@@ -300,3 +300,23 @@ suite attempts at default and four-thread concurrency reported unrelated context
 transport/process failures and stalled; sampled failing tests passed individually.
 The physical Ctrl-arrow symptom was not independently reproduced; this follow-up
 fixes the confirmed omission of the optional Ctrl-h/j/k/l bindings.
+
+## Desktop packaging
+
+Desktop packaging now requires the helper and copies it beside the native
+editor, including into `Contents/MacOS` for local app bundles. The crates remain
+independent. The tag workflow builds both and publishes a separate Linux x86-64
+desktop archive only after engine and window acceptance from an extracted copy.
+The window check omits the helper override to exercise sibling discovery.
+Terminal artifacts and their curl installer remain unchanged. Native CI builds
+and checks the macOS bundle's engine, but macOS desktop publication remains
+withheld pending window acceptance. Packaging commands and platform requirements
+live in `contrib/packaging/README.md`; release ordering lives in `releasing.md`.
+
+Local packaging validation on Linux passed both optimized builds, five Python
+packaging tests, seven release-packaging tests, twenty installer tests, workflow
+linting and historical/current checksum assembly checks. The extracted desktop
+archive passed the real engine suite and X11/lavapipe window acceptance with
+sibling helper discovery, selection/copy, scrolling, pane focus, resize and
+return to source. macOS bundle layout is covered by the packaging tests; no
+macOS runtime validation was performed locally.

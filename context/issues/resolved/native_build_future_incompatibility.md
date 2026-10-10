@@ -39,7 +39,7 @@ The native CI build requests the future-incompatibility report and requires
 zero affected dependencies on both Linux and macOS. On macOS it also compiles
 the patched crate with warnings denied and runs
 `copied_blocks_preserve_arguments_captures_and_reference_counts` and
-`copied_block_accepts_zero_arguments` in `contrib/native/block_compat.rs`.
+`copied_block_accepts_zero_arguments` in `tests/native/block_compat.rs`.
 These exercise the real system block runtime, including captured-value cleanup
 after the final reference is dropped.
 

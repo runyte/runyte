@@ -34,6 +34,7 @@ jobs:
       source_sha: ${{ steps.release.outputs.source_sha }}
       targets: ${{ steps.release.outputs.targets }}
       windows: ${{ steps.release.outputs.windows }}
+      desktop: ${{ steps.release.outputs.desktop }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -76,6 +77,10 @@ jobs:
           fi
 
           targets='[{"target":"x86_64-unknown-linux-gnu","runner":"ubuntu-22.04"},{"target":"aarch64-unknown-linux-gnu","runner":"ubuntu-22.04-arm"},{"target":"x86_64-apple-darwin","runner":"macos-15-intel"},{"target":"aarch64-apple-darwin","runner":"macos-15"}]'
+          desktop=false
+          if test -f contrib/packaging/check_package.py; then
+            desktop=true
+          fi
           windows=false
           # Retrying a historical tag must retain its original platform set.
           if test -f src/terminal/pty_windows.rs; then
@@ -89,6 +94,7 @@ jobs:
             echo "source_sha=$source_sha"
             echo "targets=$targets"
             echo "windows=$windows"
+            echo "desktop=$desktop"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -198,9 +204,68 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+  desktop:
+    name: Build and accept Linux x86-64 desktop
+    needs: validate
+    if: needs.validate.outputs.desktop == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.source_sha }}
+          persist-credentials: false
+      - name: Native build and acceptance dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config cmake clang \
+            libfontconfig1-dev libfreetype6-dev libxcb1-dev libx11-xcb-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libssl-dev \
+            libvulkan1 mesa-vulkan-drivers xvfb xauth libxtst6 fonts-dejavu-core
+          lvp_icds=(/usr/share/vulkan/icd.d/lvp*.json)
+          test "${#lvp_icds[@]}" -eq 1
+          test -f "${lvp_icds[0]}"
+          printf 'VK_DRIVER_FILES=%s\n' "${lvp_icds[0]}" >> "$GITHUB_ENV"
+      - name: Stable Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Build both executables from the release tag
+        env:
+          SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          cargo build --release --locked --features native
+          cargo build --release --locked --manifest-path contrib/document-preview/Cargo.toml
+      - name: Package and accept the extracted desktop archive
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          package_name="runyte-desktop-${VERSION}-x86_64-unknown-linux-gnu"
+          archive="$RUNNER_TEMP/runyte-desktop-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.xz"
+          python3 -m unittest discover -s contrib/packaging -p 'test_*.py'
+          python3 contrib/packaging/package.py linux --binary target/release/runyte \
+            --preview-helper contrib/document-preview/target/release/runyte-preview-helper \
+            --output "$RUNNER_TEMP/$package_name"
+          tar -C "$RUNNER_TEMP" -cJf "$archive" "$package_name"
+          mkdir "$RUNNER_TEMP/extracted"
+          tar -C "$RUNNER_TEMP/extracted" -xJf "$archive"
+          xvfb-run -a -s '-screen 0 3200x1800x24' python3 contrib/packaging/check_package.py \
+            "$RUNNER_TEMP/extracted/$package_name" --window
+      - name: Upload accepted desktop archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-desktop-x86_64-unknown-linux-gnu
+          path: ${{ runner.temp }}/runyte-desktop-${{ needs.validate.outputs.tag }}-x86_64-unknown-linux-gnu.tar.xz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
   publish:
     name: Publish GitHub Release
-    needs: [validate, build]
+    needs: [validate, build, desktop]
+    if: always() && needs.validate.result == 'success' && needs.build.result == 'success' && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped')
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     permissions:
@@ -224,6 +289,7 @@ jobs:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
           WINDOWS: ${{ needs.validate.outputs.windows }}
+          DESKTOP: ${{ needs.validate.outputs.desktop }}
         shell: bash
         run: |
           set -euo pipefail
@@ -239,7 +305,7 @@ jobs:
           do
             test -f "dist/runyte-${RELEASE_TAG}-${target}.tar.xz"
           done
-          test "$(find dist -maxdepth 1 -type f -name 'runyte-*.tar.xz' | wc -l)" -eq 4
+          test "$(find dist -maxdepth 1 -type f -name 'runyte-v*.tar.xz' | wc -l)" -eq 4
           expected=4
           if [[ "$WINDOWS" == true ]]; then
             test -f "dist/runyte-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip"
@@ -247,6 +313,11 @@ jobs:
             expected=5
           else
             test "$(find dist -maxdepth 1 -type f -name 'runyte-*.zip' | wc -l)" -eq 0
+          fi
+
+          if [[ "$DESKTOP" == true ]]; then
+            test -f "dist/runyte-desktop-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.xz"
+            expected=$((expected + 1))
           fi
 
           (

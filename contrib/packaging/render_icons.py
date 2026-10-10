@@ -10,13 +10,13 @@ SIZES = (16, 32, 64, 128, 256, 512, 1024)
 
 
 def main():
-    destination = ROOT / "contrib/native/icons"
+    destination = ROOT / "contrib/packaging/icons"
     destination.mkdir(parents=True, exist_ok=True)
     source = base64.b64encode((ROOT / "logo/runyte_logo.svg").read_bytes()).decode("ascii")
     # Keep the authored shape and charcoal fill. A light backplate makes the
     # same mark readable on both dark and light desktop panels.
     svg = f'''<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="0 0 1024 1024">
-<!-- Derived from logo/runyte_logo.svg by contrib/native/render_icons.py. -->
+<!-- Derived from logo/runyte_logo.svg by contrib/packaging/render_icons.py. -->
 <rect x="32" y="32" width="960" height="960" rx="196" fill="#f3f1eb"/>
 <image x="144" y="144" width="736" height="736" xlink:href="data:image/svg+xml;base64,{source}"/>
 </svg>

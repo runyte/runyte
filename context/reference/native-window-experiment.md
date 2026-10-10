@@ -26,7 +26,7 @@ unimplemented, so the adapter does not call them. GPUI is vendored under
 [patch record](../../vendor/gpui/RUNYTE-PATCH.md).
 The macOS helper builds a local `.app` with an ICNS resource, launcher and
 project/dependency/font notices. Installation, regeneration and platform
-limits are documented in [the native packaging guide](../../contrib/native/README.md).
+limits are documented in [the native packaging guide](../../contrib/packaging/README.md).
 
 Native builds embed four unmodified JetBrainsMono Nerd Font faces from Nerd
 Fonts v3.4.0 (JetBrains Mono 2.304): Medium, Medium Italic, Bold, and Bold Italic.

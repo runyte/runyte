@@ -16,6 +16,6 @@ The manifest's development-only `test_utils` path is removed because that
 directory is absent from the published archive; its registry version is
 retained. All other upstream source and metadata are preserved.
 
-`contrib/native/block_compat.rs` checks stack invocation, heap copying,
+`tests/native/block_compat.rs` checks stack invocation, heap copying,
 reference-counted cloning, and captured-value destruction on macOS CI.
 Remove this patch when the native dependency graph no longer needs it.

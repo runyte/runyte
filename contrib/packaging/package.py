@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Install Linux desktop integration or construct a local macOS app bundle."""
+"""Register a Linux launcher or package the native editor with document preview."""
 import argparse
 import os
 from pathlib import Path
@@ -60,7 +60,39 @@ StartupWMClass={APP_ID}
     return desktop
 
 
-def bundle_macos(binary, destination):
+def preview_helper(binary, helper=None):
+    helper = (helper or binary.with_name("runyte-preview-helper")).expanduser().resolve()
+    if not helper.is_file() or not os.access(helper, os.X_OK):
+        raise ValueError(f"preview helper is missing or not executable: {helper}; "
+                         "build contrib/document-preview and pass --preview-helper")
+    return helper
+
+
+def bundle_linux(binary, destination, helper=None):
+    helper = preview_helper(binary, helper)
+    destination = destination.expanduser().absolute()
+    if destination.exists():
+        raise ValueError(f"package already exists: {destination}; choose a new output directory")
+    destination.mkdir(parents=True)
+    shutil.copy2(binary, destination / "runyte")
+    shutil.copy2(helper, destination / "runyte-preview-helper")
+    (destination / "runed").symlink_to("runyte")
+    repository = HERE.parents[1]
+    for name in ("README.md", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "config.example.yaml"):
+        shutil.copyfile(repository / name, destination / name)
+    shutil.copytree(repository / "licenses", destination / "licenses")
+    (destination / "docs").mkdir()
+    shutil.copyfile(repository / "docs/user-guide.md", destination / "docs/user-guide.md")
+    integration = destination / "contrib/packaging"
+    integration.mkdir(parents=True)
+    for name in ("package.py", "README.md"):
+        shutil.copyfile(HERE / name, integration / name)
+    shutil.copytree(HERE / "icons", integration / "icons")
+    return destination
+
+
+def bundle_macos(binary, destination, helper=None):
+    helper = preview_helper(binary, helper)
     destination = destination.expanduser().absolute()
     if destination.exists():
         raise ValueError(f"bundle already exists: {destination}; choose a new output directory")
@@ -69,6 +101,7 @@ def bundle_macos(binary, destination):
     executables.mkdir(parents=True)
     resources.mkdir()
     shutil.copy2(binary, executables / "runyte")
+    shutil.copy2(helper, executables / "runyte-preview-helper")
     shutil.copyfile(HERE / "icons/Runyte.icns", resources / "Runyte.icns")
     repository = HERE.parents[1]
     for notice in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
@@ -104,20 +137,27 @@ def main():
                         help="existing Runyte binary built with --features native")
     parser.add_argument("--data-dir", type=Path,
                         help="Linux XDG data directory (default: XDG_DATA_HOME or ~/.local/share)")
-    parser.add_argument("--output", type=Path, help="new macOS .app directory")
+    parser.add_argument("--output", type=Path, help="new Linux package directory or macOS .app directory")
+    parser.add_argument("--preview-helper", type=Path,
+                        help="preview executable to bundle (default: beside --binary)")
     arguments = parser.parse_args()
     binary = arguments.binary.expanduser().resolve(strict=True)
     if not binary.is_file() or not os.access(binary, os.X_OK):
         parser.error("--binary must name an executable regular file")
     if arguments.platform == "linux":
         if arguments.output is not None:
-            parser.error("--output is only used for macos")
+            if arguments.data_dir is not None:
+                parser.error("--output cannot be combined with --data-dir")
+            print(bundle_linux(binary, arguments.output, arguments.preview_helper))
+            return
+        if arguments.preview_helper is not None:
+            parser.error("--preview-helper requires --output")
         root = arguments.data_dir or Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
         print(install_linux(binary, root))
     else:
         if arguments.data_dir is not None or arguments.output is None:
             parser.error("macos requires --output and does not use --data-dir")
-        print(bundle_macos(binary, arguments.output))
+        print(bundle_macos(binary, arguments.output, arguments.preview_helper))
 
 
 if __name__ == "__main__":

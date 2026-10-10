@@ -23,7 +23,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       CARGO_TERM_COLOR: always
       TMPDIR: ${{ matrix.os == 'macos-15' && '/private/tmp' || '/tmp' }}
@@ -63,7 +63,7 @@ jobs:
           cargo clippy --locked --features native --all-targets -- -D warnings
       - name: Core and adapter tests
         run: |
-          python3 -m unittest discover -s contrib/native -p 'test_*.py'
+          python3 -m unittest discover -s contrib/packaging -p 'test_*.py'
           cargo test --locked --workspace -- --test-threads=4
           cargo test --locked --features native --bin runyte native_frontend
           cargo test --locked --features native --bin runyte native_frontend::media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count -- --ignored --exact
@@ -78,13 +78,23 @@ jobs:
           if "0 dependencies had future-incompatible warnings" not in report:
               sys.exit("Native dependencies must have no future-incompatibility warnings")
           PY
+      - name: Build preview helper
+        run: cargo build --release --locked --manifest-path contrib/document-preview/Cargo.toml
+      - name: Package Linux desktop and accept bundled preview
+        if: runner.os == 'Linux'
+        run: |
+          python3 contrib/packaging/package.py linux --binary target/debug/runyte \
+            --preview-helper contrib/document-preview/target/release/runyte-preview-helper \
+            --output "$RUNNER_TEMP/runyte-desktop"
+          xvfb-run -a -s '-screen 0 3200x1800x24' python3 contrib/packaging/check_package.py \
+            "$RUNNER_TEMP/runyte-desktop" --window
       - name: Bundled PDF helper without Poppler
         run: python3 tests/native_pdf.py
       - name: macOS block ABI compatibility
         if: runner.os == 'macOS'
         run: |
           rustc --crate-name block --crate-type rlib -D warnings vendor/block/src/lib.rs --out-dir "$RUNNER_TEMP"
-          rustc --edition=2021 --test -D warnings contrib/native/block_compat.rs \
+          rustc --edition=2021 --test -D warnings tests/native/block_compat.rs \
             --extern block="$RUNNER_TEMP/libblock.rlib" -o "$RUNNER_TEMP/block-compat"
           "$RUNNER_TEMP/block-compat"
       - name: Linux window acceptance with bundled fonts
@@ -101,4 +111,8 @@ jobs:
           xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --window-controls --mux
       - name: Construct macOS app bundle
         if: runner.os == 'macOS'
-        run: python3 contrib/native/package.py macos --binary target/debug/runyte --output "$RUNNER_TEMP/Runyte.app"
+        run: |
+          python3 contrib/packaging/package.py macos --binary target/debug/runyte \
+            --preview-helper contrib/document-preview/target/release/runyte-preview-helper \
+            --output "$RUNNER_TEMP/Runyte.app"
+          python3 contrib/packaging/check_package.py "$RUNNER_TEMP/Runyte.app"

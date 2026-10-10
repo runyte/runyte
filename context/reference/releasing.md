@@ -17,8 +17,8 @@ curated `## Changes` list describing what changed since the previous version,
 not a dump of commit subjects. Release notes are drafted outside the working
 tree, so they do not become a third file in the release commit.
 
-The `Binary release` GitHub Actions workflow attaches five prebuilt archives
-and one combined `SHA256SUMS` to that GitHub Release. It builds the exact tag on
+The `Binary release` GitHub Actions workflow attaches five terminal archives,
+one Linux x86-64 desktop archive, and one combined `SHA256SUMS` to that GitHub Release. It builds the exact tag on
 native x86-64 and ARM64 Linux/macOS runners and an x86-64 Windows MSVC runner. Cargo publishing remains a
 manual local operation; the workflow never publishes to crates.io.
 
@@ -196,7 +196,7 @@ The example version below is 0.2.1. Substitute the real one.
     ```
 
     Open the URL printed by `gh` and verify the title, tag, comparison link,
-    rendered `Changes` list, five archives, and `SHA256SUMS`. The GitHub Release
+    rendered `Changes` list, six archives, and `SHA256SUMS`. The GitHub Release
     is the published changes record; the temporary draft may then be removed.
 
 14. **Carry the release commit back to `dev`**, so the branches do not diverge
@@ -275,10 +275,11 @@ The tag workflow publishes these files, where `<version>` includes its leading
 - `runyte-<version>-aarch64-unknown-linux-gnu.tar.xz`;
 - `runyte-<version>-x86_64-apple-darwin.tar.xz`;
 - `runyte-<version>-aarch64-apple-darwin.tar.xz`;
-- `runyte-<version>-x86_64-pc-windows-msvc.zip`; and
-- `SHA256SUMS`, covering all five archives.
+- `runyte-<version>-x86_64-pc-windows-msvc.zip`;
+- `runyte-desktop-<version>-x86_64-unknown-linux-gnu.tar.xz`; and
+- `SHA256SUMS`, covering all six archives.
 
-Each archive has one top-level directory named
+Each terminal archive has one top-level directory named
 `runyte-MAJOR.MINOR.PATCH-<target>`. It contains the executable, `README.md`,
 `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`, the complete `licenses/`
 directory, and `config.example.yaml`. Linux archives are built on Ubuntu 22.04
@@ -287,16 +288,37 @@ notarized. Windows executables are also unsigned. The packaged README links to t
 
 To verify one downloaded archive, compute `sha256sum <archive>` on Linux or
 `shasum -a 256 <archive>` on macOS and compare the complete digest with the
-archive's line in `SHA256SUMS`. On Windows use `Get-FileHash -Algorithm SHA256 <archive.zip>`. Downloading all five archives permits the
+archive's line in `SHA256SUMS`. On Windows use `Get-FileHash -Algorithm SHA256 <archive.zip>`. Downloading all six archives permits the
 direct `sha256sum -c SHA256SUMS` or `shasum -a 256 -c SHA256SUMS` form.
 
 Build jobs keep only read access to repository contents. The final publishing
 job alone receives `contents: write`, through the workflow-provided
 `GITHUB_TOKEN`. Actions are pinned to complete commit hashes. A rerun checks
 out the immutable commit resolved from the requested tag, replaces only the
-six expected assets, and neither recreates nor moves the tag. Build-provenance
+seven expected assets, and neither recreates nor moves the tag. Build-provenance
 attestations are deliberately omitted for now because they require additional
 permissions; archive checksums and exact-tag validation add no such authority.
+
+### Desktop release archive
+
+The separate desktop job builds the native editor and the locked
+`contrib/document-preview` crate from the same validated tag. It runs on Ubuntu
+24.04 x86-64, so the desktop archive has a glibc 2.39 floor; terminal artifacts
+retain their existing floor. Other desktop targets are not published until
+native window and preview acceptance has been established on them.
+
+`runyte-desktop-MAJOR.MINOR.PATCH-x86_64-unknown-linux-gnu/` contains `runyte`
+and `runyte-preview-helper` as siblings, `runed`, notices, icons, documentation
+and the Linux desktop registration script. Both executables must stay together.
+The job extracts the completed archive and runs headless engine acceptance plus
+real `:preview` window acceptance on isolated Xvfb/lavapipe, without a helper
+environment override, before uploading. Publishing requires this job to succeed
+and includes the desktop archive in `SHA256SUMS`.
+
+Historical tags without `contrib/packaging/check_package.py` retain their original
+artifact set and skip the desktop job. Native-window CI also builds the helper
+and packages it into local macOS apps, but these are not published desktop
+artifacts. The macOS window still requires platform validation.
 
 ### Curl installation and updates
 

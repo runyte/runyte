@@ -348,15 +348,23 @@ cargo run --features native -- --window --editor /path/to/file
 For a desktop launcher and the Runyte icon on Linux (required by Wayland):
 
 ```sh
-python3 contrib/native/package.py linux --binary target/debug/runyte
+python3 contrib/packaging/package.py linux --binary target/debug/runyte
 ```
 
 Register again if you move the binary or switch to `target/release/runyte`.
-On macOS, use the [native desktop packaging guide](contrib/native/README.md)
+On macOS, use the [native desktop packaging guide](contrib/packaging/README.md)
 to create a local `Runyte.app` with the same icon and bundled font notices.
 
+Use the [desktop packaging guide](contrib/packaging/README.md) to package
+the editor with its separate preview helper. The release workflow adds a
+Linux x86-64 desktop archive (Ubuntu 24.04 / glibc 2.39 minimum), with preview
+acceptance required before publication. Terminal archives and the curl installer
+continue to provide the terminal edition. macOS app bundles include the helper
+for local testing; macOS desktop release publication awaits window validation.
+
 This branch also includes an isolated [native document preview prototype](contrib/document-preview/README.md).
-After building its separate Blitz helper, `:preview` renders the selected text,
+Desktop packages include its Blitz helper; checkout builds require the separate
+helper build described there. `:preview` renders the selected text,
 or the whole buffer with no selection, including unsaved edits. It supports
 Markdown, static HTML, SVG, JSON, YAML, highlighted source and plain text.
 Escape returns to source. Existing `?`, `:render`, and `:markdown` are unchanged.

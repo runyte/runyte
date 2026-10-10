@@ -1735,10 +1735,10 @@ Consecutive queued drags coalesce to their latest position; keys, clicks and
 paste keep their order.
 
 For the Runyte application icon on Wayland, register the desktop entry with
-`python3 contrib/native/package.py linux --binary target/debug/runyte` before
+`python3 contrib/packaging/package.py linux --binary target/debug/runyte` before
 opening a new window. X11 also receives an icon directly. A macOS `.app`
 packaging helper and the platform limitations are described in the
-[native desktop integration guide](../contrib/native/README.md).
+[native desktop integration guide](../contrib/packaging/README.md).
 
 PNG, JPEG, GIF, WebP, BMP, and PDF paths open as read-only media projections in
 the destination pane, including from `:open`, the explorer, the directory tree,
@@ -4152,7 +4152,11 @@ edits and leaves the source text and selection intact. Multiple nonempty ranges
 are joined in document order with a newline. A selected SVG diagram is rendered
 graphically even inside a Markdown or source document.
 
-Build the separate helper using the [prototype instructions](../contrib/document-preview/README.md).
+Desktop packages include the separate helper beside the editor, including inside
+local macOS app bundles. The Linux x86-64 desktop release archive requires glibc
+2.39 or newer and the native runtime dependencies; the terminal archives and
+curl installer remain separate. See the [desktop packaging guide](../contrib/packaging/README.md).
+For a checkout build, use the [prototype instructions](../contrib/document-preview/README.md).
 Markdown uses proportional GitHub-like typography; static HTML and SVG render
 graphically. JSON is pretty-printed when valid and retains its original text
 with a diagnostic otherwise. YAML retains its comments, structure and ordering.

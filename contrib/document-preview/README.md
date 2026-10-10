@@ -1,5 +1,8 @@
 # Native document preview prototype
 
+Desktop packages already include the helper beside Runyte, so no helper build
+or environment override is needed. See [desktop packaging](../packaging/README.md).
+
 Build both executables from this checkout (a current stable Rust toolchain and
 Runyte's native platform prerequisites are required):
 
@@ -160,7 +163,7 @@ cargo clippy --manifest-path contrib/document-preview/Cargo.toml --all-targets -
 cargo test --manifest-path contrib/document-preview/Cargo.toml
 python3 contrib/document-preview/check.py
 # Dedicated X11 display only: the test owns its clipboard.
-DISPLAY=:95 python3 tests/native_window.py --document-preview --output /tmp/runyte-preview-captures
+DISPLAY=:95 python3 tests/native_window.py --document-preview --preview-helper "$RUNYTE_PREVIEW_HELPER" --output /tmp/runyte-preview-captures
 ```
 
 `check.py` uses `RUNYTE_PREVIEW_HELPER`, falling back to the debug helper and tests actual Blitz selection, links,

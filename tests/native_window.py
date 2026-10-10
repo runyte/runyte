@@ -21,7 +21,9 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--binary", type=pathlib.Path, default=pathlib.Path("target/debug/runyte"))
 parser.add_argument("--output", type=pathlib.Path)
 parser.add_argument("--document-preview", action="store_true", help="exercise the bounded Blitz document preview")
-parser.add_argument("--preview-helper", type=pathlib.Path, default=pathlib.Path("contrib/document-preview/target/debug/runyte-preview-helper"))
+helper_options = parser.add_mutually_exclusive_group()
+helper_options.add_argument("--preview-helper", type=pathlib.Path, default=pathlib.Path("contrib/document-preview/target/debug/runyte-preview-helper"))
+helper_options.add_argument("--packaged-preview-helper", action="store_true", help="test sibling discovery without an environment override")
 parser.add_argument("--window-controls", action="store_true", help="exercise font settings, system clipboard, and parent editor wait")
 parser.add_argument("--animations", action="store_true", help="exercise media playback, selection pause, and hidden-window idle")
 parser.add_argument("--mux", action="store_true", help="exercise persistent window attachment and frontend handoff")
@@ -37,6 +39,7 @@ parser.add_argument("--paint-styles", action="store_true", help="capture styled 
 parser.add_argument("--paint-reference", type=pathlib.Path, help="compare styled-cell pixels against an earlier --paint-styles output directory")
 args = parser.parse_args()
 binary = args.binary.resolve()
+preview_helper = (binary.with_name("runyte-preview-helper") if args.packaged_preview_helper else args.preview_helper).resolve()
 fixture = tempfile.TemporaryDirectory(prefix="runyte-native-window-")
 storage = pathlib.Path(fixture.name)
 root = storage / "project"
@@ -168,7 +171,8 @@ if args.document_preview:
     (root/'busy.md').write_text('| a | b |\n| - | - |\n' + '| content | content |\n' * 5000)
     (root/'section.md').write_text('# First\n\n# Second\n\n')
     (root/'selection.html').write_text('<html><body style="margin:0;background:white;font:20px monospace"><p style="margin:0">Selectable text</p><a href="https://example.com">Link target</a><div style="height:2000px;width:2000px;background:#09a"></div></body></html>')
-    env['RUNYTE_PREVIEW_HELPER'] = str(args.preview_helper.resolve())
+    if not args.packaged_preview_helper:
+        env['RUNYTE_PREVIEW_HELPER'] = str(preview_helper)
 log=open(root/'window.log','w')
 launch=[str(binary),'--window','--mux' if args.mux else '--ide','--config',str(storage/'config/config.yaml')]
 if not args.mux:launch.append(str(root/'notes.txt'))
@@ -390,7 +394,7 @@ try:
                 continue
             for child in candidates:
                 try:
-                    if (pathlib.Path('/proc')/child/'exe').resolve() == args.preview_helper.resolve():
+                    if (pathlib.Path('/proc')/child/'exe').resolve() == preview_helper:
                         helper_children.add(int(child))
                 except OSError:
                     pass
