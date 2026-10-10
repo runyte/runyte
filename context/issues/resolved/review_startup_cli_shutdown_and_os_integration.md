@@ -38,14 +38,20 @@ sends nothing when it holds neither. Descendant cleanup is unchanged in
 effect: retiring the group after the leader exits is exactly what the
 unreaped anchor preserves.
 
-Coverage lives in `src/clipboard.rs` in
+The timeout regression's descendant now waits on a release-file barrier that
+the test opens only after helper cleanup returns. Its former fixed delay
+could write the marker before cleanup when the test thread was descheduled,
+misreporting pre-cleanup activity as a surviving descendant. The helper's
+100 ms timeout and the 500 ms observation window remain unchanged.
+
+Coverage lives in `src/clipboard/helpers.rs` in
 `timing_out_a_helper_also_kills_its_descendants`,
 `a_successful_parent_with_stuck_output_cleans_up_its_descendant`,
 `completed_helper_cleanup_signals_no_recycled_group`, and
 `a_completed_but_unreaped_helper_still_owns_its_group`, in
 `src/external_open.rs` in
 `launched_program_has_a_process_group_separate_from_the_editor`, in
-`src/main.rs` in `cwd_file_retry_preserves_colliding_temporary_file` and
+`src/cli.rs` in `cwd_file_retry_preserves_colliding_temporary_file` and
 `cwd_file_supports_a_near_name_max_target`, and in `tests/local_protocol.rs`
 in `termination_signal_restores_the_terminal_and_preserves_its_exit_status`
 and `signalling_a_wait_client_cancels_its_durable_request`.

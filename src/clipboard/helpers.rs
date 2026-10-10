@@ -1017,19 +1017,26 @@ mod tests {
         ));
         fs::create_dir_all(&root).unwrap();
         let marker = root.join("leaked");
-        let error = run_helper(
+        let release = root.join("release");
+        let outcome = run_helper(
             "sh",
             &[
                 "-c".into(),
-                "(sleep 0.4; printf leaked > \"$1\") & wait".into(),
+                "(while [ ! -e \"$2\" ]; do sleep 0.01; done; printf leaked > \"$1\") & wait"
+                    .into(),
                 "sh".into(),
                 marker.as_os_str().to_owned(),
+                release.as_os_str().to_owned(),
             ],
             None,
             Some(64),
             Duration::from_millis(100),
-        )
-        .unwrap_err();
+        );
+        // Only activity after cleanup returns constitutes survival. A delayed
+        // test thread must not mistake a pre-cleanup write for a leaked child.
+        // Release even on an unexpected result so the fixture cannot strand it.
+        fs::write(&release, "").unwrap();
+        let error = outcome.unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         std::thread::sleep(Duration::from_millis(500));
         assert!(!marker.exists(), "a timed-out helper descendant survived");
