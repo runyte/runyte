@@ -271,16 +271,16 @@ two-file release commit or the crate contents.
 The tag workflow publishes these files, where `<version>` includes its leading
 `v`:
 
-- `runyte-<version>-x86_64-unknown-linux-gnu.tar.xz`;
-- `runyte-<version>-aarch64-unknown-linux-gnu.tar.xz`;
-- `runyte-<version>-x86_64-apple-darwin.tar.xz`;
-- `runyte-<version>-aarch64-apple-darwin.tar.xz`;
-- `runyte-<version>-x86_64-pc-windows-msvc.zip`;
+- `runyte-terminal-<version>-x86_64-unknown-linux-gnu.tar.xz`;
+- `runyte-terminal-<version>-aarch64-unknown-linux-gnu.tar.xz`;
+- `runyte-terminal-<version>-x86_64-apple-darwin.tar.xz`;
+- `runyte-terminal-<version>-aarch64-apple-darwin.tar.xz`;
+- `runyte-terminal-<version>-x86_64-pc-windows-msvc.zip`;
 - `runyte-desktop-<version>-x86_64-unknown-linux-gnu.tar.xz`; and
 - `SHA256SUMS`, covering all six archives.
 
 Each terminal archive has one top-level directory named
-`runyte-MAJOR.MINOR.PATCH-<target>`. It contains the executable, `README.md`,
+`runyte-terminal-MAJOR.MINOR.PATCH-<target>`. It contains the executable, `README.md`,
 `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`, the complete `licenses/`
 directory, and `config.example.yaml`. Linux archives are built on Ubuntu 22.04
 to retain the glibc 2.35 floor. The macOS executables are unsigned and are not
@@ -315,8 +315,8 @@ real `:preview` window acceptance on isolated Xvfb/lavapipe, without a helper
 environment override, before uploading. Publishing requires this job to succeed
 and includes the desktop archive in `SHA256SUMS`.
 
-Historical tags without `contrib/packaging/check_package.py` retain their original
-artifact set and skip the desktop job. Desktop CI also packages the executable
+Historical tags without `crates/runyte-desktop/Cargo.toml` retain their original
+artifact set and `runyte-<tag>-<target>` names, and skip the desktop job. Desktop CI also packages the executable
 into local macOS apps, but these are not published desktop
 artifacts. The macOS window still requires platform validation.
 
@@ -324,11 +324,15 @@ artifacts. The macOS window still requires platform validation.
 
 The repository-root `install.sh`, served from `main`, installs and updates the
 same executable. Its default resolves GitHub's `/releases/latest` redirect to
-one stable version, then fetches that version's archive and `SHA256SUMS` using
-the names above. `--version X.Y.Z` bypasses latest-release discovery.
+one stable version, then fetches that version's `SHA256SUMS` first. It selects
+the listed `runyte-terminal-` archive, falling back to a listed historical
+`runyte-` archive, and fails if neither is listed. `--version X.Y.Z` bypasses latest-release discovery.
 `--install-dir` chooses an absolute destination directory; the default is
 `$HOME/.local/bin`. Downloads and checks complete before a staged executable
-replaces the old file through a rename on the destination filesystem.
+replaces the old file through a rename on the destination filesystem. An
+installed executable reporting the desktop edition is preserved: use the
+desktop release archive to update it. Historical and unrecognized version
+strings continue to count as terminal installations.
 
 Installer changes land with ordinary code before the version-only release
 commit. No installer version or embedded archive hash needs updating at release

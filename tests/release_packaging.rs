@@ -209,8 +209,10 @@ fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
     assert!(source.contains(r#"{"target":"x86_64-pc-windows-msvc","runner":"windows-latest"}"#));
 
     assert!(source.contains("cargo build --release --locked --target \"$TARGET\""));
-    assert!(source.contains("runyte-${RELEASE_TAG}-${TARGET}.tar.xz"));
+    assert!(source.contains("${TERMINAL_PREFIX}-${RELEASE_TAG}-${TARGET}.tar.xz"));
     assert!(source.contains("sha256sum runyte-*.tar.xz runyte-*.zip | sort -k2 > SHA256SUMS"));
+    assert!(source.contains("terminal_prefix=runyte\n"));
+    assert!(source.contains("terminal_prefix=runyte-terminal"));
     assert!(source.contains("Compress-Archive -LiteralPath $packageDir"));
     // Every archive provides runed beside runyte: a link where the format
     // holds one, a copy in the Windows zip.

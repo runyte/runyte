@@ -35,6 +35,7 @@ jobs:
       targets: ${{ steps.release.outputs.targets }}
       windows: ${{ steps.release.outputs.windows }}
       desktop: ${{ steps.release.outputs.desktop }}
+      terminal_prefix: ${{ steps.release.outputs.terminal_prefix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,7 +79,9 @@ jobs:
 
           targets='[{"target":"x86_64-unknown-linux-gnu","runner":"ubuntu-22.04"},{"target":"aarch64-unknown-linux-gnu","runner":"ubuntu-22.04-arm"},{"target":"x86_64-apple-darwin","runner":"macos-15-intel"},{"target":"aarch64-apple-darwin","runner":"macos-15"}]'
           desktop=false
-          if test -f contrib/packaging/check_package.py; then
+          terminal_prefix=runyte
+          if test -f crates/runyte-desktop/Cargo.toml; then
+            terminal_prefix=runyte-terminal
             desktop=true
           fi
           windows=false
@@ -95,6 +98,7 @@ jobs:
             echo "targets=$targets"
             echo "windows=$windows"
             echo "desktop=$desktop"
+            echo "terminal_prefix=$terminal_prefix"
           } >> "$GITHUB_OUTPUT"
 
   build:
@@ -127,6 +131,7 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.validate.outputs.version }}
+          TERMINAL_PREFIX: ${{ needs.validate.outputs.terminal_prefix }}
           EXE_SUFFIX: ${{ runner.os == 'Windows' && '.exe' || '' }}
         shell: bash
         run: |
@@ -144,13 +149,14 @@ jobs:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.validate.outputs.version }}
+          TERMINAL_PREFIX: ${{ needs.validate.outputs.terminal_prefix }}
         shell: bash
         run: |
           set -euo pipefail
 
-          archive="runyte-${RELEASE_TAG}-${TARGET}.tar.xz"
+          archive="${TERMINAL_PREFIX}-${RELEASE_TAG}-${TARGET}.tar.xz"
           package_root="$RUNNER_TEMP/runyte-package"
-          package_dir="$package_root/runyte-${VERSION}-${TARGET}"
+          package_dir="$package_root/${TERMINAL_PREFIX}-${VERSION}-${TARGET}"
           archive_path="$RUNNER_TEMP/$archive"
 
           mkdir -p "$package_dir"
@@ -169,7 +175,7 @@ jobs:
           install -m 0644 docs/user-guide.md "$package_dir/docs/user-guide.md"
 
           COPYFILE_DISABLE=1 tar -C "$package_root" -cJf "$archive_path" \
-            "runyte-${VERSION}-${TARGET}"
+            "${TERMINAL_PREFIX}-${VERSION}-${TARGET}"
           tar -tJf "$archive_path"
           "$package_dir/runyte" --version
           "$package_dir/runed" --version
@@ -181,8 +187,9 @@ jobs:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           TARGET: ${{ matrix.target }}
           VERSION: ${{ needs.validate.outputs.version }}
+          TERMINAL_PREFIX: ${{ needs.validate.outputs.terminal_prefix }}
         run: |
-          $packageName = "runyte-$env:VERSION-$env:TARGET"
+          $packageName = "$env:TERMINAL_PREFIX-$env:VERSION-$env:TARGET"
           $packageDir = Join-Path $env:RUNNER_TEMP $packageName
           New-Item -ItemType Directory -Path $packageDir | Out-Null
           Copy-Item -LiteralPath "target/$env:TARGET/release/runyte.exe" -Destination $packageDir
@@ -195,7 +202,7 @@ jobs:
           Copy-Item -LiteralPath docs/user-guide.md -Destination "$packageDir/docs/user-guide.md"
           New-Item -ItemType Directory -Path "$packageDir/contrib" | Out-Null
           Copy-Item -LiteralPath contrib/runyte.ps1 -Destination "$packageDir/contrib/runyte.ps1"
-          Compress-Archive -LiteralPath $packageDir -DestinationPath "$env:RUNNER_TEMP/runyte-$env:RELEASE_TAG-$env:TARGET.zip"
+          Compress-Archive -LiteralPath $packageDir -DestinationPath "$env:RUNNER_TEMP/$env:TERMINAL_PREFIX-$env:RELEASE_TAG-$env:TARGET.zip"
           & "$packageDir/runyte.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
@@ -203,7 +210,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-${{ matrix.target }}
-          path: ${{ runner.temp }}/runyte-${{ needs.validate.outputs.tag }}-${{ matrix.target }}.${{ runner.os == 'Windows' && 'zip' || 'tar.xz' }}
+          path: ${{ runner.temp }}/${{ needs.validate.outputs.terminal_prefix }}-${{ needs.validate.outputs.tag }}-${{ matrix.target }}.${{ runner.os == 'Windows' && 'zip' || 'tar.xz' }}
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -244,6 +251,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           VERSION: ${{ needs.validate.outputs.version }}
+          TERMINAL_PREFIX: ${{ needs.validate.outputs.terminal_prefix }}
         run: |
           package_name="runyte-desktop-${VERSION}-x86_64-unknown-linux-gnu"
           archive="$RUNNER_TEMP/runyte-desktop-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.xz"
@@ -290,6 +298,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           SOURCE_SHA: ${{ needs.validate.outputs.source_sha }}
+          TERMINAL_PREFIX: ${{ needs.validate.outputs.terminal_prefix }}
           WINDOWS: ${{ needs.validate.outputs.windows }}
           DESKTOP: ${{ needs.validate.outputs.desktop }}
         shell: bash
@@ -305,12 +314,12 @@ jobs:
             x86_64-apple-darwin \
             aarch64-apple-darwin
           do
-            test -f "dist/runyte-${RELEASE_TAG}-${target}.tar.xz"
+            test -f "dist/${TERMINAL_PREFIX}-${RELEASE_TAG}-${target}.tar.xz"
           done
-          test "$(find dist -maxdepth 1 -type f -name 'runyte-v*.tar.xz' | wc -l)" -eq 4
+          test "$(find dist -maxdepth 1 -type f -name "${TERMINAL_PREFIX}-v*.tar.xz" | wc -l)" -eq 4
           expected=4
           if [[ "$WINDOWS" == true ]]; then
-            test -f "dist/runyte-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip"
+            test -f "dist/${TERMINAL_PREFIX}-${RELEASE_TAG}-x86_64-pc-windows-msvc.zip"
             test "$(find dist -maxdepth 1 -type f -name 'runyte-*.zip' | wc -l)" -eq 1
             expected=5
           else
@@ -335,6 +344,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           VERSION: ${{ needs.validate.outputs.version }}
+          TERMINAL_PREFIX: ${{ needs.validate.outputs.terminal_prefix }}
         shell: bash
         run: |
           set -euo pipefail

@@ -1344,3 +1344,15 @@ failure also seen before Phase 4; diagnosis continues. The macOS terminal
 performance job exceeded two unchanged 16 ms maxima (17.64/18.97 ms). Review
 found no changes in their source paths or measured-path dependencies; budgets
 remain unchanged and these failures are not counted as accepted gates.
+
+### Phase 6 — terminal archives, 2026-10-10
+
+The validated tag's desktop manifest now selects `runyte-terminal-` names and
+matching archive directories; historical tags retain their original names.
+The installer reads `SHA256SUMS` before choosing or downloading an archive,
+prefers the terminal edition name, and refuses to replace an installed desktop
+edition. Its executable probe fixture uses a hard link to the checked-in
+stand-in on the repository filesystem; written archive payloads are never run.
+All 24 offline installer cases and eight release packaging tests pass.
+Independent review is clear. The PowerShell wrapper and demo-video skill have
+no archive names to update.

@@ -94,11 +94,11 @@ class InstallerTests(unittest.TestCase):
         path.symlink_to(ROOT / "src/fixtures/stand-in")
         path.with_name(tool + ".behavior").write_text(behavior)
 
-    def make_archive(self, target="x86_64-unknown-linux-gnu", member=None, payload=PAYLOAD):
-        name = f"runyte-v{VERSION}-{target}.tar.xz"
+    def make_archive(self, target="x86_64-unknown-linux-gnu", member=None, payload=PAYLOAD, prefix="runyte-terminal"):
+        name = f"{prefix}-v{VERSION}-{target}.tar.xz"
         path = self.assets / name
         with tarfile.open(path, "w:xz") as archive:
-            entry = tarfile.TarInfo(member or f"runyte-{VERSION}-{target}/runyte")
+            entry = tarfile.TarInfo(member or f"{prefix}-{VERSION}-{target}/runyte")
             entry.size = len(payload)
             archive.addfile(entry, io.BytesIO(payload))
         self.write_checksum(path)
@@ -109,6 +109,11 @@ class InstallerTests(unittest.TestCase):
         (self.assets / "SHA256SUMS").write_text(f"{digest}  {path.name}\n")
 
     def install(self, *args, success=True, shell="/bin/sh", piped=False):
+        # Written archive payloads are inspected only, never executed by the
+        # installed-version probe. Executable probes use the checked-in inode.
+        if self.destination.is_file() and not self.destination.is_symlink():
+            if self.destination.read_bytes() != (ROOT / "src/fixtures/stand-in").read_bytes():
+                self.destination.chmod(0o644)
         (self.root / "settings.json").write_text(json.dumps(self.settings))
         command = [shell, "-s", "--"] if piped else [shell, str(ROOT / "install.sh")]
         result = subprocess.run(command + list(args), env=self.env, text=True,
@@ -129,14 +134,51 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.destination.stat().st_mode & 0o777, 0o755)
         requests = (self.root / "requests").read_text().splitlines()
         self.assertEqual(requests, [RELEASES + "/latest",
-                                  RELEASES + f"/download/v{VERSION}/" + self.archive.name,
-                                  RELEASES + f"/download/v{VERSION}/SHA256SUMS"])
+                                  RELEASES + f"/download/v{VERSION}/SHA256SUMS",
+                                  RELEASES + f"/download/v{VERSION}/" + self.archive.name])
         # An open reader of the old inode must remain undisturbed by replacement.
         with self.destination.open("rb") as old:
             self.make_archive(payload=b"new editor")
             self.install(piped=True)
             self.assertEqual(old.read(), PAYLOAD)
         self.assertEqual(self.destination.read_bytes(), b"new editor")
+
+    def test_historical_layout_is_selected_from_manifest(self):
+        archive = self.make_archive(prefix="runyte")
+        self.install()
+        self.assertEqual(self.destination.read_bytes(), PAYLOAD)
+        self.assertTrue((self.root / "requests").read_text().endswith(archive.name + "\n"))
+
+    def test_modern_layout_wins_when_both_are_listed(self):
+        modern = (self.assets / "SHA256SUMS").read_text()
+        self.make_archive(prefix="runyte", payload=b"historical")
+        sums = self.assets / "SHA256SUMS"
+        sums.write_text(sums.read_text() + modern)
+        self.install()
+        self.assertEqual(self.destination.read_bytes(), PAYLOAD)
+
+    def test_manifest_without_either_layout_fails_before_archive_download(self):
+        (self.assets / "SHA256SUMS").write_text("0" * 64 + "  unrelated.tar.xz\n")
+        result = self.install(success=False)
+        self.assertIn("no terminal archive", result.stderr)
+        self.assertEqual(len((self.root / "requests").read_text().splitlines()), 2)
+
+    def test_installed_desktop_edition_is_preserved(self):
+        # A hard link keeps the executable inode unwritten and must stay on
+        # the repository filesystem; the installer deliberately refuses symlinks.
+        target = ROOT / "target"
+        target.mkdir(exist_ok=True)
+        fixture = tempfile.TemporaryDirectory(prefix="installer-desktop-", dir=target)
+        self.addCleanup(fixture.cleanup)
+        self.destination = Path(fixture.name) / "runyte"
+        os.link(ROOT / "src/fixtures/stand-in", self.destination)
+        self.destination.with_name("runyte.behavior").write_text(
+            "printf '%s\\n' 'runyte 0.4.0 (desktop edition)'\n")
+        original = self.destination.stat().st_ino
+        result = self.install("--install-dir", str(self.destination.parent), success=False)
+        self.assertIn("cannot replace your desktop edition", result.stderr)
+        self.assertIn("https://github.com/runyte/runyte/releases", result.stderr)
+        self.assertEqual(self.destination.stat().st_ino, original)
 
     def test_runed_is_a_relative_link_to_runyte(self):
         self.install()

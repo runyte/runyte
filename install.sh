@@ -103,11 +103,23 @@ main() {
     trap cleanup 0
     trap 'exit 1' HUP INT TERM
     work=$(mktemp -d "${TMPDIR:-/tmp}/runyte-install.XXXXXXXX") || fail 'Could not create a temporary directory'
-    archive=runyte-v$version-$target.tar.xz
     base=$releases/download/v$version
     printf 'Downloading Runyte %s for %s...\n' "$version" "$target"
-    download --output "$work/$archive" "$base/$archive" || fail "Could not download $archive"
     download --output "$work/SHA256SUMS" "$base/SHA256SUMS" || fail 'Could not download SHA256SUMS'
+
+    # The manifest, not the version number, defines historical archive layouts.
+    prefix=$(awk -v new="runyte-terminal-v$version-$target.tar.xz" \
+        -v old="runyte-v$version-$target.tar.xz" '
+        $2 == new { modern=1 }
+        $2 == old { historical=1 }
+        END {
+            if (modern) print "runyte-terminal"
+            else if (historical) print "runyte"
+            else exit 1
+        }
+    ' "$work/SHA256SUMS") || fail "SHA256SUMS lists no terminal archive for $target"
+    archive=$prefix-v$version-$target.tar.xz
+    download --output "$work/$archive" "$base/$archive" || fail "Could not download $archive"
 
     # Match exactly one entry, never ask a checksum tool to read manifest paths.
     expected=$(awk -v name="$archive" '
@@ -129,11 +141,19 @@ main() {
     destination=$install_dir/runyte
     [ ! -L "$destination" ] || fail "Refusing to replace a symlink: $destination"
     [ ! -e "$destination" ] || [ -f "$destination" ] || fail "Not a regular file: $destination"
+    if [ -x "$destination" ]; then
+        installed_version=$("$destination" --version 2>/dev/null) || installed_version=
+        case "$installed_version" in
+            *' (desktop edition)')
+                fail "This installer installs the terminal edition and cannot replace your desktop edition. Use the desktop archive at https://github.com/runyte/runyte/releases (see https://github.com/runyte/runyte#editions)"
+                ;;
+        esac
+    fi
     # Stage on the destination filesystem, then rename, so updates also work
     # while the old executable is running and failures leave it intact.
     stage=$(mktemp "$install_dir/.runyte-install.XXXXXXXX") || fail "Cannot write to $install_dir"
     # Read only the executable to stdout; archive paths are never extracted.
-    tar -xOJf "$work/$archive" "runyte-$version-$target/runyte" > "$stage" \
+    tar -xOJf "$work/$archive" "$prefix-$version-$target/runyte" > "$stage" \
         || fail 'Could not extract runyte (tar with xz support is required)'
     [ -s "$stage" ] || fail 'The archive contains no executable data'
     chmod 755 "$stage" || fail 'Could not set executable permissions'
