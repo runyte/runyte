@@ -117,9 +117,14 @@ broader capabilities.
 Identifiers are opaque, connection-owned ASCII strings with a 256-byte ceiling;
 request IDs have a 128-byte ceiling. Handles bind the host incarnation and owner
 generation. Reconnecting requires fresh discovery. Names and paths are never
-alternate implicit targets. Request IDs are unique during a connection; bounded
-deduplication retains at most 1,024 IDs, after which the connection must be
-renewed instead of recycling IDs and risking insertion replay.
+alternate implicit targets. Each `terminal.list` entry carries the `number` and
+`title` its pane shows (`[terminal #2] shell`, without markers such as
+`[review]` that describe the person's view) so a reader can find the terminal a
+person names. Numbers are reused after a terminal exits or closes, and an exited
+terminal has none; only the handle identifies a terminal across requests.
+Request IDs are unique during a connection; bounded deduplication retains at
+most 1,024 IDs, after which the connection must be renewed instead of recycling
+IDs and risking insertion replay.
 
 ## Read and edit semantics
 

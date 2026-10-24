@@ -21,6 +21,8 @@ struct State {
     fail: Option<String>,
     malformed: bool,
     exhaust_inventory: Option<String>,
+    extra_terminals: Vec<Value>,
+    unnumbered: bool,
 }
 struct Host {
     _temp: crate::test_support::TestRuntimeRoot,
@@ -150,13 +152,33 @@ impl Host {
                                         json!({"buffers":[{"buffer":"native:b","name":"notes.txt","revision":format!("r:{}",s.revision),"chars":s.buffer.chars().count(),"read_only":false}],"next":null})
                                     }
                                     "terminal.list" => {
-                                        json!({"terminals":[{"terminal":"native:t","name":"shell","live":true,"revision":"r:1"}],"next":null})
+                                        let mut terminals = vec![
+                                            json!({"terminal":"native:t","number":1,"title":"[terminal #1] shell","name":"shell","live":true,"revision":"r:1"}),
+                                        ];
+                                        terminals.extend(s.extra_terminals.iter().cloned());
+                                        if s.unnumbered {
+                                            for row in &mut terminals {
+                                                let row = row.as_object_mut().unwrap();
+                                                row.remove("number");
+                                                row.remove("title");
+                                            }
+                                        }
+                                        let offset = params["offset"].as_u64().unwrap() as usize;
+                                        let limit = params["limit"].as_u64().unwrap() as usize;
+                                        let next = (offset + limit < terminals.len())
+                                            .then_some(offset + limit);
+                                        let page = terminals
+                                            .into_iter()
+                                            .skip(offset)
+                                            .take(limit)
+                                            .collect::<Vec<_>>();
+                                        json!({"terminals":page,"next":next})
                                     }
                                     "buffer.read" => {
                                         json!({"buffer":"native:b","revision":format!("r:{}",s.revision),"text":s.buffer.chars().skip(params["from"].as_u64().unwrap() as usize).take((params["to"].as_u64().unwrap()-params["from"].as_u64().unwrap()) as usize).collect::<String>()})
                                     }
                                     "terminal.read" => {
-                                        json!({"terminal":"native:t","rows":[{"text":"Welcome to Claude Code"},{"text":"Editing Rust"}],"revision":"r:1"})
+                                        json!({"terminal":"native:t","rows":[{"text":"Welcome to Claude Code"},{"text":"Editing Rust"},{"text":"Merged PR #19"}],"revision":"r:1"})
                                     }
                                     "buffer.append" => {
                                         s.buffer.push_str(params["text"].as_str().unwrap());
@@ -558,4 +580,132 @@ async fn healthy_discovery_preserves_handles_and_later_buffer_windows_are_explic
         .await
         .unwrap();
     assert_eq!(read["data"]["text"], "TARGET_LATE\n");
+}
+
+#[tokio::test]
+async fn terminal_number_finds_the_titled_terminal_on_any_page_without_reading_output() {
+    let host = Host::new();
+    {
+        let mut s = host.state.lock().unwrap();
+        // Exited terminals keep earlier slots, so #2 sits past the first page.
+        for index in 0..10 {
+            s.extra_terminals.push(json!({"terminal":format!("native:x{index}"),"number":null,"title":format!("[terminal] old{index}"),"name":format!("old{index}"),"live":false,"revision":"r:1"}));
+        }
+        s.extra_terminals.push(json!({"terminal":"native:t2","number":2,"title":"[terminal #2] codex","name":"codex","live":true,"revision":"r:1"}));
+        s.buffer = "see issue #2 here\n".into();
+    }
+    let mut bridge = host.bridge();
+    let terminal_reads = |host: &Host| {
+        host.state
+            .lock()
+            .unwrap()
+            .methods
+            .iter()
+            .filter(|m| *m == "terminal.read")
+            .count()
+    };
+    for query in [
+        "#2",
+        "terminal 2",
+        "Terminal #2",
+        " [terminal #2] ",
+        "[terminal #2] codex",
+    ] {
+        let found = bridge
+            .call("find_resources", json!({"query":query,"kind":"terminal"}))
+            .await
+            .unwrap();
+        let results = found["results"].as_array().unwrap();
+        assert_eq!(results.len(), 1, "{query}");
+        assert_eq!(results[0]["matched_on"], "number");
+        assert_eq!(results[0]["excerpt"], "[terminal #2] codex");
+    }
+    assert_eq!(terminal_reads(&host), 0, "a number lookup reads no output");
+
+    // Searching everything, the exact terminal ranks above a buffer that
+    // mentions the same text.
+    let found = bridge
+        .call("find_resources", json!({"query":"#2"}))
+        .await
+        .unwrap();
+    let results = found["results"].as_array().unwrap();
+    assert_eq!(results[0]["matched_on"], "number");
+    assert!(
+        results
+            .iter()
+            .any(|row| row["kind"] == "buffer" && row["matched_on"] == "content")
+    );
+    let terminal = handle(&found, "terminal");
+    let proposal = bridge
+        .call(
+            "propose_terminal_text",
+            json!({"terminal":terminal,"text":"ls"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(proposal["data"]["state"], "pending");
+
+    // A buffer or content search means the text, as in an issue reference.
+    let found = bridge
+        .call("find_resources", json!({"query":"#2","kind":"buffer"}))
+        .await
+        .unwrap();
+    assert_eq!(found["results"][0]["matched_on"], "content");
+    let before = terminal_reads(&host);
+    let found = bridge
+        .call(
+            "find_resources",
+            json!({"query":"#2","kind":"terminal","match_in":"content"}),
+        )
+        .await
+        .unwrap();
+    assert!(
+        found["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["matched_on"] != "number")
+    );
+    assert!(terminal_reads(&host) > before);
+
+    // No running terminal shows the number. Output that merely mentions it
+    // (`PR #19`) is not offered as something to write to.
+    let missing = bridge
+        .call("find_resources", json!({"query":"#9","kind":"terminal"}))
+        .await
+        .unwrap();
+    assert!(missing["results"].as_array().unwrap().is_empty());
+    assert!(
+        missing["searches"][0]["note"]
+            .as_str()
+            .unwrap()
+            .starts_with("No live terminal shows this number")
+    );
+    let text = bridge
+        .call(
+            "find_resources",
+            json!({"query":"#9","kind":"terminal","match_in":"content"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(text["results"][0]["matched_on"], "content");
+    // A bare number is fuzzy text from the start.
+    let bare = bridge
+        .call("find_resources", json!({"query":"2","kind":"terminal"}))
+        .await
+        .unwrap();
+    assert!(bare["searches"][0].get("note").is_none());
+
+    // A host that predates numbers is named rather than silently empty.
+    host.state.lock().unwrap().unnumbered = true;
+    let old = bridge
+        .call("find_resources", json!({"query":"#2","kind":"terminal"}))
+        .await
+        .unwrap();
+    assert!(
+        old["searches"][0]["note"]
+            .as_str()
+            .unwrap()
+            .contains("does not report terminal numbers")
+    );
 }

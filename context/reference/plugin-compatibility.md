@@ -56,7 +56,10 @@ editing its checkout. Release CI must use the exact 0.4.0 package version and
 source commit under the release runbook.
 
 The bundled examples and MCP adapter admit both 0.3 and 0.4 hosts with
-`>=0.3.0, <0.5.0`; their wire contract is unchanged. The documented
+`>=0.3.0, <0.5.0`; their wire contract is unchanged. `terminal.list` entries
+gained additive `number` and `title` fields; the adapter's `#N` lookup needs
+them and, against a host that omits them, says so in `searches` and falls back
+to text matching. The documented
 configuration examples, the admission error's suggestion (`RECOMMENDED_RANGE`),
 the benchmark harness and the in-crate context fixtures use the same range.
 `STABLE_RANGE` stays `>=0.3.0, <0.4.0` because it is the acknowledgement in the

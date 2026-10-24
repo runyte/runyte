@@ -1188,3 +1188,60 @@ fn appends_are_bounded_granted_owned_and_refused_on_read_only_buffers() {
     );
     assert_eq!(host.app.buffers[0].len_chars(), length);
 }
+
+#[test]
+fn terminal_list_shows_the_title_number_beside_a_stable_handle() {
+    let (_root, mut host, mut state) = fixture();
+    let list = |host: &mut WorkspaceHost, state: &mut ReadState| {
+        call(
+            host,
+            state,
+            Request::TerminalList {
+                offset: 0,
+                limit: 10,
+            },
+        )["terminals"]
+            .as_array()
+            .unwrap()
+            .clone()
+    };
+    host.app.terminals.insert_test_session(20, 3);
+    let second = host.app.terminals.insert_test_session(20, 3);
+    // The title is the label the pane starts with, not the markers for how
+    // the person is looking at it, so a review does not rename it.
+    host.app.terminals.get_mut(second).unwrap().begin_review();
+    let listed = list(&mut host, &mut state);
+    assert_eq!(listed[1]["number"], 2);
+    assert_eq!(
+        listed[1]["title"],
+        format!("[terminal #2] {}", listed[1]["name"].as_str().unwrap())
+    );
+    let old = listed[1]["terminal"].as_str().unwrap().to_owned();
+
+    // The next terminal takes the released number but not the handle, so a
+    // reader still holding the old one cannot reach it.
+    assert!(host.app.terminals.close(second));
+    host.app.terminals.insert_test_session(20, 3);
+    let listed = list(&mut host, &mut state);
+    let renumbered = listed.iter().find(|t| t["number"] == 2).unwrap();
+    assert_ne!(renumbered["terminal"], old);
+
+    // An exited terminal has released its number and is titled by kind.
+    let first = host.app.terminals.ids()[0];
+    host.app.terminals.apply(TerminalOutput::Exited {
+        id: first,
+        code: Some(0),
+    });
+    let listed = list(&mut host, &mut state);
+    assert_eq!(listed[0]["number"], Value::Null);
+    assert!(
+        listed[0]["title"]
+            .as_str()
+            .unwrap()
+            .starts_with("[terminal] ")
+    );
+    assert!(
+        host.context_read_request(&mut state, &scopes(), read_terminal(old))
+            .is_err()
+    );
+}

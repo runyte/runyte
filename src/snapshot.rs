@@ -2196,6 +2196,17 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
 /// looking at history rather than at the live screen, and that the child has
 /// gone. Neither is a buffer property, so neither has a field of its own.
 ///
+/// The label a terminal's pane title begins with, without the markers for how
+/// the person is viewing it. A context reader is shown this rather than the
+/// whole title, so the name it finds a terminal by does not change because the
+/// person scrolled or opened a review.
+pub(crate) fn terminal_label(session: &crate::terminal::TerminalSession) -> String {
+    match session.number() {
+        Some(number) => format!("[terminal #{number}] {}", session.name()),
+        None => format!("[terminal] {}", session.name()),
+    }
+}
+
 /// The title exposes the number accepted by `:terminal-send` without
 /// requiring the terminal list preview. An exited terminal has none, so its
 /// title carries only the kind.
@@ -2205,10 +2216,7 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
 /// spelling it out here would repeat the mode line on the title of the one
 /// pane that has other things to say.
 fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Option<Mode>) -> String {
-    let mut name = match session.number() {
-        Some(number) => format!("[terminal #{number}] {}", session.name()),
-        None => format!("[terminal] {}", session.name()),
-    };
+    let mut name = terminal_label(session);
     if active_mode == Some(Mode::Insert) {
         name.push_str(" [insert]");
     }

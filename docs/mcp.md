@@ -99,6 +99,22 @@ The usual sequence is two calls:
 2. `read_terminal(terminal=<returned handle>)` or
    `propose_terminal_text(terminal=<returned handle>, text="...")`
 
+When you can see the terminal, its number is the shortest way to name it:
+
+> Write `ls` to terminal #2.
+
+A query of `#2`, `terminal 2`, `[terminal #2]` or a whole pasted title such as
+`[terminal #2] codex` finds the terminal whose title shows `#2` in each searched
+workspace, without reading any output; pass `workspace` to get exactly one. The
+number belongs to a running terminal: it is released when the terminal's program
+exits or the terminal closes, and the next new terminal may take it. The agent
+therefore writes through the returned handle, and if `#2` is replaced in the
+meantime the old handle is refused rather than reaching the new terminal. If no
+running terminal shows the number, the search says so and returns no terminal,
+rather than one whose output merely mentions the number. A bare `2`, and `#2`
+with `kind="buffer"` or `match_in="content"`, are ordinary fuzzy text, so an
+issue reference such as `#29` can still be found in a buffer.
+
 `find_resources` uses the editor's fuzzy matcher over names and content.
 `clde` can match `Claude Code` even when the terminal is named `shell`.
 Results include match excerpts, the workspace, exact handles and buffer
