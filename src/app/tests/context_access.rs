@@ -82,16 +82,14 @@ fn repeated_enter_cannot_approve_proposal_but_repeat_navigation_remains_live() {
         Some(Decision::Proposal { accepted: true, .. })
     ));
 
-    let mut paged = proposal(&"x".repeat(64 * 14), vec![]);
-    present(&mut paged, 1);
-    paged
-        .handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Char('j'))))
+    let mut long = proposal(&"x".repeat(64 * 14), vec![]);
+    present(&mut long, 1);
+    long.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Char('j'))))
         .unwrap();
-    assert_eq!(paged.context_ui.surface.as_ref().unwrap().page, 1);
-    paged
-        .handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Char('k'))))
+    assert_eq!(long.context_ui.surface.as_ref().unwrap().top, 1);
+    long.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Char('k'))))
         .unwrap();
-    assert_eq!(paged.context_ui.surface.as_ref().unwrap().page, 0);
+    assert_eq!(long.context_ui.surface.as_ref().unwrap().top, 0);
 }
 
 #[test]
@@ -228,7 +226,9 @@ fn short_proposal_is_one_page_that_leads_with_the_proposed_text() {
 }
 
 #[test]
-fn refused_insert_names_the_unread_page_until_every_page_is_shown() {
+fn refused_insert_names_the_unread_line_until_every_line_is_shown() {
+    // Fourteen rows of text and the note under it: one line more than the
+    // smallest approving area shows.
     let mut app = proposal(&"x".repeat(64 * 14), vec![]);
     present(&mut app, 1);
     press(&mut app, KeyCode::Tab);
@@ -237,15 +237,15 @@ fn refused_insert_names_the_unread_page_until_every_page_is_shown() {
     let overlay = app.context_overlay().unwrap();
     assert_eq!(
         overlay.message.as_deref(),
-        Some("Read page 2/2 first: press j until the last page has been shown.")
+        Some("Read the rest first: line 15 of 15 has not been shown.")
     );
     assert!(
         overlay
             .rows
             .iter()
-            .any(|row| row.label.starts_with("Page 1/2"))
+            .any(|row| row.label.starts_with("Lines 1–14 of 15 · j/k line"))
     );
-    assert_eq!(overlay.actions[0].key_hint, "j/k");
+    assert_eq!(overlay.actions[0].key_hint, "Tab");
 
     press(&mut app, KeyCode::Char('j'));
     present(&mut app, 2);
@@ -260,6 +260,75 @@ fn refused_insert_names_the_unread_page_until_every_page_is_shown() {
         app.context_ui.decision,
         Some(Decision::Proposal { accepted: true, .. })
     ));
+}
+
+#[test]
+fn buffer_motions_scroll_and_a_jump_does_not_count_as_reading() {
+    let mut app = proposal(&"x".repeat(64 * 40), vec![]);
+    let top = |app: &App| app.context_ui.surface.as_ref().unwrap().top;
+    present(&mut app, 1);
+    // 41 lines in a 14-line view: the last view starts at line 28.
+    for (keys, expected) in [
+        (&[KeyCode::PageDown][..], 14),
+        (&[KeyCode::PageDown], 27),
+        (&[KeyCode::PageUp], 13),
+        (&[KeyCode::Char('g'), KeyCode::Char('g')], 0),
+        (&[KeyCode::Char('g'), KeyCode::Char('e')], 27),
+        (&[KeyCode::Home], 0),
+        (&[KeyCode::End], 27),
+        (&[KeyCode::Up], 26),
+        (&[KeyCode::Down, KeyCode::Down], 27),
+    ] {
+        for &code in keys {
+            press(&mut app, code);
+        }
+        assert_eq!(top(&app), expected, "{keys:?}");
+    }
+    press(&mut app, KeyCode::Home);
+    app.handle_input(InputEvent::Key(KeyStroke::new(
+        KeyCode::Char('G'),
+        crate::input::Modifiers::SHIFT,
+    )))
+    .unwrap();
+    assert_eq!(top(&app), 27, "Shift is part of G, not a refused modifier");
+
+    // Lines 1-14 and 28-41 have been shown; the middle has not.
+    present(&mut app, 2);
+    press(&mut app, KeyCode::Tab);
+    press(&mut app, KeyCode::Enter);
+    assert!(app.context_ui.decision.is_none());
+    assert_eq!(
+        app.context_overlay().unwrap().message.as_deref(),
+        Some("Read the rest first: line 15 of 41 has not been shown.")
+    );
+    press(&mut app, KeyCode::PageUp);
+    present(&mut app, 3);
+    assert!(app.context_ui.surface.as_ref().unwrap().fully_reviewed());
+    press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        app.context_ui.decision,
+        Some(Decision::Proposal { accepted: true, .. })
+    ));
+}
+
+#[test]
+fn a_taller_editor_shows_more_of_a_long_proposal() {
+    let mut app = proposal(&"x".repeat(64 * 60), vec![]);
+    app.note_context_frame(120, 50, 1);
+    app.note_context_presented(1);
+    let overlay = app.context_overlay().unwrap();
+    let text_rows = overlay
+        .rows
+        .iter()
+        .filter(|row| row.label.ends_with(&"x".repeat(64)))
+        .count();
+    assert_eq!(text_rows, 42, "a 50-row editor shows 42 lines, not 14");
+    assert!(
+        overlay
+            .rows
+            .iter()
+            .any(|row| row.label.starts_with("Lines 1–42 of 61"))
+    );
 }
 
 #[test]
@@ -295,16 +364,21 @@ fn prose_wraps_between_words_and_proposed_text_anywhere() {
 }
 
 #[test]
-fn arrows_move_between_the_choices_without_paging() {
-    let mut app = proposal(&"x".repeat(64 * 14), vec![]);
+fn arrows_choose_when_the_text_fits_and_scroll_when_it_does_not() {
+    let mut app = proposal("short", vec![]);
     present(&mut app, 1);
     let rows = app.context_overlay().unwrap().rows.len();
-    press(&mut app, KeyCode::Down);
     press(&mut app, KeyCode::Down);
     assert_eq!(app.context_overlay().unwrap().selected, Some(rows - 1));
     press(&mut app, KeyCode::Up);
     assert_eq!(app.context_overlay().unwrap().selected, Some(rows - 2));
-    assert_eq!(app.context_ui.surface.as_ref().unwrap().page, 0);
+
+    let mut app = proposal(&"x".repeat(64 * 14), vec![]);
+    present(&mut app, 1);
+    let rows = app.context_overlay().unwrap().rows.len();
+    press(&mut app, KeyCode::Down);
+    assert_eq!(app.context_ui.surface.as_ref().unwrap().top, 1);
+    assert_eq!(app.context_overlay().unwrap().selected, Some(rows - 2));
     press(&mut app, KeyCode::Enter);
     assert!(matches!(
         app.context_ui.decision,
@@ -382,4 +456,54 @@ fn mcp_scope_toggles_keep_prerequisites_and_cycle_identity_without_granting() {
     assert_eq!(app.context_ui.requested_identity.as_deref(), Some("codex"));
     assert!(app.context_ui.surface.is_none());
     assert!(app.context_ui.decision.is_none());
+}
+
+#[test]
+fn a_pending_g_is_spent_on_the_next_input_and_otherwise_cancels() {
+    let mut app = proposal(&"x".repeat(64 * 40), vec![]);
+    let top = |app: &App| app.context_ui.surface.as_ref().unwrap().top;
+    present(&mut app, 1);
+    press(&mut app, KeyCode::Char('g'));
+    press(&mut app, KeyCode::Char('j'));
+    assert_eq!(top(&app), 0, "g then j cancels rather than scrolling");
+    press(&mut app, KeyCode::Char('g'));
+    app.handle_input(InputEvent::Text("pasted".into())).unwrap();
+    press(&mut app, KeyCode::Char('e'));
+    assert_eq!(top(&app), 0, "a paste spends the pending g");
+    press(&mut app, KeyCode::Char('g'));
+    press(&mut app, KeyCode::Char('e'));
+    assert_eq!(top(&app), 27);
+    assert_eq!(
+        app.context_ui.surface.as_ref().unwrap().presented_top,
+        None,
+        "a view not yet presented cannot approve"
+    );
+}
+
+#[test]
+fn a_frame_laid_out_for_an_earlier_area_stops_counting() {
+    let mut app = proposal(&"x".repeat(64 * 40), vec![]);
+    app.note_context_frame(120, 50, 1);
+    app.note_context_frame(80, 22, 2);
+    // Frame 1 would show 42 lines, but the window has since shrunk.
+    app.note_context_presented(1);
+    let surface = app.context_ui.surface.as_ref().unwrap();
+    assert!(surface.seen.iter().all(|seen| !seen));
+    assert_eq!(surface.presented_top, None);
+    app.note_context_presented(2);
+    let seen = app.context_ui.surface.as_ref().unwrap().seen.clone();
+    assert_eq!(seen.iter().filter(|seen| **seen).count(), 14);
+}
+
+#[test]
+fn the_session_strip_row_comes_out_of_the_review_not_the_approval_size() {
+    let mut app = proposal(&"x".repeat(64 * 40), vec![]);
+    app.note_context_frame_in(80, 22, 21, 1);
+    app.note_context_presented(1);
+    let surface = app.context_ui.surface.as_ref().unwrap();
+    assert_eq!(surface.seen.iter().filter(|seen| **seen).count(), 13);
+    assert!(
+        app.context_overlay().unwrap().message.is_none(),
+        "80 x 22 still has room to approve"
+    );
 }

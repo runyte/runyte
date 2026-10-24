@@ -5870,7 +5870,7 @@ connected reader identifies a local connection, not a verified agent process.
 | `r` | Remember this exact workspace's grant |
 | `n` | Next known identity; discards unapplied choices |
 | `x` | Revoke the selected identity immediately |
-| `j` / `k` | Page through longer reviews |
+| `j` / `k`, `PgUp` / `PgDn`, `gg` / `G` | Scroll longer reviews by line, by screen, or to the first or last line |
 | `Tab` then Enter | Select **Apply permissions** and apply |
 | `Esc` | Close without applying |
 
@@ -5983,19 +5983,24 @@ terminal. You review it in **Review terminal text**:
 
 1. The exact proposed value comes first, then the requester, target terminal,
    workspace, untrusted reason (if any), and recent output.
-2. Page with `j` / `k` if it is long. Each page must actually reach the
-   screen before approval is enabled; until then, choosing **Insert text (no
-   Enter)** names the page still to read.
-3. **Reject** is selected at first. `Down` or `Tab` selects **Insert text (no
-   Enter)**, and `Up` returns to **Reject**.
+2. A long proposal scrolls like a buffer: `j` / `k` or `Up` / `Down` by line,
+   `PgDn` / `PgUp` by screen, `gg` or `Home` to the first line, and `G`, `ge`
+   or `End` to the last. The overlay grows with the editor, so a taller window
+   shows more of it at once. Every line must actually reach the screen before
+   approval is enabled; jumping past lines does not count as reading them, and
+   until then choosing **Insert text (no Enter)** names the first line still
+   to read.
+3. **Reject** is selected at first. `Tab` switches between it and **Insert
+   text (no Enter)**. When the whole proposal fits, `Down` and `Up` choose
+   too.
 4. One fresh physical `Enter` inserts the text. That Enter belongs to the
    overlay. **Submit separately in the terminal.**
 
 **Making hidden characters visible.** In the proposed value, spaces show as
 `·`, backslashes are doubled, and non-ASCII characters are escaped. Labels keep
 printable Unicode and spaces but escape control, zero-width, bidirectional,
-and space-like characters. A short proposal fits on one page. The overlay needs
-at least 80 × 24 cells.
+and space-like characters. A short proposal fits without scrolling. The overlay
+needs at least 80 × 24 cells.
 
 **What cannot approve:** macros, pasted keys, repeated input, and the context
 API.

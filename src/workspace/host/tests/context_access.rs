@@ -89,8 +89,8 @@ fn key(host: &mut WorkspaceHost, code: KeyCode) {
 }
 fn review_all(host: &mut WorkspaceHost) {
     // Bounded, so a review that can never complete fails instead of hanging.
-    let pages = host.app.context_ui.surface.as_ref().unwrap().last_page() + 1;
-    for _ in 0..pages {
+    let lines = host.app.context_ui.surface.as_ref().unwrap().lines.len();
+    for _ in 0..=lines {
         host.app.note_context_frame(80, 22, 1);
         host.app.note_context_presented(1);
         if host
@@ -103,9 +103,9 @@ fn review_all(host: &mut WorkspaceHost) {
         {
             return;
         }
-        key(host, KeyCode::Char('j'));
+        key(host, KeyCode::PageDown);
     }
-    panic!("review did not complete within {pages} pages");
+    panic!("review did not complete within {lines} lines");
 }
 
 #[tokio::test]
@@ -573,7 +573,7 @@ async fn real_pty_overlay_enter_only_inserts_and_separate_native_enter_submits()
 }
 
 #[tokio::test]
-async fn prepared_but_unpainted_pages_cannot_be_skipped_or_approved() {
+async fn prepared_but_unpainted_lines_cannot_be_counted_or_approved() {
     let (_root, mut host, identity, _events) = fixture();
     grant(
         &mut host,
@@ -590,26 +590,21 @@ async fn prepared_but_unpainted_pages_cannot_be_skipped_or_approved() {
     host.context_propose(1, terminal, &"x".repeat(1024), None)
         .unwrap();
     host.sync_context();
+    fn surface(host: &WorkspaceHost) -> &crate::app::context_access::Surface {
+        host.app.context_ui.surface.as_ref().unwrap()
+    }
     host.app.note_context_frame(80, 22, 10);
     key(&mut host, KeyCode::Char('j'));
-    assert_eq!(host.app.context_ui.surface.as_ref().unwrap().page, 0);
+    assert_eq!(surface(&host).top, 1);
+    // Frame 10 was prepared for the first line, which is no longer in view.
     host.app.note_context_presented(10);
-    key(&mut host, KeyCode::Char('j'));
-    assert_eq!(host.app.context_ui.surface.as_ref().unwrap().page, 1);
+    assert!(surface(&host).seen.iter().all(|seen| !seen));
     host.app.note_context_frame(80, 22, 11); // dropped/backpressured frame
-    host.app.note_context_presented(10); // frontend still displays page zero
-    key(&mut host, KeyCode::Char('j'));
+    host.app.note_context_presented(10); // frontend still displays line one
+    key(&mut host, KeyCode::Char('G'));
     key(&mut host, KeyCode::Tab);
     key(&mut host, KeyCode::Enter);
-    assert_eq!(host.app.context_ui.surface.as_ref().unwrap().page, 1);
-    assert_eq!(
-        host.app
-            .context_ui
-            .surface
-            .as_ref()
-            .unwrap()
-            .reviewed_through,
-        Some(0)
-    );
+    assert!(surface(&host).seen.iter().all(|seen| !seen));
+    assert_eq!(surface(&host).presented_top, None);
     assert!(host.app.context_ui.decision.is_none());
 }

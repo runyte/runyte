@@ -36,8 +36,8 @@ fn key(host: &mut WorkspaceHost, code: KeyCode) {
 }
 
 fn review_all(host: &mut WorkspaceHost) {
-    let pages = host.app.context_ui.surface.as_ref().unwrap().last_page() + 1;
-    for frame in 1..=pages as u64 {
+    let lines = host.app.context_ui.surface.as_ref().unwrap().lines.len();
+    for frame in 1..=lines as u64 + 1 {
         host.app.note_context_frame(80, 22, frame);
         host.app.note_context_presented(frame);
         if host
@@ -50,9 +50,9 @@ fn review_all(host: &mut WorkspaceHost) {
         {
             return;
         }
-        key(host, KeyCode::Char('j'));
+        key(host, KeyCode::PageDown);
     }
-    panic!("context review did not finish within {pages} pages");
+    panic!("context review did not finish within {lines} lines");
 }
 
 fn frame(host: &mut WorkspaceHost, connection: u64, value: Value) -> Reply {
