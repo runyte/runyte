@@ -239,4 +239,7 @@ snapshots, cancels pending work, drops unsent responses and disconnects readers.
 Authorization is checked at request admission, before response publication and
 before mutations. Bytes already delivered cannot be recalled. This boundary
 controls Runyte's API and is not an operating-system sandbox for same-user
-processes.
+processes. A per-user configuration may also name default grants
+(`mcp.default_grants`), applied when a workspace host starts and the workspace
+has no grant record of its own; a revocation record in that workspace overrides
+them, and they never include `terminal_insert`.

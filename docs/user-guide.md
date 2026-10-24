@@ -5882,9 +5882,11 @@ the grant lasts until the owning editor or persistent host exits. Applying a
 change disconnects existing readers, so agents must rediscover their targets.
 
 Granting, changing, and revoking need physical input from the active Runyte
-frontend. Repeated input, pasted text, macros, and MCP clients cannot approve
-access or terminal text. Each terminal proposal needs its own native approval
-unless the grant includes `5`, and text is always inserted **without Enter**.
+frontend, apart from the defaults in your configuration described under [Default
+grants](#default-grants). Repeated input, pasted text, macros, and MCP clients
+cannot approve access or terminal text. Each terminal proposal needs its own
+native approval unless the grant includes `5`, and text is always inserted
+**without Enter**.
 
 **Skipping review (`5`).** With direct insertion granted, a proposal for a
 terminal that has bracketed paste on, as shells and agent prompts do, is typed
@@ -5908,6 +5910,40 @@ applied again or revoked.
 The server works with ide-mode and mux-mode workspaces on Linux, macOS,
 and Windows. Detached hosts support content reads and buffer edits, but cannot
 approve terminal insertion until a native frontend is attached.
+
+### Default grants
+
+To let agents read without opening `:mcp` in every project, name the
+permissions in your configuration:
+
+```yaml
+mcp:
+  default_grants:
+    agent: [terminal_read, editor_context_read]
+```
+
+A workspace that starts with no grant record for `agent` grants it these
+permissions for as long as it runs. Its own decisions take precedence: a grant
+applied with Remember replaces the default there, and revoking with `x`, or
+applying with nothing selected, records a revocation that keeps the default off
+in that workspace until you apply a grant again. A grant applied without
+Remember lasts for the session and leaves the default in place for next time.
+`:mcp` says when a grant comes from the default. Revocations made before this
+release removed the record instead of keeping one, so revoke again where a new
+default should stay off. Revocation records stay in the private store until a
+grant replaces them.
+
+Defaults use the same names as the context profile. Write permissions need their
+read permission (`buffer_edit` needs `editor_context_read`, `terminal_propose`
+needs `terminal_read`). Skipping review (`5`) cannot be a default: it is decided
+per workspace. Runyte reads the setting when a workspace host starts, so a
+change applies to workspaces started afterwards; a persistent session keeps the
+value it started with until `runyte --session-restart`. It creates the private
+store and the named identity if they do not exist yet; a default that cannot be
+applied is reported and leaves the workspace's own grants in place. A grant
+covers the same content and has the same limits whether it came from a default
+or from `:mcp`. The configuration file is the one way to grant access without
+physical input, so it deserves the same care as the rest of your configuration.
 
 ### What a grant covers
 
@@ -6416,7 +6452,7 @@ section. Key dispatch, help, and key hints are rebuilt together, with each
 running plugin's keys laid back over them.
 
 **What keeps its startup value:** `editor.mouse`, `editor.font_size`, `lsp.enable`,
-`mode`, `workspace.state`, and `workspace.state_anchor`. The status
+`mcp.default_grants`, `mode`, `workspace.state`, and `workspace.state_anchor`. The status
 line names them as needing a restart. The `[config]` page shows the file's
 value as saved, while the editor keeps using the startup value.
 
@@ -6455,8 +6491,8 @@ nothing.
 ### Settings reference
 
 Every setting below is also on the `[config]` page, except `workspace.state`,
-`workspace.state_anchor`, and the language-server definitions, which are
-file-only.
+`workspace.state_anchor`, `mcp.default_grants`, and the language-server
+definitions, which are file-only.
 
 #### Editor settings
 
@@ -6512,6 +6548,7 @@ file-only.
 | `git.refresh_interval_seconds` | `60` | 0–3600 | Bounds automatic Git refresh. `0` turns it off. See [Automatic Git refresh](#automatic-git-refresh). |
 | `notifications.history_limit` | `50` | 1–1000 | Newest notifications kept in memory for the workspace. |
 | `lsp.enable` | `true` | boolean | Allow configured language servers to start. Restart required. |
+| `mcp.default_grants` | none | identity: list of permissions | What an MCP identity may do in every workspace that has no grant or revocation of its own. Permissions are `terminal_read`, `editor_context_read`, `buffer_edit` and `terminal_propose`. Read when a workspace starts. See [Default grants](#default-grants). |
 | `lsp.<language>` | `rust` only | `command`, `args`, `initialization_options` | A language server definition. See [Language servers](#language-servers). |
 | `theme` | `ocean-dark` | theme name | The active theme. See [Themes](#themes). |
 

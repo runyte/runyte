@@ -310,6 +310,30 @@ fn invalid_write_scope_dependencies_are_rejected() {
 }
 
 #[test]
+fn an_empty_grant_record_is_a_revocation_rather_than_no_record() {
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    let identity = store.identity("agent").unwrap();
+    assert_eq!(
+        store.grant_record(&fixture.project(), &identity).unwrap(),
+        None
+    );
+    store
+        .grant(&fixture.project(), &identity, BTreeSet::new())
+        .unwrap();
+    assert_eq!(
+        store.grant_record(&fixture.project(), &identity).unwrap(),
+        Some(BTreeSet::new())
+    );
+    assert!(
+        store
+            .scopes(&fixture.project(), &identity)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn identities_are_bounded_and_ignore_corrupt_neighbors() {
     let fixture = Fixture::new();
     let store = fixture.store();

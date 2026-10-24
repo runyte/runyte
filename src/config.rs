@@ -38,6 +38,7 @@ pub struct Config {
     pub lsp: LspConfig,
     pub git: GitConfig,
     pub notifications: NotificationsConfig,
+    pub mcp: McpConfig,
     /// Raw so malformed key-remapping sections can be reported non-fatally by
     /// the keymap compiler after the built-in registry is available.
     #[serde(default, deserialize_with = "deserialize_present_yaml_value")]
@@ -57,6 +58,80 @@ where
     D: Deserializer<'de>,
 {
     serde_yaml::Value::deserialize(deserializer).map(Some)
+}
+
+/// Agent access through `runyte mcp`.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct McpConfig {
+    /// What each MCP identity may do in a workspace that has no grant of its
+    /// own, by context capability name. A grant applied with `:mcp`, and a
+    /// revocation, take precedence in that workspace.
+    pub default_grants: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+impl McpConfig {
+    /// The configured defaults as scopes. Validation has already refused
+    /// unknown names, so none are dropped here.
+    pub fn default_scopes(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &str,
+            std::collections::BTreeSet<crate::workspace::context::wire::Scope>,
+        ),
+    > {
+        self.default_grants.iter().map(|(identity, names)| {
+            (
+                identity.as_str(),
+                names
+                    .iter()
+                    .filter_map(|name| {
+                        crate::workspace::context::wire::Scope::from_capability(name)
+                    })
+                    .collect(),
+            )
+        })
+    }
+
+    fn validate(&self) -> std::result::Result<(), String> {
+        use crate::workspace::context::wire::{Scope, validate_scopes};
+        if self.default_grants.len() > 32 {
+            return Err("mcp.default_grants names at most 32 identities".to_owned());
+        }
+        for (identity, names) in &self.default_grants {
+            if identity.is_empty()
+                || identity.len() > 64
+                || !identity
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            {
+                return Err(format!(
+                    "mcp.default_grants identity {identity:?} must use 1 to 64 ASCII letters, digits, underscores or hyphens"
+                ));
+            }
+            let mut scopes = std::collections::BTreeSet::new();
+            for name in names {
+                if name == Scope::TerminalInsert.capability() {
+                    return Err(format!(
+                        "mcp.default_grants.{identity}: terminal_insert skips review and is granted per workspace with :mcp, never by default"
+                    ));
+                }
+                let Some(scope) = Scope::from_capability(name) else {
+                    return Err(format!(
+                        "mcp.default_grants.{identity}: unknown permission {name:?}; use terminal_read, editor_context_read, buffer_edit or terminal_propose"
+                    ));
+                };
+                scopes.insert(scope);
+            }
+            if validate_scopes(&scopes).is_err() {
+                return Err(format!(
+                    "mcp.default_grants.{identity}: buffer_edit needs editor_context_read and terminal_propose needs terminal_read"
+                ));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -935,6 +1010,7 @@ impl Default for Config {
             lsp: LspConfig::default(),
             git: GitConfig::default(),
             notifications: NotificationsConfig::default(),
+            mcp: McpConfig::default(),
             plugins: Vec::new(),
             keys: None,
             theme: None,
@@ -1263,6 +1339,7 @@ impl Config {
                 "git.refresh_interval_seconds must be between 0 and {MAX_GIT_REFRESH_INTERVAL_SECONDS}"
             ));
         }
+        self.mcp.validate()?;
         let mut servers = self.lsp.servers.iter().collect::<Vec<_>>();
         servers.sort_unstable_by_key(|(language, _)| language.as_str());
         for (language, server) in servers {
@@ -1704,6 +1781,37 @@ mod tests {
         let config: Config = serde_yaml::from_str("editor:\n  scratch_markdown: false\n").unwrap();
         assert!(!config.editor.scratch_markdown);
         assert!(config.validate_settings().is_ok());
+    }
+
+    #[test]
+    fn mcp_default_grants_name_negotiable_permissions_with_their_prerequisites() {
+        assert!(Config::default().mcp.default_grants.is_empty());
+        let config: Config = serde_yaml::from_str(
+            "mcp:\n  default_grants:\n    agent: [terminal_read, editor_context_read]\n",
+        )
+        .unwrap();
+        assert!(config.validate_settings().is_ok());
+        let (identity, scopes) = config.mcp.default_scopes().next().unwrap();
+        assert_eq!(identity, "agent");
+        assert_eq!(scopes.len(), 2);
+
+        for (yaml, error) in [
+            (
+                "agent: [terminal_insert, terminal_propose, terminal_read]",
+                "never by default",
+            ),
+            ("agent: [terminal_write]", "unknown permission"),
+            (
+                "agent: [terminal_propose]",
+                "terminal_propose needs terminal_read",
+            ),
+            ("'bad name': [terminal_read]", "must use 1 to 64"),
+        ] {
+            let config: Config =
+                serde_yaml::from_str(&format!("mcp:\n  default_grants:\n    {yaml}\n")).unwrap();
+            let message = config.validate_settings().unwrap_err();
+            assert!(message.contains(error), "{yaml}: {message}");
+        }
     }
 
     #[test]

@@ -55,6 +55,11 @@ cycles known identities, and `x` revokes the selected identity. Readers connect
 when the agent performs discovery; tool listing alone leaves the count at zero.
 Revocation drops readers and pending proposals. `:context-access` remains an alias.
 
+To grant permissions in every workspace without opening `:mcp` in each, set
+`mcp.default_grants` in the configuration; see the
+[user guide](user-guide.md#default-grants). A workspace's own grant or
+revocation takes precedence over the default.
+
 **Starting the agent before granting is fine.** The nine tools stay available;
 a tool's presence is not permission to use it. Calls check the target's native
 grant. After a permission change, run `find_resources` again. Healthy searches

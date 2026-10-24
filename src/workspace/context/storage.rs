@@ -397,10 +397,21 @@ impl Storage {
     }
 
     pub fn scopes(&self, root: &Path, identity: &Identity) -> io::Result<BTreeSet<Scope>> {
+        Ok(self.grant_record(root, identity)?.unwrap_or_default())
+    }
+
+    /// The workspace's own grant record, if it has one. An empty set is a
+    /// record too: a revocation kept so that a configured default does not
+    /// grant again what the person took away.
+    pub fn grant_record(
+        &self,
+        root: &Path,
+        identity: &Identity,
+    ) -> io::Result<Option<BTreeSet<Scope>>> {
         let root = path_bytes(&self.workspace_root(root)?);
         let fingerprint = identity.fingerprint();
         let Some(record): Option<Grant> = self.read(&grant_file(&root, &fingerprint))? else {
-            return Ok(BTreeSet::new());
+            return Ok(None);
         };
         if record.root != root || record.identity != fingerprint {
             return Err(invalid(
@@ -409,7 +420,7 @@ impl Storage {
         }
         super::wire::validate_scopes(&record.scopes)
             .map_err(|_| invalid("invalid context grant scopes"))?;
-        Ok(record.scopes)
+        Ok(Some(record.scopes))
     }
 
     pub fn revoke(&self, root: &Path, identity: &Identity) -> io::Result<()> {

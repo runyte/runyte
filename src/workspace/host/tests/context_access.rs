@@ -808,3 +808,174 @@ async fn direct_insertion_falls_back_to_review_and_ends_with_its_grant() {
             .contains(&Scope::TerminalInsert)
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn configured_defaults_apply_where_nothing_was_decided_and_a_revocation_sticks() {
+    let root = TestRuntimeRoot::new("context-defaults").unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let storage = root.path().join("ctx");
+    let start = || {
+        let mut app =
+            App::new_in_isolated_project(&project, HostPorts::isolated(Box::new(Clipboard)))
+                .unwrap();
+        app.config.mcp.default_grants = [(
+            "agent".to_owned(),
+            vec!["terminal_read".to_owned(), "editor_context_read".to_owned()],
+        )]
+        .into();
+        let mut host = WorkspaceHost::new(app);
+        let events = host.start_context_with_root(HostMode::Standalone, Some(storage.clone()));
+        (host, events)
+    };
+    let scopes_of = |host: &WorkspaceHost| {
+        host.context
+            .grants
+            .values()
+            .find(|(identity, _)| identity.name() == "agent")
+            .map(|(_, scopes)| scopes.clone())
+    };
+
+    // No storage yet: the default creates it and the identity, and listens.
+    let (mut host, _events) = start();
+    assert_eq!(
+        scopes_of(&host),
+        Some([Scope::TerminalRead, Scope::EditorContextRead].into())
+    );
+    assert!(host.context.defaulted.contains("agent"));
+    assert!(host.context_enabled());
+
+    // Revoking keeps an empty record, so the next start stays off.
+    host.app.context_ui.decision =
+        Some(crate::app::context_access::Decision::Revoke("agent".into()));
+    host.sync_context();
+    drop(host);
+    let (mut host, _events) = start();
+    assert_eq!(scopes_of(&host), None);
+    assert!(host.context.denied.contains("agent"));
+
+    // A remembered grant of the person's own wins over the default.
+    host.app.context_ui.decision = Some(crate::app::context_access::Decision::Grant {
+        identity: "agent".into(),
+        scopes: [Scope::TerminalRead].into(),
+        remember: true,
+    });
+    host.sync_context();
+    drop(host);
+    let (mut host, _events) = start();
+    assert_eq!(scopes_of(&host), Some([Scope::TerminalRead].into()));
+    assert!(host.context.remembered.contains("agent"));
+    assert!(!host.context.defaulted.contains("agent"));
+
+    // A grant applied for this session only leaves no record, so the
+    // default is what the next start sees.
+    host.app.context_ui.decision = Some(crate::app::context_access::Decision::Grant {
+        identity: "agent".into(),
+        scopes: [Scope::TerminalRead].into(),
+        remember: false,
+    });
+    host.sync_context();
+    drop(host);
+    let (host, _events) = start();
+    assert!(host.context.defaulted.contains("agent"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_revocation_made_without_defaults_still_holds_once_one_is_configured() {
+    let root = TestRuntimeRoot::new("context-defaults-later").unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let storage = root.path().join("ctx");
+    let start = |defaults: bool| {
+        let mut app =
+            App::new_in_isolated_project(&project, HostPorts::isolated(Box::new(Clipboard)))
+                .unwrap();
+        if defaults {
+            app.config.mcp.default_grants =
+                [("agent".to_owned(), vec!["terminal_read".to_owned()])].into();
+        }
+        let mut host = WorkspaceHost::new(app);
+        let events = host.start_context_with_root(HostMode::Standalone, Some(storage.clone()));
+        host.note_plugin_frontend(true);
+        (host, events)
+    };
+    // A workspace that never had a grant has not opened the store; revoking
+    // there must still be kept.
+    let (mut host, _events) = start(false);
+    assert!(host.context.storage.is_none());
+    host.app.context_ui.decision =
+        Some(crate::app::context_access::Decision::Revoke("agent".into()));
+    host.sync_context();
+    drop(host);
+
+    let (mut host, _events) = start(true);
+    assert!(host.context.grants.is_empty());
+    host.app.context_ui.requested_identity = Some("agent".into());
+    host.sync_context();
+    let status = |host: &WorkspaceHost| {
+        host.app
+            .context_ui
+            .surface
+            .as_ref()
+            .unwrap()
+            .lines
+            .iter()
+            .find(|line| line.label == "Status")
+            .unwrap()
+            .value
+            .clone()
+    };
+    assert!(
+        status(&host).starts_with("Revoked here"),
+        "{}",
+        status(&host)
+    );
+    drop(host);
+    // Without a default there is nothing for the revocation to hold off.
+    let (mut host, _events) = start(false);
+    host.app.context_ui.requested_identity = Some("agent".into());
+    host.sync_context();
+    assert!(
+        status(&host).starts_with("Not granted"),
+        "{}",
+        status(&host)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_default_that_cannot_be_applied_leaves_remembered_grants_in_place() {
+    let root = TestRuntimeRoot::new("context-defaults-full").unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let storage = root.path().join("ctx");
+    {
+        let store = Storage::new(storage.clone()).unwrap();
+        let agent = store.identity("agent").unwrap();
+        store
+            .grant(&project, &agent, [Scope::TerminalRead].into())
+            .unwrap();
+        // Fill the store's identity capacity, so a new default cannot be made.
+        for index in 1..32 {
+            store.identity(&format!("other{index}")).unwrap();
+        }
+    }
+    let mut app =
+        App::new_in_isolated_project(&project, HostPorts::isolated(Box::new(Clipboard))).unwrap();
+    app.config.mcp.default_grants =
+        [("newcomer".to_owned(), vec!["terminal_read".to_owned()])].into();
+    let mut host = WorkspaceHost::new(app);
+    let _events = host.start_context_with_root(HostMode::Standalone, Some(storage));
+    assert!(host.context.remembered.contains("agent"));
+    assert!(!host.context.defaulted.contains("newcomer"));
+    assert!(host.context_enabled());
+    assert!(
+        host.app
+            .notifications()
+            .entries()
+            .iter()
+            .any(|entry| entry.body.contains("newcomer"))
+    );
+}

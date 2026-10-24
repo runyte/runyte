@@ -49,6 +49,10 @@ pub(super) struct State {
     environment: Option<String>,
     grants: BTreeMap<String, (Identity, BTreeSet<Scope>)>,
     remembered: BTreeSet<String>,
+    /// Identities whose grant here came from `mcp.default_grants`.
+    defaulted: BTreeSet<String>,
+    /// Identities the person revoked here, which keeps their default off.
+    denied: BTreeSet<String>,
     readers: BTreeMap<u64, Reader>,
     proposals: BTreeMap<String, Proposal>,
     recent: VecDeque<String>,
@@ -66,6 +70,16 @@ impl State {
     pub(super) fn started(&self) -> bool {
         self.events.is_some()
     }
+}
+
+#[derive(Default)]
+struct InitialGrants {
+    grants: BTreeMap<String, (Identity, BTreeSet<Scope>)>,
+    remembered: BTreeSet<String>,
+    defaulted: BTreeSet<String>,
+    denied: BTreeSet<String>,
+    /// Defaults that could not be applied, with why.
+    skipped: Vec<String>,
 }
 
 struct Reader {
@@ -138,26 +152,31 @@ impl WorkspaceHost {
         self.context.events = Some(send);
         self.context.mode = Some(mode);
         self.context.storage_root = root.clone();
-        if let Some(root) = root.filter(|root| root.exists()) {
+        // Defaults may name an identity no agent has created yet, so they
+        // need storage that can be written; otherwise nothing is created.
+        let defaults = !self.app.config.mcp.default_grants.is_empty();
+        if let Some(root) = root.filter(|root| defaults || root.exists()) {
             let loaded = (|| -> anyhow::Result<()> {
-                let store = Storage::open_existing(root.clone())?;
-                for identity in store.identities()? {
-                    let scopes = store.scopes(&self.app.project_root, &identity)?;
-                    if !scopes.is_empty() {
-                        self.context.remembered.insert(identity.name().to_owned());
-                        self.context
-                            .grants
-                            .insert(identity.fingerprint(), (identity, scopes));
-                    }
-                }
+                let initial = if defaults {
+                    self.context_open_storage(root.clone())?;
+                    let store = self.context.storage.clone().unwrap();
+                    self.context_initial_grants(&store)?
+                } else {
+                    self.context_initial_grants(&Storage::open_existing(root.clone())?)?
+                };
+                self.context_adopt_grants(initial);
                 if !self.context.grants.is_empty() {
-                    self.context_open_storage(root)?;
+                    if self.context.storage.is_none() {
+                        self.context_open_storage(root)?;
+                    }
                     self.context_enable()?;
                 }
                 Ok(())
             })();
-            if loaded.is_err() {
-                self.report_host_error("Remembered agent context access could not be loaded");
+            if let Err(error) = loaded {
+                self.report_host_error(format!(
+                    "Agent context access (remembered or default) could not be loaded: {error}"
+                ));
             }
         }
         receive
@@ -191,37 +210,122 @@ impl WorkspaceHost {
         self.context.mode = Some(mode);
         self.context.location = location.clone();
         self.context.environment = Some(environment);
-        let Some(location) = location.filter(|location| location.root().exists()) else {
+        let defaults = !self.app.config.mcp.default_grants.is_empty();
+        let Some(location) = location.filter(|location| defaults || location.root().exists())
+        else {
             return Ok(receive);
         };
         let loaded = (|| -> anyhow::Result<()> {
             self.context_validate_storage_root(location.root())?;
-            let store = Storage::open_existing(location.root().to_owned())?;
-            let mut grants = BTreeMap::new();
-            for identity in store.identities()? {
-                let scopes = store.scopes(&self.app.project_root, &identity)?;
-                if !scopes.is_empty() {
-                    grants.insert(identity.fingerprint(), (identity, scopes));
+            let initial = if defaults {
+                let store = Arc::new(Storage::open_location(location.clone())?);
+                let initial = self.context_initial_grants(&store)?;
+                self.context.storage = Some(store);
+                initial
+            } else {
+                self.context_initial_grants(&Storage::open_existing(location.root().to_owned())?)?
+            };
+            let granted = !initial.grants.is_empty();
+            self.context_adopt_grants(initial);
+            if granted {
+                if self.context.storage.is_none() {
+                    self.context.storage = Some(Arc::new(Storage::open_location(location)?));
                 }
-            }
-            if !grants.is_empty() {
-                self.context.storage = Some(Arc::new(Storage::open_location(location)?));
-                self.context.remembered = grants
-                    .values()
-                    .map(|(id, _)| id.name().to_owned())
-                    .collect();
-                self.context.grants = grants;
                 self.context_enable()?;
             }
             Ok(())
         })();
-        if loaded.is_err() {
-            self.context.grants.clear();
+        if let Err(error) = loaded {
+            self.context_adopt_grants(InitialGrants::default());
             self.context.storage = None;
             self.context.enable_failed = true;
-            self.report_host_error("Remembered agent context access could not be loaded");
+            self.report_host_error(format!(
+                "Agent context access (remembered or default) could not be loaded: {error}"
+            ));
         }
         Ok(receive)
+    }
+
+    /// The grants this workspace starts with: each identity's own record,
+    /// then the configured default for an identity that has none. An empty
+    /// record is a revocation the person made here, and keeps the default off.
+    fn context_initial_grants(&self, store: &Storage) -> anyhow::Result<InitialGrants> {
+        let mut initial = InitialGrants::default();
+        for identity in store.identities()? {
+            match store.grant_record(&self.app.project_root, &identity)? {
+                Some(scopes) if scopes.is_empty() => {
+                    initial.denied.insert(identity.name().to_owned());
+                }
+                Some(scopes) => {
+                    initial.remembered.insert(identity.name().to_owned());
+                    initial
+                        .grants
+                        .insert(identity.fingerprint(), (identity, scopes));
+                }
+                None => {}
+            }
+        }
+        for (name, scopes) in self.app.config.mcp.default_scopes() {
+            if initial.remembered.contains(name) || initial.denied.contains(name) {
+                continue;
+            }
+            // An existing identity is read without the store's lock. Creating
+            // one lets an agent started later authenticate as it; its
+            // credential stays in the private store. A default that cannot be
+            // applied is reported without costing the workspace its own grants.
+            let identity = match store.load_identity(name) {
+                Ok(Some(identity)) => Ok(identity),
+                Ok(None) => store.identity(name),
+                Err(error) => Err(error),
+            };
+            match identity {
+                Ok(identity) => {
+                    initial.defaulted.insert(name.to_owned());
+                    initial
+                        .grants
+                        .insert(identity.fingerprint(), (identity, scopes));
+                }
+                Err(error) => initial.skipped.push(format!("{name} ({error})")),
+            }
+        }
+        Ok(initial)
+    }
+
+    /// The private store, opened for writing if it is not open yet.
+    fn context_writable_storage(&mut self) -> anyhow::Result<Arc<Storage>> {
+        if self.context.storage.is_none() {
+            #[cfg(unix)]
+            self.context_open_storage(
+                self.context
+                    .storage_root
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("Private context storage unavailable"))?,
+            )?;
+            #[cfg(windows)]
+            {
+                let location = self
+                    .context
+                    .location
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("Private context storage unavailable"))?;
+                self.context_validate_storage_root(location.root())?;
+                self.context.storage = Some(Arc::new(Storage::open_location(location)?));
+            }
+        }
+        Ok(self.context.storage.clone().unwrap())
+    }
+
+    fn context_adopt_grants(&mut self, initial: InitialGrants) {
+        if !initial.skipped.is_empty() {
+            self.report_host_error(format!(
+                "Default agent access could not be applied for {}",
+                initial.skipped.join(", ")
+            ));
+        }
+        self.context.grants = initial.grants;
+        self.context.remembered = initial.remembered;
+        self.context.defaulted = initial.defaulted;
+        self.context.denied = initial.denied;
     }
 
     #[cfg(any(unix, test))]
@@ -407,10 +511,17 @@ impl WorkspaceHost {
                 .values()
                 .filter(|r| r.identity == identity && r.registered)
                 .count();
-            let status = if granted.is_none() {
+            let status = if granted.is_none()
+                && self.context.denied.contains(&identity)
+                && self.app.config.mcp.default_grants.contains_key(&identity)
+            {
+                "Revoked here, so mcp.default_grants stays off; apply to grant"
+            } else if granted.is_none() {
                 "Not granted; apply the selected permissions below"
             } else if remember {
                 "Enabled; remembered for this workspace"
+            } else if self.context.defaulted.contains(&identity) {
+                "Enabled by mcp.default_grants; x revokes it here"
             } else {
                 "Enabled until this editor or persistent host exits"
             };
@@ -609,30 +720,22 @@ impl WorkspaceHost {
                 remember,
             } => {
                 wire::validate_scopes(&scopes).map_err(|e| anyhow::anyhow!(e.message))?;
-                if self.context.storage.is_none() {
-                    #[cfg(unix)]
-                    self.context_open_storage(
-                        self.context.storage_root.clone().ok_or_else(|| {
-                            anyhow::anyhow!("Private context storage unavailable")
-                        })?,
-                    )?;
-                    #[cfg(windows)]
-                    {
-                        let location = self.context.location.clone().ok_or_else(|| {
-                            anyhow::anyhow!("Private context storage unavailable")
-                        })?;
-                        self.context_validate_storage_root(location.root())?;
-                        self.context.storage = Some(Arc::new(Storage::open_location(location)?));
-                    }
-                }
-                let store = self.context.storage.as_ref().unwrap();
+                let store = self.context_writable_storage()?;
                 let identity = store.identity(&identity)?;
-                if remember {
+                // Applying nothing is a revocation and is kept like one.
+                if remember || scopes.is_empty() {
                     store.grant(&self.app.project_root, &identity, scopes.clone())?;
                 } else {
                     store.revoke(&self.app.project_root, &identity)?;
                 }
                 self.context_revoke(identity.name());
+                // An applied grant replaces a default and clears a revocation.
+                self.context.defaulted.remove(identity.name());
+                if scopes.is_empty() {
+                    self.context.denied.insert(identity.name().to_owned());
+                } else {
+                    self.context.denied.remove(identity.name());
+                }
                 if remember && !scopes.is_empty() {
                     self.context.remembered.insert(identity.name().to_owned());
                 } else {
@@ -659,12 +762,16 @@ impl WorkspaceHost {
             }
             Decision::Revoke(name) => {
                 self.context.remembered.remove(&name);
+                self.context.defaulted.remove(&name);
                 self.context_revoke(&name);
-                if let Some(store) = &self.context.storage
-                    && let Some(identity) = store.load_identity(&name)?
-                {
-                    store.revoke(&self.app.project_root, &identity)?;
-                }
+                // Kept as an empty record, so a default configured now or
+                // later does not grant again what the person took away. A
+                // workspace that never had a grant has not opened the store
+                // yet, and that is just where a revocation must be kept.
+                let store = self.context_writable_storage()?;
+                let identity = store.identity(&name)?;
+                store.grant(&self.app.project_root, &identity, BTreeSet::new())?;
+                self.context.denied.insert(name);
             }
             Decision::Proposal { id, accepted } => {
                 let Some(proposal) = self.context.proposals.get_mut(&id) else {

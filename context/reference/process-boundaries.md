@@ -65,17 +65,20 @@ and result application live in `src/workspace/host/plugins.rs` and the adjacent
 
 This is a public extension surface for external agents connecting into Runyte.
 It uses a separately authenticated, owner-private Unix socket or Windows named
-pipe, enabled by a native grant for an exact workspace. It negotiates the
-`runyte-1` envelope, a supported release range and the `runyte.context.v1`
-feature; ordinary plugin grants cannot authorize it.
+pipe, enabled by a native grant, or a configured default, for an exact
+workspace. It negotiates the `runyte-1` envelope, a supported release range and
+the `runyte.context.v1` feature; ordinary plugin grants cannot authorize it.
 
 The host checks peer ownership, credentials and granted scopes for reads,
-revision-checked buffer edits and terminal text proposals, individually
-approved unless the grant includes direct insertion (`terminal_insert`, a grant
-setting that is never negotiated).
-Terminal insertion never submits Enter. Grants and approvals remain native
-editor actions. Frames are at most 2 MiB; readers, outstanding requests,
-snapshots, retained bytes and proposals have independent quotas.
+revision-checked buffer edits and terminal text proposals, individually approved
+unless the grant includes direct insertion (`terminal_insert`, a grant setting
+that is never negotiated). Terminal insertion never submits Enter. Grants and
+approvals remain native editor actions, with one second source of grants: the
+per-user configuration may name default grants (`mcp.default_grants`), trusted
+like the rest of that file, applied at host start only where the workspace has
+no grant or revocation record, and never including `terminal_insert`. Frames are
+at most 2 MiB; readers, outstanding requests, snapshots, retained bytes and
+proposals have independent quotas.
 
 [`runyte mcp`](../../docs/mcp.md) adapts MCP over stdio to this same context
 transport. An external client starts the adapter; the adapter connects to
