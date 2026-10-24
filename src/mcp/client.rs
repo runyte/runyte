@@ -37,19 +37,19 @@ impl Connection {
         }
         // A metadata-only request checks the live grant and connection. Grant
         // changes close readers at the host, so stale negotiations cannot pass.
-        let method = if self.scopes.contains(&Scope::EditorContextRead) {
-            "buffer.list"
+        let (method, params) = if self.scopes.contains(&Scope::EditorContextRead) {
+            ("buffer.list", json!({"offset":0,"limit":1}))
         } else if self.scopes.contains(&Scope::TerminalRead) {
-            "terminal.list"
+            ("terminal.list", json!({"offset":0,"limit":1}))
+        } else if self.scopes.contains(&Scope::AgentChannel) {
+            ("channel.who", json!({}))
         } else {
             return None;
         };
         self.count += 1;
         let id = format!("r:{}", self.count);
         let response = self
-            .exchange(
-                &json!({"type":"request","id":id,"method":method,"params":{"offset":0,"limit":1}}),
-            )
+            .exchange(&json!({"type":"request","id":id,"method":method,"params":params}))
             .await
             .ok()?;
         (response["type"] == "response"
@@ -134,9 +134,20 @@ impl Connection {
             ));
         }
         connection.limits(&hello)?;
+        // Ask for the agent channel only from a host that says it has one; an
+        // older host refuses capability names it does not know.
+        let channel = hello["features"]
+            .as_array()
+            .is_some_and(|v| v.contains(&json!(wire::CHANNEL_FEATURE)));
+        let mut features = vec![wire::FEATURE];
+        let mut capabilities = wire::CAPABILITIES.to_vec();
+        if channel {
+            features.push(wire::CHANNEL_FEATURE);
+            capabilities.push(Scope::AgentChannel.capability());
+        }
         let reply = connection.exchange(&json!({"type":"register","version":"runyte-1","runyte":SUPPORTED_HOSTS,
-            "name":format!("Runyte MCP ({})",identity.name()),"commands":[],"required_features":[wire::FEATURE],"optional_features":[],
-            "required_capabilities":[],"optional_capabilities":wire::CAPABILITIES})).await?;
+            "name":format!("Runyte MCP ({})",identity.name()),"commands":[],"required_features":[wire::FEATURE],"optional_features":&features[1..],
+            "required_capabilities":[],"optional_capabilities":capabilities})).await?;
         if reply["type"] == "registration_error" {
             return Err(Failure::new(
                 "capability_denied",
@@ -144,7 +155,7 @@ impl Connection {
             ));
         }
         if reply["type"] != "registered"
-            || reply["features"] != json!([wire::FEATURE])
+            || reply["features"] != json!(features)
             || reply["commands"] != json!([])
             || reply["runyte"] != SUPPORTED_HOSTS
         {
@@ -186,6 +197,31 @@ pub(super) struct Bridge {
     order: VecDeque<String>,
     resources: BTreeMap<String, Resource>,
     pub(super) deadline: Option<Instant>,
+    /// The MCP client that started this server, as `initialize` named it.
+    pub(super) client: Option<crate::workspace::context::channel::Client>,
+    /// This agent's place in each workspace's channel, by workspace handle.
+    pub(super) joined: BTreeMap<String, Joined>,
+    /// The last location reported, so posting in quick succession does not
+    /// run Git each time.
+    pub(super) location: Option<(
+        PathBuf,
+        Instant,
+        crate::workspace::context::channel::Location,
+    )>,
+}
+
+/// What a join established, so the agent can be joined again after a
+/// reconnect and reads continue where they stopped.
+pub(super) struct Joined {
+    /// The private token that brings this participant back.
+    pub resume: String,
+    /// The directory the agent last said it works in, used until it names
+    /// another.
+    pub directory: Option<PathBuf>,
+    pub provider: String,
+    pub task: String,
+    pub generation: u64,
+    pub next: u64,
 }
 impl Bridge {
     pub(super) fn new(
@@ -204,7 +240,14 @@ impl Bridge {
             order: VecDeque::new(),
             resources: BTreeMap::new(),
             deadline: None,
+            client: None,
+            joined: BTreeMap::new(),
+            location: None,
         })
+    }
+    /// The connection generation for a workspace handle, while connected.
+    pub(super) fn generation(&self, workspace: &str) -> Option<u64> {
+        self.connections.get(workspace).map(|c| c.generation)
     }
     fn token(&mut self, kind: &str) -> String {
         self.next += 1;
@@ -512,6 +555,7 @@ impl Bridge {
                         "buffer.append",
                         "terminal.input.propose",
                         "terminal.input.cancel",
+                        "channel.post",
                     ]
                     .contains(&method)
                     {

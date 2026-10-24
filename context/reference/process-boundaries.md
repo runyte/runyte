@@ -82,8 +82,12 @@ proposals have independent quotas.
 
 [`runyte mcp`](../../docs/mcp.md) adapts MCP over stdio to this same context
 transport. An external client starts the adapter; the adapter connects to
-granted hosts and gains no additional authority. Its nine-tool catalog is
-distinct from the fuller context operation catalog. The
+granted hosts and gains no additional authority. Its thirteen-tool catalog is
+distinct from the fuller context operation catalog. The agent channel
+(`agent_channel`, feature `runyte.context.channel.v1`) lets readers of one host
+exchange messages; the host verifies a participant's terminal from the
+capability Runyte handed that terminal's children and the connecting process's
+session, and treats every message as untrusted text. The
 [context contract](../../docs/plugins/context.md) defines the profile and its
 bounds, and the MCP guide defines adapter discovery and usage.
 Implementation: `src/workspace/context/`, `src/workspace/host/context.rs`,

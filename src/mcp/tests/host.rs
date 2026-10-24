@@ -24,6 +24,10 @@ struct State {
     extra_terminals: Vec<Value>,
     unnumbered: bool,
     direct_insert: bool,
+    /// The host advertises the agent channel.
+    channel: bool,
+    joins: Vec<Value>,
+    posts: Vec<Value>,
 }
 struct Host {
     _temp: crate::test_support::TestRuntimeRoot,
@@ -95,20 +99,34 @@ impl Host {
                         .await;
                         return;
                     }
-                    let hello = json!({"type":"hello","version":"runyte-1","host_version":"0.4.0","features":[wire::FEATURE],"workspace":record,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
+                    let channel = shared.lock().unwrap().channel;
+                    let features = if channel {
+                        json!([wire::FEATURE, wire::CHANNEL_FEATURE])
+                    } else {
+                        json!([wire::FEATURE])
+                    };
+                    let hello = json!({"type":"hello","version":"runyte-1","host_version":"0.4.0","features":features,"workspace":record,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
                     if write_frame(socket.get_mut(), &hello, wire::MAX_FRAME_BYTES)
                         .await
                         .is_err()
                     {
                         return;
                     }
-                    if read_frame(&mut socket, wire::MAX_FRAME_BYTES)
-                        .await
-                        .is_err()
-                    {
+                    let Ok(registration) = read_frame(&mut socket, wire::MAX_FRAME_BYTES).await
+                    else {
                         return;
-                    }
-                    let registered = json!({"type":"registered","runyte":">=0.3.0, <0.5.0","commands":[],"features":[wire::FEATURE],"capabilities":scopes,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
+                    };
+                    let registration = parse(&registration).unwrap();
+                    let mut negotiated = vec![json!(wire::FEATURE)];
+                    negotiated.extend(
+                        registration["optional_features"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .filter(|_| channel)
+                            .cloned(),
+                    );
+                    let registered = json!({"type":"registered","runyte":">=0.3.0, <0.5.0","commands":[],"features":negotiated,"capabilities":scopes,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
                     if write_frame(socket.get_mut(), &registered, wire::MAX_FRAME_BYTES)
                         .await
                         .is_err()
@@ -201,6 +219,23 @@ impl Host {
                                     "terminal.input.cancel" => {
                                         json!({"proposal":"native:i","state":"cancelled"})
                                     }
+                                    "channel.join" => {
+                                        s.joins.push(params.clone());
+                                        json!({"participant":{"participant":"0c0ffee0-0000-4000-8000-000000000001","nick":"claude-1"},"resume":"secret-resume","head":4})
+                                    }
+                                    "channel.post" => {
+                                        s.posts.push(params.clone());
+                                        json!({"seq":5})
+                                    }
+                                    "channel.read" => {
+                                        let since = params["since"].as_u64().unwrap();
+                                        if since < 5 {
+                                            json!({"messages":[{"seq":5,"kind":"message","from_nick":"codex-1","text":"hello"}],"next":5,"lost":false,"head":5})
+                                        } else {
+                                            json!({"messages":[],"next":since,"lost":false,"head":5})
+                                        }
+                                    }
+                                    "channel.who" => json!({"participants":[]}),
                                     _ => panic!("unexpected method {method}"),
                                 };
                                 json!({"type":"response","id":value["id"],"result":data})
@@ -746,4 +781,159 @@ async fn proposal_guidance_follows_whether_the_person_skipped_review() {
     assert_eq!(direct["data"]["state"], "queued");
     let next = direct["next_step"].as_str().unwrap();
     assert!(next.contains("without review") && next.contains("Enter was not sent"));
+}
+
+#[tokio::test]
+async fn channel_tools_join_once_continue_reads_and_rejoin_after_a_reconnect() {
+    let host = Host::new();
+    let mut bridge = host.bridge();
+    // A host without the channel, or a grant without it, has none to join.
+    let refused = bridge
+        .call(
+            "join_channel",
+            json!({"provider":"claude","task":"refactor"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code, "capability_denied");
+    assert!(
+        refused.message.contains(":mcp agent"),
+        "{}",
+        refused.message
+    );
+
+    {
+        let mut s = host.state.lock().unwrap();
+        s.channel = true;
+        s.scopes.insert("agent_channel".into());
+    }
+    let mut bridge = host.bridge();
+    bridge.client = Some(crate::workspace::context::channel::Client {
+        name: "claude-code".into(),
+        version: "2.0".into(),
+    });
+    assert_eq!(
+        bridge
+            .call("post_message", json!({"text":"hi"}))
+            .await
+            .unwrap_err()
+            .code,
+        "capability_denied",
+        "posting needs a join"
+    );
+    let joined = bridge
+        .call(
+            "join_channel",
+            json!({"provider":"claude","task":"refactor"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(joined["data"]["participant"]["nick"], "claude-1");
+    assert!(
+        joined["data"].get("resume").is_none(),
+        "the agent never sees its token"
+    );
+    let join = host.state.lock().unwrap().joins[0].clone();
+    assert_eq!(join["client"]["name"], "claude-code");
+    assert_eq!(
+        join["location"]["directory"],
+        std::env::current_dir().unwrap().display().to_string()
+    );
+    assert!(join.get("resume").is_none(), "a first join is new");
+
+    // The first read starts with what was said before; the next continues.
+    let first = bridge.call("read_messages", json!({})).await.unwrap();
+    assert_eq!(first["data"]["messages"][0]["text"], "hello");
+    let started = std::time::Instant::now();
+    let second = bridge
+        .call("read_messages", json!({"wait_seconds":1}))
+        .await
+        .unwrap();
+    assert!(second["data"]["messages"].as_array().unwrap().is_empty());
+    assert!(started.elapsed() >= Duration::from_millis(900));
+    bridge
+        .call("post_message", json!({"text":"done","to":"codex-1"}))
+        .await
+        .unwrap();
+    bridge.call("list_participants", json!({})).await.unwrap();
+
+    // A lost connection renews on the next call, which joins again as the
+    // same participant before reading.
+    host.state.lock().unwrap().fail = Some("channel.post".into());
+    assert_eq!(
+        bridge
+            .call("post_message", json!({"text":"lost"}))
+            .await
+            .unwrap_err()
+            .code,
+        "outcome_unknown"
+    );
+    bridge.call("read_messages", json!({})).await.unwrap();
+    let joins = host.state.lock().unwrap().joins.clone();
+    assert_eq!(joins.len(), 2);
+    assert_eq!(joins[1]["resume"], "secret-resume");
+    assert_eq!(joins[1]["provider"], "claude");
+}
+
+#[tokio::test]
+async fn a_channel_only_grant_keeps_its_connection_between_calls() {
+    let host = Host::new();
+    {
+        let mut s = host.state.lock().unwrap();
+        s.channel = true;
+        s.scopes = ["agent_channel".to_owned()].into();
+    }
+    let mut bridge = host.bridge();
+    bridge
+        .call("join_channel", json!({"provider":"codex","task":"review"}))
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        bridge
+            .call("post_message", json!({"text":"still here"}))
+            .await
+            .unwrap();
+        bridge.call("read_messages", json!({})).await.unwrap();
+    }
+    assert_eq!(
+        host.state.lock().unwrap().joins.len(),
+        1,
+        "no reconnect, so no rejoin"
+    );
+}
+
+#[tokio::test]
+async fn a_named_directory_stays_the_agents_place_until_it_names_another() {
+    let host = Host::new();
+    {
+        let mut s = host.state.lock().unwrap();
+        s.channel = true;
+        s.scopes.insert("agent_channel".into());
+    }
+    let mut bridge = host.bridge();
+    bridge
+        .call(
+            "join_channel",
+            json!({"provider":"claude","task":"refactor"}),
+        )
+        .await
+        .unwrap();
+    let elsewhere = std::env::temp_dir().display().to_string();
+    bridge
+        .call(
+            "post_message",
+            json!({"text":"moved","directory":elsewhere}),
+        )
+        .await
+        .unwrap();
+    bridge
+        .call("post_message", json!({"text":"still there"}))
+        .await
+        .unwrap();
+    let posts = host.state.lock().unwrap().posts.clone();
+    assert_eq!(posts[0]["location"]["directory"], elsewhere);
+    assert_eq!(
+        posts[1]["location"]["directory"], elsewhere,
+        "leaving directory out does not move the agent back"
+    );
 }

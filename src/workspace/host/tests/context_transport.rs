@@ -293,6 +293,7 @@ async fn regrant_changes_incarnation_and_old_events_cannot_disconnect_new_reader
     drop(receiver);
     host.handle_context_event(Event::Frame {
         connection: old_id,
+        peer: None,
         bytes: b"ignored".to_vec(),
         reply,
     });

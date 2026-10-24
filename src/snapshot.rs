@@ -2232,6 +2232,12 @@ fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Optio
     if session.history_truncated() {
         name.push_str(" [history truncated]");
     }
+    // The agent here has messages waiting in the agent channel.
+    match session.channel_unread() {
+        0 => {}
+        1 => name.push_str(" [1 unread]"),
+        count => name.push_str(&format!(" [{count} unread]")),
+    }
     if !session.live() {
         name.push_str(match session.exit_code() {
             Some(Some(code)) if code != 0 => return format!("{name} [exited {code}]"),
@@ -2244,6 +2250,10 @@ fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Optio
 #[cfg(test)]
 #[path = "snapshot/tests/long_lines.rs"]
 mod long_line_tests;
+
+#[cfg(test)]
+#[path = "snapshot/tests/terminal_titles.rs"]
+mod terminal_title_tests;
 
 #[cfg(test)]
 mod tests {

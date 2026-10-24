@@ -746,6 +746,9 @@ pub struct TerminalSession {
     /// The small number a person reads and types, held only while the child
     /// runs. See [`TerminalSession::number`].
     number: Option<u32>,
+    /// Agent channel messages the agent running here has not read, as the
+    /// workspace host last counted them.
+    channel_unread: usize,
     label: String,
     user_name: Option<String>,
     directory: PathBuf,
@@ -789,6 +792,14 @@ impl Drop for TerminalSession {
 impl TerminalSession {
     pub fn id(&self) -> TerminalId {
         self.id
+    }
+
+    pub fn channel_unread(&self) -> usize {
+        self.channel_unread
+    }
+
+    pub fn set_channel_unread(&mut self, count: usize) {
+        self.channel_unread = count;
     }
 
     /// The number a title shows and a command accepts, or `None` once the
@@ -2995,6 +3006,7 @@ impl TerminalSessions {
             TerminalSession {
                 id,
                 number,
+                channel_unread: 0,
                 label: request.label,
                 user_name: None,
                 directory: request.directory.clone(),
@@ -3254,6 +3266,7 @@ mod tests {
         TerminalSession {
             id: TerminalId(1),
             number: None,
+            channel_unread: 0,
             label: "test".to_owned(),
             user_name: None,
             directory: PathBuf::from("/"),

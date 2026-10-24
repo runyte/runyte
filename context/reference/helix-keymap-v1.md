@@ -694,7 +694,8 @@ file. Paths are literal and relative to the workspace root unless absolute.
 ### Agent context permission command
 
 `:mcp [identity]` is Runyte-specific and opens native workspace
-permissions for MCP access. `:context-access` remains an alias. It adds no
+permissions for MCP access. `:agent-channel` is Runyte-specific too and opens
+the read-only `[agent channel]` page; it has no default binding either. `:context-access` remains an alias. It adds no
 default editor key binding. Grant and terminal-text confirmation keys are owned by their overlay,
 as described in the UI vocabulary; they do not change the Helix-derived
 selection-first editing keys.

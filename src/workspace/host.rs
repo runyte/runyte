@@ -252,6 +252,8 @@ struct CompletedGitSnapshot {
 #[cfg(any(unix, windows))]
 mod context;
 #[cfg(any(unix, windows))]
+mod context_channel;
+#[cfg(any(unix, windows))]
 mod context_reads;
 mod pipe;
 mod plugin_activity;

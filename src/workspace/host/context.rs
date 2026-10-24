@@ -28,6 +28,12 @@ type FrameSource = (usize, u64, Option<(TerminalId, u64)>);
 #[derive(Default)]
 pub(super) struct State {
     events: Option<mpsc::Sender<Event>>,
+    /// The workspace's agent channel, for as long as this host runs.
+    pub(super) channel: crate::workspace::context::channel::Channel,
+    /// The channel revision the open `[agent channel]` page last showed.
+    pub(super) channel_page_revision: u64,
+    /// The process behind each connection, where the transport knows it.
+    pub(super) peers: BTreeMap<u64, Option<u32>>,
     storage: Option<Arc<Storage>>,
     #[cfg(unix)]
     storage_root: Option<std::path::PathBuf>,
@@ -457,6 +463,13 @@ impl WorkspaceHost {
                 .map(|reader| reader.reads.retained_bytes())
                 .sum(),
         );
+        if std::mem::take(&mut self.app.context_ui.channel_page_requested) {
+            let page = self.context_channel_page();
+            self.context.channel_page_revision = self.context.channel.revision();
+            self.app.open_agent_channel_page(&page);
+            // Opened after this frame was drawn, so ask for another.
+            self.app.plugins.presentation_dirty = true;
+        }
         if let Some(identity) = self.app.context_ui.requested_identity.take()
             && self.app.plugins.frontend_attached
             && !self.app.has_input_overlay()
@@ -853,6 +866,9 @@ impl WorkspaceHost {
         if let Some(reader) = self.context.readers.remove(&id) {
             reader.lease.cancel();
         }
+        self.context.peers.remove(&id);
+        self.context.channel.disconnect(id);
+        self.context_channel_changed();
         self.context.proposals.retain(|_, p| {
             if p.owner == id {
                 if let Some(d) = &p.delivery {
@@ -980,9 +996,11 @@ impl WorkspaceHost {
             Event::Closed(id) => self.context_disconnect(id),
             Event::Frame {
                 connection,
+                peer,
                 bytes,
                 reply,
             } => {
+                self.context.peers.entry(connection).or_insert(peer);
                 #[cfg(windows)]
                 if self.context.server.is_none() || self.context.stopping {
                     self.context_disconnect(connection);
@@ -1061,7 +1079,7 @@ impl WorkspaceHost {
                 },
             );
             return Reply {
-                value: json!({"type":"hello","version":"runyte-1","host_version":crate::plugin::compatibility::HOST_VERSION,"features":[wire::FEATURE],"capabilities":wire::CAPABILITIES,"limits":wire::limits(),"workspace":self.context.registration}),
+                value: json!({"type":"hello","version":"runyte-1","host_version":crate::plugin::compatibility::HOST_VERSION,"features":[wire::FEATURE,wire::CHANNEL_FEATURE],"capabilities":wire::CAPABILITIES.iter().copied().chain([Scope::AgentChannel.capability()]).collect::<Vec<_>>(),"limits":wire::limits(),"workspace":self.context.registration}),
                 lease: Some(lease),
                 close: false,
             };
@@ -1102,8 +1120,16 @@ impl WorkspaceHost {
                     .collect();
                 wire::validate_scopes(&reader.scopes)?;
                 reader.registered = true;
+                let mut features = vec![wire::FEATURE];
+                if registration
+                    .required_features
+                    .union(&registration.optional_features)
+                    .any(|feature| feature == wire::CHANNEL_FEATURE)
+                {
+                    features.push(wire::CHANNEL_FEATURE);
+                }
                 Ok(
-                    json!({"type":"registered","runyte":registration.runyte,"features":[wire::FEATURE],"commands":[],"capabilities":reader.scopes,"limits":wire::limits()}),
+                    json!({"type":"registered","runyte":registration.runyte,"features":features,"commands":[],"capabilities":reader.scopes,"limits":wire::limits()}),
                 )
             })();
             match result {
@@ -1164,6 +1190,10 @@ impl WorkspaceHost {
             Request::TerminalInputCancel { proposal } => {
                 ("terminal.input.cancel", proposal.as_str())
             }
+            Request::ChannelJoin { .. } => ("channel.join", "channel"),
+            Request::ChannelPost { .. } => ("channel.post", "channel"),
+            Request::ChannelRead { .. } => ("channel.read", "channel"),
+            Request::ChannelWho(_) => ("channel.who", "channel"),
         };
         let inspection = format!(
             "{}: {} {} at {:?}",
@@ -1227,6 +1257,12 @@ impl WorkspaceHost {
                     }
                     None => Err(Error::new(Code::NotFound, "Unknown proposal")),
                 },
+                request @ (Request::ChannelJoin { .. }
+                | Request::ChannelPost { .. }
+                | Request::ChannelRead { .. }
+                | Request::ChannelWho(_)) => {
+                    self.context_channel_request(id, &reader.identity, request)
+                }
                 request => self.context_read_request(&mut reader.reads, &reader.scopes, request),
             }
         };

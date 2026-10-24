@@ -979,3 +979,178 @@ async fn a_default_that_cannot_be_applied_leaves_remembered_grants_in_place() {
             .any(|entry| entry.body.contains("newcomer"))
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agents_share_the_channel_and_a_verified_terminal_counts_what_is_unread() {
+    use crate::terminal::TerminalRequest;
+    use crate::workspace::parent::{ParentContext, ParentLaunch};
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, [Scope::AgentChannel].into());
+    authenticate(&mut host, &identity, 1, &["agent_channel"]);
+    authenticate(&mut host, &identity, 2, &["agent_channel"]);
+    let launch = ParentLaunch::new(&host.app.project_root.join("endpoint.json")).unwrap();
+    host.app.terminals.set_parent_launch(launch.clone());
+    let terminal = host
+        .app
+        .terminals
+        .open(
+            TerminalRequest {
+                program: "/bin/cat".into(),
+                arguments: vec![],
+                directory: host.app.project_root.clone(),
+                label: "agent".to_owned(),
+            },
+            40,
+            10,
+        )
+        .unwrap();
+    let parent: ParentContext = serde_json::from_str(&launch.context(terminal)).unwrap();
+    // The first agent runs in that terminal; the second only claims to.
+    let process = host.app.terminals.get(terminal).unwrap().process_id();
+    host.context.peers.insert(1, process);
+    host.context.peers.insert(2, Some(std::process::id()));
+    let location = json!({"directory":"/work","repository":null,"worktree":null,"branch":"main"});
+    let claude = request(
+        &mut host,
+        1,
+        "join",
+        "channel.join",
+        json!({"provider":"claude","task":"refactor the parser","location":location,
+            "client":{"name":"claude-code","version":"2.0"},
+            "terminal":{"terminal":terminal.get(),"capability":parent.capability}}),
+    );
+    assert!(
+        claude["result"]["resume"].is_string(),
+        "only the joiner gets it"
+    );
+    let claude = &claude["result"]["participant"];
+    assert!(claude.get("resume").is_none());
+    assert_eq!(claude["nick"], "claude-1");
+    assert_eq!(claude["identity"], "agent");
+    assert_eq!(claude["client"]["name"], "claude-code");
+    assert_eq!(claude["terminal"]["number"], 1);
+    let codex = request(
+        &mut host,
+        2,
+        "join",
+        "channel.join",
+        json!({"provider":"codex","task":"review","location":location,
+            "terminal":{"terminal":terminal.get(),"capability":parent.capability}}),
+    );
+    assert!(
+        codex["result"]["participant"]["terminal"].is_null(),
+        "a process outside the terminal's session cannot claim it"
+    );
+
+    request(
+        &mut host,
+        2,
+        "public",
+        "channel.post",
+        json!({"text":"hello all","location":location}),
+    );
+    request(
+        &mut host,
+        2,
+        "direct",
+        "channel.post",
+        json!({"text":"just you","to":"claude-1","location":location}),
+    );
+    assert_eq!(
+        host.app.terminals.get(terminal).unwrap().channel_unread(),
+        2
+    );
+    let read = request(
+        &mut host,
+        1,
+        "read",
+        "channel.read",
+        json!({"since":0,"limit":200}),
+    );
+    let texts = read["result"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["kind"] == "message")
+        .map(|m| {
+            (
+                m["from_nick"].clone(),
+                m["to_nick"].clone(),
+                m["text"].clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        texts,
+        [
+            (json!("codex-1"), Value::Null, json!("hello all")),
+            (json!("codex-1"), json!("claude-1"), json!("just you"))
+        ]
+    );
+    assert_eq!(
+        host.app.terminals.get(terminal).unwrap().channel_unread(),
+        0
+    );
+    let who = request(&mut host, 1, "who", "channel.who", json!({}));
+    assert_eq!(who["result"]["participants"].as_array().unwrap().len(), 2);
+
+    // The person's page shows everything, direct messages included.
+    host.app.context_ui.channel_page_requested = true;
+    host.app.plugins.presentation_dirty = false;
+    host.sync_context();
+    assert!(
+        host.app.plugins.presentation_dirty,
+        "the page asks to be drawn"
+    );
+    let page = host.app.active_buffer().text().to_string();
+    assert!(
+        page.contains("claude-1  claude · refactor the parser"),
+        "{page}"
+    );
+    assert!(
+        page.contains("codex-1 → claude-1 (direct): just you"),
+        "{page}"
+    );
+    // A later message refreshes the open page.
+    request(
+        &mut host,
+        2,
+        "later",
+        "channel.post",
+        json!({"text":"done","location":location}),
+    );
+    assert!(
+        host.app
+            .active_buffer()
+            .text()
+            .to_string()
+            .contains("codex-1: done")
+    );
+
+    // A disconnected participant stays known but no longer marks its terminal,
+    // and the open page says so.
+    host.handle_context_event(Event::Closed(1));
+    assert_eq!(
+        host.app.terminals.get(terminal).unwrap().channel_unread(),
+        0
+    );
+    assert!(
+        host.app
+            .active_buffer()
+            .text()
+            .to_string()
+            .contains("· disconnected"),
+        "{}",
+        host.app.active_buffer().text()
+    );
+    let who = request(&mut host, 2, "who", "channel.who", json!({}));
+    assert!(
+        who["result"]["participants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["nick"] == "claude-1" && p["connected"] == false)
+    );
+    host.app.terminals.close(terminal);
+}

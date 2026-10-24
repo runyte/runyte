@@ -29,7 +29,7 @@ async fn catalog_is_stable_before_pairing_and_discovery_needs_no_storage() {
         .await
         .unwrap();
     let tools = catalog["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 9);
+    assert_eq!(tools.len(), 13);
     assert!(tools.iter().any(|t| t["name"] == "append_buffer"));
     assert!(
         tools

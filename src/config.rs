@@ -119,7 +119,7 @@ impl McpConfig {
                 }
                 let Some(scope) = Scope::from_capability(name) else {
                     return Err(format!(
-                        "mcp.default_grants.{identity}: unknown permission {name:?}; use terminal_read, editor_context_read, buffer_edit or terminal_propose"
+                        "mcp.default_grants.{identity}: unknown permission {name:?}; use terminal_read, editor_context_read, buffer_edit, terminal_propose or agent_channel"
                     ));
                 };
                 scopes.insert(scope);

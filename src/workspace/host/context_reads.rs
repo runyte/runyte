@@ -626,6 +626,13 @@ impl WorkspaceHost {
                 Code::Unsupported,
                 "Terminal proposals require the native review coordinator",
             )),
+            Request::ChannelJoin { .. }
+            | Request::ChannelPost { .. }
+            | Request::ChannelRead { .. }
+            | Request::ChannelWho(_) => Err(Error::new(
+                Code::Unsupported,
+                "The agent channel is served by the workspace host",
+            )),
         }
     }
 }

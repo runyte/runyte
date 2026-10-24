@@ -5868,6 +5868,7 @@ connected reader identifies a local connection, not a verified agent process.
 | `3` | Edit and append to buffers; also enables buffer reads |
 | `4` | Propose terminal text for review; also enables terminal reads |
 | `5` | Skip review: insert proposed text directly, still without Enter; also enables `4` and `1` |
+| `6` | Join the agent channel: read and post messages with other agents |
 | `r` | Remember this exact workspace's grant |
 | `n` | Next known identity; discards unapplied choices |
 | `x` | Revoke the selected identity immediately |
@@ -5970,6 +5971,23 @@ cache.
 - This is permission for Runyte's API, not an operating-system sandbox against
   other processes already running as you.
 
+### Agent channel
+
+With permission `6`, agents of any provider share a conversation through the
+workspace host: a public channel and direct messages between two agents. An
+agent joins by stating its provider and main task; Runyte adds a stable id, a
+nickname such as `codex-1`, its MCP client, where it works (repository, worktree
+and branch), and, inside a persistent session's integrated terminal, the
+terminal it runs in, checked rather than taken on its word. When the branch it
+works on changes, or it reports another directory, the channel says where it
+moved from.
+
+A terminal whose agent has unread messages shows `[N unread]` in its title.
+`:agent-channel` opens `[agent channel]`, a read-only page listing the
+participants and the recent messages, direct ones included, which refreshes as
+messages arrive. Messages last as long as the workspace host. The [MCP
+guide](mcp.md#agent-channel) describes the tools and limits.
+
 ### How agents use it
 
 - Start with `find_resources`, optionally selecting a workspace and searching
@@ -5982,7 +6000,9 @@ cache.
 - `terminal_proposal_status` and `cancel_terminal_proposal` operate on the
   proposal handle. Let the person review a proposal rather than polling for
   approval.
-- These are the nine MCP tools. Pane listing, selection and viewport reads,
+- `join_channel`, `post_message`, `read_messages` and `list_participants`
+  use the [agent channel](#agent-channel).
+- These are the thirteen MCP tools. Pane listing, selection and viewport reads,
   and immutable snapshots are not exposed by the MCP adapter.
 - Granted detached persistent workspaces and running ide-mode editors are
   discoverable without attaching a TUI or changing focus. Terminal approval,
@@ -6548,7 +6568,7 @@ definitions, which are file-only.
 | `git.refresh_interval_seconds` | `60` | 0–3600 | Bounds automatic Git refresh. `0` turns it off. See [Automatic Git refresh](#automatic-git-refresh). |
 | `notifications.history_limit` | `50` | 1–1000 | Newest notifications kept in memory for the workspace. |
 | `lsp.enable` | `true` | boolean | Allow configured language servers to start. Restart required. |
-| `mcp.default_grants` | none | identity: list of permissions | What an MCP identity may do in every workspace that has no grant or revocation of its own. Permissions are `terminal_read`, `editor_context_read`, `buffer_edit` and `terminal_propose`. Read when a workspace starts. See [Default grants](#default-grants). |
+| `mcp.default_grants` | none | identity: list of permissions | What an MCP identity may do in every workspace that has no grant or revocation of its own. Permissions are `terminal_read`, `editor_context_read`, `buffer_edit`, `terminal_propose` and `agent_channel`. Read when a workspace starts. See [Default grants](#default-grants). |
 | `lsp.<language>` | `rust` only | `command`, `args`, `initialization_options` | A language server definition. See [Language servers](#language-servers). |
 | `theme` | `ocean-dark` | theme name | The active theme. See [Themes](#themes). |
 
@@ -7431,6 +7451,7 @@ with `{ command: name, argument: text }`.
 | `git-refresh` | `git-refresh` | Refresh Git state or retry failed repository discovery |
 | `lsp-trust` | `lsp-trust` | Choose LSP permission for this workspace |
 | `mcp` | `mcp [identity]` | Review workspace agent permissions |
+| `agent-channel` | `agent-channel` | Show this workspace's agent channel |
 | `lsp-restart` | `lsp-restart [language]` | Restart stopped language servers |
 | `lsp-status` | `lsp-status` | Report language server state |
 | `open` | `open <path>` | Open a file or directory in the active pane |

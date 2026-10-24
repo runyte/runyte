@@ -18,6 +18,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub(crate) struct ContextUi {
     pub identities: Vec<String>,
     pub requested_identity: Option<String>,
+    /// `:agent-channel` waits for the workspace host to render the page.
+    pub channel_page_requested: bool,
     pub surface: Option<Surface>,
     pub decision: Option<Decision>,
     /// The editor area. Approval needs at least 80 × 22 of it.
@@ -146,12 +148,13 @@ pub(crate) struct ReviewLine {
 }
 
 /// The grant toggles in key order: `1` is the first.
-const SCOPES: [Scope; 5] = [
+const SCOPES: [Scope; 6] = [
     Scope::TerminalRead,
     Scope::EditorContextRead,
     Scope::BufferEdit,
     Scope::TerminalPropose,
     Scope::TerminalInsert,
+    Scope::AgentChannel,
 ];
 
 /// The scope another one needs. Turning a scope on turns on what it needs,
@@ -161,7 +164,7 @@ fn prerequisite(scope: Scope) -> Option<Scope> {
         Scope::BufferEdit => Some(Scope::EditorContextRead),
         Scope::TerminalPropose => Some(Scope::TerminalRead),
         Scope::TerminalInsert => Some(Scope::TerminalPropose),
-        Scope::TerminalRead | Scope::EditorContextRead => None,
+        Scope::TerminalRead | Scope::EditorContextRead | Scope::AgentChannel => None,
     }
 }
 
@@ -315,12 +318,12 @@ impl Surface {
     /// area less any session strip: everything but the border, the position
     /// row, the choices, and room for a two-row message. A grant also lists
     /// its scopes above the lines. At the smallest approving area a proposal
-    /// shows 14 lines and a grant 7, one fewer of each beside the session
+    /// shows 14 lines and a grant 6, one fewer of each beside the session
     /// strip, and a taller editor shows more, so a long prompt reads in fewer
     /// screens.
     pub(crate) fn view_rows(&self, height: u16) -> usize {
         let chrome = match self.kind {
-            Kind::Grant { .. } => 15,
+            Kind::Grant { .. } => 16,
             Kind::Proposal { .. } => 8,
         };
         usize::from(height).saturating_sub(chrome).max(1)
@@ -409,6 +412,42 @@ impl App {
 
     pub fn context_overlay_active(&self) -> bool {
         self.context_ui.surface.is_some()
+    }
+
+    pub(super) fn request_agent_channel(&mut self) {
+        self.context_ui.channel_page_requested = true;
+    }
+
+    /// Shows the channel page the workspace host rendered.
+    pub(crate) fn open_agent_channel_page(&mut self, page: &str) {
+        self.open_virtual_page(
+            crate::buffer::GeneratedViewIdentity::AgentChannel,
+            crate::buffer::AGENT_CHANNEL_NAME.to_owned(),
+            page,
+            super::ContentAlignment::default(),
+        );
+    }
+
+    fn agent_channel_page(&self) -> Option<usize> {
+        self.buffers.iter().enumerate().find_map(|(index, buffer)| {
+            (!self.closed_buffers.contains(&index)
+                && buffer.generated_view_identity()
+                    == Some(&crate::buffer::GeneratedViewIdentity::AgentChannel))
+            .then_some(index)
+        })
+    }
+
+    pub(crate) fn agent_channel_page_open(&self) -> bool {
+        self.agent_channel_page().is_some()
+    }
+
+    /// Replaces the page's text if it is open; nothing opens otherwise.
+    pub(crate) fn refresh_agent_channel_page(&mut self, page: &str) {
+        if let Some(index) = self.agent_channel_page() {
+            self.buffers[index].replace_virtual_text(page);
+            self.normalize_buffer(index);
+            self.plugins.presentation_dirty = true;
+        }
     }
 
     pub(super) fn request_context_access(&mut self, identity: Option<String>) {
@@ -505,7 +544,7 @@ impl App {
                     return;
                 }
             }
-            KeyCode::Char(character @ '1'..='5') => {
+            KeyCode::Char(character @ '1'..='6') => {
                 if let Kind::Grant { scopes, .. } = &mut surface.kind {
                     toggle(scopes, SCOPES[character as usize - '1' as usize]);
                 }
@@ -559,6 +598,7 @@ impl App {
                             Scope::TerminalPropose => "Propose terminal text for review",
                             Scope::TerminalInsert =>
                                 "Skip review: insert proposals directly (no Enter)",
+                            Scope::AgentChannel => "Join the agent channel: read and post messages",
                         }
                     ),
                     Vec::new(),

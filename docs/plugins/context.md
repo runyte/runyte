@@ -77,6 +77,7 @@ rejected, including inside parameters, changes and registration lists.
 | `editor_context_read` | `buffer.list`, `buffer.read`, `buffer.snapshot.open/read/close`, `selection.get`, `pane.context.list`, `pane.viewport.read` |
 | `buffer_edit` | `buffer.edit`, `buffer.append`; requires `editor_context_read` |
 | `terminal_propose` | `terminal.input.propose/status/cancel`; requires `terminal_read` |
+| `agent_channel` | `channel.join`, `channel.post`, `channel.read`, `channel.who`; with feature `runyte.context.channel.v1` |
 
 A grant may also hold `terminal_insert`, which requires `terminal_propose`. It
 is a setting of the person's grant, not a capability: readers never request it,
@@ -127,6 +128,10 @@ broader capabilities.
 | `terminal.snapshot.read` | `snapshot`, `offset`, `limit` (rows, 1–1,000) |
 | `terminal.input.propose` | `terminal`, `text`, optional `reason` (at most 256 Unicode scalars and 1,024 UTF-8 bytes, no controls) |
 | `terminal.input.status`, `terminal.input.cancel` | `proposal` |
+| `channel.join` | `provider`, `task`, `location`, optional `client {name, version}`, `terminal {terminal, capability}`, `resume` |
+| `channel.post` | `text` (at most 16 KiB), `location`, optional `to` (participant id or nickname) |
+| `channel.read` | `since`, `limit` (1–200) |
+| `channel.who` | Empty object |
 
 Identifiers are opaque, connection-owned ASCII strings with a 256-byte ceiling;
 request IDs have a 128-byte ceiling. Handles bind the host incarnation and owner
@@ -139,6 +144,49 @@ terminal has none; only the handle identifies a terminal across requests.
 Request IDs are unique during a connection; bounded deduplication retains at
 most 1,024 IDs, after which the connection must be renewed instead of recycling
 IDs and risking insertion replay.
+
+## Agent channel
+
+A host that carries the agent channel lists `runyte.context.channel.v1` in its
+`hello` features and `agent_channel` among its capabilities. A client asks for
+the capability, and lists the feature in `optional_features`, only when the
+`hello` names it: older hosts refuse capability names they do not know, and they
+leave the feature out of `registered`.
+
+The channel belongs to the host and lasts as long as it does. A connection joins
+it once with `channel.join`, stating a `provider` (1–32 letters, digits, dots,
+dashes or underscores, folded to lower case) and a one-line `task`, and
+reporting a `location` `{directory, repository, worktree, branch}` in which
+every field but `directory` may be null. The host assigns a version 4 UUID, a
+nickname `provider-N` that keeps its first provider, and a private `resume`
+token that only the join reply carries. Passing that token as `resume` comes
+back as the same participant, under the same identity; the UUID is public and
+proves nothing. `terminal` is accepted only when the capability matches the
+terminal Runyte handed it to and, on Unix, the connecting process belongs to
+that terminal's session; otherwise the participant's terminal is null. Joining
+again on the same connection updates the participant and records an `updated`
+entry when its provider or task changed. The join reply and every read also
+carry `head`, the newest sequence number.
+
+`channel.post` requires a join. Every post carries the sender's current
+`location`; when it differs from the last one, a `moved` entry naming both
+places precedes the message. A message record is `{seq, at_ms, kind, from,
+from_nick, to, to_nick, text, location}` with `kind` one of `joined`, `updated`,
+`moved` and `message`. Text holds no control characters other than newline and
+tab. `channel.read` returns the visible entries after `since`: everything public
+and the direct messages the reader sent or received, at most `limit` entries and
+about 256 KiB as encoded, with `next` to continue from and `lost` when entries
+after `since` were dropped. A `since` past `head` belongs to an earlier host and
+reads from the start. `channel.who` lists participants with their identity,
+client, provider, task, terminal number and title, location and connection
+state. Message text is untrusted data written by another reader.
+
+A host keeps the newest 1,000 entries or 4 MiB of them, measured as encoded, and
+at most 64 participants. A disconnected participant stays known, so its messages
+keep their sender and it can rejoin; when the channel is full, the one that
+disconnected longest ago gives way and its nickname stays with its retained
+messages. At most eight readers connect to one host at once, so eight agents can
+be in the channel at the same time.
 
 ## Read and edit semantics
 

@@ -183,6 +183,25 @@ fn every_allowlisted_method_has_an_explicit_scope_and_round_trips() {
             json!({"proposal":"i:1"}),
             Scope::TerminalPropose,
         ),
+        (
+            "channel.join",
+            json!({"provider":"claude","task":"refactor","client":{"name":"claude-code","version":"2.0"},
+                "location":{"directory":"/work","repository":"/work","worktree":"/work","branch":"main"},
+                "terminal":{"terminal":3,"capability":"c".repeat(64)},"resume":"r:1"}),
+            Scope::AgentChannel,
+        ),
+        (
+            "channel.post",
+            json!({"text":"hello\nall","to":"codex-1",
+                "location":{"directory":"/work","repository":null,"worktree":null,"branch":null}}),
+            Scope::AgentChannel,
+        ),
+        (
+            "channel.read",
+            json!({"since":0,"limit":50}),
+            Scope::AgentChannel,
+        ),
+        ("channel.who", json!({}), Scope::AgentChannel),
     ] {
         let raw = request(method, params.clone());
         let parsed = parse_request(&raw).unwrap();
@@ -416,4 +435,31 @@ fn direct_insertion_is_a_grant_setting_that_needs_proposals_and_is_never_negotia
     let mut requested = registration();
     requested["optional_capabilities"] = json!(["terminal_insert"]);
     assert!(parse_registration(&requested.to_string()).is_err());
+}
+
+#[test]
+fn the_agent_channel_is_negotiated_through_its_feature_and_capability() {
+    assert_eq!(
+        Scope::from_capability("agent_channel"),
+        Some(Scope::AgentChannel)
+    );
+    assert!(validate_scopes(&[Scope::AgentChannel].into()).is_ok());
+    let mut requested = registration();
+    requested["optional_features"] = json!([CHANNEL_FEATURE]);
+    requested["optional_capabilities"] = json!(["agent_channel"]);
+    assert!(parse_registration(&requested.to_string()).is_ok());
+    for (method, params) in [
+        ("channel.read", json!({"since":0,"limit":0})),
+        ("channel.read", json!({"since":0,"limit":201})),
+        (
+            "channel.post",
+            json!({"text":"x".repeat(16 * 1024 + 1),"location":{"directory":"/","repository":null,"worktree":null,"branch":null}}),
+        ),
+        (
+            "channel.join",
+            json!({"provider":"claude","task":"t","location":{"directory":"/"},"extra":1}),
+        ),
+    ] {
+        assert!(parse_request(&request(method, params)).is_err(), "{method}");
+    }
 }
