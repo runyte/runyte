@@ -211,11 +211,14 @@ fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
     let macos = &workflow["jobs"]["macos-desktop"];
     assert_eq!(macos["runs-on"], "macos-15");
     assert!(
-        !workflow["jobs"]["publish"]["needs"]
+        workflow["jobs"]["publish"]["needs"]
             .as_sequence()
             .unwrap()
             .contains(&serde_yaml::Value::from("macos-desktop"))
     );
+    assert!(workflow["jobs"]["publish"]["if"].as_str().unwrap().contains(
+        "&& (needs['macos-desktop'].result == 'success' || (needs.validate.outputs.desktop != 'true' && needs['macos-desktop'].result == 'skipped'))"
+    ));
     let macos_steps = macos["steps"].as_sequence().unwrap();
     assert!(
         macos_steps

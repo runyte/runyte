@@ -341,8 +341,8 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [validate, build, desktop]
-    if: always() && needs.validate.result == 'success' && needs.build.result == 'success' && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped')
+    needs: [validate, build, desktop, macos-desktop]
+    if: always() && needs.validate.result == 'success' && needs.build.result == 'success' && (needs.desktop.result == 'success' || needs.desktop.result == 'skipped') && (needs['macos-desktop'].result == 'success' || (needs.validate.outputs.desktop != 'true' && needs['macos-desktop'].result == 'skipped'))
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     permissions:
