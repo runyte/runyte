@@ -168,7 +168,9 @@ async fn disconnect_and_revocation_invalidate_reply_leases_and_all_owner_resourc
     .lease
     .unwrap();
     let terminal = host.app.terminals.insert_test_session(20, 3);
-    let proposal = host.context_propose(1, terminal, "literal", None).unwrap();
+    let proposal = host
+        .context_propose(1, terminal, "literal", None, None)
+        .unwrap();
     assert_eq!(host.context.proposals.len(), 1);
     host.context_revoke("agent");
     assert!(!lease.active());
@@ -196,7 +198,7 @@ async fn default_reject_expiry_attachment_and_input_races_are_inert() {
     for expected in ["rejected", "expired", "cancelled", "stale"] {
         host.note_plugin_frontend(true);
         let result = host
-            .context_propose(1, terminal, "echo approved", None)
+            .context_propose(1, terminal, "echo approved", None, None)
             .unwrap();
         let id = result["proposal"].as_str().unwrap().to_owned();
         host.sync_context();
@@ -217,14 +219,14 @@ async fn default_reject_expiry_attachment_and_input_races_are_inert() {
         host.context.proposals.clear();
     }
     assert_eq!(
-        host.context_propose(1, terminal, "bad\n", None)
+        host.context_propose(1, terminal, "bad\n", None, None)
             .unwrap_err()
             .code,
         Code::InvalidArgument
     );
     host.note_plugin_frontend(false);
     assert_eq!(
-        host.context_propose(1, terminal, "ok", None)
+        host.context_propose(1, terminal, "ok", None, None)
             .unwrap_err()
             .code,
         Code::NoFrontend
@@ -324,6 +326,7 @@ async fn approval_requires_every_page_to_be_painted_and_consumes_enter() {
             terminal,
             &"a".repeat(1024),
             Some("untrusted reason".into()),
+            None,
         )
         .unwrap()["proposal"]
         .as_str()
@@ -521,7 +524,7 @@ async fn real_pty_overlay_enter_only_inserts_and_separate_native_enter_submits()
     .await
     .unwrap();
     let id = host
-        .context_propose(1, terminal, "echo literal", None)
+        .context_propose(1, terminal, "echo literal", None, None)
         .unwrap()["proposal"]
         .as_str()
         .unwrap()
@@ -587,7 +590,7 @@ async fn prepared_but_unpainted_lines_cannot_be_counted_or_approved() {
         &["terminal_read", "terminal_propose"],
     );
     let terminal = host.app.terminals.insert_test_session(20, 3);
-    host.context_propose(1, terminal, &"x".repeat(1024), None)
+    host.context_propose(1, terminal, &"x".repeat(1024), None, None)
         .unwrap();
     host.sync_context();
     fn surface(host: &WorkspaceHost) -> &crate::app::context_access::Surface {
@@ -607,4 +610,201 @@ async fn prepared_but_unpainted_lines_cannot_be_counted_or_approved() {
     assert!(surface(&host).seen.iter().all(|seen| !seen));
     assert_eq!(surface(&host).presented_top, None);
     assert!(host.app.context_ui.decision.is_none());
+}
+
+#[tokio::test]
+async fn direct_insertion_grant_skips_review_but_never_sends_enter() {
+    use crate::terminal::{TerminalOutput, TerminalRequest, proposal::DeliveryState};
+    let (_root, mut host, identity, _events) = fixture();
+    grant(
+        &mut host,
+        &identity,
+        [
+            Scope::TerminalRead,
+            Scope::TerminalPropose,
+            Scope::TerminalInsert,
+        ]
+        .into(),
+    );
+    // The reader negotiates nothing new: direct insertion is the grant's.
+    let registered = authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_propose"],
+    );
+    assert_eq!(
+        registered.value["capabilities"],
+        json!(["terminal_read", "terminal_propose"])
+    );
+    let terminal = host.app.terminals.open(TerminalRequest {
+        program: "/bin/sh".into(),
+        // A line editor asks for bracketed paste; this one stands in for it.
+        arguments: vec!["-c".into(), "stty -echo; printf '\\033[?2004h'; printf READY; IFS= read -r line; printf 'SUBMITTED:%s' \"$line\"; IFS= read -r hold".into()],
+        directory: host.app.project_root.clone(), label: "direct fixture".into(),
+    }, 40, 10).unwrap();
+    let mut output = host.take_terminal_events().unwrap();
+    let mut bytes = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !bytes.windows(5).any(|part| part == b"READY") {
+            let event = output.recv().await.unwrap();
+            if let TerminalOutput::Bytes { bytes: part, .. } = &event {
+                bytes.extend(part);
+            }
+            host.app.terminals.apply(event);
+        }
+    })
+    .await
+    .unwrap();
+    let list = request(
+        &mut host,
+        1,
+        "list",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    let handle = list["result"]["terminals"][0]["terminal"].clone();
+    let proposed = request(
+        &mut host,
+        1,
+        "propose",
+        "terminal.input.propose",
+        json!({"terminal":handle,"text":"echo direct"}),
+    );
+    assert_eq!(proposed["result"]["state"], "queued");
+    let id = proposed["result"]["proposal"].as_str().unwrap().to_owned();
+    host.sync_context();
+    assert!(host.app.context_ui.surface.is_none(), "no review overlay");
+    let notice = host.app.notifications().entries().last().unwrap();
+    assert_eq!(notice.title, "Terminal text inserted");
+    assert!(
+        notice
+            .body
+            .contains("inserted 11 characters into terminal #1 without review"),
+        "{}",
+        notice.body
+    );
+    let delivery = host.context.proposals[&id]
+        .delivery
+        .as_ref()
+        .unwrap()
+        .clone();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while delivery.state() != DeliveryState::Delivered {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // Still blocked in read: the text arrived without Enter.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), output.recv())
+            .await
+            .is_err()
+    );
+    assert!(
+        host.app
+            .terminals
+            .get_mut(terminal)
+            .unwrap()
+            .send_key(KeyStroke::plain(KeyCode::Enter))
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        // The text arrives framed as a paste, which is what makes it inert
+        // until the person submits it.
+        while !String::from_utf8_lossy(&bytes).contains("SUBMITTED:\x1b[200~echo direct\x1b[201~") {
+            let event = output.recv().await.unwrap();
+            if let TerminalOutput::Bytes { bytes: part, .. } = &event {
+                bytes.extend(part);
+            }
+            host.app.terminals.apply(event);
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn direct_insertion_falls_back_to_review_and_ends_with_its_grant() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(
+        &mut host,
+        &identity,
+        [
+            Scope::TerminalRead,
+            Scope::TerminalPropose,
+            Scope::TerminalInsert,
+        ]
+        .into(),
+    );
+    authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_propose"],
+    );
+    // A program that has not asked for bracketed paste would read the text
+    // as keystrokes, so the person reviews it even under this grant.
+    let terminal = host.app.terminals.insert_test_session(20, 3);
+    assert!(
+        !host
+            .app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .proposal_input_signature()
+            .modes
+            .bracketed_paste
+    );
+    let list = request(
+        &mut host,
+        1,
+        "list",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    let handle = list["result"]["terminals"][0]["terminal"].clone();
+    let notices = host.app.notifications().entries().len();
+    let proposed = request(
+        &mut host,
+        1,
+        "propose",
+        "terminal.input.propose",
+        json!({"terminal":handle,"text":"y"}),
+    );
+    assert_eq!(proposed["result"]["state"], "pending");
+    assert_eq!(host.app.notifications().entries().len(), notices);
+    host.sync_context();
+    assert!(host.app.context_ui.surface.is_some(), "the review opens");
+    key(&mut host, KeyCode::Escape);
+    host.sync_context();
+
+    // Applying the grant again without `5` ends the connection that held it,
+    // so the authority cannot outlive the person's choice.
+    host.app.context_ui.decision = Some(crate::app::context_access::Decision::Grant {
+        identity: "agent".into(),
+        scopes: [Scope::TerminalRead, Scope::TerminalPropose].into(),
+        remember: false,
+    });
+    host.sync_context();
+    let stale = request(
+        &mut host,
+        1,
+        "again",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    assert!(stale.get("result").is_none(), "{stale}");
+    let registered = authenticate(
+        &mut host,
+        &identity,
+        2,
+        &["terminal_read", "terminal_propose"],
+    );
+    assert_eq!(registered.value["type"], "registered");
+    assert!(
+        !host.context.readers[&2]
+            .granted
+            .contains(&Scope::TerminalInsert)
+    );
 }

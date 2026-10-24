@@ -391,3 +391,29 @@ fn buffer_append_is_a_strict_buffer_edit_request_with_advertised_bounds() {
     assert_eq!(context["append_tail_bytes"], MAX_EXPECTED_TAIL_BYTES);
     assert_eq!(context["append_preview_chars"], APPEND_PREVIEW_CHARS);
 }
+
+#[test]
+fn direct_insertion_is_a_grant_setting_that_needs_proposals_and_is_never_negotiated() {
+    assert!(validate_scopes(&[Scope::TerminalInsert].into()).is_err());
+    assert!(validate_scopes(&[Scope::TerminalRead, Scope::TerminalInsert].into()).is_err());
+    assert!(
+        validate_scopes(
+            &[
+                Scope::TerminalRead,
+                Scope::TerminalPropose,
+                Scope::TerminalInsert
+            ]
+            .into()
+        )
+        .is_ok()
+    );
+    assert_eq!(
+        serde_json::to_value(Scope::TerminalInsert).unwrap(),
+        "terminal_insert"
+    );
+    assert_eq!(Scope::from_capability("terminal_insert"), None);
+    assert!(!CAPABILITIES.contains(&"terminal_insert"));
+    let mut requested = registration();
+    requested["optional_capabilities"] = json!(["terminal_insert"]);
+    assert!(parse_registration(&requested.to_string()).is_err());
+}

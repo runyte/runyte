@@ -71,7 +71,7 @@ pub(super) fn descriptors() -> Vec<Value> {
         ),
         tool(
             "propose_terminal_text",
-            "Send one line for the person's review in Runyte. Returns pending immediately: stop and let the person approve. Approval inserts the text without Enter; the person submits separately. No newlines or controls. Never retry outcome_unknown automatically.",
+            "Send one line to a terminal. Usually returns pending: stop and let the person review it in Runyte. If the person granted direct insertion and the terminal has paste mode on (shells and agent prompts do) it returns queued and is inserted without review. Either way Enter is never sent; the person submits separately. No newlines or controls. Never retry outcome_unknown automatically.",
             json!({"terminal":text("Exact returned terminal handle",128),"text":text("One literal line",4096),"reason":text("Short reason shown separately",256)}),
             &["terminal", "text"],
             true,
@@ -251,9 +251,11 @@ impl Bridge {
         }
         let mut reply = self.request(&workspace, method, args).await?;
         if name == "propose_terminal_text" {
-            reply["next_step"] = json!(
+            reply["next_step"] = json!(if reply["data"]["state"] == "pending" {
                 "Waiting for approval in Runyte. No text submitted. Let the person review; check status only when needed."
-            );
+            } else {
+                "Inserting without review, as the person granted. Enter was not sent; the person submits it."
+            });
         }
         Ok(reply)
     }

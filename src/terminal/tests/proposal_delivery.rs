@@ -145,6 +145,36 @@ fn refused_proposal_preserves_review_scroll_and_attention() {
     );
 }
 
+#[test]
+fn an_insertion_without_review_queues_behind_others_but_an_approval_supersedes() {
+    let mut session = session(12, 3);
+    let earlier = Delivery::queued();
+    session.proposal_deliveries.push(earlier.clone());
+    let finished = Delivery::queued();
+    finished.cancel();
+    session.proposal_deliveries.push(finished);
+    let signature = session.proposal_input_signature();
+    // No writer in this fixture, so both refuse after their effect on the queue.
+    assert!(
+        session
+            .append_proposal(&Text::new("literal").unwrap())
+            .is_err()
+    );
+    assert_eq!(earlier.state(), DeliveryState::Queued);
+    assert_eq!(
+        session.proposal_deliveries.len(),
+        1,
+        "finished records are pruned, unfinished ones kept"
+    );
+    assert_ne!(session.proposal_input_signature(), signature);
+    assert!(
+        session
+            .enqueue_proposal(&Text::new("literal").unwrap())
+            .is_err()
+    );
+    assert_eq!(earlier.state(), DeliveryState::Cancelled);
+}
+
 fn wait_until(mut predicate: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !predicate() {

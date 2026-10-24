@@ -3,6 +3,7 @@
 use super::{WorkspaceHost, context_reads::ReadState};
 use crate::{
     app::context_access::{Decision, Detail, Kind, Surface, label, visible},
+    notification::{NotificationDraft, NotificationSeverity},
     plugin::application::{Error, ErrorCode as Code},
     terminal::{
         TerminalId,
@@ -424,7 +425,12 @@ impl WorkspaceHost {
                 Detail::note(
                     "Use the same --identity in runyte mcp. Agent start order is flexible.",
                 ),
-                Detail::note("Reads include unsaved text; terminal insertion needs approval."),
+                Detail::note(
+                    "Reads include unsaved text. Terminal text needs approval unless 5 is on.",
+                ),
+                Detail::note(
+                    "5 trusts a terminal's paste mode to mean its program reads pastes as text. Inside tmux, zellij or screen that mode is the multiplexer's, so do not use 5 there.",
+                ),
             ];
             if let Some(recent) = self.context.recent.back() {
                 explanation.push(Detail::excerpt("Last call", recent));
@@ -1082,7 +1088,13 @@ impl WorkspaceHost {
                     reason,
                 } => {
                     let terminal = reader.reads.terminal(&terminal);
-                    terminal.and_then(|terminal| self.context_propose(id, terminal, &text, reason))
+                    let direct = reader
+                        .granted
+                        .contains(&Scope::TerminalInsert)
+                        .then_some(reader.identity.as_str());
+                    terminal.and_then(|terminal| {
+                        self.context_propose(id, terminal, &text, reason, direct)
+                    })
                 }
                 Request::TerminalInputStatus { proposal } => self
                     .context
@@ -1142,12 +1154,17 @@ impl WorkspaceHost {
         }
     }
 
+    /// Queue proposed text for review, or with `direct` (the identity of a
+    /// reader whose grant skips review) for insertion now when the terminal
+    /// reads pasted text. Either way the text is never followed by Enter, and
+    /// the person must be attached.
     fn context_propose(
         &mut self,
         owner: u64,
         terminal: TerminalId,
         text: &str,
         reason: Option<String>,
+        direct: Option<&str>,
     ) -> Result<Value, Error> {
         if !self.app.plugins.frontend_attached {
             return Err(Error::new(
@@ -1191,28 +1208,58 @@ impl WorkspaceHost {
         let session = self
             .app
             .terminals
-            .get(terminal)
+            .get_mut(terminal)
             .filter(|t| t.live())
             .ok_or_else(|| Error::new(Code::Closed, "Terminal is not live"))?;
         let text = Text::new(text)
             .map_err(|_| Error::new(Code::InvalidArgument, "Invalid terminal text"))?;
         let id = storage::random_token()
             .map_err(|_| Error::new(Code::Unavailable, "Cannot allocate proposal"))?;
-        self.context.proposals.insert(
-            id.clone(),
-            Proposal {
-                owner,
-                terminal,
-                text,
-                reason,
-                signature: session.proposal_input_signature(),
-                attachment: self.app.plugins.attachment_generation,
-                deadline: Instant::now() + Duration::from_secs(wire::PROPOSAL_EXPIRY_SECONDS),
-                status: "pending",
-                delivery: None,
-            },
-        );
-        Ok(json!({"proposal":id,"state":"pending"}))
+        let mut proposal = Proposal {
+            owner,
+            terminal,
+            reason,
+            signature: session.proposal_input_signature(),
+            attachment: self.app.plugins.attachment_generation,
+            deadline: Instant::now() + Duration::from_secs(wire::PROPOSAL_EXPIRY_SECONDS),
+            status: "pending",
+            delivery: None,
+            text,
+        };
+        // Skipping review is safe only where the text arrives as a paste: a
+        // shell or an agent's prompt asks for bracketed paste, while a pager,
+        // a single-key prompt or an editor in normal mode would read the same
+        // bytes as keystrokes. Those still go to the person. The mode is the
+        // terminal's, not necessarily the program's: a multiplexer enables it
+        // for itself and may strip the framing for whatever runs in its pane,
+        // which is why the grant note and the guide warn against it there.
+        let direct = direct.filter(|_| proposal.signature.modes.bracketed_paste);
+        if let Some(identity) = direct {
+            let delivery = session
+                .append_proposal(&proposal.text)
+                .map_err(|_| Error::new(Code::Unavailable, "Terminal cannot accept text"))?;
+            proposal.delivery = Some(delivery);
+            proposal.status = "queued";
+            let target = match session.number() {
+                Some(number) => format!("terminal #{number}"),
+                None => "a terminal".to_owned(),
+            };
+            // Nothing asks the person first, so say what arrived and from
+            // whom where it can still be traced afterwards.
+            self.app.push_notification(NotificationDraft::new(
+                NotificationSeverity::Info,
+                "MCP",
+                "Terminal text inserted",
+                format!(
+                    "{} inserted {} characters into {target} without review. Enter was not sent.",
+                    visible(identity),
+                    proposal.text.as_str().chars().count(),
+                ),
+            ));
+        }
+        let state = proposal.status;
+        self.context.proposals.insert(id.clone(), proposal);
+        Ok(json!({"proposal":id,"state":state}))
     }
 
     pub fn context_delay(&self) -> Option<Duration> {

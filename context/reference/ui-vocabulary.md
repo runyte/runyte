@@ -713,8 +713,9 @@ Cancelled callbacks cannot reopen presentation without another foreground comman
 `:context-access` remains an alias. It shows grant lifetime, connected reader
 count and the most recent request metadata, with Reject selected. No-argument
 opening prefers an existing grant; `n` cycles known identities without applying
-pending choices. Scope keys `1`–`4` use plain-language labels and maintain read
-prerequisites automatically. Remember key `r` reflects the active grant; `x`
+pending choices. Scope keys `1`–`5` use plain-language labels and maintain
+prerequisites automatically: `5` skips proposal review and needs `4`, which
+needs `1`. Remember key `r` reflects the active grant; `x`
 revokes, the review motions below scroll, Tab chooses, and Enter applies
 **Apply permissions**. Esc closes without applying. These are local overlay keys.
 

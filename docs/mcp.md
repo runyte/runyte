@@ -46,7 +46,8 @@ Open `:mcp agent` in each workspace to share. The identity must match
 identities, such as `codex` and `claude`, when permissions should differ.
 
 Toggle terminal reads (`1`), editor-context reads (`2`), buffer edits (`3`),
-and terminal proposals (`4`). Optionally remember the grant with `r`, then
+terminal proposals (`4`) and, optionally, direct insertion without review
+(`5`). Optionally remember the grant with `r`, then
 Tab and Enter to **Apply permissions**.
 Write permissions automatically enable the corresponding read permission.
 `:mcp` reopens the current grant, lifetime and connected-reader count; `n`
@@ -78,7 +79,7 @@ The catalog always contains these nine tools:
 | `read_terminal` | Read recent output or the live terminal screen. |
 | `append_buffer` | Append in one unsaved, undoable transaction. |
 | `edit_buffer` | Replace character ranges at an expected revision. |
-| `propose_terminal_text` | Request human approval to insert one literal line. |
+| `propose_terminal_text` | Ask to insert one literal line; reviewed unless the person skipped review. |
 | `terminal_proposal_status` | Check a proposal's state when needed. |
 | `cancel_terminal_proposal` | Cancel a pending proposal. |
 
@@ -148,9 +149,14 @@ without reading source content.
 - `append_buffer` adds text atomically at the current end, with optional
   `expected_tail`. Use actual newlines. `edit_buffer` takes an expected revision
   and character ranges. Both are undoable and leave the buffer unsaved.
-- `propose_terminal_text` accepts one line and returns immediately. The agent
-  should stop and let the person review it in Runyte. Approval inserts text
-  without Enter; submitting is a separate human action. Status and cancellation
+- `propose_terminal_text` accepts one line and returns immediately. Normally it
+  returns `pending`: the agent should stop and let the person review it in
+  Runyte. If the person granted direct insertion (`5`) and the terminal has
+  bracketed paste on, as shells and agent prompts do, it returns `queued` and
+  the text is typed in as a paste without review; other terminals still get a
+  review. Through tmux, zellij or screen the paste mode is the multiplexer's, so
+  the person should not grant `5` there. Either way it is inserted without
+  Enter, and submitting is a separate human action. Status and cancellation
   tools operate on the returned proposal handle. Do not poll for approval.
 
 Handles belong to one MCP process and one connection generation. They cannot

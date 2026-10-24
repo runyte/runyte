@@ -5866,7 +5866,8 @@ connected reader identifies a local connection, not a verified agent process.
 | `1` | Read terminal output |
 | `2` | Editor-context read permission; MCP exposes buffer reads |
 | `3` | Edit and append to buffers; also enables buffer reads |
-| `4` | Propose terminal text; also enables terminal reads |
+| `4` | Propose terminal text for review; also enables terminal reads |
+| `5` | Skip review: insert proposed text directly, still without Enter; also enables `4` and `1` |
 | `r` | Remember this exact workspace's grant |
 | `n` | Next known identity; discards unapplied choices |
 | `x` | Revoke the selected identity immediately |
@@ -5874,15 +5875,35 @@ connected reader identifies a local connection, not a verified agent process.
 | `Tab` then Enter | Select **Apply permissions** and apply |
 | `Esc` | Close without applying |
 
-Turning off a read permission also turns off its dependent write permission.
+Turning off a permission also turns off the ones that need it: turning off
+terminal reads turns off proposals and direct insertion.
 The remembered checkbox reflects the current grant when reopened. Without it,
 the grant lasts until the owning editor or persistent host exits. Applying a
 change disconnects existing readers, so agents must rediscover their targets.
 
 Granting, changing, and revoking need physical input from the active Runyte
 frontend. Repeated input, pasted text, macros, and MCP clients cannot approve
-access or terminal text. Each terminal proposal still needs its own native
-approval and inserts text **without Enter**.
+access or terminal text. Each terminal proposal needs its own native approval
+unless the grant includes `5`, and text is always inserted **without Enter**.
+
+**Skipping review (`5`).** With direct insertion granted, a proposal for a
+terminal that has bracketed paste on, as shells and agent prompts do, is typed
+in as a paste as soon as it arrives, behind any text already queued there, and a
+notification records which identity inserted how many characters into which
+terminal. The text still cannot contain line breaks or control characters, and
+Enter is never sent. A terminal whose program has not turned on bracketed paste,
+such as a pager, a single-key prompt or an editor in normal mode, would read the
+text as keystrokes, so its proposals are still reviewed. Runyte sees only the
+terminal's own mode, so inside tmux, zellij or screen, which turn bracketed
+paste on for themselves and pass text to the pane as keystrokes when its program
+did not ask for paste, this check does not protect you: do not grant `5` to
+agents that type into a multiplexer. Even as a paste, text lands in whatever
+input is open, so grant it only to agents you trust, in workspaces where you
+expect them to type. The notifications are a recent record, not an audit log:
+they share the bounded notification history. A Runyte release that predates this
+permission reads a grant containing it as invalid and, because it stops at that
+record, ignores every remembered grant in that workspace until the grant is
+applied again or revoked.
 
 The server works with ide-mode and mux-mode workspaces on Linux, macOS,
 and Windows. Detached hosts support content reads and buffer edits, but cannot
@@ -5928,8 +5949,8 @@ cache.
 - These are the nine MCP tools. Pane listing, selection and viewport reads,
   and immutable snapshots are not exposed by the MCP adapter.
 - Granted detached persistent workspaces and running ide-mode editors are
-  discoverable without attaching a TUI or changing focus. Terminal approval
-  needs an attached native frontend.
+  discoverable without attaching a TUI or changing focus. Terminal approval,
+  and direct insertion, need an attached native frontend.
 - After permission changes, run `find_resources` again. Handles belong to one
   MCP process and connection generation; they expire on revocation, connection
   renewal, eviction, or host restart. Never retry an `outcome_unknown` mutation

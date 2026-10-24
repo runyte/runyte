@@ -325,7 +325,7 @@ async fn expired_queued_and_writing_proposals_stop_delivery_polling() {
     let terminal = host.app.terminals.insert_test_session(20, 3);
     for writing in [false, true] {
         let id = host
-            .context_propose(owner, terminal, "literal", None)
+            .context_propose(owner, terminal, "literal", None, None)
             .unwrap()["proposal"]
             .as_str()
             .unwrap()

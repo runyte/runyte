@@ -1856,13 +1856,39 @@ impl TerminalSession {
     }
 
     /// Native approval alone may call this after checking the captured target,
-    /// grant, and input signature. It does not change native presentation state.
+    /// grant, and input signature. Like typing, the approval supersedes text
+    /// still queued. It does not change native presentation state.
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn enqueue_proposal(
         &mut self,
         text: &proposal::Text,
     ) -> std::io::Result<proposal::Delivery> {
         self.note_input_intent();
+        self.queue_proposal(text)
+    }
+
+    /// For a grant that skips review, checked by the caller: the text joins
+    /// the queue behind whatever is already there, so one agent's insertion
+    /// never cancels another's. It still changes the input line, so a review
+    /// captured before it goes stale.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn append_proposal(
+        &mut self,
+        text: &proposal::Text,
+    ) -> std::io::Result<proposal::Delivery> {
+        self.input_generation = self.input_generation.wrapping_add(1);
+        self.queue_proposal(text)
+    }
+
+    fn queue_proposal(&mut self, text: &proposal::Text) -> std::io::Result<proposal::Delivery> {
+        // Insertions without review supersede nothing, so finished records
+        // would otherwise accumulate until the person next types.
+        self.proposal_deliveries.retain(|delivery| {
+            matches!(
+                delivery.state(),
+                proposal::DeliveryState::Queued | proposal::DeliveryState::Writing
+            )
+        });
         self.sent_text = None;
         if !self.live() {
             return Err(std::io::Error::new(

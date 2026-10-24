@@ -23,6 +23,7 @@ struct State {
     exhaust_inventory: Option<String>,
     extra_terminals: Vec<Value>,
     unnumbered: bool,
+    direct_insert: bool,
 }
 struct Host {
     _temp: crate::test_support::TestRuntimeRoot,
@@ -190,7 +191,9 @@ impl Host {
                                         json!({"buffer":"native:b","revision":format!("r:{}",s.revision)})
                                     }
                                     "terminal.input.propose" => {
-                                        json!({"proposal":"native:i","state":"pending"})
+                                        let state =
+                                            if s.direct_insert { "queued" } else { "pending" };
+                                        json!({"proposal":"native:i","state":state})
                                     }
                                     "terminal.input.status" => {
                                         json!({"proposal":"native:i","state":"pending"})
@@ -708,4 +711,39 @@ async fn terminal_number_finds_the_titled_terminal_on_any_page_without_reading_o
             .unwrap()
             .contains("does not report terminal numbers")
     );
+}
+
+#[tokio::test]
+async fn proposal_guidance_follows_whether_the_person_skipped_review() {
+    let host = Host::new();
+    let mut bridge = host.bridge();
+    let found = bridge
+        .call("find_resources", json!({"kind":"terminal"}))
+        .await
+        .unwrap();
+    let terminal = handle(&found, "terminal");
+    let reviewed = bridge
+        .call(
+            "propose_terminal_text",
+            json!({"terminal":terminal,"text":"ls"}),
+        )
+        .await
+        .unwrap();
+    assert!(
+        reviewed["next_step"]
+            .as_str()
+            .unwrap()
+            .starts_with("Waiting for approval")
+    );
+    host.state.lock().unwrap().direct_insert = true;
+    let direct = bridge
+        .call(
+            "propose_terminal_text",
+            json!({"terminal":terminal,"text":"ls"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(direct["data"]["state"], "queued");
+    let next = direct["next_step"].as_str().unwrap();
+    assert!(next.contains("without review") && next.contains("Enter was not sent"));
 }

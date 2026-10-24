@@ -78,6 +78,20 @@ rejected, including inside parameters, changes and registration lists.
 | `buffer_edit` | `buffer.edit`, `buffer.append`; requires `editor_context_read` |
 | `terminal_propose` | `terminal.input.propose/status/cancel`; requires `terminal_read` |
 
+A grant may also hold `terminal_insert`, which requires `terminal_propose`. It
+is a setting of the person's grant, not a capability: readers never request it,
+and registration rejects it like any unknown name. While a reader's grant holds
+it and the target terminal has bracketed paste enabled, `terminal.input.propose`
+skips native review and answers `queued` instead of `pending`. A terminal whose
+program has not enabled bracketed paste (a pager, a single-key prompt, an editor
+in normal mode) would read the text as keystrokes, so its proposals are still
+reviewed. The host sees only the terminal's mode: a multiplexer such as tmux
+enables bracketed paste for itself and strips the framing for a pane whose
+program did not ask for it, so the gate does not hold through a multiplexer. The
+text is never followed by Enter, an attached frontend is still required, and a
+direct insertion queues behind other text rather than cancelling it. A reader
+learns which path a proposal took only from its state.
+
 `pane.viewport.read` additionally requires `terminal_read` whenever the target
 pane displays a live terminal or its frozen review. Editor read permission alone
 never exposes terminal text. Pane inventory with editor read permission omits
@@ -91,7 +105,7 @@ Error codes retain the [application contract](../plugins.md) meanings. In
 particular, missing authority, stale state, closed resources, unavailable
 frontends, limits and unknown delivery outcomes are errors, not empty text.
 
-There is no method for direct terminal input, keys, submitting, approving a
+There is no method for raw terminal input, keys, submitting, approving a
 proposal, saving a buffer, opening resources, executing commands, changing
 selection/focus or changing grants. A `submit` or approval flag is invalid on
 every request. The host checks the method allowlist even if a client declares
@@ -191,11 +205,13 @@ acknowledgement is lost is uncertain and must not be retried automatically.
 
 ## Terminal proposals and revocation
 
-Proposing text does not write terminal input. A native overlay identifies the
-reader, exact workspace, terminal and exact proposed text. Each proposal needs
-one physical native **Insert text** action; **Reject** writes nothing. Insertion
-does not append Enter. Enter used to approve the overlay is consumed by the
-overlay. The person submits separately in the terminal.
+Proposing text does not by itself write terminal input. A native overlay
+identifies the reader, exact workspace, terminal and exact proposed text. Each
+proposal needs one physical native **Insert text** action; **Reject** writes
+nothing. The one exception is a grant holding `terminal_insert` while the target
+terminal has bracketed paste enabled, described under the scopes above.
+Insertion never appends Enter. Enter used to approve the overlay is consumed by
+the overlay. The person submits separately in the terminal.
 
 Only one nonempty line of at most 4 KiB is accepted. CR, LF, C0/C1 controls,
 DEL, Unicode line/paragraph separators and escape sequences are rejected as
@@ -209,6 +225,9 @@ expire after two minutes. Presentation captures terminal input generation and
 input modes. Approval rechecks these, live grant generation, target incarnation
 and physical frontend ownership. Intervening input requires fresh review.
 Existing prompts are not interrupted, and detached hosts cannot approve.
+Under direct insertion a proposal skips presentation and enters the delivery
+queue as soon as it is admitted; it counts against the same limits, and the
+host records it in a notification naming the identity and terminal.
 Disconnect, terminal exit/close, attachment loss and revocation cancel pending
 proposals. A bounded non-interleaved queue supports cancellation before writing
 starts. Partial delivery or lost acknowledgements is uncertain and is never

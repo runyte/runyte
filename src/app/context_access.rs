@@ -145,6 +145,44 @@ pub(crate) struct ReviewLine {
     pub tone: Tone,
 }
 
+/// The grant toggles in key order: `1` is the first.
+const SCOPES: [Scope; 5] = [
+    Scope::TerminalRead,
+    Scope::EditorContextRead,
+    Scope::BufferEdit,
+    Scope::TerminalPropose,
+    Scope::TerminalInsert,
+];
+
+/// The scope another one needs. Turning a scope on turns on what it needs,
+/// and turning one off turns off what needs it, so a grant is always valid.
+fn prerequisite(scope: Scope) -> Option<Scope> {
+    match scope {
+        Scope::BufferEdit => Some(Scope::EditorContextRead),
+        Scope::TerminalPropose => Some(Scope::TerminalRead),
+        Scope::TerminalInsert => Some(Scope::TerminalPropose),
+        Scope::TerminalRead | Scope::EditorContextRead => None,
+    }
+}
+
+fn toggle(scopes: &mut BTreeSet<Scope>, scope: Scope) {
+    if scopes.remove(&scope) {
+        while let Some(orphan) = scopes
+            .iter()
+            .copied()
+            .find(|s| prerequisite(*s).is_some_and(|needed| !scopes.contains(&needed)))
+        {
+            scopes.remove(&orphan);
+        }
+    } else {
+        let mut next = Some(scope);
+        while let Some(scope) = next {
+            scopes.insert(scope);
+            next = prerequisite(scope);
+        }
+    }
+}
+
 /// Width of the label column, which holds the longest label and a gap.
 const LABEL_WIDTH: usize = 11;
 /// Width a value wraps at. With the label column and the selection gutter it
@@ -273,14 +311,16 @@ impl Surface {
             pending_g: false,
         }
     }
-    /// Lines in view for an editor area `height` rows tall: everything but
-    /// the border, the position row, the choices, and room for a two-row
-    /// message. A grant also lists its scopes above the lines. At the
-    /// smallest approving area a proposal shows 14 lines and a grant 8, and
-    /// a taller editor shows more, so a long prompt reads in fewer screens.
+    /// Lines in view for an overlay that may use `height` rows, the editor
+    /// area less any session strip: everything but the border, the position
+    /// row, the choices, and room for a two-row message. A grant also lists
+    /// its scopes above the lines. At the smallest approving area a proposal
+    /// shows 14 lines and a grant 7, one fewer of each beside the session
+    /// strip, and a taller editor shows more, so a long prompt reads in fewer
+    /// screens.
     pub(crate) fn view_rows(&self, height: u16) -> usize {
         let chrome = match self.kind {
-            Kind::Grant { .. } => 14,
+            Kind::Grant { .. } => 15,
             Kind::Proposal { .. } => 8,
         };
         usize::from(height).saturating_sub(chrome).max(1)
@@ -465,36 +505,9 @@ impl App {
                     return;
                 }
             }
-            KeyCode::Char(character @ '1'..='4') => {
+            KeyCode::Char(character @ '1'..='5') => {
                 if let Kind::Grant { scopes, .. } = &mut surface.kind {
-                    let scope = [
-                        Scope::TerminalRead,
-                        Scope::EditorContextRead,
-                        Scope::BufferEdit,
-                        Scope::TerminalPropose,
-                    ][character as usize - '1' as usize];
-                    if !scopes.remove(&scope) {
-                        scopes.insert(scope);
-                        match scope {
-                            Scope::BufferEdit => {
-                                scopes.insert(Scope::EditorContextRead);
-                            }
-                            Scope::TerminalPropose => {
-                                scopes.insert(Scope::TerminalRead);
-                            }
-                            _ => {}
-                        }
-                    } else {
-                        match scope {
-                            Scope::EditorContextRead => {
-                                scopes.remove(&Scope::BufferEdit);
-                            }
-                            Scope::TerminalRead => {
-                                scopes.remove(&Scope::TerminalPropose);
-                            }
-                            _ => {}
-                        }
-                    }
+                    toggle(scopes, SCOPES[character as usize - '1' as usize]);
                 }
             }
             KeyCode::Enter if approval => {
@@ -533,15 +546,7 @@ impl App {
             scopes, remember, ..
         } = &surface.kind
         {
-            for (index, scope) in [
-                Scope::TerminalRead,
-                Scope::EditorContextRead,
-                Scope::BufferEdit,
-                Scope::TerminalPropose,
-            ]
-            .iter()
-            .enumerate()
-            {
+            for (index, scope) in SCOPES.iter().enumerate() {
                 rows.push(review_row(
                     format!(
                         "{} [{}] {}",
@@ -551,7 +556,9 @@ impl App {
                             Scope::TerminalRead => "Read terminal output",
                             Scope::EditorContextRead => "Read buffers and selections",
                             Scope::BufferEdit => "Edit and append to buffers",
-                            Scope::TerminalPropose => "Propose terminal text (approval each time)",
+                            Scope::TerminalPropose => "Propose terminal text for review",
+                            Scope::TerminalInsert =>
+                                "Skip review: insert proposals directly (no Enter)",
                         }
                     ),
                     Vec::new(),

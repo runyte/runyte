@@ -82,6 +82,12 @@ pub enum Scope {
     EditorContextRead,
     BufferEdit,
     TerminalPropose,
+    /// A grant setting rather than a capability a reader negotiates: a host
+    /// whose grant holds it inserts proposed text without native review. It
+    /// changes nothing on the wire, so clients and hosts of other releases
+    /// keep talking to each other, and a reader learns of it from a proposal
+    /// that is already `queued` rather than `pending`. Enter is never sent.
+    TerminalInsert,
 }
 
 impl Scope {
@@ -91,6 +97,7 @@ impl Scope {
             Self::EditorContextRead => "editor_context_read",
             Self::BufferEdit => "buffer_edit",
             Self::TerminalPropose => "terminal_propose",
+            Self::TerminalInsert => "terminal_insert",
         }
     }
     pub fn from_capability(value: &str) -> Option<Self> {
@@ -99,6 +106,7 @@ impl Scope {
             "editor_context_read" => Some(Self::EditorContextRead),
             "buffer_edit" => Some(Self::BufferEdit),
             "terminal_propose" => Some(Self::TerminalPropose),
+            // Never negotiated; see `TerminalInsert`.
             _ => None,
         }
     }
@@ -107,6 +115,7 @@ impl Scope {
 pub fn validate_scopes(scopes: &BTreeSet<Scope>) -> Result<(), Error> {
     if (scopes.contains(&Scope::BufferEdit) && !scopes.contains(&Scope::EditorContextRead))
         || (scopes.contains(&Scope::TerminalPropose) && !scopes.contains(&Scope::TerminalRead))
+        || (scopes.contains(&Scope::TerminalInsert) && !scopes.contains(&Scope::TerminalPropose))
     {
         return Err(Error::new(
             ErrorCode::CapabilityDenied,

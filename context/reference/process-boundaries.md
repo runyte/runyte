@@ -70,7 +70,9 @@ pipe, enabled by a native grant for an exact workspace. It negotiates the
 feature; ordinary plugin grants cannot authorize it.
 
 The host checks peer ownership, credentials and granted scopes for reads,
-revision-checked buffer edits and individually approved terminal text proposals.
+revision-checked buffer edits and terminal text proposals, individually
+approved unless the grant includes direct insertion (`terminal_insert`, a grant
+setting that is never negotiated).
 Terminal insertion never submits Enter. Grants and approvals remain native
 editor actions. Frames are at most 2 MiB; readers, outstanding requests,
 snapshots, retained bytes and proposals have independent quotas.

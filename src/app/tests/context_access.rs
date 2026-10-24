@@ -459,6 +459,50 @@ fn mcp_scope_toggles_keep_prerequisites_and_cycle_identity_without_granting() {
 }
 
 #[test]
+fn skipping_review_brings_its_prerequisites_and_leaves_with_them() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.context_ui.surface = Some(Surface::new(
+        Kind::Grant {
+            identity: "agent".into(),
+            scopes: BTreeSet::new(),
+            remember: false,
+        },
+        "MCP permissions".into(),
+        vec![],
+        "",
+        app.plugins.attachment_generation,
+    ));
+    let scopes = |app: &App| match &app.context_ui.surface.as_ref().unwrap().kind {
+        Kind::Grant { scopes, .. } => scopes.clone(),
+        Kind::Proposal { .. } => unreachable!(),
+    };
+    press(&mut app, KeyCode::Char('5'));
+    assert_eq!(
+        scopes(&app),
+        BTreeSet::from([
+            Scope::TerminalRead,
+            Scope::TerminalPropose,
+            Scope::TerminalInsert
+        ])
+    );
+    assert!(
+        app.context_overlay()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.label == "5 [x] Skip review: insert proposals directly (no Enter)")
+    );
+    press(&mut app, KeyCode::Char('4'));
+    assert_eq!(scopes(&app), BTreeSet::from([Scope::TerminalRead]));
+    press(&mut app, KeyCode::Char('5'));
+    press(&mut app, KeyCode::Char('1'));
+    assert!(
+        scopes(&app).is_empty(),
+        "reading is what everything else needs"
+    );
+}
+
+#[test]
 fn a_pending_g_is_spent_on_the_next_input_and_otherwise_cancels() {
     let mut app = proposal(&"x".repeat(64 * 40), vec![]);
     let top = |app: &App| app.context_ui.surface.as_ref().unwrap().top;
