@@ -732,6 +732,29 @@ impl WorkspaceHost {
         }
     }
 
+    /// Checks all host-owned work before an attached quit may destroy state.
+    /// Only the explicit terminal-terminating request permits ending children.
+    pub(crate) fn prepare_attached_quit(
+        &mut self,
+        force: bool,
+        terminate_terminals: bool,
+    ) -> Result<(), ProtectedHostState> {
+        let mut protected = self.protected_state();
+        if force {
+            protected.unsaved_buffers = 0;
+        }
+        if terminate_terminals {
+            protected.live_terminals = 0;
+        }
+        if !protected.is_empty() {
+            return Err(protected);
+        }
+        if terminate_terminals {
+            self.app.terminals.close_all();
+        }
+        Ok(())
+    }
+
     /// Whether an unattached persistent host may retire without losing work
     /// or abandoning a caller waiting for a buffer.
     pub fn may_retire_idle(&self) -> bool {
@@ -3379,6 +3402,39 @@ mod tests {
                 reason: "cancelled in test".to_owned()
             })
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn terminating_quit_checks_host_protection_before_ending_terminals() {
+        let root = std::env::temp_dir().join(format!(
+            "runyte-host-quit-{}-{}",
+            std::process::id(),
+            unique_test_id()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("note.txt");
+        std::fs::write(&path, "base").unwrap();
+        let mut host = host();
+        let id = host.app.terminals.insert_test_session(80, 24);
+        let (token, buffers) = host.create_wait_request([path], false).unwrap();
+        assert_eq!(
+            host.prepare_attached_quit(true, true)
+                .unwrap_err()
+                .pending_wait_requests,
+            1
+        );
+        assert!(host.app.terminals.get(id).unwrap().live());
+        host.complete_wait_buffer(token, buffers[0]).unwrap();
+        assert_eq!(
+            host.prepare_attached_quit(true, false)
+                .unwrap_err()
+                .live_terminals,
+            1
+        );
+        assert!(host.app.terminals.get(id).unwrap().live());
+        host.prepare_attached_quit(true, true).unwrap();
+        assert!(host.app.terminals.is_empty());
         std::fs::remove_dir_all(root).unwrap();
     }
 

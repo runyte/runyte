@@ -5039,6 +5039,15 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
 /// several visits share a catalog timestamp. Detach still exits immediately.
 #[tokio::test]
 async fn quitting_last_panes_returns_through_successful_sessions_and_detach_exits() {
+    quit_return_scenario(false).await;
+}
+
+#[tokio::test]
+async fn double_force_quit_terminates_only_current_session_and_returns_to_previous() {
+    quit_return_scenario(true).await;
+}
+
+async fn quit_return_scenario(terminate: bool) {
     let root = project();
     let runtime = TestRuntimeRoot::new("quit-return").unwrap();
     let cache = runtime.create_private_dir("cache").unwrap();
@@ -5099,9 +5108,12 @@ async fn quitting_last_panes_returns_through_successful_sessions_and_detach_exit
         )
         .await;
         wait_for_terminal_screen(&output, &format!("session-{index}-ready.txt")).await;
+        if terminate {
+            prepare_force_quit_terminals(&mut terminal, &output, &roots[index]).await;
+        }
     }
     for index in (1..3).rev() {
-        type_colon_command(&mut terminal, "q");
+        type_colon_command(&mut terminal, if terminate { "qa!!" } else { "q" });
         wait_for_interactive_attachment(
             &mut controls[index - 1],
             client.0.as_mut().unwrap(),
@@ -5113,6 +5125,12 @@ async fn quitting_last_panes_returns_through_successful_sessions_and_detach_exit
         wait_for_terminal_screen(&output, &format!("session-{}-ready.txt", index - 1)).await;
         assert!(wait_child(hosts[index].0.as_mut().unwrap()).await.success());
         hosts[index].0.take().unwrap().wait().unwrap();
+        if terminate {
+            assert_force_quit_processes(&roots[index], false);
+            for directory in &roots[..index] {
+                assert_force_quit_processes(directory, true);
+            }
+        }
     }
     type_colon_command(&mut terminal, "detach");
     assert!(wait_child(client.0.as_mut().unwrap()).await.success());
@@ -5138,7 +5156,7 @@ async fn quitting_last_panes_returns_through_successful_sessions_and_detach_exit
     )
     .await;
     wait_for_terminal_screen(&output, "session-0-ready.txt").await;
-    type_colon_command(&mut terminal, "q");
+    type_colon_command(&mut terminal, if terminate { "quit-all!!" } else { "q" });
     assert!(wait_child(client.0.as_mut().unwrap()).await.success());
     client.0.take().unwrap().wait().unwrap();
     assert!(wait_child(hosts[0].0.as_mut().unwrap()).await.success());
@@ -6114,4 +6132,73 @@ fn media_protocol_bounds_and_page_changes_require_complete_frames() {
         .validate()
         .is_ok()
     );
+}
+
+async fn prepare_force_quit_terminals(
+    terminal: &mut File,
+    output: &SharedTerminalCapture,
+    root: &Path,
+) {
+    type_colon_command(terminal, "vsplit");
+    for index in 0..2 {
+        let script = format!(
+            "printf '%s' \"$$\" > {}; printf 'force-quit-ready-{index}\\n'; read line",
+            parent_shell_quote(&root.join(format!("force-quit-{index}.pid")))
+        );
+        type_colon_command(
+            terminal,
+            &format!(
+                "terminal /bin/sh -c {}",
+                parent_shell_quote(Path::new(&script))
+            ),
+        );
+        wait_for_terminal_screen(output, &format!("force-quit-ready-{index}")).await;
+        std::io::Write::write_all(terminal, b"\x1c").unwrap();
+        std::io::Write::flush(terminal).unwrap();
+        wait_for_terminal_screen(output, " NOR ").await;
+    }
+    type_colon_command(terminal, "buffer-new");
+    wait_for_terminal_screen(output, "[scratch]").await;
+    std::io::Write::write_all(terminal, b"iunsaved-force-quit\x1b").unwrap();
+    std::io::Write::flush(terminal).unwrap();
+    wait_for_terminal_screen(output, "unsaved-force-quit").await;
+    assert_force_quit_processes(root, true);
+}
+
+fn assert_force_quit_processes(root: &Path, running: bool) {
+    for index in 0..2 {
+        let pid: u32 = fs::read_to_string(root.join(format!("force-quit-{index}.pid")))
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(
+            process_is_running(pid),
+            running,
+            "terminal {index}, pid {pid}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn double_force_quit_ends_standalone_terminal_processes() {
+    let root = project();
+    let config = default_config(&root);
+    let (child, mut terminal) = spawn_in_pty(
+        bundled_runyte()
+            .args(["--ide", "--config"])
+            .arg(config)
+            .arg("note.txt")
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    );
+    let mut child = ChildGuard(Some(child));
+    let output = capture_terminal_output(&terminal);
+    wait_for_terminal_screen(&output, "note.txt").await;
+    prepare_force_quit_terminals(&mut terminal, &output, &root).await;
+    type_colon_command(&mut terminal, "quit-all!!");
+    assert!(wait_child(child.0.as_mut().unwrap()).await.success());
+    child.0.take();
+    assert_force_quit_processes(&root, false);
+    fs::remove_dir_all(root).unwrap();
 }

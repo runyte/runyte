@@ -1887,6 +1887,7 @@ Opening one asks which program should have it instead of loading it as text.
 | `:window-close` or `:wc` | Close the active pane, but refuse the last pane |
 | `:quit[!]` or `:q[!]` | Close the active pane and its uniquely displayed buffer; from the last pane, exit ide mode or stop the persistent session and return to a previous running session, with unsaved-change protection |
 | `:quit-all[!]` or `:qa[!]` | Exit ide mode or stop the persistent session and return to a previous running session regardless of pane count, with unsaved-change protection; never terminate terminals |
+| `:quit-all!!` or `:qa!!` | Discard unsaved buffers, terminate this workspace’s terminal processes, and quit or stop its persistent session; return to a previous running session when available |
 | `:quit-here[!]` or `:qh[!]` | Quit and let the shell wrapper change to the active explorer/file directory |
 | `:write-quit` (`:wq`) | Save, then close the pane or quit from the last one |
 
@@ -1894,7 +1895,7 @@ Opening one asks which program should have it instead of loading it as text.
   own most recently used live buffer, or a scratch buffer when none remains.
 - Quitting in mux mode is described under
   [Quitting and detaching](#quitting-and-detaching).
-- Neither `:close[!]` nor any `:quit…` command ends a terminal session; see
+- Only `:quit-all!!` (`:qa!!`) ends terminals as part of quitting; see
   [Managing terminal sessions](#managing-terminal-sessions).
 
 ### The Finder
@@ -3022,9 +3023,10 @@ preview keeps the child's cursor row visible. `Ctrl-t` toggles it.
 | **Create** (Tab) | Start a new terminal |
 
 **Ending a program is always explicit:** type `exit` in it, or choose Close or
-Force kill. Neither `:close[!]` nor any `:quit…` command ends a terminal, and
-every quit spelling, `!` included, refuses while any terminal is running,
-pointing to `:terminals`.
+Force kill, or use `:quit-all!!` (`:qa!!`) to terminate this workspace’s terminal
+processes, discard unsaved buffers, and quit. Ordinary quit spellings, including
+`:qa!`, refuse while terminals run. Pending plugin writes and activity still
+protect against quitting; finish those operations or stop their owner first.
 
 **Other commands:**
 
@@ -3065,8 +3067,8 @@ Sessions live as long as the workspace-host process that owns them:
 | Reattaching | Machine failure |
 
 `:detach` leaves persistent terminal children running without signalling them.
-In ide and mux modes alike, quitting refuses while a terminal
-runs.
+In ide and mux modes alike, ordinary quitting refuses while a terminal
+runs; `:qa!!` explicitly terminates this workspace’s terminal processes.
 
 ### Emulation and limits
 
@@ -5542,6 +5544,7 @@ The working directory starts where Runyte was launched.
 | `:quit!` | `q!` | Discard its unique buffer, or force quit from the last pane |
 | `:quit-all` | `qa` | Quit safely regardless of pane count, without ending terminals |
 | `:quit-all!` | `qa!` | Discard buffer changes and quit, without ending terminals |
+| `:quit-all!!` | `qa!!` | Discard buffer changes, terminate this workspace’s terminals and quit |
 | `:quit-here` | `qh` | Quit and return the shell to the active directory |
 | `:quit-here!` | `qh!` | Discard changes, quit, and return there |
 | `:write-quit` | `wq` | Save, then close the pane or quit from the last one |
@@ -7572,6 +7575,7 @@ with `{ command: name, argument: text }`.
 | `quit!` | `quit!` | Discard a unique buffer and close its pane, or force quit from the last pane |
 | `quit-all` | `quit-all` | Quit if all buffers are saved and no terminal is running |
 | `quit-all!` | `quit-all!` | Quit and discard unsaved buffers, but never terminate terminals |
+| `quit-all!!` | `quit-all!!` | Discard unsaved buffers, terminate this workspace’s terminals and quit |
 | `quit-here` | `quit-here` | Quit and hand the active directory to the shell wrapper |
 | `quit-here!` | `quit-here!` | Discard changes, quit, and hand the active directory to the shell wrapper |
 | `reload` | `reload` | Reload the active view |

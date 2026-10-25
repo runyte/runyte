@@ -559,13 +559,19 @@ impl Clients {
                 self.disconnected(host, id);
                 false
             }
-            crate::app::PersistentExitRequest::Quit { force } => {
+            request @ (crate::app::PersistentExitRequest::Quit { .. }
+            | crate::app::PersistentExitRequest::QuitTerminatingTerminals) => {
                 self.finish_active_waits(host, id);
-                let mut protected = host.protected_state();
-                if force {
-                    protected.unsaved_buffers = 0;
-                }
-                if !protected.is_empty() {
+                let terminate = matches!(
+                    request,
+                    crate::app::PersistentExitRequest::QuitTerminatingTerminals
+                );
+                let force = terminate
+                    || matches!(
+                        request,
+                        crate::app::PersistentExitRequest::Quit { force: true }
+                    );
+                if let Err(protected) = host.prepare_attached_quit(force, terminate) {
                     host.report_host_error(format!("cannot quit persistent session: {}; finish or close that state, or use :detach", protected.refusal()));
                     self.publish_requested = true;
                     return false;

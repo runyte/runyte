@@ -58,6 +58,8 @@ fn activity_health_protects_every_global_quit_and_force_discard_spelling() {
                 "qa",
                 "quit-all!",
                 "qa!",
+                "quit-all!!",
+                "qa!!",
                 "quit-here",
                 "qh",
                 "quit-here!",

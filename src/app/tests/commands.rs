@@ -4190,3 +4190,36 @@ fn the_terminal_list_puts_running_sessions_first_and_dims_the_exited_ones() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn double_force_quit_discards_buffers_and_ends_only_its_own_terminals() {
+    for persistent in [false, true] {
+        for command in ["qa!!", "quit-all!!"] {
+            let mut other = App::new(Config::default(), None).unwrap();
+            let other_terminal = other.terminals.insert_test_session(80, 24);
+            let mut app = App::new(Config::default(), None).unwrap();
+            app.persistent_session = persistent;
+            app.execute_command("vsplit").unwrap();
+            app.terminals.insert_test_session(80, 24);
+            app.terminals.insert_test_session(80, 24);
+            let buffer = app.active().buffer;
+            app.buffers[buffer].apply(&Transaction::insert(0, "unsaved"));
+            app.execute_command("qa").unwrap();
+            assert!(!app.should_quit);
+            app.execute_command("qa!").unwrap();
+            assert!(!app.should_quit);
+            assert_eq!(app.terminals.iter().count(), 2);
+            assert!(app.status.contains(":qa!!"));
+            assert!(app.status.contains("terminate terminal processes"));
+            app.execute_command(command).unwrap();
+            assert!(app.should_quit);
+            assert_eq!(app.terminals.iter().count(), if persistent { 2 } else { 0 });
+            assert_eq!(
+                app.take_persistent_exit_request(),
+                Some(PersistentExitRequest::QuitTerminatingTerminals)
+            );
+            assert!(other.terminals.get(other_terminal).unwrap().live());
+            assert!(!other.should_quit);
+        }
+    }
+}

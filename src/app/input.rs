@@ -6662,6 +6662,10 @@ impl App {
                 self.request_quit(true, ":qa!");
                 Ok(())
             }
+            (Colon::TerminateQuitAll, InvocationParameters::None) => {
+                self.request_quit_terminating_terminals();
+                Ok(())
+            }
             (Colon::QuitHere, InvocationParameters::None) => {
                 self.request_quit_here(false);
                 Ok(())

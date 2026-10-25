@@ -33,6 +33,8 @@ fn pending_document_write_refuses_every_global_quit_spelling_even_when_clean() {
             "qa",
             "quit-all!",
             "qa!",
+            "quit-all!!",
+            "qa!!",
             "quit-here",
             "qh",
             "quit-here!",

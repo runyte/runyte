@@ -3530,8 +3530,16 @@ async fn run_host_server(
                     last_detached = Instant::now();
                     changed = false;
                 }
+                PersistentExitRequest::QuitTerminatingTerminals => {
+                    if finish_attached_quit(&mut host, &mut active, true, true) {
+                        shutting_down = true;
+                        changed = false;
+                    } else {
+                        changed = true;
+                    }
+                }
                 PersistentExitRequest::Quit { force } => {
-                    if finish_attached_quit(&mut host, &mut active, force) {
+                    if finish_attached_quit(&mut host, &mut active, force, false) {
                         shutting_down = true;
                         changed = false;
                     } else {
@@ -4013,13 +4021,10 @@ fn finish_attached_quit(
     host: &mut WorkspaceHost,
     active: &mut Option<AttachedClient>,
     force: bool,
+    terminate_terminals: bool,
 ) -> bool {
     complete_attached_waits(host, active);
-    let mut protected = host.protected_state();
-    if force {
-        protected.unsaved_buffers = 0;
-    }
-    if !protected.is_empty() {
+    if let Err(protected) = host.prepare_attached_quit(force, terminate_terminals) {
         host.report_host_error(format!(
             "cannot quit persistent session: {}; finish or close that state, or use :detach to leave the session running",
             protected.refusal()

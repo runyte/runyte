@@ -821,6 +821,22 @@ impl App {
         }
     }
 
+    /// Explicitly ends this workspace's terminal sessions through the same
+    /// cleanup used by editor shutdown, then follows the ordinary quit path.
+    pub(super) fn request_quit_terminating_terminals(&mut self) {
+        if self.quit_allowed_with_terminals(true, ":qa!!", true) {
+            // A persistent host checks its additional protected work before
+            // performing teardown. Standalone mode has only the App guards.
+            if !self.persistent_session {
+                self.terminals.close_all();
+            }
+            self.quit_directory = None;
+            self.persistent_exit_request =
+                Some(super::PersistentExitRequest::QuitTerminatingTerminals);
+            self.should_quit = true;
+        }
+    }
+
     /// Leaves a persistent client without applying editor-exit guards.
     ///
     /// The host retains the complete editor state, so dirty buffers and live
@@ -976,6 +992,15 @@ impl App {
     }
 
     fn quit_allowed(&mut self, force: bool, force_command: &str) -> bool {
+        self.quit_allowed_with_terminals(force, force_command, false)
+    }
+
+    fn quit_allowed_with_terminals(
+        &mut self,
+        force: bool,
+        force_command: &str,
+        terminate_terminals: bool,
+    ) -> bool {
         let detach_hint = if self.persistent_session {
             "; use :detach to leave the work running"
         } else {
@@ -1004,18 +1029,17 @@ impl App {
             );
             return false;
         }
-        // A terminal can only be ended by its child or the terminal manager.
-        // `:detach` bypasses this guard because it leaves the host alive, but
-        // every quit spelling ends its owner in either deployment mode.
+        // Only the explicit double-force spelling authorizes terminating
+        // terminal processes. Detach leaves their host alive.
         let running = self
             .terminals
             .iter()
             .filter(|session| session.live())
             .count();
-        if running > 0 {
+        if running > 0 && !terminate_terminals {
             let plural = if running == 1 { "" } else { "s" };
             self.action_failed(format!(
-                "{running} terminal{plural} still running; close {} in :terminals before quitting",
+                "{running} terminal{plural} still running; close {} in :terminals, or use :qa!! to terminate terminal processes and discard unsaved changes",
                 if running == 1 { "it" } else { "them" }
             ));
             return false;

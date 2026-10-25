@@ -2859,6 +2859,7 @@ pub struct DestinationVisit {
 pub enum PersistentExitRequest {
     Detach,
     Quit { force: bool },
+    QuitTerminatingTerminals,
 }
 
 pub struct App {
