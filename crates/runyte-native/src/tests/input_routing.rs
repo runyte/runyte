@@ -2,6 +2,21 @@
 use super::*;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+#[test]
+fn review_overlay_claims_wheel_input_above_native_media() {
+    let overlays = [runyte::layout::Rect {
+        x: 20,
+        y: 12,
+        width: 160,
+        height: 36,
+    }];
+    assert!(overlay_owns_scroll(&overlays, 20.0, 12.0));
+    assert!(overlay_owns_scroll(&overlays, 179.9, 47.9));
+    assert!(!overlay_owns_scroll(&overlays, 180.0, 30.0));
+    assert!(!overlay_owns_scroll(&overlays, 40.0, 48.0));
+    assert!(!overlay_owns_scroll(&[], 40.0, 30.0));
+}
+
 fn key(code: char, attachment: u64) -> NativeInput {
     let mut key = KeyEvent::new(KeyCode::Char(code), KeyModifiers::NONE);
     key.kind = KeyEventKind::Repeat;

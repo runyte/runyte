@@ -6058,18 +6058,22 @@ one shared buffer without refusing each other.
 With the proposal grant, an agent can ask to type literal text into a
 terminal. You review it in **Review terminal text**:
 
-1. The exact proposed value comes first, then the requester, target terminal,
+1. The target terminal stays visible above the review. The exact proposed value
+   comes first in the scrolling content, followed by the requester, target,
    workspace, untrusted reason (if any), and recent output.
-2. A long proposal scrolls like a buffer: `j` / `k` or `Up` / `Down` by line,
-   `PgDn` / `PgUp` by screen, `gg` or `Home` to the first line, and `G`, `ge`
-   or `End` to the last. The overlay grows with the editor, so a taller window
-   shows more of it at once. Every line must actually reach the screen before
-   approval is enabled; jumping past lines does not count as reading them, and
-   until then choosing **Insert text (no Enter)** names the first line still
-   to read.
-3. **Reject** is selected at first. `Tab` switches between it and **Insert
-   text (no Enter)**. When the whole proposal fits, `Down` and `Up` choose
-   too.
+2. Scroll with the editor's Normal-mode page motions: `Ctrl-u` / `Ctrl-d`
+   for half pages, `Ctrl-b` / `Ctrl-f` or PageUp / PageDown for full pages,
+   and `gg` / `ge` for the beginning / end. Home / End are also supported.
+   The mouse wheel scrolls over the review content. Scrolling never changes
+   the selected action. The dialog uses 80% of the editor width and 60% of
+   its height, with an 80 × 22 minimum where space permits; smaller areas
+   use the available space. Text wraps to the available width.
+   Every line must actually reach the screen before approval is enabled;
+   jumping past lines does not count as reading them. Rewrapping after a
+   width change requires reviewing the newly laid-out text again.
+3. **Reject** is selected at first. `Down` / `Up` always choose between it
+   and **Insert text (no Enter)**, even for long proposals. `Tab` /
+   `Shift-Tab` also switch choices. The choices remain visible while scrolling.
 4. One fresh physical `Enter` inserts the text. That Enter belongs to the
    overlay. **Submit separately in the terminal.**
 

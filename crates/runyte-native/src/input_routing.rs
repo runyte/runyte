@@ -3,6 +3,16 @@
 use super::NativeInput;
 use std::collections::VecDeque;
 
+/// Overlay cells own wheel input even when native media lies underneath.
+fn overlay_owns_scroll(overlays: &[runyte::layout::Rect], column: f32, row: f32) -> bool {
+    overlays.iter().any(|area| {
+        column >= f32::from(area.x)
+            && column < f32::from(area.x.saturating_add(area.width))
+            && row >= f32::from(area.y)
+            && row < f32::from(area.y.saturating_add(area.height))
+    })
+}
+
 #[derive(Default)]
 pub(super) struct Queue<T = ()> {
     inputs: VecDeque<(NativeInput, T)>,
@@ -241,7 +251,15 @@ impl super::NativeView {
                         }
                     }
                     RoutingAction::Scroll(event, metrics, when) => {
+                        let over_overlay = self.frame.as_ref().is_some_and(|frame| {
+                            overlay_owns_scroll(
+                                &frame.overlays,
+                                f32::from(event.position.x) / metrics.width,
+                                f32::from(event.position.y) / metrics.height,
+                            )
+                        });
                         if current
+                            && !over_overlay
                             && (self.preview_scroll(&event, cx) || self.media_scroll(&event, cx))
                         {
                             continue;

@@ -5289,6 +5289,9 @@ fn overlay_action_hints(overlay: &OverlaySnapshot) -> String {
 /// so size them from that content instead of using the generic list popup's
 /// percentage-based geometry.
 fn confirmation_overlay_area(area: Rect, overlay: &OverlaySnapshot) -> Rect {
+    if overlay.layout == OverlayLayout::ContextReview {
+        return crate::context_review_layout::area(area);
+    }
     const MIN_WIDTH: u16 = 28;
     const MAX_WIDTH: u16 = 88;
 
@@ -9570,6 +9573,51 @@ mod tests {
     }
 
     #[test]
+    fn terminal_review_uses_proportional_geometry_and_keeps_choices_visible() {
+        use crate::app::context_access::{Detail, Kind, Surface};
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.context_ui.surface = Some(Surface::new(
+            Kind::Proposal { id: "p".into() },
+            "Review terminal text".into(),
+            vec![Detail::value("Terminal", "Claude (#2)".into())],
+            &format!("{}END-MARKER", "long text ".repeat(800)),
+            app.plugins.attachment_generation,
+        ));
+        app.note_context_frame(200, 80, 1);
+        app.note_context_presented(1);
+        let overlay = app.context_overlay().unwrap();
+        let area = confirmation_overlay_area(
+            Rect {
+                x: 0,
+                y: 0,
+                width: 200,
+                height: 80,
+            },
+            &overlay,
+        );
+        assert_eq!((area.x, area.y, area.width, area.height), (20, 16, 160, 48));
+        let before = rendered(&mut app, 200, 82);
+        app.handle_input(crate::input::InputEvent::Key(
+            crate::input::KeyStroke::plain(crate::input::KeyCode::End),
+        ))
+        .unwrap();
+        app.note_context_frame(200, 80, 2);
+        app.note_context_presented(2);
+        let after = rendered(&mut app, 200, 82);
+        assert!(!before.contains("END-MARKER"));
+        assert!(after.contains("END-MARKER"));
+        for label in ["To: Claude (#2)", "Reject", "Insert text (no Enter)"] {
+            let row = |screen: &str| {
+                screen
+                    .find(label)
+                    .map(|offset| screen[..offset].chars().count() / 200)
+            };
+            assert!(row(&before).is_some(), "{label}");
+            assert_eq!(row(&before), row(&after), "{label} stays fixed");
+        }
+    }
+
+    #[test]
     fn terminal_text_review_fits_whole_in_the_smallest_approving_editor() {
         use crate::app::context_access::{Detail, Kind, Surface, label, visible};
         let mut app = App::new(Config::default(), None).unwrap();
@@ -9604,9 +9652,8 @@ mod tests {
             },
             &overlay,
         );
-        assert_eq!(
-            usize::from(area.height),
-            overlay.rows.len() + 2,
+        assert!(
+            usize::from(area.height) >= overlay.rows.len() + 2,
             "every row and the border: {area:?}"
         );
 
@@ -9646,9 +9693,8 @@ mod tests {
             },
             &overlay,
         );
-        assert_eq!(
-            usize::from(area.height),
-            overlay.rows.len() + 3,
+        assert!(
+            usize::from(area.height) >= overlay.rows.len() + 3,
             "every row, the refusal and the border: {area:?}"
         );
         let screen = rendered(&mut app, 80, 23);

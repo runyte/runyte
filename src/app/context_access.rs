@@ -7,7 +7,10 @@
 
 use super::App;
 use crate::{
-    input::{InputEvent, KeyCode},
+    command::{EditorCommand as Command, Mode},
+    input::{InputEvent, KeyCode, Modifiers, PointerEventKind},
+    keymap::{Binding, BindingTarget, KeySequence, Lookup},
+    layout::Rect,
     snapshot::*,
     workspace::context::wire::Scope,
 };
@@ -33,6 +36,23 @@ pub(crate) struct ContextUi {
 impl ContextUi {
     fn view_height(&self) -> u16 {
         self.overlay_height.unwrap_or(self.height)
+    }
+
+    fn review_area(&self) -> Rect {
+        crate::context_review_layout::area(Rect {
+            x: 0,
+            y: self.height.saturating_sub(self.view_height()),
+            width: self.width,
+            height: self.view_height(),
+        })
+    }
+
+    fn surface_height(&self, surface: &Surface) -> u16 {
+        if surface.proposal().is_some() {
+            self.review_area().height
+        } else {
+            self.view_height()
+        }
     }
 }
 
@@ -92,8 +112,10 @@ pub(crate) struct Surface {
     pub presented_top: Option<usize>,
     /// Recently prepared frames, all laid out for the current area.
     pub prepared: VecDeque<PreparedFrame>,
-    /// `g` was pressed and waits for `g` (first line) or `e` (last line).
-    pub pending_g: bool,
+    /// Pending registry motion prefix, normally `g` for `gg` / `ge`.
+    pub pending_keys: KeySequence,
+    details: Vec<Detail>,
+    wrap_width: usize,
 }
 
 /// How a reviewed line is drawn: proposed text stands out, labels and notes
@@ -289,7 +311,7 @@ impl Surface {
         }
         details.extend(explanation);
         let lines: Vec<ReviewLine> = details
-            .into_iter()
+            .iter()
             .flat_map(|detail| {
                 wrap(&detail.value, detail.tone, VALUE_WIDTH)
                     .into_iter()
@@ -301,7 +323,7 @@ impl Surface {
                     })
             })
             .collect();
-        Self {
+        let mut surface = Self {
             kind,
             title,
             seen: vec![false; lines.len()],
@@ -311,20 +333,50 @@ impl Surface {
             attachment,
             presented_top: None,
             prepared: VecDeque::new(),
-            pending_g: false,
-        }
+            pending_keys: KeySequence::default(),
+            details,
+            wrap_width: VALUE_WIDTH,
+        };
+        surface.reflow(76);
+        surface
     }
-    /// Lines in view for an overlay that may use `height` rows, the editor
-    /// area less any session strip: everything but the border, the position
-    /// row, the choices, and room for a two-row message. A grant also lists
-    /// its scopes above the lines. At the smallest approving area a proposal
-    /// shows 14 lines and a grant 6, one fewer of each beside the session
-    /// strip, and a taller editor shows more, so a long prompt reads in fewer
-    /// screens.
+    fn reflow(&mut self, width: usize) {
+        if self.proposal().is_none() || self.wrap_width == width {
+            return;
+        }
+        self.wrap_width = width;
+        self.lines = self
+            .details
+            .iter()
+            .flat_map(|detail| {
+                let value = if detail.label.is_empty() || detail.label == "Text" {
+                    detail.value.clone()
+                } else {
+                    format!("{}: {}", detail.label, detail.value)
+                };
+                wrap(&value, detail.tone, width)
+                    .into_iter()
+                    .map(move |value| ReviewLine {
+                        label: "",
+                        value,
+                        tone: detail.tone,
+                    })
+            })
+            .collect();
+        // Rewrapping changes which characters each row contains. Only newly
+        // presented frames may acknowledge those rows.
+        self.seen = vec![false; self.lines.len()];
+        self.top = 0;
+        self.presented_top = None;
+        self.prepared.clear();
+    }
+    /// Body rows after the border, position, choices and two-row message.
+    /// Proposals also pin a two-row destination summary; grants list scopes.
+    /// `height` is the actual dialog height, not the surrounding editor.
     pub(crate) fn view_rows(&self, height: u16) -> usize {
         let chrome = match self.kind {
             Kind::Grant { .. } => 16,
-            Kind::Proposal { .. } => 8,
+            Kind::Proposal { .. } => 10,
         };
         usize::from(height).saturating_sub(chrome).max(1)
     }
@@ -368,7 +420,9 @@ impl App {
         self.context_ui.width = width;
         self.context_ui.height = height;
         self.context_ui.overlay_height = Some(overlay_height);
+        let review_area = self.context_ui.review_area();
         if let Some(surface) = self.context_ui.surface.as_mut() {
+            surface.reflow(usize::from(review_area.width.saturating_sub(4)).max(1));
             let area = (width, height, overlay_height);
             // A frame laid out for an area the window no longer has may be
             // painted clipped, so once the area changes only frames laid out
@@ -379,8 +433,13 @@ impl App {
                 .is_some_and(|last| last.area != area)
             {
                 surface.prepared.clear();
+                surface.presented_top = None;
             }
-            let rows = surface.view_rows(overlay_height);
+            let rows = surface.view_rows(if surface.proposal().is_some() {
+                review_area.height
+            } else {
+                overlay_height
+            });
             surface.scroll_to(surface.top, rows);
             let shown = rows.min(surface.lines.len() - surface.top);
             surface.prepared.push_back(PreparedFrame {
@@ -474,34 +533,97 @@ impl App {
         let Some(mut surface) = self.context_ui.surface.take() else {
             return;
         };
-        // Whatever arrives next, a pending `g` is spent on it.
-        let pending_g = std::mem::take(&mut surface.pending_g);
+        // Non-key input spends a pending motion prefix.
+        let mut pending = std::mem::take(&mut surface.pending_keys);
+        let continuing = !pending.is_empty();
         if self.recording_macro.is_some()
             || self.macro_replay.is_some()
             || surface.attachment != self.plugins.attachment_generation
         {
             return;
         }
+        let rows = surface.view_rows(self.context_ui.surface_height(&surface));
+        if let InputEvent::Pointer(pointer) = input {
+            let area = self.context_ui.review_area();
+            let in_body = pointer.column > area.x
+                && pointer.column < area.x.saturating_add(area.width).saturating_sub(1)
+                && pointer.row >= area.y.saturating_add(3)
+                && usize::from(pointer.row.saturating_sub(area.y + 3)) < rows;
+            if surface.proposal().is_some() && in_body {
+                match pointer.kind {
+                    PointerEventKind::ScrollUp => {
+                        surface.scroll_to(surface.top.saturating_sub(3), rows)
+                    }
+                    PointerEventKind::ScrollDown => {
+                        surface.scroll_to(surface.top.saturating_add(3), rows)
+                    }
+                    _ => {}
+                }
+            }
+            self.context_ui.surface = Some(surface);
+            return;
+        }
         let InputEvent::Key(key) = input else {
             self.context_ui.surface = Some(surface);
             return;
         };
-        // Shift is part of the character (`G`), not a modifier to refuse.
         let key = key.canonical_for_binding();
-        if !key.modifiers.is_empty() {
+        let enough_room = self.context_ui.width >= 80 && self.context_ui.height >= 22;
+        // Choice keys retain their meaning even when the text overflows.
+        // Only approved motion commands from the live registry can scroll;
+        // configured action chains and arbitrary editor commands cannot run.
+        let choice = matches!(
+            key.code,
+            KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::Tab
+                | KeyCode::BackTab
+                | KeyCode::Enter
+                | KeyCode::Escape
+        );
+        if !choice {
+            pending.push(key);
+            let binding = match self.keymap().lookup(Mode::Normal, &pending) {
+                Lookup::Exact(binding) => Some(binding),
+                Lookup::ExactAndPrefix { exact, .. } => Some(exact),
+                Lookup::Prefix(bindings) => {
+                    if bindings
+                        .iter()
+                        .any(|binding| review_motion(binding).is_some())
+                    {
+                        surface.pending_keys = pending;
+                    }
+                    None
+                }
+                Lookup::NoMatch => None,
+            };
+            if let Some(command) = binding.and_then(review_motion) {
+                let top = match command {
+                    Command::PageUp => surface.top.saturating_sub(rows),
+                    Command::PageDown => surface.top.saturating_add(rows),
+                    Command::HalfPageUp => surface.top.saturating_sub((rows / 2).max(1)),
+                    Command::HalfPageDown => surface.top.saturating_add((rows / 2).max(1)),
+                    Command::MoveFileStart => 0,
+                    Command::MoveFileEnd => usize::MAX,
+                    _ => unreachable!(),
+                };
+                surface.scroll_to(top, rows);
+                self.context_ui.surface = Some(surface);
+                return;
+            }
+            if continuing || !surface.pending_keys.is_empty() {
+                self.context_ui.surface = Some(surface);
+                return;
+            }
+        }
+        if key.code == KeyCode::BackTab
+            || (key.code == KeyCode::Tab && key.modifiers == Modifiers::SHIFT)
+        {
+            surface.accept_selected = !surface.accept_selected;
             self.context_ui.surface = Some(surface);
             return;
         }
-        let enough_room = self.context_ui.width >= 80 && self.context_ui.height >= 22;
-        let rows = surface.view_rows(self.context_ui.view_height());
-        let scrollable = surface.lines.len() > rows;
-        if pending_g {
-            // `gg` and `ge` move; anything else cancels, as in a buffer.
-            match key.code {
-                KeyCode::Char('g') => surface.scroll_to(0, rows),
-                KeyCode::Char('e') => surface.scroll_to(usize::MAX, rows),
-                _ => {}
-            }
+        if !key.modifiers.is_empty() {
             self.context_ui.surface = Some(surface);
             return;
         }
@@ -516,20 +638,10 @@ impl App {
                 return;
             }
             KeyCode::Tab => surface.accept_selected = !surface.accept_selected,
-            // With nothing to scroll the arrows move between the two choice
-            // rows, which sit one above the other. Once the text is longer
-            // than the view they scroll it like a buffer, and Tab chooses.
-            KeyCode::Up if !scrollable => surface.accept_selected = false,
-            KeyCode::Down if !scrollable => surface.accept_selected = true,
-            KeyCode::Up | KeyCode::Char('k') => {
-                surface.scroll_to(surface.top.saturating_sub(1), rows);
-            }
-            KeyCode::Down | KeyCode::Char('j') => surface.scroll_to(surface.top + 1, rows),
-            KeyCode::PageUp => surface.scroll_to(surface.top.saturating_sub(rows), rows),
-            KeyCode::PageDown => surface.scroll_to(surface.top + rows, rows),
+            KeyCode::Up => surface.accept_selected = false,
+            KeyCode::Down => surface.accept_selected = true,
             KeyCode::Home => surface.scroll_to(0, rows),
-            KeyCode::End | KeyCode::Char('G') => surface.scroll_to(usize::MAX, rows),
-            KeyCode::Char('g') => surface.pending_g = true,
+            KeyCode::End => surface.scroll_to(usize::MAX, rows),
             KeyCode::Char('x') => {
                 if let Kind::Grant { identity, .. } = surface.kind {
                     self.context_ui.decision = Some(Decision::Revoke(identity));
@@ -627,10 +739,28 @@ impl App {
             ));
             rows.push(review_row(String::new(), Vec::new(), Vec::new()));
         }
-        let view_rows = surface.view_rows(self.context_ui.view_height());
+        if surface.proposal().is_some() {
+            let target = surface
+                .details
+                .iter()
+                .find(|detail| detail.label == "Terminal")
+                .map(|detail| detail.value.as_str())
+                .unwrap_or("Terminal");
+            rows.push(review_row(format!("To: {target}"), Vec::new(), Vec::new()));
+            rows.push(review_row(
+                "Inserts text without pressing Enter.".into(),
+                Vec::new(),
+                Vec::new(),
+            ));
+        }
+        let view_rows = surface.view_rows(self.context_ui.surface_height(surface));
         let top = surface.top.min(surface.last_top(view_rows));
         for line in surface.lines.iter().skip(top).take(view_rows) {
-            let label = format!("{:<LABEL_WIDTH$}", line.label);
+            let label = if surface.proposal().is_some() {
+                String::new()
+            } else {
+                format!("{:<LABEL_WIDTH$}", line.label)
+            };
             let label_end = label.chars().count();
             let end = label_end + line.value.chars().count();
             let (muted, emphasis) = match line.tone {
@@ -644,16 +774,25 @@ impl App {
                 emphasis,
             ));
         }
+        if surface.proposal().is_some() {
+            for _ in surface.lines.len().saturating_sub(top).min(view_rows)..view_rows {
+                rows.push(review_row(String::new(), Vec::new(), Vec::new()));
+            }
+        }
         let total = surface.lines.len();
         let scrollable = total > view_rows;
         if scrollable {
             let text = format!(
-                "Lines {}–{} of {total} · j/k line · PgUp/PgDn page · gg/G first/last",
+                "Lines {}–{} of {total} · {}",
                 top + 1,
                 (top + view_rows).min(total),
+                self.key_text("{binding:Ctrl-u}/{binding:Ctrl-d} scroll · {binding:g g}/{binding:g e} first/last"),
             );
             let end = text.chars().count();
             rows.push(review_row(text, (0..end).collect(), Vec::new()));
+        }
+        if !scrollable && surface.proposal().is_some() {
+            rows.push(review_row(String::new(), Vec::new(), Vec::new()));
         }
         rows.push(review_row(String::new(), Vec::new(), Vec::new()));
         let action = match surface.kind {
@@ -679,11 +818,7 @@ impl App {
             None
         };
         let actions = vec![
-            if scrollable {
-                OverlayAction::new("Tab", "choose")
-            } else {
-                OverlayAction::new("↑/↓/Tab", "choose")
-            },
+            OverlayAction::new("↑/↓/Tab", "choose"),
             OverlayAction::new("Enter", "apply choice"),
             OverlayAction::new("Esc", "reject"),
         ];
@@ -691,7 +826,11 @@ impl App {
             kind: OverlayKind::Confirmation,
             purpose: OverlayPurpose::Confirmation,
             input: OverlayInput::None,
-            layout: OverlayLayout::Standard,
+            layout: if surface.proposal().is_some() {
+                OverlayLayout::ContextReview
+            } else {
+                OverlayLayout::Standard
+            },
             legend: Vec::new(),
             actions,
             title: surface.title.clone(),
@@ -729,5 +868,23 @@ fn review_row(label: String, muted: Vec<usize>, emphasis: Vec<usize>) -> Overlay
         detail_emphasis: Vec::new(),
         tints: Vec::new(),
         elide_from: None,
+    }
+}
+
+/// Navigation is shared with the editor registry without granting editor action authority.
+fn review_motion(binding: &Binding) -> Option<Command> {
+    if !binding.actions.is_empty() {
+        return None;
+    }
+    match binding.target {
+        BindingTarget::Editor(
+            command @ (Command::PageUp
+            | Command::PageDown
+            | Command::HalfPageUp
+            | Command::HalfPageDown
+            | Command::MoveFileStart
+            | Command::MoveFileEnd),
+        ) => Some(command),
+        _ => None,
     }
 }

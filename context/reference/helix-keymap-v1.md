@@ -814,3 +814,14 @@ caret, plus bounded grapheme lookaround: exceptionally long zero-width runs may
 use a later origin rather than finding the global left edge. Unchanged viewport
 checks are cached. Ordinary motions retain the current horizontal scroll while
 the caret fits; vertical scrolling is unchanged.
+
+### Terminal proposal review
+
+The native terminal proposal review keeps Up/Down and Tab/Shift-Tab for the
+Reject/Insert choices regardless of content length. Its scrolling dispatch
+reads the active Normal-mode registry's page, half-page and file-start/end
+commands (`Ctrl-b/f`, `Ctrl-u/d`, `gg`/`ge` by default), without executing other
+editor commands or configured action chains. Home/End remain review aliases;
+mouse wheel input over the review body scrolls three rows. Enter applies the
+selected choice only through the existing native presentation checks; Escape
+rejects. The footer resolves its motion spellings through the same registry.

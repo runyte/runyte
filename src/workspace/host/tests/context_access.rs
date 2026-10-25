@@ -597,14 +597,14 @@ async fn prepared_but_unpainted_lines_cannot_be_counted_or_approved() {
         host.app.context_ui.surface.as_ref().unwrap()
     }
     host.app.note_context_frame(80, 22, 10);
-    key(&mut host, KeyCode::Char('j'));
-    assert_eq!(surface(&host).top, 1);
+    key(&mut host, KeyCode::PageDown);
+    assert!(surface(&host).top > 0);
     // Frame 10 was prepared for the first line, which is no longer in view.
     host.app.note_context_presented(10);
     assert!(surface(&host).seen.iter().all(|seen| !seen));
     host.app.note_context_frame(80, 22, 11); // dropped/backpressured frame
     host.app.note_context_presented(10); // frontend still displays line one
-    key(&mut host, KeyCode::Char('G'));
+    key(&mut host, KeyCode::End);
     key(&mut host, KeyCode::Tab);
     key(&mut host, KeyCode::Enter);
     assert!(surface(&host).seen.iter().all(|seen| !seen));

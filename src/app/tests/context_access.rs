@@ -82,12 +82,12 @@ fn repeated_enter_cannot_approve_proposal_but_repeat_navigation_remains_live() {
         Some(Decision::Proposal { accepted: true, .. })
     ));
 
-    let mut long = proposal(&"x".repeat(64 * 14), vec![]);
+    let mut long = proposal(&"x".repeat(76 * 12), vec![]);
     present(&mut long, 1);
-    long.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Char('j'))))
+    long.handle_repeated_input(InputEvent::Key(KeyStroke::ctrl('d')))
         .unwrap();
     assert_eq!(long.context_ui.surface.as_ref().unwrap().top, 1);
-    long.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Char('k'))))
+    long.handle_repeated_input(InputEvent::Key(KeyStroke::ctrl('u')))
         .unwrap();
     assert_eq!(long.context_ui.surface.as_ref().unwrap().top, 0);
 }
@@ -186,10 +186,10 @@ fn short_proposal_is_one_page_that_leads_with_the_proposed_text() {
     let mut app = proposal("Hello to myself", realistic_explanation());
     present(&mut app, 1);
     let overlay = app.context_overlay().unwrap();
-    let first = &overlay.rows[0];
-    assert_eq!(first.label, format!("{:<11}Hello·to·myself", "Text"));
-    assert_eq!(first.muted, (0..11).collect::<Vec<_>>());
-    assert_eq!(first.emphasis, (11..26).collect::<Vec<_>>());
+    let first = &overlay.rows[2];
+    assert_eq!(first.label, "Hello·to·myself");
+    assert!(first.muted.is_empty());
+    assert_eq!(first.emphasis, (0..15).collect::<Vec<_>>());
     assert!(
         overlay
             .rows
@@ -227,9 +227,9 @@ fn short_proposal_is_one_page_that_leads_with_the_proposed_text() {
 
 #[test]
 fn refused_insert_names_the_unread_line_until_every_line_is_shown() {
-    // Fourteen rows of text and the note under it: one line more than the
+    // Twelve rows of text and the note under it: one line more than the
     // smallest approving area shows.
-    let mut app = proposal(&"x".repeat(64 * 14), vec![]);
+    let mut app = proposal(&"x".repeat(76 * 12), vec![]);
     present(&mut app, 1);
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Enter);
@@ -237,24 +237,19 @@ fn refused_insert_names_the_unread_line_until_every_line_is_shown() {
     let overlay = app.context_overlay().unwrap();
     assert_eq!(
         overlay.message.as_deref(),
-        Some("Read the rest first: line 15 of 15 has not been shown.")
+        Some("Read the rest first: line 13 of 13 has not been shown.")
     );
-    assert!(
-        overlay
-            .rows
-            .iter()
-            .any(|row| row.label.starts_with("Lines 1–14 of 15 · j/k line"))
-    );
-    assert_eq!(overlay.actions[0].key_hint, "Tab");
+    assert!(overlay.rows.iter().any(|row| {
+        row.label
+            .starts_with("Lines 1–12 of 13 · Ctrl-u/Ctrl-d scroll")
+    }));
+    assert_eq!(overlay.actions[0].key_hint, "↑/↓/Tab");
 
-    press(&mut app, KeyCode::Char('j'));
+    press(&mut app, KeyCode::PageDown);
     present(&mut app, 2);
     let overlay = app.context_overlay().unwrap();
     assert!(overlay.message.is_none());
-    assert_eq!(
-        overlay.rows[0].label,
-        format!("{:<11}{}", "", "x".repeat(64))
-    );
+    assert_eq!(overlay.rows[2].label, "x".repeat(76));
     press(&mut app, KeyCode::Enter);
     assert!(matches!(
         app.context_ui.decision,
@@ -264,45 +259,41 @@ fn refused_insert_names_the_unread_line_until_every_line_is_shown() {
 
 #[test]
 fn buffer_motions_scroll_and_a_jump_does_not_count_as_reading() {
-    let mut app = proposal(&"x".repeat(64 * 40), vec![]);
+    let mut app = proposal(&"x".repeat(76 * 40), vec![]);
     let top = |app: &App| app.context_ui.surface.as_ref().unwrap().top;
     present(&mut app, 1);
-    // 41 lines in a 14-line view: the last view starts at line 28.
+    // 41 lines in a 12-line view: the last view starts at line 30.
     for (keys, expected) in [
-        (&[KeyCode::PageDown][..], 14),
-        (&[KeyCode::PageDown], 27),
-        (&[KeyCode::PageUp], 13),
+        (&[KeyCode::PageDown][..], 12),
+        (&[KeyCode::PageDown], 24),
+        (&[KeyCode::PageUp], 12),
         (&[KeyCode::Char('g'), KeyCode::Char('g')], 0),
-        (&[KeyCode::Char('g'), KeyCode::Char('e')], 27),
+        (&[KeyCode::Char('g'), KeyCode::Char('e')], 29),
         (&[KeyCode::Home], 0),
-        (&[KeyCode::End], 27),
-        (&[KeyCode::Up], 26),
-        (&[KeyCode::Down, KeyCode::Down], 27),
+        (&[KeyCode::End], 29),
+        (&[KeyCode::Up], 29),
+        (&[KeyCode::Down, KeyCode::Down], 29),
     ] {
         for &code in keys {
             press(&mut app, code);
         }
         assert_eq!(top(&app), expected, "{keys:?}");
     }
-    press(&mut app, KeyCode::Home);
-    app.handle_input(InputEvent::Key(KeyStroke::new(
-        KeyCode::Char('G'),
-        crate::input::Modifiers::SHIFT,
-    )))
-    .unwrap();
-    assert_eq!(top(&app), 27, "Shift is part of G, not a refused modifier");
+    press(&mut app, KeyCode::Up);
 
-    // Lines 1-14 and 28-41 have been shown; the middle has not.
+    // Lines 1-12 and 30-41 have been shown; the middle has not.
     present(&mut app, 2);
     press(&mut app, KeyCode::Tab);
     press(&mut app, KeyCode::Enter);
     assert!(app.context_ui.decision.is_none());
     assert_eq!(
         app.context_overlay().unwrap().message.as_deref(),
-        Some("Read the rest first: line 15 of 41 has not been shown.")
+        Some("Read the rest first: line 13 of 41 has not been shown.")
     );
     press(&mut app, KeyCode::PageUp);
     present(&mut app, 3);
+    press(&mut app, KeyCode::PageUp);
+    present(&mut app, 4);
     assert!(app.context_ui.surface.as_ref().unwrap().fully_reviewed());
     press(&mut app, KeyCode::Enter);
     assert!(matches!(
@@ -313,21 +304,21 @@ fn buffer_motions_scroll_and_a_jump_does_not_count_as_reading() {
 
 #[test]
 fn a_taller_editor_shows_more_of_a_long_proposal() {
-    let mut app = proposal(&"x".repeat(64 * 60), vec![]);
+    let mut app = proposal(&"x".repeat(76 * 60), vec![]);
     app.note_context_frame(120, 50, 1);
     app.note_context_presented(1);
     let overlay = app.context_overlay().unwrap();
     let text_rows = overlay
         .rows
         .iter()
-        .filter(|row| row.label.ends_with(&"x".repeat(64)))
+        .filter(|row| row.label.ends_with(&"x".repeat(92)))
         .count();
-    assert_eq!(text_rows, 42, "a 50-row editor shows 42 lines, not 14");
+    assert_eq!(text_rows, 20, "60% of 50 rows, less fixed controls");
     assert!(
         overlay
             .rows
             .iter()
-            .any(|row| row.label.starts_with("Lines 1–42 of 61"))
+            .any(|row| row.label.starts_with("Lines 1–20 of 51"))
     );
 }
 
@@ -350,7 +341,7 @@ fn prose_wraps_between_words_and_proposed_text_anywhere() {
         "ab cd",
         vec![Detail::note(format!(
             "{} tail",
-            "word ".repeat(13).trim_end()
+            "word ".repeat(15).trim_end()
         ))],
     );
     let lines = &app.context_ui.surface.as_ref().unwrap().lines;
@@ -360,11 +351,11 @@ fn prose_wraps_between_words_and_proposed_text_anywhere() {
         .filter(|line| line.value.starts_with("word") || line.value == "tail")
         .map(|line| line.value.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(prose, [&"word ".repeat(13)[..64], "tail"]);
+    assert_eq!(prose, [&"word ".repeat(15)[..74], "tail"]);
 }
 
 #[test]
-fn arrows_choose_when_the_text_fits_and_scroll_when_it_does_not() {
+fn arrows_always_choose_without_scrolling() {
     let mut app = proposal("short", vec![]);
     present(&mut app, 1);
     let rows = app.context_overlay().unwrap().rows.len();
@@ -373,13 +364,17 @@ fn arrows_choose_when_the_text_fits_and_scroll_when_it_does_not() {
     press(&mut app, KeyCode::Up);
     assert_eq!(app.context_overlay().unwrap().selected, Some(rows - 2));
 
-    let mut app = proposal(&"x".repeat(64 * 14), vec![]);
+    let mut app = proposal(&"x".repeat(76 * 40), vec![]);
     present(&mut app, 1);
     let rows = app.context_overlay().unwrap().rows.len();
     press(&mut app, KeyCode::Down);
-    assert_eq!(app.context_ui.surface.as_ref().unwrap().top, 1);
+    assert_eq!(app.context_ui.surface.as_ref().unwrap().top, 0);
+    assert_eq!(app.context_overlay().unwrap().selected, Some(rows - 1));
+    press(&mut app, KeyCode::Up);
     assert_eq!(app.context_overlay().unwrap().selected, Some(rows - 2));
-    press(&mut app, KeyCode::Enter);
+    press(&mut app, KeyCode::BackTab);
+    assert_eq!(app.context_overlay().unwrap().selected, Some(rows - 1));
+    press(&mut app, KeyCode::Escape);
     assert!(matches!(
         app.context_ui.decision,
         Some(Decision::Proposal {
@@ -504,7 +499,7 @@ fn skipping_review_brings_its_prerequisites_and_leaves_with_them() {
 
 #[test]
 fn a_pending_g_is_spent_on_the_next_input_and_otherwise_cancels() {
-    let mut app = proposal(&"x".repeat(64 * 40), vec![]);
+    let mut app = proposal(&"x".repeat(76 * 40), vec![]);
     let top = |app: &App| app.context_ui.surface.as_ref().unwrap().top;
     present(&mut app, 1);
     press(&mut app, KeyCode::Char('g'));
@@ -516,7 +511,7 @@ fn a_pending_g_is_spent_on_the_next_input_and_otherwise_cancels() {
     assert_eq!(top(&app), 0, "a paste spends the pending g");
     press(&mut app, KeyCode::Char('g'));
     press(&mut app, KeyCode::Char('e'));
-    assert_eq!(top(&app), 27);
+    assert_eq!(top(&app), 29);
     assert_eq!(
         app.context_ui.surface.as_ref().unwrap().presented_top,
         None,
@@ -526,29 +521,168 @@ fn a_pending_g_is_spent_on_the_next_input_and_otherwise_cancels() {
 
 #[test]
 fn a_frame_laid_out_for_an_earlier_area_stops_counting() {
-    let mut app = proposal(&"x".repeat(64 * 40), vec![]);
+    let mut app = proposal(&"x".repeat(76 * 40), vec![]);
     app.note_context_frame(120, 50, 1);
     app.note_context_frame(80, 22, 2);
-    // Frame 1 would show 42 lines, but the window has since shrunk.
+    // Frame 1 would show 20 lines, but the window has since shrunk.
     app.note_context_presented(1);
     let surface = app.context_ui.surface.as_ref().unwrap();
     assert!(surface.seen.iter().all(|seen| !seen));
     assert_eq!(surface.presented_top, None);
     app.note_context_presented(2);
     let seen = app.context_ui.surface.as_ref().unwrap().seen.clone();
-    assert_eq!(seen.iter().filter(|seen| **seen).count(), 14);
+    assert_eq!(seen.iter().filter(|seen| **seen).count(), 12);
 }
 
 #[test]
 fn the_session_strip_row_comes_out_of_the_review_not_the_approval_size() {
-    let mut app = proposal(&"x".repeat(64 * 40), vec![]);
+    let mut app = proposal(&"x".repeat(76 * 40), vec![]);
     app.note_context_frame_in(80, 22, 21, 1);
     app.note_context_presented(1);
     let surface = app.context_ui.surface.as_ref().unwrap();
-    assert_eq!(surface.seen.iter().filter(|seen| **seen).count(), 13);
+    assert_eq!(surface.seen.iter().filter(|seen| **seen).count(), 11);
     assert!(
         app.context_overlay().unwrap().message.is_none(),
         "80 x 22 still has room to approve"
+    );
+}
+
+#[test]
+fn page_chords_scroll_without_changing_the_choice() {
+    let mut app = proposal(&"x".repeat(76 * 40), vec![]);
+    present(&mut app, 1);
+    press(&mut app, KeyCode::Down);
+    for (key, expected) in [('d', 6), ('f', 18), ('u', 12), ('b', 0)] {
+        app.handle_input(InputEvent::Key(KeyStroke::ctrl(key)))
+            .unwrap();
+        let surface = app.context_ui.surface.as_ref().unwrap();
+        assert_eq!(surface.top, expected);
+        assert!(surface.accept_selected);
+        assert!(app.context_ui.decision.is_none());
+    }
+    // Plain letters do not borrow less's motions or edit the buffer.
+    for key in ['d', 'u', 'j', 'k'] {
+        press(&mut app, KeyCode::Char(key));
+    }
+    assert_eq!(app.context_ui.surface.as_ref().unwrap().top, 0);
+}
+
+#[test]
+fn wheel_scrolls_only_inside_the_review_body_and_never_approves() {
+    use crate::input::{PointerButton, PointerEvent};
+    let mut app = proposal(&"x".repeat(76 * 40), vec![]);
+    app.note_context_frame(200, 60, 1);
+    app.note_context_presented(1);
+    press(&mut app, KeyCode::Down);
+    let area = app.context_ui.review_area();
+    assert_eq!((area.width, area.height), (160, 36));
+    let mut wheel = |column, row, kind| {
+        app.handle_input(InputEvent::Pointer(PointerEvent {
+            column,
+            row,
+            kind,
+            modifiers: Modifiers::NONE,
+        }))
+        .unwrap();
+        let surface = app.context_ui.surface.as_ref().unwrap();
+        assert!(surface.accept_selected);
+        assert!(app.context_ui.decision.is_none());
+        surface.top
+    };
+    assert_eq!(wheel(0, 0, PointerEventKind::ScrollDown), 0);
+    assert_eq!(
+        wheel(area.x + 2, area.y + 1, PointerEventKind::ScrollDown),
+        0
+    );
+    assert_eq!(
+        wheel(area.x + 2, area.y + 3, PointerEventKind::ScrollDown),
+        0
+    );
+    // This proposal fits at the wider width; use more text for actual scrolling.
+    let mut app = proposal(&"x".repeat(76 * 100), vec![]);
+    present(&mut app, 1);
+    press(&mut app, KeyCode::Down);
+    for (kind, top) in [
+        (PointerEventKind::ScrollDown, 3),
+        (PointerEventKind::ScrollUp, 0),
+        (PointerEventKind::Down(PointerButton::Left), 0),
+    ] {
+        app.handle_input(InputEvent::Pointer(PointerEvent {
+            column: 3,
+            row: 3,
+            kind,
+            modifiers: Modifiers::NONE,
+        }))
+        .unwrap();
+        let surface = app.context_ui.surface.as_ref().unwrap();
+        assert_eq!(surface.top, top);
+        assert!(surface.accept_selected);
+        assert!(app.context_ui.decision.is_none());
+    }
+}
+
+#[test]
+fn rewrapping_invalidates_old_read_receipts_and_preserves_every_literal_character() {
+    let text = "ab cd\\ef ".repeat(100);
+    let mut app = proposal(&text, vec![]);
+    present(&mut app, 1);
+    app.note_context_frame(200, 60, 2);
+    app.note_context_presented(1);
+    let surface = app.context_ui.surface.as_ref().unwrap();
+    assert_eq!(surface.presented_top, None);
+    assert!(surface.seen.iter().all(|seen| !seen));
+    let literal = surface
+        .lines
+        .iter()
+        .filter(|line| line.tone == Tone::Literal)
+        .map(|line| line.value.as_str())
+        .collect::<String>();
+    assert_eq!(literal, visible(&text));
+    assert!(surface.lines.iter().all(|line| line.value.width() <= 156));
+    app.note_context_presented(2);
+    assert!(app.context_ui.surface.as_ref().unwrap().fully_reviewed());
+}
+
+#[test]
+fn review_scroll_uses_the_live_registry_and_its_hint_spellings() {
+    use crate::keymap::{Keymap, default_keymap};
+    use std::{collections::HashMap, sync::Arc};
+    let defaults = default_keymap();
+    let old = KeySequence::parse("Ctrl-d").unwrap();
+    let new = KeySequence::parse("Ctrl-j").unwrap();
+    let mut bindings = defaults.bindings().to_vec();
+    let mut spellings = HashMap::new();
+    for binding in &mut bindings {
+        spellings.insert(binding.sequence.clone(), binding.sequence.clone());
+        if let Some(alias) = &binding.alias {
+            spellings.insert(alias.clone(), alias.clone());
+        }
+        if binding.sequence == old && binding.target == BindingTarget::Editor(Command::HalfPageDown)
+        {
+            binding.sequence = new.clone();
+        }
+    }
+    spellings.insert(old, new);
+    let keymap = Keymap::new(bindings).unwrap().with_spelling_metadata(
+        KeyStroke::char(' '),
+        KeyStroke::ctrl('w'),
+        spellings,
+    );
+    let mut app = proposal(&"x".repeat(76 * 40), vec![]);
+    app.set_keymap(Arc::new(keymap));
+    present(&mut app, 1);
+    app.handle_input(InputEvent::Key(KeyStroke::ctrl('d')))
+        .unwrap();
+    assert_eq!(app.context_ui.surface.as_ref().unwrap().top, 0);
+    app.handle_input(InputEvent::Key(KeyStroke::ctrl('j')))
+        .unwrap();
+    assert_eq!(app.context_ui.surface.as_ref().unwrap().top, 6);
+    assert!(
+        app.context_overlay()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.label.contains("Ctrl-u/Ctrl-j scroll"))
     );
 }
 

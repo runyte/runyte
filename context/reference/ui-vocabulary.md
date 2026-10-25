@@ -722,21 +722,22 @@ These are local overlay keys.
 
 A terminal proposal uses **Review terminal text**, an immutable scrolling native
 confirmation. The affirmative label is **Insert text (no Enter)**. The proposed
-text comes first, emphasized; labelled context and muted notes follow, wrapped
-between words to the overlay width, and the two choices are rows with the
-selection on the current one. Literal spaces, doubled backslashes and escaped
-Unicode make every character of the proposed text visible; labels and an
-optional untrusted reason are separate from it and keep printable Unicode while
-escaping invisible and space-like characters. The overlay grows with its content
-up to the height the editor area leaves it, and its lines scroll with buffer
-motions: `j`/`k` and Up/Down by line, PgUp/PgDn by view, `gg`/Home to the first
-line and `G`/`ge`/End to the last. Up/Down choose instead only while every line
-fits; Tab always chooses. Every line must be acknowledged from an actually
-displayed frontend frame before a fresh physical action can approve, and a jump
+text comes first in the scrolling body, emphasized and using the full content
+width; labelled context and muted notes follow. The destination summary and
+Reject/Insert choices stay fixed. The centered dialog uses 80% of the editor
+width and 60% of its available height, with a minimum of 80 × 22 where space
+permits. Literal spaces, doubled backslashes and escaped Unicode make every
+character of the proposed text visible; labels and an optional untrusted reason
+remain separate and escape invisible and space-like characters. Up/Down and
+Tab/Shift-Tab always choose. The active Normal-mode registry supplies full-page,
+half-page and file-boundary motions (Ctrl-b/f, Ctrl-u/d, gg/ge by default), with
+Home/End aliases and mouse-wheel scrolling over the content. Every line must
+be acknowledged from an actually displayed frontend frame before a fresh physical action can approve, and a jump
 does not acknowledge the lines it passes. While Insert is chosen before then,
 the overlay names the first unread line. Prepared or dropped frames do not
 count, and once a frame for a new editor area has been prepared, frames laid out
-for the earlier area stop counting. Key hints stay hidden while a review is open
+for the earlier area stop counting. A width change rewraps the text and resets
+its read acknowledgments. Key hints stay hidden while a review is open
 so nothing covers a line being counted. Known limitation: a frontend reports
 which frame it presented but not the size it painted it at, so a frame prepared
 before a shrink, painted clipped and acknowledged before the next frame is

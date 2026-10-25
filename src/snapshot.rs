@@ -326,6 +326,7 @@ pub enum OverlayInput {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverlayLayout {
     GitMergeReview,
+    ContextReview,
     Standard,
     Preview,
     /// A single typed setting value.

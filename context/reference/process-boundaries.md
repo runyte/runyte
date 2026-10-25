@@ -143,3 +143,8 @@ a drop. Matching client and host protocol versions are required.
   messages have a 1 MiB limit.
 - A new public wire requires its own plan. The private client/host wire is not
   a shortcut to extending a public contract.
+
+Private protocol version 81 adds the `ContextReview` overlay layout. Terminal
+proposal reviews share proportional geometry and full-width text wrapping
+between host presentation accounting and both bundled frontends. Matching
+client and host protocol versions are required.
