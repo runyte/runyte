@@ -5990,6 +5990,13 @@ guide](mcp.md#agent-channel) describes the tools and limits.
 
 ### How agents use it
 
+Install the optional Runyte MCP skill with `runyte skills install --all --user`
+for Claude Code and Codex, or select one with `--claude` or `--codex`. Use
+`--project` for a project-local installation. Then ask the agent once to use
+the skill and coordinate through the channel for its task. It chooses when to
+check according to the work; the skill does not automatically wake idle agents.
+See [skill installation and safe updates](mcp.md#runyte-mcp-skill).
+
 - Start with `find_resources`, optionally selecting a workspace and searching
   buffer or terminal names and contents. Use the returned exact handle with
   `read_buffer`, `read_terminal`, `append_buffer`, `edit_buffer`, or

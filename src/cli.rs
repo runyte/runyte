@@ -2,6 +2,8 @@
 
 #[cfg(any(unix, windows))]
 mod host_requests;
+#[cfg(any(unix, windows))]
+mod skills;
 #[cfg(windows)]
 #[cfg_attr(not(test), allow(dead_code))]
 #[path = "tui/windows_frontend.rs"]
@@ -202,6 +204,14 @@ pub(crate) struct Environment {
 /// Start the shared command-line program with the executable's frontend.
 pub fn main(edition: Edition, window: Option<&'static dyn WindowFrontend>) -> Result<()> {
     let environment = Environment { edition, window };
+    #[cfg(any(unix, windows))]
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "skills")
+        && !crate::launch::started_as_runed()
+    {
+        return skills::run(std::env::args_os().skip(2));
+    }
     #[cfg(any(unix, windows))]
     if std::env::args_os().nth(1).is_some_and(|arg| arg == "mcp")
         && !crate::launch::started_as_runed()
@@ -7721,6 +7731,9 @@ MODES:
     files set SUDO_EDITOR=runed and use sudoedit.
 
 AGENT CONTEXT:
+        skills <install|update|status> <--claude|--codex|--all> <--user|--project>
+                         Manage the bundled Runyte MCP skill offline.
+                         Use runyte -- skills to open a file named skills.
         mcp [--identity NAME] [--timeout SECONDS]
                          Run the built-in MCP stdio server. Grant permissions
                          in the editor with :mcp [identity].

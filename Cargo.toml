@@ -25,6 +25,7 @@ readme = "README.md"
 # bare `README.md` would also match a nested development-context README.
 include = [
     "/src/**",
+    "/skills/runyte-mcp/SKILL.md",
     "!/src/app/tests/**",
     "/docs/**",
     "/contrib/**",

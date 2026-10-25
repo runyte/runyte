@@ -26,15 +26,16 @@ current sources take precedence.
 
 Active work:
 
+- [Runyte MCP skill and durable agent channels](active/PLAN_AGENT_CHANNEL_SKILL_AND_STORAGE.md):
+  a cooperative MCP skill and safe installer first, followed by user testing;
+  SQLite storage across workspaces with retained public history and acknowledged
+  DM/group cleanup. Hooks and terminal wake-up remain tentative.
+
 - [Terminal and desktop editions](active/PLAN_EDITIONS_AND_EXTENSIONS.md):
   two editions built from one Cargo workspace, PDF and document-preview helpers
   inside the desktop executable, one register of process boundaries and
   extension tiers, release packaging for both editions, and a manually signed
   and notarized macOS disk image.
-- [Agent channel](active/PLAN_AGENT_CHANNEL.md): a workspace-scoped conversation
-  between agents of any provider through `runyte mcp`, with verified
-  participant identity, direct messages and the person's read-only view
-  ([#29](https://github.com/runyte/runyte/issues/29)).
 
 Current desktop ownership, supported behavior and measurements are recorded in
 [the desktop edition reference](../reference/desktop-edition.md), with the
@@ -49,6 +50,11 @@ Proposed work:
 
 The retained completed records cover:
 
+- [Agent channel](completed/PLAN_AGENT_CHANNEL.md): the implemented
+  workspace-scoped conversation through `runyte mcp`, with verified participant
+  identity, direct messages, unread indicators and the person's read-only view
+  ([#29](https://github.com/runyte/runyte/issues/29), item 5). Follow-up work is
+  consolidated in the active MCP skill and durable-channel plan above;
 - [Aligned indentation and document overrides](completed/PLAN_INDENTATION_OVERRIDES.md):
   shared per-buffer indentation, aligned Backspace, and configurable language
   and ordered file-pattern overrides through the settings page;

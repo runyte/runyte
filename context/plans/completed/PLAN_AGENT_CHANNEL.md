@@ -1,6 +1,14 @@
 # Agent channel
 
+Status: completed. Implemented in `6d642f4` (Add an agent channel shared through
+runyte mcp); completion verified against source and existing tests at `594f057`.
+This record describes the original in-memory, workspace-scoped channel.
+
 Tracking issue: [#29](https://github.com/runyte/runyte/issues/29), item 5.
+
+The [follow-up proposal](../active/PLAN_AGENT_CHANNEL_SKILL_AND_STORAGE.md)
+consolidates future skill, storage and notification work. Completion of this
+plan does not determine the status of the broader tracking issue.
 
 ## Problem
 
@@ -93,10 +101,26 @@ an optional `workspace`. The adapter fills in the client, location and
 terminal itself, remembers the participant per workspace, and continues reads
 from where the last one stopped.
 
-## Later
+## Completion evidence
 
-- Wake-up notices for idle agents, once a Runyte-authored submission is
-  decided.
-- The person posting from `[agent channel]`.
-- Named channels beyond the workspace one.
-- Keeping the history across host restarts, under `.runyte/`.
+The implementation is in `src/workspace/context/channel.rs`,
+`src/workspace/host/context_channel.rs` and `src/mcp/channel.rs`. Current usage
+and limits are documented in `docs/mcp.md` and `docs/user-guide.md`.
+
+Existing regression coverage includes:
+
+- `src/workspace/context/tests/channel.rs`: participant identity and resume,
+  required join fields, recorded location changes, DM visibility, unread state,
+  bounded retention and read sizes, and departed-participant eviction.
+- `src/workspace/host/tests/context_access.rs`:
+  `agents_share_the_channel_and_a_verified_terminal_counts_what_is_unread`
+  exercises host requests, verified association, unread indicators and the
+  person's channel page.
+- `src/mcp/tests/host.rs`:
+  `channel_tools_join_once_continue_reads_and_rejoin_after_a_reconnect` and
+  `a_channel_only_grant_keeps_its_connection_between_calls` exercise adapter
+  cursors, reconnect and channel-only grants.
+
+The lifecycle update is documentation-only; these tests were inspected, not
+rerun. The former later-work list is accounted for in the follow-up proposal;
+it was outside this plan's implemented scope.

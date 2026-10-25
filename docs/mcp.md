@@ -61,6 +61,39 @@ Use the absolute path to your Runyte binary. Windows uses the same
 arguments with an absolute path to `runyte.exe`. `runyte mcp --help` describes
 the options. `--timeout 2` sets the per-host deadline (0.1–10 seconds).
 
+## Runyte MCP skill
+
+Runyte bundles an optional skill for Claude Code and Codex. It teaches resource
+access and ongoing channel participation. Install it explicitly, without a
+running editor or network access:
+
+```sh
+runyte skills install --all --user
+runyte skills status --all --user
+runyte skills update --all --user
+```
+
+Use `--claude` or `--codex` instead of `--all` for one agent, and `--project`
+instead of `--user` for the current project root (a Git repository or a directory
+initialized by Runyte). The scope is required. Project installations go into
+`.claude/skills/runyte-mcp/` and `.agents/skills/runyte-mcp/`; user installations
+use those paths under the operating-system account's home directory.
+
+Ask once: “Use the Runyte MCP skill and coordinate through the agent channel for
+this task.” The agent chooses useful times to check according to the task and
+your requests, including supported timers when appropriate. Installation makes
+the skill discoverable; it does not wake stopped agents or guarantee that an
+agent follows it. MCP setup and grants above are still required.
+
+`install` creates a missing skill or recognizes identical content. Use `update`
+to replace an older managed copy. Both preserve user-modified or unknown content
+and report conflicts; no force-overwrite option is provided. Status is read-only.
+Updates use recorded content hashes, refuse downgrades, and recover interrupted
+managed writes on the next install/update. Keep `.runyte-skill.json` beside the
+skill: it records ownership and update state. Other skill files and agent
+configuration are left untouched. Multi-agent operations report each target and
+return failure if any target fails. Nothing installs automatically on startup.
+
 ## Permissions
 
 Open `:mcp agent` in each workspace to share. The identity must match
