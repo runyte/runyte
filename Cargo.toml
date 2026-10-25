@@ -114,6 +114,7 @@ tree-sitter-xml = "=0.7.0"
 tree-sitter-zig = "=1.1.2"
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
+rusqlite = { version = "0.38", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
 png = "0.18"

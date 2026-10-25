@@ -2,6 +2,7 @@
 
 Status: active. Stage 1 is implemented and verified locally;
 Stage 2 has partial subagent trial evidence; native-client user tests remain.
+Stage 3 has started with the storage foundation, not yet exposed through MCP.
 The initial delivery is the cooperative skill and its
 installer. Hooks and terminal wake-up
 are tentative investigations, not committed implementation stages.
@@ -439,6 +440,72 @@ and frontend-specific behavior. This short, prompted trial supports cooperative
 checks during active work, not universal compliance or eventual delivery.
 
 ### 3. Durable conversations
+
+#### Storage foundation and integration decisions
+
+The first package adds `src/workspace/context/durable.rs` and its SQLite schema
+under the existing context ownership. It is deliberately separate from the
+legacy in-memory channel. No production startup opens the database, and no
+host or MCP operation currently calls this package. Tests supply private
+temporary roots; the eventual production root remains the user-level `.runyte`.
+
+Implemented storage semantics:
+
+- Transactional registration and explicit recovery using stored credential
+  hashes. A recovery failure never creates a replacement participant.
+- Public history, initial latest-20 subscription obligations, older history
+  pages, and oldest-pending reads without implicit acknowledgement.
+- Immutable fixed groups, including two-member DMs; sending acknowledges the
+  sender and deletion requires every other member's exact receipt.
+- Receipts bind participant, channel and exact message IDs, expire after 24
+  hours, and support repeated acknowledgement until expiry. Lost responses
+  remain replayable. There are at most 64 unacknowledged receipts and 8,192
+  retained receipt records per participant.
+- Send keys carry a nonce and original creation time; the key and canonical
+  content are deduplicated for seven days. Older keys are rejected, even after
+  tombstone collection. At most 8,192 send records per participant are retained.
+- Channel policy is rechecked in each operation's transaction. Native-only
+  policy replacement uses a revision fence; recovery bindings are independent
+  of channel policy. Local public channels allow different grant identities in
+  the same workspace. Cross-workspace routes cannot be added by agent methods.
+- Private database admission, schema refusal without replacement, WAL with FULL
+  synchronization, a 100 ms busy timeout and a 65,536-page storage ceiling.
+  The ceiling does not bound transient WAL size. Maintenance removes at most
+  256 expired receipt records and 256 expired send records per call and commits
+  separately so quota refusal does not undo cleanup progress.
+
+Resource limits currently include 4,096 participants, 256 retained channels and
+64 members per channel. Limits refuse new work; they do not evict history or
+change recipient obligations. The caller must use trusted host time, validate
+live grants and dispatch blocking database work off the editor loop.
+
+Astra Medium reviewed the foundation until clean after fixes for durable
+first-use directory creation, concurrent file creation, indexed receipt cleanup,
+and expired-receipt renewal. Focused tests cover restart/replay, late subscribers,
+all-recipient deletion, native policy fences, ten participants, bounded reads,
+concurrent stores, expired records, disk-full rollback, bounded busy refusal and
+unknown/corrupt/future databases. Linux formatting, core and desktop clippy,
+core and desktop tests, and canonical coverage passed. Overall line coverage
+is 92.14%; the new storage module has 96.02% line coverage. Windows execution
+remains for CI. These checks verify the foundation, not the pending integration.
+
+Still required before Stage 3 can be used:
+
+1. A bounded host worker and separately negotiated durable context operations;
+   legacy v1 reads must never acknowledge durable messages. Define admitted
+   mutation versus revocation ordering and suppress stale worker replies.
+2. Explicit private adapter profiles, durable credential installation, concurrent
+   profile-use rules and host-incarnation fencing for presence. Credentials
+   must never reach model-visible results, channel text or logs.
+3. A native operator policy-management surface for workspace/identity routes
+   and participant recovery bindings, with revision-checked policy changes.
+4. MCP operations for conversations, history, explicit acknowledgement and
+   idempotent sends, plus the bounded human channel view and admission for at
+   least ten live agents. The storage test with ten participants does not
+   establish transport admission for ten agents.
+5. End-to-end restart/revocation/mixed-client tests, desktop parity and updated
+   skill/setup instructions before enabling the feature.
+
 
 Finalize the cross-workspace authorization and identity recovery contract, then
 implement SQLite storage, public history, DMs/fixed groups, explicit receipts
