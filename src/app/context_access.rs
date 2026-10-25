@@ -442,9 +442,21 @@ impl App {
     }
 
     /// Replaces the page's text if it is open; nothing opens otherwise.
+    /// Every pane showing it moves to the last line, so the newest message
+    /// is in view.
     pub(crate) fn refresh_agent_channel_page(&mut self, page: &str) {
         if let Some(index) = self.agent_channel_page() {
-            self.buffers[index].replace_virtual_text(page);
+            let buffer = &mut self.buffers[index];
+            buffer.replace_virtual_text(page);
+            // The page ends in a newline; the row after it holds nothing.
+            let mut row = buffer.last_row();
+            if row > 0 && buffer.line_len(row) == 0 {
+                row -= 1;
+            }
+            let last = buffer.line_to_offset(row);
+            for pane in self.panes.values_mut().filter(|pane| pane.buffer == index) {
+                pane.replace_selection(crate::selection::Selection::point(last));
+            }
             self.normalize_buffer(index);
             self.plugins.presentation_dirty = true;
         }

@@ -551,3 +551,35 @@ fn the_session_strip_row_comes_out_of_the_review_not_the_approval_size() {
         "80 x 22 still has room to approve"
     );
 }
+
+#[test]
+fn a_refreshed_agent_channel_page_shows_its_newest_message() {
+    let page = |count: usize| {
+        let mut page = String::from("Agent channel\n\nMessages\n\n");
+        for n in 1..=count {
+            page.push_str(&format!("  12:00:00  codex-1: message {n}\n"));
+        }
+        page
+    };
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_agent_channel_page(&page(3));
+    let view = |app: &mut App| {
+        app.prepare_view(crate::ui::frame_geometry(ratatui::layout::Rect::new(
+            0, 0, 80, 12,
+        )))
+    };
+    view(&mut app);
+    assert_eq!(app.active().scroll_row, 0);
+
+    app.refresh_agent_channel_page(&page(40));
+    let newest = app.active_buffer().last_row() - 1;
+    assert_eq!(app.cursor_position().row, newest);
+    assert!(
+        app.active_buffer()
+            .line_string(newest)
+            .contains("message 40")
+    );
+    view(&mut app);
+    let scroll = app.active().scroll_row;
+    assert!(scroll > 0 && scroll <= newest && newest < scroll + 12);
+}
