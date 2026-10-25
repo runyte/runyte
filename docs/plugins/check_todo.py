@@ -149,6 +149,7 @@ class TodoChecks:
         self.send(HOST[0])
         registration = self.read()
         self.assertEqual(registration['type'], 'register')
+        self.assertEqual(registration['name'], 'Todo · ' + self.language)
         self.assertEqual(registration['required_capabilities'], ['views'])
         commands = registration['commands']
         self.assertEqual([c['name'] for c in commands], ['open', 'add', 'toggle', 'remove', 'filter'])
@@ -208,7 +209,7 @@ class TodoChecks:
 
     def test_add_unicode_multiselect_toggle_filter_remove_and_reopen(self):
         self.open()
-        title = 'Buy "żółć" \\ tea 😀 e\u0301'
+        title = '東京 · Buy "żółć" \\ tea 😀 e\u0301'
         rows = self.publish('add', arguments={'title': title})
         self.assertEqual(rows[1], {'id': 'task-2', 'text': '[ ] ' + title, 'role': 'ordinary'})
         rows = self.publish('toggle', rows=['task-1', 'task-2'])
@@ -314,8 +315,10 @@ class TodoChecks:
         self.assertEqual(rows[-1]['id'], 'task-101')
 
     def test_fragmented_frames_and_unknown_host_fields(self):
-        frame = (json.dumps({**HOST[0], 'future_field': {'ignored': True}}) + '\n').encode()
-        for piece in [frame[:3], frame[3:11], frame[11:]]:
+        frame = (json.dumps({**HOST[0], 'future_field': {'ignored': 'ż東京😀'}},
+                            ensure_ascii=False) + '\n').encode()
+        split = frame.index('ż'.encode()) + 1
+        for piece in [frame[:3], frame[3:11], frame[11:split], frame[split:]]:
             self.child.stdin.write(piece)
         self.assertEqual(self.read()['type'], 'register')
         self.send({**HOST[1], 'capabilities': ['views']})
@@ -348,9 +351,26 @@ class TodoChecks:
         self.child.stdin.write(b'{invalid}\n')
         self.assertNotEqual(self.child.wait(timeout=2), 0)
 
-    def test_invalid_utf8_fails(self):
-        self.child.stdin.write(b'{"type":"\xff"}\n')
+    def reject_unknown_event(self, data):
+        # Valid unknown events are ignored, so failure must come from decoding,
+        # not rejection of an unknown type or a failed registration literal.
+        self.handshake()
+        self.child.stdin.write(b'{"type":"event","event":"future.event","data":' + data + b'}\n')
+        self.child.stdin.flush()
         self.assertNotEqual(self.child.wait(timeout=2), 0)
+        self.assertEqual(self.child.stdout.read(), b'')
+
+    def test_invalid_utf8_fails(self):
+        self.reject_unknown_event(b'"\xff"')
+
+    def test_invalid_utf8_continuation_fails(self):
+        self.reject_unknown_event(b'"\xc3("')
+
+    def test_raw_control_character_fails(self):
+        self.reject_unknown_event(b'"\x01"')
+
+    def test_json_comments_fail(self):
+        self.reject_unknown_event(b'{}/* comment */')
 
     def test_missing_required_capability_fails(self):
         self.send({**HOST[0], 'capabilities': []})

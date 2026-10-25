@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
-// Standalone stable-v1 todo showcase. C11, POSIX and json-c 0.15+.
+// Standalone stable-v1 todo showcase. C11, POSIX and json-c 0.19+.
 #define _POSIX_C_SOURCE 200809L
 #include <errno.h>
 #include <fcntl.h>
+#include <json_c_version.h>
 #include <json_object.h>
 #include <json_tokener.h>
 #include <poll.h>
@@ -13,6 +14,12 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+// Older strict parsers can reject valid non-ASCII strings (json-c issue #867).
+#define MIN_JSON_C_VERSION ((0 << 16) | (19 << 8))
+#if JSON_C_VERSION_NUM < MIN_JSON_C_VERSION
+#error "The todo example requires json-c 0.19+"
+#endif
 
 #define LIMIT (1024 * 1024)
 #define VERSION "runyte-1"
@@ -311,6 +318,11 @@ static void receive(J *message) {
     } else fail();
 }
 int main(void) {
+    // A supported header does not guarantee the loader selected that library.
+    if (json_c_version_num() < MIN_JSON_C_VERSION) {
+        fputs("The todo example requires json-c 0.19+ at runtime\n", stderr);
+        return 1;
+    }
     int flags = fcntl(STDOUT_FILENO, F_GETFL);
     if (flags < 0 || fcntl(STDOUT_FILENO, F_SETFL, flags | O_NONBLOCK) < 0) fail();
     tasks = literal("[{\"id\":\"task-1\",\"title\":\"Read the plugin guide\",\"done\":false}]");

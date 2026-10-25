@@ -217,7 +217,30 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends mpv nodejs build-essential pkg-config libjson-c-dev
+          sudo apt-get install --yes --no-install-recommends mpv nodejs build-essential pkg-config cmake
+
+      # The distro's json-c 0.18 rejects non-ASCII strings in strict mode.
+      # Keep strict UTF-8 parsing and build the supported release privately.
+      - name: Check out json-c 0.19
+        if: runner.os == 'Linux'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: json-c/json-c
+          ref: aa716cd8d663c976b99b0f30f102ee1d8ef63146 # json-c-0.19-20260627
+          path: .ci-deps/json-c
+          persist-credentials: false
+
+      - name: Build and test json-c 0.19
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S .ci-deps/json-c -B "$RUNNER_TEMP/json-c-build" \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_STATIC_LIBS=OFF \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/json-c" -DCMAKE_INSTALL_LIBDIR=lib
+          cmake --build "$RUNNER_TEMP/json-c-build" --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/json-c-build" --output-on-failure
+          cmake --install "$RUNNER_TEMP/json-c-build"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/json-c/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/json-c/lib" >> "$GITHUB_ENV"
 
       - name: Install macOS example backends
         if: runner.os == 'macOS'

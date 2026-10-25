@@ -9,7 +9,7 @@ library, Python bridge, terminal renderer, account or network service is needed.
 | --- | --- | --- |
 | Python | [python/todo.py](python/todo.py) | Python 3.10+, standard library only |
 | Rust | [rust/src/main.rs](rust/src/main.rs) | Rust 1.88+, `serde_json` and `libc`; build with the included lockfile |
-| C | [c/todo.c](c/todo.c) | C11 compiler, POSIX, pkg-config and json-c 0.15+ |
+| C | [c/todo.c](c/todo.c) | C11 compiler, POSIX, pkg-config and json-c 0.19+ |
 
 The examples target Linux and macOS. Each owns its own task list; enabling all
 three does not share tasks between them. The original [tasks.py](../tasks.py)
@@ -31,6 +31,31 @@ sudo dnf install gcc pkgconf-pkg-config json-c-devel
 # macOS (with Xcode command line tools)
 brew install pkg-config json-c
 ```
+
+Verify `pkg-config --modversion json-c` reports **0.19 or newer**. Older
+versions, including 0.18 on some Linux distributions, can reject valid Unicode
+in strict mode. The build helper and C program enforce the minimum; strict
+parsing and UTF-8 validation remain enabled.
+
+If the distribution package is older, build the supported release into a private
+prefix (requires Git and CMake), without replacing the system library:
+
+```sh
+git clone --depth 1 --branch json-c-0.19-20260627 https://github.com/json-c/json-c.git
+cmake -S json-c -B json-c-build -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_STATIC_LIBS=OFF -DCMAKE_INSTALL_PREFIX="$HOME/.local/json-c-0.19" \
+  -DCMAKE_INSTALL_LIBDIR=lib
+cmake --build json-c-build --parallel 2
+ctest --test-dir json-c-build --output-on-failure
+cmake --install json-c-build
+export PKG_CONFIG_PATH="$HOME/.local/json-c-0.19/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export LD_LIBRARY_PATH="$HOME/.local/json-c-0.19/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
+
+Keep these environment variables set when building and running the showcase;
+the dynamic loader must select the supported library too. Linux CI builds the
+same release at a pinned source revision and runs its upstream tests before
+running the unchanged cross-language conformance gate.
 
 From the Runyte checkout root, with Python and Rust installed:
 

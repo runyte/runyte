@@ -24,9 +24,9 @@ def main():
         parser.error('Install a C compiler and the Rust toolchain')
     if not shutil.which('pkg-config'):
         parser.error('Install pkg-config and json-c development headers (see README.md)')
-    dependency = subprocess.run(['pkg-config', '--atleast-version=0.15', 'json-c'])
+    dependency = subprocess.run(['pkg-config', '--atleast-version=0.19', 'json-c'])
     if dependency.returncode:
-        parser.error('Install json-c 0.15+ development headers (see README.md)')
+        parser.error('Install json-c 0.19+ development headers (see README.md)')
     flags = shlex.split(subprocess.check_output(['pkg-config', '--cflags', '--libs', 'json-c'], text=True))
     output.mkdir(parents=True, exist_ok=True)
     subprocess.run(compiler + ['-std=c11', '-O2', '-Wall', '-Wextra', '-Wpedantic', '-Werror',
