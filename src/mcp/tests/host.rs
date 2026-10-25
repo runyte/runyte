@@ -42,6 +42,10 @@ impl Drop for Host {
 }
 impl Host {
     fn new() -> Self {
+        Self::in_environment(storage::environment_fingerprint())
+    }
+    /// A host as seen by a client whose runtime and cache variables differ.
+    fn in_environment(environment: String) -> Self {
         let temp = crate::test_support::TestRuntimeRoot::new("mcp").unwrap();
         let project = temp.path().join("project");
         std::fs::create_dir(&project).unwrap();
@@ -56,7 +60,7 @@ impl Host {
             endpoint: store.socket_path(&incarnation).unwrap(),
             mode: HostMode::Persistent,
             pid: std::process::id(),
-            environment: storage::environment_fingerprint(),
+            environment,
         };
         let listener = UnixListener::bind(&record.endpoint).unwrap();
         std::fs::set_permissions(&record.endpoint, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -936,4 +940,33 @@ async fn a_named_directory_stays_the_agents_place_until_it_names_another() {
         posts[1]["location"]["directory"], elsewhere,
         "leaving directory out does not move the agent back"
     );
+}
+
+#[tokio::test]
+async fn a_host_from_another_environment_is_reported_not_blamed_on_permissions() {
+    let host = Host::in_environment("f".repeat(64));
+    host.state.lock().unwrap().channel = true;
+    let mut bridge = host.bridge();
+    let listed = bridge.call("list_workspaces", json!({})).await.unwrap();
+    assert_eq!(listed["workspaces"], json!([]));
+    assert_eq!(listed["hidden_workspaces"], 1);
+    assert!(
+        listed["discovery_help"]
+            .as_str()
+            .unwrap()
+            .contains("XDG_RUNTIME_DIR")
+    );
+    let joined = bridge
+        .call("join_channel", json!({"provider":"codex","task":"review"}))
+        .await
+        .unwrap_err();
+    assert_eq!(joined.code, "unavailable");
+    assert!(joined.message.contains("include_hidden"));
+    // The explicit expansion still reaches the host, with its grant intact.
+    let broad = bridge
+        .call("list_workspaces", json!({"include_hidden":true}))
+        .await
+        .unwrap();
+    assert_eq!(broad["workspaces"].as_array().unwrap().len(), 1);
+    assert!(broad.get("hidden_workspaces").is_none());
 }

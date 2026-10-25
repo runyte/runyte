@@ -129,8 +129,24 @@ impl Bridge {
         {
             return Ok(joined.clone());
         }
+        let discovered = inventory["workspaces"]
+            .as_array()
+            .is_some_and(|w| !w.is_empty());
         match candidates.as_slice() {
             [only] => Ok(only.clone()),
+            // Nothing to grant: blaming permissions here sends the person to
+            // a dialog that is already correct.
+            [] if !discovered && inventory["hidden_workspaces"].is_u64() => {
+                Err(Failure::new("unavailable", super::client::HIDDEN_HELP))
+            }
+            [] if !discovered && selector.is_empty() => Err(Failure::new(
+                "unavailable",
+                "No running Runyte workspace was discovered, so there is no agent channel to join.",
+            )),
+            [] if !discovered => Err(Failure::new(
+                "unavailable",
+                format!("No running Runyte workspace matches {selector}."),
+            )),
             [] => Err(Failure::new(
                 "capability_denied",
                 format!(

@@ -19,7 +19,16 @@ For a client using TOML MCP configuration:
 [mcp_servers.runyte]
 command = "/path/to/runyte"
 args = ["mcp", "--identity", "agent"]
+env_vars = ["XDG_RUNTIME_DIR", "XDG_CACHE_HOME"]
 ```
+
+The server must see the same `XDG_RUNTIME_DIR` and `XDG_CACHE_HOME` as the
+editor. Runyte lists only workspaces registered from the same runtime and cache
+environment, so that editors started for tests never appear beside real ones.
+A client that starts servers with a reduced environment must pass both
+variables through; `env_vars` does this in the TOML form above. When they are
+missing, discovery returns no workspaces, `hidden_workspaces` counts the live
+ones it left out, and `discovery_help` names the variables.
 
 ### Codex and Claude Code
 
@@ -29,6 +38,19 @@ Add Runyte to both clients with the same `agent` identity:
 codex mcp add runyte -- /path/to/runyte mcp --identity agent
 claude mcp add --scope user --transport stdio runyte -- /path/to/runyte mcp --identity agent
 ```
+
+Codex starts MCP servers with a reduced environment, and `codex mcp add` has
+no option to pass a variable through by name. After adding the server, add
+the `env_vars` line to the `[mcp_servers.runyte]` table that
+`~/.codex/config.toml` now contains:
+
+```toml
+env_vars = ["XDG_RUNTIME_DIR", "XDG_CACHE_HOME"]
+```
+
+Another client that does not pass these variables through needs the same
+addition in its own configuration; `hidden_workspaces` in a `list_workspaces`
+reply shows when it does.
 
 Check the saved configurations with `codex mcp list` and `claude mcp list`.
 Restart any already-running agent session after adding the server. Each client
@@ -145,8 +167,10 @@ runs, and source text is not cached between calls.
 Workspace selectors accept a project path fragment or returned workspace
 handle. Omitting one searches the discovered authorized workspaces; it never
 uses current editor focus. `include_hidden=true` explicitly broadens discovery
-beyond the current environment. `list_workspaces` checks identity and grants
-without reading source content.
+beyond the current environment. When nothing in the current environment is
+found, the reply carries `hidden_workspaces` and `discovery_help` if live
+workspaces from another environment exist. `list_workspaces` checks identity
+and grants without reading source content.
 
 ## Reading and writing
 

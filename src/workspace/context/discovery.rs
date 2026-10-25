@@ -26,6 +26,14 @@ pub struct Discovery {
     /// True means a bounded scan did not probe every admitted registration.
     pub truncated: bool,
     pub workspaces: Vec<Endpoint>,
+    /// Live hosts registered from another runtime or cache environment. Counted
+    /// only when this environment found none, so an empty answer can say why.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub hidden: usize,
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
 }
 
 #[derive(Debug, Serialize)]
@@ -55,6 +63,7 @@ pub async fn discover(
         schema: SCHEMA,
         truncated: false,
         workspaces: Vec::new(),
+        hidden: 0,
     };
     let Some(root) = root else {
         return Ok(result);
@@ -64,8 +73,51 @@ pub async fn discover(
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(result),
         Err(error) => return Err(error),
     };
+    let deadline = tokio::time::Instant::now() + DISCOVERY_TIMEOUT;
     let registrations = storage.discover(environment, include_hidden)?;
-    result.truncated = registrations.len() > MAX_ENDPOINTS;
+    let (live, truncated) = probe_all(registrations, deadline).await;
+    result.truncated = truncated;
+    result.workspaces = live
+        .into_iter()
+        .map(|registration| {
+            let label = registration
+                .root
+                .file_name()
+                .unwrap_or(registration.root.as_os_str())
+                .to_string_lossy()
+                .into_owned();
+            Endpoint {
+                registration,
+                label,
+                transport_version: super::wire::FEATURE,
+            }
+        })
+        .collect();
+    result.workspaces.sort_by(|a, b| {
+        a.registration
+            .host_incarnation
+            .cmp(&b.registration.host_incarnation)
+    });
+    // A client started with a reduced environment otherwise sees nothing and
+    // cannot tell that from missing permission. Stale records are not counted.
+    if result.workspaces.is_empty() && !include_hidden {
+        let foreign = storage
+            .discover(environment, true)?
+            .into_iter()
+            .filter(|registration| registration.environment != environment)
+            .collect();
+        result.hidden = probe_all(foreign, deadline).await.0.len();
+    }
+    Ok(result)
+}
+
+/// Probes at most `MAX_ENDPOINTS` registrations before `deadline`; true means
+/// some were left unprobed.
+async fn probe_all(
+    registrations: Vec<Registration>,
+    deadline: tokio::time::Instant,
+) -> (Vec<Registration>, bool) {
+    let mut truncated = registrations.len() > MAX_ENDPOINTS;
     let probes = stream::iter(registrations.into_iter().take(MAX_ENDPOINTS).map(
         |registration| async move {
             let valid = matches!(
@@ -77,36 +129,19 @@ pub async fn discover(
     ))
     .buffer_unordered(CONCURRENCY);
     tokio::pin!(probes);
-    let deadline = tokio::time::Instant::now() + DISCOVERY_TIMEOUT;
+    let mut live = Vec::new();
     loop {
         match tokio::time::timeout_at(deadline, probes.next()).await {
-            Ok(Some(Some(registration))) => {
-                let label = registration
-                    .root
-                    .file_name()
-                    .unwrap_or(registration.root.as_os_str())
-                    .to_string_lossy()
-                    .into_owned();
-                result.workspaces.push(Endpoint {
-                    registration,
-                    label,
-                    transport_version: super::wire::FEATURE,
-                });
-            }
+            Ok(Some(Some(registration))) => live.push(registration),
             Ok(Some(None)) => {}
             Ok(None) => break,
             Err(_) => {
-                result.truncated = true;
+                truncated = true;
                 break;
             }
         }
     }
-    result.workspaces.sort_by(|a, b| {
-        a.registration
-            .host_incarnation
-            .cmp(&b.registration.host_incarnation)
-    });
-    Ok(result)
+    (live, truncated)
 }
 
 /// Connect only after checking the private endpoint and its live process owner.
@@ -325,22 +360,50 @@ mod tests {
         let hidden = fixture.registration(&store);
         store.register(&hidden).unwrap();
         let server = serve(&hidden, response(&hidden));
+        // A dead host from the same foreign environment is not worth mentioning.
+        let stale = fixture.registration(&store);
+        store.register(&stale).unwrap();
+        let narrow = discover(Some(store.root().to_owned()), &"b".repeat(64), false)
+            .await
+            .unwrap();
+        assert!(narrow.workspaces.is_empty());
+        assert_eq!(narrow.hidden, 1);
         assert!(
-            discover(Some(store.root().to_owned()), &"b".repeat(64), false)
-                .await
+            serde_json::to_string(&narrow)
                 .unwrap()
-                .workspaces
-                .is_empty()
-        );
-        assert_eq!(
-            discover(Some(store.root().to_owned()), &"b".repeat(64), true)
-                .await
-                .unwrap()
-                .workspaces
-                .len(),
-            1
+                .contains("\"hidden\":1")
         );
         server.await.unwrap();
+        std::fs::remove_file(&hidden.endpoint).unwrap();
+        let server = serve(&hidden, response(&hidden));
+        let broad = discover(Some(store.root().to_owned()), &"b".repeat(64), true)
+            .await
+            .unwrap();
+        assert_eq!(broad.workspaces.len(), 1);
+        assert_eq!(broad.hidden, 0);
+        assert!(!serde_json::to_string(&broad).unwrap().contains("hidden"));
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn foreign_hosts_are_not_counted_beside_a_matching_one() {
+        let fixture = Fixture::new();
+        let store = fixture.store();
+        let here = fixture.registration(&store);
+        store.register(&here).unwrap();
+        let server = serve(&here, response(&here));
+        let mut elsewhere = fixture.registration(&store);
+        elsewhere.environment = "b".repeat(64);
+        store.register(&elsewhere).unwrap();
+        // Live, so only skipping the count keeps it at zero.
+        let foreign = serve(&elsewhere, response(&elsewhere));
+        let result = discover(Some(store.root().to_owned()), &here.environment, false)
+            .await
+            .unwrap();
+        assert_eq!(result.workspaces.len(), 1);
+        assert_eq!(result.hidden, 0);
+        server.await.unwrap();
+        foreign.abort();
     }
 
     #[tokio::test]

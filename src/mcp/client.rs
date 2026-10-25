@@ -21,6 +21,9 @@ use tokio::{
 trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
 const SUPPORTED_HOSTS: &str = ">=0.3.0, <0.5.0";
+/// Shown when every live host was registered from another environment, which
+/// is what an MCP client that starts servers with a reduced environment sees.
+pub(super) const HIDDEN_HELP: &str = "Running Runyte workspaces exist but were registered from a different environment: XDG_RUNTIME_DIR or XDG_CACHE_HOME here differs from the editor's. Configure the MCP client to pass both variables through to runyte mcp and restart it, or rerun with include_hidden=true.";
 struct Connection {
     socket: BufReader<Box<dyn Stream>>,
     scopes: BTreeSet<Scope>,
@@ -387,10 +390,13 @@ impl Bridge {
             };
             rows.push(json!({"workspace":key,"root":record.root,"label":label,"scopes":scopes,"unavailable_reason":error}));
         }
-        Ok(
-            json!({"identity":self.identity,"workspaces":rows,"next_workspace_offset":(offset+4<total).then_some(offset+4),
-            "truncated":inventory.truncated,"permission_help":format!("In the target Runyte workspace, use :mcp {}. Apply permissions, then rerun find_resources; no agent restart needed.",self.identity)}),
-        )
+        let mut reply = json!({"identity":self.identity,"workspaces":rows,"next_workspace_offset":(offset+4<total).then_some(offset+4),
+            "truncated":inventory.truncated,"permission_help":format!("In the target Runyte workspace, use :mcp {}. Apply permissions, then rerun find_resources; no agent restart needed.",self.identity)});
+        if inventory.hidden > 0 {
+            reply["hidden_workspaces"] = json!(inventory.hidden);
+            reply["discovery_help"] = json!(HIDDEN_HELP);
+        }
+        Ok(reply)
     }
 
     pub(super) fn scopes(&self, workspace: &str) -> BTreeSet<Scope> {

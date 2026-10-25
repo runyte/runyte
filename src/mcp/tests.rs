@@ -137,6 +137,25 @@ async fn lifecycle_errors_arguments_and_bounded_frames() {
     assert!(String::from_utf8(output).unwrap().contains("Invalid JSON"));
 }
 
+#[tokio::test]
+async fn joining_with_no_host_running_says_so() {
+    let mut empty = Bridge::new(None, "agent".into(), Duration::from_millis(100)).unwrap();
+    let error = empty
+        .call("join_channel", json!({"provider":"codex","task":"review"}))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "unavailable");
+    assert!(error.message.contains("No running Runyte workspace"));
+    let named = empty
+        .call(
+            "join_channel",
+            json!({"provider":"codex","task":"review","workspace":"elsewhere"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(named.message.contains("matches elsewhere"));
+}
+
 #[cfg(unix)]
 #[path = "tests/host.rs"]
 mod host;
