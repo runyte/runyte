@@ -5,6 +5,7 @@
 pub mod channel;
 #[cfg(any(unix, windows))]
 pub mod durable;
+pub mod durable_protocol;
 #[cfg(any(unix, windows))]
 pub mod storage;
 #[cfg(any(unix, windows))]

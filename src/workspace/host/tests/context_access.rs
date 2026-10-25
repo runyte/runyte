@@ -1154,3 +1154,103 @@ async fn agents_share_the_channel_and_a_verified_terminal_counts_what_is_unread(
     );
     host.app.terminals.close(terminal);
 }
+
+#[tokio::test]
+async fn durable_dispatch_requires_negotiation_scope_store_and_live_lease() {
+    let (root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, [Scope::AgentChannel].into());
+    let hello = frame(
+        &mut host,
+        1,
+        json!({"type":"authenticate","credential":identity.credential()}),
+    );
+    assert!(
+        !hello.value["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(wire::DURABLE_FEATURE))
+    );
+    host.context_disconnect(1);
+    let store = root.path().join("durable");
+    host.context.durable_root = Some(store.clone());
+    authenticate(&mut host, &identity, 1, &["agent_channel"]);
+    async fn dispatch(host: &mut WorkspaceHost, id: &str, store: &str) -> Value {
+        let bytes = serde_json::to_vec(&json!({"type":"request","id":id,"method":"channel.durable","params":{"credential":"a".repeat(64),"store":store,"operation":{"action":"register","provider":"test","task":"fixture"}}})).unwrap();
+        let (send, receive) = tokio::sync::oneshot::channel();
+        let mut send = Some(send);
+        assert!(host.context_durable_frame(1, &bytes, &mut send));
+        tokio::time::timeout(Duration::from_secs(3), receive)
+            .await
+            .unwrap()
+            .unwrap()
+            .value
+    }
+    let store_key = crate::hash::sha256_hex(&crate::native_path::encode_path(&store));
+    assert!(
+        dispatch(&mut host, "not-negotiated", &store_key)
+            .await
+            .get("error")
+            .is_some()
+    );
+    assert!(!store.exists());
+    host.context.readers.get_mut(&1).unwrap().durable = true;
+    assert!(
+        dispatch(&mut host, "wrong-store", &"b".repeat(64))
+            .await
+            .get("error")
+            .is_some()
+    );
+    host.context.readers.get_mut(&1).unwrap().scopes.clear();
+    assert!(
+        dispatch(&mut host, "no-scope", &store_key)
+            .await
+            .get("error")
+            .is_some()
+    );
+    host.context
+        .readers
+        .get_mut(&1)
+        .unwrap()
+        .scopes
+        .insert(Scope::AgentChannel);
+    // A real context registration supplies the immutable workspace route.
+    host.context.registration = Some(Registration {
+        root: host.app.project_root.clone(),
+        workspace_id: crate::workspace::identity::workspace_id(&host.app.project_root),
+        host_incarnation: "fixture".into(),
+        endpoint: root.path().join("socket"),
+        mode: HostMode::Standalone,
+        pid: std::process::id(),
+        environment: "fixture".into(),
+    });
+    let registered = dispatch(&mut host, "register", &store_key).await;
+    assert!(
+        registered["result"]["participant"].is_string(),
+        "{registered}"
+    );
+    assert!(
+        dispatch(&mut host, "register", &store_key)
+            .await
+            .get("error")
+            .is_some()
+    );
+    assert_eq!(
+        registered["result"]["participant"],
+        dispatch(&mut host, "retry", &store_key).await["result"]["participant"]
+    );
+    // A saturated worker refuses admission without blocking the host.
+    host.context.durable_worker = Some(durable::Worker::disconnected_for_test());
+    assert!(
+        dispatch(&mut host, "full", &store_key)
+            .await
+            .get("error")
+            .is_some()
+    );
+    host.context.readers.get_mut(&1).unwrap().lease.cancel();
+    assert!(
+        dispatch(&mut host, "cancelled", &store_key)
+            .await
+            .get("error")
+            .is_some()
+    );
+}

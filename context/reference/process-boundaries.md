@@ -82,7 +82,7 @@ proposals have independent quotas.
 
 [`runyte mcp`](../../docs/mcp.md) adapts MCP over stdio to this same context
 transport. An external client starts the adapter; the adapter connects to
-granted hosts and gains no additional authority. Its thirteen-tool catalog is
+granted hosts and gains no additional authority. Its fourteen-tool catalog is
 distinct from the fuller context operation catalog. The agent channel
 (`agent_channel`, feature `runyte.context.channel.v1`) lets readers of one host
 exchange messages; the host verifies a participant's terminal from the

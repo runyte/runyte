@@ -15,6 +15,7 @@ use crate::plugin::{
 pub const FEATURE: &str = "runyte.context.v1";
 /// Hosts carrying the agent channel name this in their hello, so a client
 /// asks for `agent_channel` only from a host that knows it.
+pub const DURABLE_FEATURE: &str = "runyte.context.channel.durable.v1";
 pub const CHANNEL_FEATURE: &str = "runyte.context.channel.v1";
 pub const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_READERS: usize = 8;
@@ -201,7 +202,7 @@ pub fn parse_registration(raw: &str) -> Result<Registration, Error> {
     crate::plugin::compatibility::negotiate_features(
         &value.required_features,
         &value.optional_features,
-        &[FEATURE, CHANNEL_FEATURE],
+        &[FEATURE, CHANNEL_FEATURE, DURABLE_FEATURE],
     )
     .map_err(|_| Error::new(ErrorCode::Unsupported, "Unsupported context features"))?;
     crate::plugin::compatibility::ReleaseRange::parse(&value.runyte)
@@ -258,6 +259,8 @@ pub struct Empty {}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "method", content = "params", deny_unknown_fields)]
 pub enum Request {
+    #[serde(rename = "channel.durable")]
+    ChannelDurable(super::durable_protocol::Command),
     #[serde(rename = "buffer.list")]
     BufferList { offset: usize, limit: usize },
     #[serde(rename = "buffer.read")]
@@ -390,7 +393,8 @@ impl Request {
             Self::TerminalInputPropose { .. }
             | Self::TerminalInputStatus { .. }
             | Self::TerminalInputCancel { .. } => Scope::TerminalPropose,
-            Self::ChannelJoin { .. }
+            Self::ChannelDurable(_)
+            | Self::ChannelJoin { .. }
             | Self::ChannelPost { .. }
             | Self::ChannelRead { .. }
             | Self::ChannelWho(_) => Scope::AgentChannel,
@@ -578,6 +582,7 @@ impl Request {
             }
             Self::ChannelRead { limit, .. } => page(0, *limit, super::channel::MAX_READ)?,
             Self::ChannelWho(_) => {}
+            Self::ChannelDurable(command) => command.validate()?,
         }
         Ok(())
     }

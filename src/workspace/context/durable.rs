@@ -80,7 +80,7 @@ pub struct StoredMessage {
     pub location: Location,
     pub at_ms: u64,
 }
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub struct Page {
     pub messages: Vec<StoredMessage>,
     pub receipt: Option<String>,
@@ -94,7 +94,7 @@ pub enum ReadMode {
     History { before: Option<u64> },
 }
 
-/// One blocking worker's database connection. No production startup opens it.
+/// One blocking worker's database connection, opened only on explicit durable use.
 /// The root is explicit so tests never select the operator's home implicitly.
 pub struct Store {
     db: Connection,

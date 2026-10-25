@@ -111,7 +111,7 @@ impl Bridge {
 
     /// The workspace to use: the one named, or else the only one whose grant
     /// includes the channel, preferring one this agent already joined.
-    async fn channel_workspace(&mut self, selector: &str) -> Result<String> {
+    pub(super) async fn channel_workspace(&mut self, selector: &str) -> Result<String> {
         let inventory = self.discover(selector, false, 0).await?;
         let candidates = inventory["workspaces"]
             .as_array()

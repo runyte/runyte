@@ -5,6 +5,7 @@
 
 mod channel;
 mod client;
+mod durable;
 mod json;
 #[cfg(test)]
 mod tests;
@@ -211,10 +212,17 @@ impl Server {
 /// Entered before any editor, configuration, logging or terminal initialization.
 pub fn run(arguments: impl IntoIterator<Item = OsString>) -> anyhow::Result<()> {
     let mut identity = "agent".to_owned();
+    let mut channel_profile = None;
     let mut timeout = Duration::from_secs(2);
     let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
         match argument.to_str() {
+            Some("--channel-profile") => {
+                channel_profile =
+                    Some(PathBuf::from(arguments.next().ok_or_else(|| {
+                        anyhow::anyhow!("--channel-profile needs an absolute path")
+                    })?));
+            }
             Some("--identity") => {
                 identity = arguments
                     .next()
@@ -235,7 +243,7 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> anyhow::Result<()> 
             }
             Some("--help" | "-h") => {
                 println!(
-                    "runyte mcp [--identity agent] [--timeout 2]\nMCP server over stdio. Grant access in Runyte with :mcp <identity>.\nPermissions can be set before or after starting the agent."
+                    "runyte mcp [--identity agent] [--timeout 2] [--channel-profile PATH]\nMCP server over stdio. Grant access in Runyte with :mcp <identity>.\nPermissions can be set before or after starting the agent."
                 );
                 return Ok(());
             }
@@ -259,6 +267,9 @@ pub fn run(arguments: impl IntoIterator<Item = OsString>) -> anyhow::Result<()> 
         initialized: false,
         ready: false,
     };
+    if let Some(path) = channel_profile {
+        server.bridge.durable_profile = Some(durable::Profile::open(&path)?);
+    }
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?

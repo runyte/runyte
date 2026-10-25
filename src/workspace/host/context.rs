@@ -23,11 +23,15 @@ use std::{
 };
 use tokio::sync::mpsc;
 
+mod durable;
+
 type FrameSource = (usize, u64, Option<(TerminalId, u64)>);
 
 #[derive(Default)]
 pub(super) struct State {
     events: Option<mpsc::Sender<Event>>,
+    durable_root: Option<std::path::PathBuf>,
+    durable_worker: Option<durable::Worker>,
     /// The workspace's agent channel, for as long as this host runs.
     pub(super) channel: crate::workspace::context::channel::Channel,
     /// The channel revision the open `[agent channel]` page last showed.
@@ -89,6 +93,8 @@ struct InitialGrants {
 }
 
 struct Reader {
+    fingerprint: String,
+    durable: bool,
     identity: String,
     granted: BTreeSet<Scope>,
     scopes: BTreeSet<Scope>,
@@ -145,6 +151,11 @@ impl WorkspaceHost {
     }
     #[cfg(unix)]
     pub fn start_context(&mut self, mode: HostMode) -> mpsc::Receiver<Event> {
+        self.context.durable_root = if cfg!(test) {
+            None
+        } else {
+            std::env::var_os("RUNYTE_CHANNEL_HOME").map(std::path::PathBuf::from)
+        };
         self.start_context_with_root(mode, Storage::default_root())
     }
 
@@ -190,6 +201,11 @@ impl WorkspaceHost {
 
     #[cfg(windows)]
     pub fn start_context(&mut self, mode: HostMode) -> anyhow::Result<mpsc::Receiver<Event>> {
+        self.context.durable_root = if cfg!(test) {
+            None
+        } else {
+            std::env::var_os("RUNYTE_CHANNEL_HOME").map(std::path::PathBuf::from)
+        };
         let location = Storage::default_location();
         let environment = storage::environment_fingerprint();
         self.start_context_windows(mode, location, environment)
@@ -1024,8 +1040,12 @@ impl WorkspaceHost {
                     )));
                     return;
                 }
+                let mut reply = Some(reply);
+                if self.context_durable_frame(connection, &bytes, &mut reply) {
+                    return;
+                }
                 let response = self.context_frame(connection, &bytes);
-                let _ = reply.send(response);
+                let _ = reply.unwrap().send(response);
             }
         }
     }
@@ -1069,6 +1089,8 @@ impl WorkspaceHost {
             self.context.readers.insert(
                 id,
                 Reader {
+                    fingerprint,
+                    durable: false,
                     identity: identity.name().to_owned(),
                     granted: scopes.clone(),
                     scopes: BTreeSet::new(),
@@ -1078,8 +1100,12 @@ impl WorkspaceHost {
                     requests: BTreeSet::new(),
                 },
             );
+            let mut features = vec![wire::FEATURE, wire::CHANNEL_FEATURE];
+            if self.context.durable_root.is_some() {
+                features.push(wire::DURABLE_FEATURE);
+            }
             return Reply {
-                value: json!({"type":"hello","version":"runyte-1","host_version":crate::plugin::compatibility::HOST_VERSION,"features":[wire::FEATURE,wire::CHANNEL_FEATURE],"capabilities":wire::CAPABILITIES.iter().copied().chain([Scope::AgentChannel.capability()]).collect::<Vec<_>>(),"limits":wire::limits(),"workspace":self.context.registration}),
+                value: json!({"type":"hello","version":"runyte-1","host_version":crate::plugin::compatibility::HOST_VERSION,"features":features,"capabilities":wire::CAPABILITIES.iter().copied().chain([Scope::AgentChannel.capability()]).collect::<Vec<_>>(),"limits":wire::limits(),"workspace":self.context.registration}),
                 lease: Some(lease),
                 close: false,
             };
@@ -1127,6 +1153,24 @@ impl WorkspaceHost {
                     .any(|feature| feature == wire::CHANNEL_FEATURE)
                 {
                     features.push(wire::CHANNEL_FEATURE);
+                }
+                if registration
+                    .required_features
+                    .contains(wire::DURABLE_FEATURE)
+                    && self.context.durable_root.is_none()
+                {
+                    return Err(Error::new(
+                        Code::Unsupported,
+                        "Durable storage is not configured",
+                    ));
+                }
+                reader.durable = self.context.durable_root.is_some()
+                    && registration
+                        .required_features
+                        .union(&registration.optional_features)
+                        .any(|f| f == wire::DURABLE_FEATURE);
+                if reader.durable {
+                    features.push(wire::DURABLE_FEATURE);
                 }
                 Ok(
                     json!({"type":"registered","runyte":registration.runyte,"features":features,"commands":[],"capabilities":reader.scopes,"limits":wire::limits()}),
@@ -1194,6 +1238,7 @@ impl WorkspaceHost {
             Request::ChannelPost { .. } => ("channel.post", "channel"),
             Request::ChannelRead { .. } => ("channel.read", "channel"),
             Request::ChannelWho(_) => ("channel.who", "channel"),
+            Request::ChannelDurable(_) => ("channel.durable", "channel"),
         };
         let inspection = format!(
             "{}: {} {} at {:?}",

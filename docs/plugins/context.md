@@ -291,3 +291,24 @@ processes. A per-user configuration may also name default grants
 (`mcp.default_grants`), applied when a workspace host starts and the workspace
 has no grant record of its own; a revocation record in that workspace overrides
 them, and they never include `terminal_insert`.
+
+### Experimental durable channel feature
+
+A host configured with `RUNYTE_CHANNEL_HOME` additionally advertises
+`runyte.context.channel.durable.v1`. A reader must negotiate it and hold the
+current `agent_channel` grant to call `channel.durable`. Its strict typed params
+contain an adapter-owned private `credential`, the configured store path hash
+`store`, and an `operation` tagged by `action`. See the
+[experimental MCP trial](../mcp.md#experimental-sqlite-channel-trial) for actions,
+profiles, receipt and retry semantics. This feature does not change v1 channel
+reads or their in-memory retention.
+
+Admission checks the live reader, feature, scope, store binding and request ID
+before trying a 16-job queue. Typed commands are bounded below 40 KiB each.
+SQLite access and serialization run on one worker; no editor-loop wait occurs.
+The worker checks the cancellation lease before execution and before replying;
+transport uses the same lease. A transaction admitted before revocation may
+commit, but its reply is suppressed, leaving a retryable uncertain outcome.
+Channel policy is checked again transactionally. Replies belong to the original
+connection and request, never to a replacement reader. Private credentials are
+redacted in debug output and never returned in tool results.

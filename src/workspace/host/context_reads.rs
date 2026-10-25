@@ -626,7 +626,8 @@ impl WorkspaceHost {
                 Code::Unsupported,
                 "Terminal proposals require the native review coordinator",
             )),
-            Request::ChannelJoin { .. }
+            Request::ChannelDurable(_)
+            | Request::ChannelJoin { .. }
             | Request::ChannelPost { .. }
             | Request::ChannelRead { .. }
             | Request::ChannelWho(_) => Err(Error::new(

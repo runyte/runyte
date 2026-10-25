@@ -25,6 +25,7 @@ const SUPPORTED_HOSTS: &str = ">=0.3.0, <0.5.0";
 /// is what an MCP client that starts servers with a reduced environment sees.
 pub(super) const HIDDEN_HELP: &str = "Running Runyte workspaces exist but were registered from a different environment: XDG_RUNTIME_DIR or XDG_CACHE_HOME here differs from the editor's. Configure the MCP client to pass both variables through to runyte mcp and restart it, or rerun with include_hidden=true.";
 struct Connection {
+    durable: bool,
     socket: BufReader<Box<dyn Stream>>,
     scopes: BTreeSet<Scope>,
     generation: u64,
@@ -94,6 +95,7 @@ impl Connection {
         let _ = root;
         let socket = discovery::connect(record).await?;
         let mut connection = Self {
+            durable: false,
             socket: BufReader::new(Box::new(socket)),
             scopes: BTreeSet::new(),
             generation: 0,
@@ -148,6 +150,12 @@ impl Connection {
             features.push(wire::CHANNEL_FEATURE);
             capabilities.push(Scope::AgentChannel.capability());
         }
+        connection.durable = hello["features"]
+            .as_array()
+            .is_some_and(|v| v.contains(&json!(wire::DURABLE_FEATURE)));
+        if connection.durable {
+            features.push(wire::DURABLE_FEATURE);
+        }
         let reply = connection.exchange(&json!({"type":"register","version":"runyte-1","runyte":SUPPORTED_HOSTS,
             "name":format!("Runyte MCP ({})",identity.name()),"commands":[],"required_features":[wire::FEATURE],"optional_features":&features[1..],
             "required_capabilities":[],"optional_capabilities":capabilities})).await?;
@@ -190,6 +198,7 @@ struct Resource {
 }
 
 pub(super) struct Bridge {
+    pub(super) durable_profile: Option<super::durable::Profile>,
     root: Option<PathBuf>,
     pub(super) identity: String,
     timeout: Duration,
@@ -233,6 +242,7 @@ impl Bridge {
         timeout: Duration,
     ) -> std::io::Result<Self> {
         Ok(Self {
+            durable_profile: None,
             root,
             identity,
             timeout,
@@ -251,6 +261,12 @@ impl Bridge {
     /// The connection generation for a workspace handle, while connected.
     pub(super) fn generation(&self, workspace: &str) -> Option<u64> {
         self.connections.get(workspace).map(|c| c.generation)
+    }
+    pub(super) fn durable_supported(&self, workspace: &str) -> bool {
+        self.connections.get(workspace).is_some_and(|c| c.durable)
+    }
+    pub(super) fn workspace_id(&self, workspace: &str) -> Option<&str> {
+        self.records.get(workspace).map(|r| r.workspace_id.as_str())
     }
     fn token(&mut self, kind: &str) -> String {
         self.next += 1;
@@ -562,6 +578,7 @@ impl Bridge {
                         "terminal.input.propose",
                         "terminal.input.cancel",
                         "channel.post",
+                        "channel.durable",
                     ]
                     .contains(&method)
                     {

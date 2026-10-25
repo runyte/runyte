@@ -44,7 +44,7 @@ class NativeMCPTests(unittest.TestCase):
         client = self.client('codex')
         catalog = client.rpc('tools/list', {})['result']['tools']
         startup_ms = (time.monotonic() - started) * 1000
-        self.assertEqual(len(catalog), 13)
+        self.assertEqual(len(catalog), 14)
         timings = []
         for _ in range(5):
             started = time.monotonic()
@@ -106,7 +106,7 @@ class NativeMCPTests(unittest.TestCase):
         for grant in (self.root / 'ctx').glob('grant-*.json'):
             grant.unlink()
         client = self.client('codex')
-        self.assertEqual(len(client.rpc('tools/list', {})['result']['tools']), 13)
+        self.assertEqual(len(client.rpc('tools/list', {})['result']['tools']), 14)
         editor = self.editor(0)
         self.assertEqual(self.call(client, 'find_resources')['results'], [])
         editor.command('mcp codex')

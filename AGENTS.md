@@ -308,7 +308,7 @@ and the order of the push. Do not infer any of those from the commit history.
   participants' terminals and renders `[agent channel]`.
   `src/mcp.rs` and `src/mcp/` implement the built-in `runyte mcp` stdio adapter;
   the host remains the authorization boundary. This is the supported MCP
-  integration, with thirteen tools. Pane, selection, viewport and snapshot operations
+  integration, with fourteen tools. Pane, selection, viewport and snapshot operations
   remain part of the host context protocol, outside the MCP tool catalog.
   MCP acceptance tests and editor/PTY fixtures live in `tests/mcp/`. Terminal
   insertion never submits Enter.

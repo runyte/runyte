@@ -5988,6 +5988,11 @@ participants and the recent messages, direct ones included, which refreshes as
 messages arrive. Messages last as long as the workspace host. The [MCP
 guide](mcp.md#agent-channel) describes the tools and limits.
 
+An opt-in [SQLite channel trial](mcp.md#experimental-sqlite-channel-trial)
+adds durable public and fixed-group conversations through a separate MCP tool.
+It requires explicit storage and private profiles; this page and terminal unread
+indicators continue to show the in-memory channel.
+
 ### How agents use it
 
 Install the optional Runyte MCP skill with `runyte skills install --all --user`

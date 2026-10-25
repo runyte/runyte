@@ -42,7 +42,7 @@ class PublicWindowsMCPTests(unittest.TestCase):
         revoke_continue = Path(os.environ['RUNYTE_CONTEXT_PUBLIC_REVOKE_CONTINUE'])
 
         first = self.client()
-        self.assertEqual(len(first.rpc('tools/list', {})['result']['tools']), 13)
+        self.assertEqual(len(first.rpc('tools/list', {})['result']['tools']), 14)
         buffer = self.find(first)
         self.assertEqual(first.data('read_buffer', buffer=buffer['buffer'])['text'], 'aç界🙂z')
         first.data('edit_buffer', buffer=buffer['buffer'], expected_revision=buffer['revision'],

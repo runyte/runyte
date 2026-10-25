@@ -11,9 +11,12 @@ FRAME_BYTES = 1024 * 1024
 
 
 class RealMCPClient:
-    def __init__(self, binary, root, env, identity):
+    def __init__(self, binary, root, env, identity, *, channel_profile=None):
+        arguments = [str(binary), 'mcp', '--identity', identity, '--timeout', '2']
+        if channel_profile is not None:
+            arguments += ['--channel-profile', str(channel_profile)]
         self.process = subprocess.Popen(
-            [str(binary), 'mcp', '--identity', identity, '--timeout', '2'],
+            arguments,
             cwd=root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
         )
@@ -68,16 +71,16 @@ class RealMCPClient:
                 return reply
         raise AssertionError('Too many MCP notifications')
 
-    def tool(self, name, **arguments):
-        return self.rpc('tools/call', {'name': name, 'arguments': arguments})['result']
+    def tool(self, tool_name, **arguments):
+        return self.rpc('tools/call', {'name': tool_name, 'arguments': arguments})['result']
 
-    def data(self, name, *, response_seconds=10, **arguments):
-        result = self.rpc('tools/call', {'name': name, 'arguments': arguments},
+    def data(self, tool_name, *, response_seconds=10, **arguments):
+        result = self.rpc('tools/call', {'name': tool_name, 'arguments': arguments},
                           seconds=response_seconds)['result']
         if result.get('isError'):
-            raise AssertionError(f'MCP tool {name} failed: {result}')
+            raise AssertionError(f'MCP tool {tool_name} failed: {result}')
         value = result['structuredContent']
-        return value if name in ('list_workspaces', 'find_resources') else value['data']
+        return value if tool_name in ('list_workspaces', 'find_resources') else value['data']
 
     def close(self):
         if self.stopped.is_set():

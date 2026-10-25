@@ -36,7 +36,7 @@ CI verifies that this named test ran. The Python scenario fails if its fixture
 environment is absent and the Rust driver rejects skipped acceptance results.
 It needs only the Python standard library on Windows.
 
-Host operations outside the thirteen-tool MCP catalog remain covered by
+Host operations outside the fourteen-tool MCP catalog remain covered by
 [src/workspace/host/tests/context_reads.rs](../../src/workspace/host/tests/context_reads.rs):
 pane listing, selection/viewport ownership and invalidation, immutable buffer
 and terminal snapshots, Unicode offsets, and retention budgets. Native
@@ -47,3 +47,21 @@ in `src/workspace/host/tests/context_transport*.rs` and
 `src/workspace/host/tests/context_access.rs` and the native-input tests retain
 terminal proposal approval and insertion-without-Enter coverage. Run the canonical `cargo test` suite for these
 boundaries; `tests/mcp_cli.rs` and `src/mcp/tests*` cover the Rust adapter itself.
+
+## Isolated SQLite trial
+
+`test_durable_channel.py` starts a real persistent host with temporary discovery,
+workspace, configuration, SQLite and private profile directories. It covers
+public paging, fixed-group privacy/deletion, exact receipts, retry deduplication,
+exclusive profiles and adapter/host restart recovery. Run it with the built
+`RUNYTE_CONTEXT_TEST_BINARY`, using unittest discovery as for the other tests.
+
+For a manually driven multi-agent trial, `durable_trial.py host BINARY` prints a
+private manifest path; `durable_trial.py agent MANIFEST receiver` and `peer`
+start independent adapters. Each stdin JSON object is one explicit action.
+`post_auto_key` generates and returns immutable retry arguments; `restart_adapter`
+reopens the same profile. The host driver also supports `restart_host` and
+`storage_counts`. It performs no polling or automatic acknowledgement. Closing
+its stdin stops the isolated host and removes temporary state, so stop the agent
+drivers first. This harness does not establish automatic skill selection or
+agent wake-up behavior.

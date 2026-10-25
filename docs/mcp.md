@@ -115,7 +115,7 @@ To grant permissions in every workspace without opening `:mcp` in each, set
 [user guide](user-guide.md#default-grants). A workspace's own grant or
 revocation takes precedence over the default.
 
-**Starting the agent before granting is fine.** The thirteen tools stay available;
+**Starting the agent before granting is fine.** The fourteen tools stay available;
 a tool's presence is not permission to use it. Calls check the target's native
 grant. After a permission change, run `find_resources` again. Healthy searches
 preserve handles. Changed permissions renew the connection and require fresh
@@ -129,10 +129,13 @@ See the [user guide](user-guide.md#what-a-grant-covers) for platform locations.
 
 ## Tools
 
-The catalog always contains these thirteen tools:
+The catalog always contains these fourteen tools. The experimental
+`durable_channel` tool requires separately configured SQLite storage and an
+explicit private profile (see below).
 
 | Tool | Purpose |
 | --- | --- |
+| `durable_channel` | Experimental durable conversations and explicit receipts; requires [separate opt-in setup](#experimental-sqlite-channel-trial). |
 | `find_resources` | Discover buffers and terminals by name or content, with exact handles and revisions. |
 | `list_workspaces` | Inspect workspace access without reading source content. |
 | `read_buffer` | Read unsaved buffer text at a revision. |
@@ -286,3 +289,65 @@ Change the MCP command from `runyte-context` to the Runyte binary and prepend
 `mcp` to its arguments. Keep the same `--identity` and private-store environment.
 Existing grants work. Restart the MCP client to load the new configuration.
 The Python adapter has been removed; no separate package is needed.
+
+### Experimental SQLite channel trial
+
+`durable_channel` is an opt-in experimental tool alongside the existing channel.
+The existing `join_channel`, `post_message`, `read_messages`, terminal unread
+indicator and `[agent channel]` page still use the host's in-memory conversation.
+They do not read or acknowledge SQLite messages.
+
+For an isolated trial, start the host with `RUNYTE_CHANNEL_HOME` set to an
+absolute private storage directory whose parent exists. The host advertises
+`runyte.context.channel.durable.v1` only when configured. SQLite runs on a bounded
+worker, not on the editor loop. An unavailable directory fails the operation;
+there is no fallback database. With the variable unset, the host starts no
+worker and opens no channel database.
+
+Start each trial MCP adapter with `--channel-profile /absolute/profile.json`.
+The profile must already exist in a private directory as an owner-private file,
+containing `workspace` (the exact 32-character workspace ID), `store` (SHA-256 of
+the configured storage path's native encoding), and `secret` (64 random hex
+characters). Unix paths use raw bytes; Windows paths use UTF-16LE. The adapter
+holds an exclusive kernel lock for its lifetime. Use one distinct profile per
+agent; reopening the same profile recovers that participant. Never put profile
+contents in prompts or channel messages. General profile installation and
+recovery management remain unfinished; the isolated acceptance fixture provisions
+these files. Do not replace a live profile file while it is locked.
+
+The tool supports `register`, `resume`, `create`, `subscribe`, `post`, `read`,
+`history` and `acknowledge`. Use `register` explicitly once, then `resume` after
+restart. Public conversations retain history; subscribing initially exposes the
+latest 20 messages, and `history` with `before` requests older pages. `read`
+returns oldest outstanding messages, 20 by default. Reads return exact-batch
+receipts and never acknowledge automatically. `acknowledge` clears only the
+returned batch. Fixed groups include the creator and supplied participant IDs;
+the creator implicitly acknowledges its own sends, and bodies are deleted only
+when every other member acknowledges. There is no participant/channel discovery
+yet, so trial participants exchange their returned IDs explicitly.
+
+`post` requires an original 64-hex `nonce`, Unix-millisecond `issued_ms`, text,
+and immutable `directory`. Preserve every argument when retrying an uncertain
+send. The seven-day retry window rejects expired keys rather than risking a
+second send after deduplication state expires. Receipts expire after 24 hours;
+read again if a receipt expires. Store failures return a bounded generic error.
+
+Every request requires the live workspace's `agent_channel` grant, negotiated
+feature, matching profile store binding and current channel policy. Cancellation
+skips queued jobs and suppresses replies. A transaction already admitted may
+commit during revocation: a suppressed reply is an uncertain outcome, not a
+rollback. Retry with the original key after authorization is restored. Profiles
+are workspace-local in this trial; there is no agent tool for changing policy
+or granting cross-workspace access. Native policy management, durable channel
+presentation, ten-agent transport admission and general deployment remain
+Stage 3 work. The skill and wake-up behavior are unchanged.
+
+The real-host acceptance test is:
+
+```sh
+RUNYTE_CONTEXT_TEST_BINARY="$PWD/target/debug/runyte" \
+  python3 -m unittest discover -s tests/mcp -p test_durable_channel.py -v
+```
+
+It uses temporary workspace, storage, profile, configuration and discovery
+roots, and does not touch a running personal channel.

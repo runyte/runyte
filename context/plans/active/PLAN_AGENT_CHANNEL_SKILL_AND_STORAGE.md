@@ -2,14 +2,15 @@
 
 Status: active. Stage 1 is implemented and verified locally;
 Stage 2 has partial subagent trial evidence; native-client user tests remain.
-Stage 3 has started with the storage foundation, not yet exposed through MCP.
+Stage 3 includes the storage foundation and a tested opt-in live MCP trial;
+general deployment remains unfinished.
 The initial delivery is the cooperative skill and its
 installer. Hooks and terminal wake-up
 are tentative investigations, not committed implementation stages.
 
 This extends the [completed agent-channel plan](../completed/PLAN_AGENT_CHANNEL.md)
-and its related [issue #29](https://github.com/runyte/runyte/issues/29). It does
-not change current behavior until implemented. Repository inspection baseline:
+and its related [issue #29](https://github.com/runyte/runyte/issues/29). It
+preserves the legacy in-memory channel. Repository inspection baseline:
 `594f057`, 2026-10-25. No new tracking issue has been created for this proposal.
 
 ## Objectives
@@ -445,9 +446,9 @@ checks during active work, not universal compliance or eventual delivery.
 
 The first package adds `src/workspace/context/durable.rs` and its SQLite schema
 under the existing context ownership. It is deliberately separate from the
-legacy in-memory channel. No production startup opens the database, and no
-host or MCP operation currently calls this package. Tests supply private
-temporary roots; the eventual production root remains the user-level `.runyte`.
+legacy in-memory channel. The subsequent opt-in live-trial package connects it
+to the host and MCP as described below. Tests supply private temporary roots;
+the eventual general-use root remains the user-level `.runyte`.
 
 Implemented storage semantics:
 
@@ -489,19 +490,91 @@ core and desktop tests, and canonical coverage passed. Overall line coverage
 is 92.14%; the new storage module has 96.02% line coverage. Windows execution
 remains for CI. These checks verify the foundation, not the pending integration.
 
-Still required before Stage 3 can be used:
+#### Opt-in live-trial integration
 
-1. A bounded host worker and separately negotiated durable context operations;
-   legacy v1 reads must never acknowledge durable messages. Define admitted
-   mutation versus revocation ordering and suppress stale worker replies.
+An explicitly configured host (`RUNYTE_CHANNEL_HOME`) advertises a separate
+`runyte.context.channel.durable.v1` feature and serves typed `channel.durable`
+requests on one bounded worker. With no override it advertises no durable
+feature, opens no database and starts no worker. The MCP catalog adds
+`durable_channel` without changing the legacy channel's behavior.
+
+A pre-provisioned `--channel-profile` file binds a private recovery credential to
+one workspace and configured store path. A retained kernel lock rejects concurrent
+use of the same profile. The adapter never returns credentials to the model.
+Profile installation is currently fixture-owned; general profile management is
+not complete. No implicit recovery creates replacement identities.
+
+The live path supports explicit registration/recovery, public subscription,
+fixed groups, immutable send retry arguments, history pages, oldest-pending
+reads and exact-batch acknowledgement. It requires current grants and negotiated
+features, rechecks store policy, refuses queue overflow, and attaches replies to
+the original cancellation lease. A transaction already admitted may commit
+during revocation; its reply is suppressed and its original key resolves an
+uncertain send after authorization is restored. Pending jobs with cancelled
+leases are skipped. Public and fixed-group conversations remain local to the
+granted workspace; native cross-workspace policy methods are not agent tools.
+
+This trial does not replace the native channel page or terminal unread
+indicators. Participant and channel IDs must be supplied explicitly. The
+acceptance fixture and manual subagent driver are under `tests/mcp/`; all runtime
+files belong to temporary directories outside tracked development context.
+
+#### Live SQLite trial evidence
+
+The isolated live trial used one persistent host, an alternate temporary SQLite
+directory and three independent MCP adapters: coordinator, receiver and peer.
+The two subagents drove the real `durable_channel` tool through their own stdio
+adapters. The harness performed no scheduled reads or automatic acknowledgements.
+
+Observed results:
+
+- Public exchange and repeated reads returned the same pending batch and receipt
+  until explicit acknowledgement. Public history remained readable afterwards.
+- Receiver adapter restart and explicit recovery preserved its participant ID.
+- A fixed group containing all three participants retained its message after the
+  receiver acknowledged while the peer deliberately withheld acknowledgement.
+- A separate two-member DM was readable by its recipient; the non-member peer's
+  synthetic negative read was refused without returning a message body.
+- Restarting the persistent host preserved public history, participant recovery,
+  and the peer's exact outstanding group message and receipt.
+- The peer's final acknowledgement deleted the fixed-group body; both subagents
+  confirmed empty group history. SQLite inspection found no remaining DM/group
+  bodies, thirteen retained public messages and `integrity_check = ok`.
+- Retrying the original group send after deletion returned its original sequence
+  without recreating the message.
+
+Both adapters and the temporary host were closed and fixture storage removed.
+The automated real-host test additionally checks twenty-five public messages,
+latest-twenty subscription, explicit older-history paging, profile exclusivity,
+strict tool fields, receipt replay and restart recovery. Focused Rust tests
+cover direct host admission, cancelled worker jobs, private profiles and strict
+protocol validation alongside the storage suite. Astra Medium reviewed the
+integration repeatedly until clean; real-host testing also caught and fixed
+workspace-ID length, strict empty-variant decoding and array-schema bounds.
+
+Linux verification passed: formatting, core and desktop all-target Clippy,
+the full core and desktop test suites, all 23 Unix MCP acceptance tests, and
+canonical package coverage at 92.09% of lines (89% floor unchanged). Platform
+execution on macOS and Windows remains for CI. The completed coverage target
+and temporary Python environment were removed after recording results.
+
+This was a prompted storage/integration test, not evidence of automatic skill
+selection, independent native Claude Code participation, autonomous wake-up,
+ten concurrent agents or desktop presentation. The bundled skill describes the
+legacy in-memory tools; durable trial onboarding uses the separate explicit
+workflow in the MCP guide. General skill/profile onboarding remains pending.
+
+Still required before general Stage 3 deployment:
+
+1. Graduate the opt-in host/MCP trial after integration and user-test coverage;
+   preserve the separate legacy protocol and documented revocation boundary.
 2. Explicit private adapter profiles, durable credential installation, concurrent
    profile-use rules and host-incarnation fencing for presence. Credentials
    must never reach model-visible results, channel text or logs.
 3. A native operator policy-management surface for workspace/identity routes
    and participant recovery bindings, with revision-checked policy changes.
-4. MCP operations for conversations, history, explicit acknowledgement and
-   idempotent sends, plus the bounded human channel view and admission for at
-   least ten live agents. The storage test with ten participants does not
+4. Conversation/participant discovery, the bounded human channel view and
+   admission for at least ten live agents. The storage test with ten participants does not
    establish transport admission for ten agents.
 5. End-to-end restart/revocation/mixed-client tests, desktop parity and updated
    skill/setup instructions before enabling the feature.
