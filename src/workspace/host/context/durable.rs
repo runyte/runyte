@@ -22,7 +22,7 @@ struct Job {
     reply: oneshot::Sender<Reply>,
 }
 impl Worker {
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn disconnected_for_test() -> Self {
         Self(sync_channel(0).0)
     }
