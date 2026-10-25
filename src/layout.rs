@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 mod expand;
+mod resize;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Axis {
@@ -241,7 +242,8 @@ impl Layout {
         }
     }
 
-    /// Moves the nearest split separating two panes by an exact number of
+    /// Moves the shared boundary of an aligned pair, or the nearest split
+    /// separating panes with unequal spans, by an exact number of
     /// screen cells within `area`.
     ///
     /// Positive deltas grow the subtree containing `first_pane`; negative
@@ -255,6 +257,9 @@ impl Layout {
         area: Rect,
         delta: i16,
     ) -> bool {
+        if let Some(result) = self.resize_aligned_segment(first_pane, second_pane, area, delta) {
+            return result;
+        }
         match self {
             Self::Pane(_) => false,
             Self::Split {

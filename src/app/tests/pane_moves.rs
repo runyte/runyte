@@ -687,3 +687,64 @@ fn extending_over_a_temporary_comparison_side_restores_the_source_like_window_cl
         assert_eq!(app.active_buffer().to_string(), "working\n");
     }
 }
+
+#[test]
+fn dragging_either_segment_of_a_grid_preserves_the_other_pair() {
+    for axis in [Axis::Vertical, Axis::Horizontal] {
+        for pair in [(0, 1), (2, 3)] {
+            let cross = if axis == Axis::Vertical {
+                Axis::Horizontal
+            } else {
+                Axis::Vertical
+            };
+            let mut app = wide_top_over_two_columns();
+            app.panes.insert(3, Pane::new(0));
+            app.layout = Layout::Pane(0);
+            app.layout.split(0, 1, axis);
+            app.layout.split(0, 2, cross);
+            app.layout.split(1, 3, cross);
+            let before: Vec<_> = (0..4).map(|id| area(&mut app, id)).collect();
+            let leading = before[pair.0];
+            let (column, row) = match axis {
+                Axis::Horizontal => (leading.x + leading.width, leading.y + 4),
+                Axis::Vertical => (leading.x + 4, leading.y + leading.height),
+            };
+            pointer(
+                &mut app,
+                PointerEventKind::Down(PointerButton::Left),
+                column,
+                row,
+                Modifiers::NONE,
+            );
+            for delta in 1..=4 {
+                let (x, y) = match axis {
+                    Axis::Horizontal => (column + delta, row),
+                    Axis::Vertical => (column, row + delta),
+                };
+                pointer(
+                    &mut app,
+                    PointerEventKind::Drag(PointerButton::Left),
+                    x,
+                    y,
+                    Modifiers::NONE,
+                );
+            }
+            let after: Vec<_> = (0..4).map(|id| area(&mut app, id)).collect();
+            for id in 0..4 {
+                if id != pair.0 && id != pair.1 {
+                    assert_eq!(after[id], before[id], "{axis:?}, pair {pair:?}, pane {id}");
+                }
+            }
+            match axis {
+                Axis::Horizontal => {
+                    assert_eq!(after[pair.0].width, leading.width + 4);
+                    assert_eq!(after[pair.1].width, before[pair.1].width - 4);
+                }
+                Axis::Vertical => {
+                    assert_eq!(after[pair.0].height, leading.height + 4);
+                    assert_eq!(after[pair.1].height, before[pair.1].height - 4);
+                }
+            }
+        }
+    }
+}

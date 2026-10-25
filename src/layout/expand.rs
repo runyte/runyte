@@ -196,7 +196,7 @@ fn fill_gap(index: usize, panes: &[(usize, Rect)], area: Rect, axis: Axis, edge:
 
 /// Reconstruct a slicing tree from the final rectangles. Cuts are existing
 /// pane edges, and ratios round back to the exact previewed cell boundaries.
-fn rebuild(area: Rect, panes: &[(usize, Rect)]) -> Option<Layout> {
+pub(super) fn rebuild(area: Rect, panes: &[(usize, Rect)]) -> Option<Layout> {
     if let [(id, rect)] = panes {
         return (*rect == area).then_some(Layout::Pane(*id));
     }

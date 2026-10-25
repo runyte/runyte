@@ -608,7 +608,7 @@ Mouse support needs a terminal with mouse reporting and `editor.mouse: true`
 | Drag | Select, entering Select mode |
 | Drag past the top or bottom row | Scroll and keep extending |
 | Wheel | Scroll the pane under the pointer |
-| Drag a shared border | Resize the split |
+| Drag a shared border | Resize the adjacent aligned panes; unequal spans resize their shared split |
 | Alt-left-drag inside a pane | Rearrange panes using the [pane drop outline](#pane-keys) |
 | Shift-Alt-left-drag inside a pane | Extend the pane into neighbouring panes |
 | Right-click a selection | Copy all selections to the system clipboard, like `Space c y` |
