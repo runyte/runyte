@@ -7,10 +7,11 @@ use super::{
 };
 use crate::command::{self, CommandId, CommandInvocation, EditorCommand, Mode};
 use crate::input::KeyCode;
-use serde_yaml::Value;
-use std::collections::{BTreeMap, HashSet};
+use serde_yaml::{Mapping, Value};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-const MAX_BINDINGS: usize = 256;
+/// Bound the work and storage of configured assignments across all mode files.
+pub const MAX_BINDINGS: usize = 65_536;
 const MAX_ACTIONS: usize = 16;
 const MAX_ARGUMENT_BYTES: usize = 4096;
 
@@ -246,6 +247,17 @@ struct Rule {
     description: String,
 }
 
+/// Whether `sequence` uses a key the grammar keeps for itself in `mode`.
+fn is_reserved(mode: Mode, sequence: &KeySequence) -> bool {
+    sequence.as_slice().iter().enumerate().any(|(index, key)| {
+        (index > 0 && matches!(key.code, KeyCode::Escape | KeyCode::Backspace))
+            || (index == 0
+                && matches!(mode, Mode::Normal | Mode::Select)
+                && key.modifiers.is_empty()
+                && matches!(key.code, KeyCode::Char('1'..='9') | KeyCode::Tab))
+    })
+}
+
 fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<Rule, String> {
     let tokens: Vec<_> = source.split_whitespace().collect();
     if tokens.is_empty() || tokens.len() > 8 {
@@ -261,13 +273,7 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
             })
             .collect::<Result<Vec<_>, _>>()?,
     );
-    if sequence.as_slice().iter().enumerate().any(|(index, key)| {
-        (index > 0 && matches!(key.code, KeyCode::Escape | KeyCode::Backspace))
-            || (index == 0
-                && matches!(mode, Mode::Normal | Mode::Select)
-                && key.modifiers.is_empty()
-                && matches!(key.code, KeyCode::Char('1'..='9') | KeyCode::Tab))
-    }) {
+    if is_reserved(mode, &sequence) {
         return Err(
             "sequence uses a reserved count, context-action, or prefix-cancellation key".into(),
         );
@@ -324,7 +330,9 @@ pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<Stri
             .sum::<usize>()
             > MAX_BINDINGS
     {
-        errors.push("bind rejected: at most 4 modes and 256 assignments are allowed".into());
+        errors.push(format!(
+            "bind rejected: at most 4 modes and {MAX_BINDINGS} assignments are allowed"
+        ));
         return base;
     }
     let mut rules = Vec::new();
@@ -371,51 +379,71 @@ pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<Stri
             }
         }
     }
+    // Insert and Replace keys a terminal already answers to in the built-in
+    // map; anything else replaced in those modes keeps its built-in meaning
+    // inside terminals.
+    let terminal_keys = base
+        .bindings
+        .iter()
+        .filter(|binding| binding.scope == BindingScope::Terminal)
+        .flat_map(|binding| {
+            binding
+                .modes
+                .iter()
+                .map(move |&mode| (mode, binding.sequence.clone()))
+        })
+        .collect::<HashSet<_>>();
     let mut active = vec![true; rules.len()];
     loop {
         let mut candidate = base.clone();
-        for (rule, enabled) in rules.iter().zip(&active) {
-            if !enabled {
-                continue;
-            }
-            candidate.bindings = candidate
-                .bindings
-                .into_iter()
-                .flat_map(|binding| {
-                    if binding.scope == BindingScope::Global
-                        && binding.sequence == rule.sequence
-                        && binding.is_active_in(rule.mode)
+        // One pass over the bindings for all rules: a written configuration
+        // carries the whole built-in keymap, and a pass per rule would cost
+        // their product at every startup.
+        let mut replaced = HashMap::<&KeySequence, Vec<Mode>>::new();
+        for (rule, _) in rules.iter().zip(&active).filter(|(_, enabled)| **enabled) {
+            replaced.entry(&rule.sequence).or_default().push(rule.mode);
+        }
+        candidate.bindings = candidate
+            .bindings
+            .into_iter()
+            .flat_map(|binding| {
+                let modes = match replaced.get(&binding.sequence) {
+                    Some(modes) if binding.scope == BindingScope::Global => modes
+                        .iter()
+                        .copied()
+                        .filter(|&mode| binding.is_active_in(mode))
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                };
+                if modes.is_empty() {
+                    return vec![binding];
+                }
+                let mut retained = binding
+                    .modes
+                    .iter()
+                    .filter(|mode| !modes.contains(mode))
+                    .map(|&mode| {
+                        let mut copy = binding.clone();
+                        copy.modes = mode_slice(mode);
+                        copy
+                    })
+                    .collect::<Vec<_>>();
+                for mode in modes {
+                    if matches!(mode, Mode::Insert | Mode::Replace)
+                        && !terminal_keys.contains(&(mode, binding.sequence.clone()))
                     {
-                        let mut retained = binding
-                            .modes
-                            .iter()
-                            .filter(|&&mode| mode != rule.mode)
-                            .map(|&mode| {
-                                let mut copy = binding.clone();
-                                copy.modes = mode_slice(mode);
-                                copy
-                            })
-                            .collect::<Vec<_>>();
-                        if matches!(rule.mode, Mode::Insert | Mode::Replace)
-                            && !base.bindings.iter().any(|original| {
-                                original.scope == BindingScope::Terminal
-                                    && original.is_active_in(rule.mode)
-                                    && original.sequence == rule.sequence
-                            })
-                        {
-                            let mut terminal = binding.clone();
-                            terminal.scope = BindingScope::Terminal;
-                            terminal.modes = mode_slice(rule.mode);
-                            terminal.alias = None;
-                            terminal.alias_modes = None;
-                            retained.push(terminal);
-                        }
-                        retained
-                    } else {
-                        vec![binding]
+                        let mut terminal = binding.clone();
+                        terminal.scope = BindingScope::Terminal;
+                        terminal.modes = mode_slice(mode);
+                        terminal.alias = None;
+                        terminal.alias_modes = None;
+                        retained.push(terminal);
                     }
-                })
-                .collect();
+                }
+                retained
+            })
+            .collect();
+        for (rule, _) in rules.iter().zip(&active).filter(|(_, enabled)| **enabled) {
             if let Some(first) = rule.actions.first() {
                 let mut binding = Binding::implemented(
                     mode_slice(rule.mode),
@@ -485,14 +513,23 @@ pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<Stri
             candidate.rebuild_lookup_index();
             return candidate;
         }
+        // Keep the first diagnostic for each rule without rescanning every
+        // violation for every assignment. Large sets of conflicting prefixes
+        // must be cheap to reject as well as valid maps being cheap to admit.
+        let mut violation_by_rule = HashMap::new();
+        for violation in &violations {
+            for sequence in &violation.sequences {
+                violation_by_rule
+                    .entry((violation.mode, sequence))
+                    .or_insert(violation);
+            }
+        }
         let mut rejected = false;
         for (index, rule) in rules.iter().enumerate() {
             if !active[index] {
                 continue;
             }
-            if let Some(violation) = violations.iter().find(|violation| {
-                violation.mode == rule.mode && violation.sequences.contains(&rule.sequence)
-            }) {
+            if let Some(violation) = violation_by_rule.get(&(rule.mode, &rule.sequence)) {
                 active[index] = false;
                 rejected = true;
                 errors.push(format!(
@@ -508,6 +545,74 @@ pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<Stri
             return base;
         }
     }
+}
+
+/// The modes `keys.bind` accepts, in the order they are written.
+const BIND_MODES: [Mode; 4] = [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace];
+
+/// Built-in assignments for commented export examples, after prefix remapping.
+/// Explicit assignments are omitted, including null removals. Compile only the
+/// prefix/remap section: the examples never need to materialize custom rules.
+/// Fast pane keys and sequences `bind` cannot express stay implicit.
+pub(crate) fn default_bindings(section: Option<&Value>) -> BTreeMap<&'static str, Mapping> {
+    let mut section = section
+        .and_then(Value::as_mapping)
+        .cloned()
+        .unwrap_or_default();
+    let own_bind = section.remove("bind");
+    let keymap =
+        super::configured::compile(&Value::Mapping(section), &super::keymap_for(false)).keymap;
+
+    let mut bind = BTreeMap::new();
+    for mode in BIND_MODES {
+        let own = own_bind
+            .as_ref()
+            .and_then(|bind| bind.get(mode_name(mode)))
+            .and_then(Value::as_mapping);
+        let claimed = own
+            .into_iter()
+            .flatten()
+            .filter_map(|(source, _)| sequence_for(source.as_str()?, &keymap))
+            .collect::<HashSet<_>>();
+        let mut entries = BTreeMap::new();
+        for binding in keymap.bindings_for_mode(mode) {
+            let sequence = &binding.sequence;
+            if !binding.actions.is_empty()
+                || binding.availability != BindingAvailability::Implemented
+                || matches!(binding.target, BindingTarget::Plugin(_))
+                || sequence.len() > 8
+                || claimed.contains(sequence)
+                || is_reserved(mode, sequence)
+                || matches!(sequence.as_slice(), [key] if super::is_fast_pane_key(*key))
+            {
+                continue;
+            }
+            let action = Value::String(binding.target.name().into());
+            if parse_action(&action, mode).is_ok() {
+                entries.entry(sequence.to_string()).or_insert(action);
+            }
+        }
+        let written = entries
+            .into_iter()
+            .map(|(sequence, action)| (Value::String(sequence), action))
+            .collect::<Mapping>();
+        bind.insert(mode_name(mode), written);
+    }
+    bind
+}
+
+/// The sequence a `bind` key names, as [`parse_rule`] reads it.
+fn sequence_for(source: &str, keymap: &Keymap) -> Option<KeySequence> {
+    source
+        .split_whitespace()
+        .map(|token| match token {
+            "Leader" => Ok(keymap.leader()),
+            "Window" => Ok(keymap.window_prefix()),
+            _ => Key::parse(token),
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .ok()
+        .map(KeySequence::new)
 }
 
 /// Generated from the same mode admission and continuation policy as compilation.
@@ -554,8 +659,125 @@ pub fn reference() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::reference;
+    use super::{BIND_MODES, reference};
+    use crate::keymap::{Binding, BindingScope, KeySequence, Keymap, Lookup, configured};
     use std::collections::BTreeSet;
+
+    /// What `binding` does when its key is pressed, ignoring whether that
+    /// came from the built-in table or from `bind`.
+    fn effect(binding: &Binding) -> String {
+        if binding.is_plain_action() {
+            format!("{:?}", binding.target)
+        } else {
+            format!("{:?}", binding.actions)
+        }
+    }
+
+    fn effects(bindings: &[&Binding]) -> BTreeSet<String> {
+        bindings
+            .iter()
+            .map(|binding| format!("{} {}", binding.sequence, effect(binding)))
+            .collect()
+    }
+
+    /// Every lookup a keystroke could make, in every mode and scope.
+    fn dispatch(keymap: &Keymap) -> Vec<String> {
+        let mut prefixes = std::collections::HashSet::new();
+        for binding in keymap.bindings() {
+            for length in 1..=binding.sequence.len() {
+                prefixes.insert(KeySequence::new(
+                    binding.sequence.as_slice()[..length].iter().copied(),
+                ));
+            }
+        }
+        let mut out = Vec::new();
+        for &scope in BindingScope::ALL {
+            for mode in BIND_MODES {
+                for sequence in &prefixes {
+                    let found = match keymap.lookup_in(mode, scope, sequence) {
+                        Lookup::NoMatch => continue,
+                        Lookup::Exact(binding) => effect(binding),
+                        Lookup::Prefix(continuations) => format!("{:?}", effects(&continuations)),
+                        Lookup::ExactAndPrefix {
+                            exact,
+                            continuations,
+                        } => format!("{} {:?}", effect(exact), effects(&continuations)),
+                    };
+                    out.push(format!("{scope:?} {mode:?} {sequence}: {found}"));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn bind_admits_up_to_its_assignment_limit() {
+        // Five letters after F12 per entry: distinct, equally long, and clear
+        // of the count keys.
+        let section = |count: usize| {
+            let mut source = String::from("bind:\n  normal:\n");
+            for n in 0..count {
+                let letters = format!("{n:05}")
+                    .bytes()
+                    .map(|digit| char::from(b'a' + digit - b'0').to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                source.push_str(&format!("    F12 {letters}: save\n"));
+            }
+            serde_yaml::from_str::<serde_yaml::Value>(&source).unwrap()
+        };
+        let built_in = crate::keymap::keymap_for(false);
+        let errors = configured::compile(&section(super::MAX_BINDINGS), &built_in).errors;
+        assert!(errors.is_empty(), "{errors:?}");
+        let errors = configured::compile(&section(super::MAX_BINDINGS + 1), &built_in).errors;
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("65536 assignments")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn the_written_keys_section_dispatches_every_key_as_before() {
+        let sections = [
+            None,
+            Some(
+                "leader: Ctrl-x\nwindow: Ctrl-a\nrebind:\n  Space g: Leader G\nbind:\n  normal:\n    J: null\n    F6: [select-all, yank]\n    Leader q: { command: pipe, argument: sort }\n  insert:\n    Ctrl-s: save\n",
+            ),
+        ];
+        for source in sections {
+            let section = source.map(|source| serde_yaml::from_str(source).unwrap());
+            let config = crate::config::Config {
+                keys: section.clone(),
+                ..Default::default()
+            };
+            let files = config
+                .to_files(std::path::Path::new("config.yaml"))
+                .unwrap();
+            let text = files
+                .iter()
+                .map(|(_, text)| text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(text.contains("#     w: move-word-forward\n"), "{text}");
+            let mut written = crate::config::Config::default();
+            for (path, text) in &files {
+                if path.starts_with(crate::config::KEYBINDS_DIRECTORY) {
+                    written.merge_keys_source(text).unwrap();
+                }
+            }
+            let empty = serde_yaml::Value::Mapping(Default::default());
+            for fast in [false, true] {
+                let built_in = crate::keymap::keymap_for(fast);
+                let before = configured::compile(section.as_ref().unwrap_or(&empty), &built_in);
+                let after = configured::compile(written.keys.as_ref().unwrap_or(&empty), &built_in);
+                assert_eq!(after.errors, before.errors, "{text}");
+                assert_eq!(dispatch(&after.keymap), dispatch(&before.keymap), "{text}");
+            }
+        }
+    }
 
     /// Collects the backquoted first cell of every table row in `text`.
     fn first_cells(text: &str) -> BTreeSet<String> {

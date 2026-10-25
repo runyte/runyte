@@ -50,6 +50,11 @@ name = "runyte"
 path = "src/main.rs"
 
 [[bench]]
+name = "config_export"
+path = "benches/config_export.rs"
+harness = false
+
+[[bench]]
 name = "path_completion"
 path = "benches/path_completion.rs"
 harness = false

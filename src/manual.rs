@@ -226,6 +226,8 @@ pub(crate) fn render_document_for(keymap: &Keymap) -> HelpDocument {
         ":file-picker-directory",
         ":help <topic>",
         ":config-reload",
+        ":write-config [path]",
+        ":write-config!",
         ":lsp-restart [language]",
         ":notifications",
         ":service-health",

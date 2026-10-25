@@ -273,6 +273,7 @@ impl FinderContentSource {
 // snapshot rendering from those existing boundaries.
 mod completion_support;
 mod config_reload;
+mod config_write;
 mod directory_tree;
 mod editing;
 mod external_opening;
@@ -2870,6 +2871,12 @@ pub struct App {
     /// The exact YAML document settings writes patch. Set only by the config
     /// loader, and injectable through `note_loaded_config` for isolated tests.
     config_path: Option<PathBuf>,
+    /// Where `:write-config` writes when it is given no path: the per-user
+    /// configuration file, even when `--config` loaded another. `None` under
+    /// `cfg(test)` so unit tests cannot reach the person's own configuration;
+    /// an integration test that runs the command must point it at temporary
+    /// storage.
+    pub default_config_target: Option<PathBuf>,
     /// Whether a file has ever been read from [`Self::config_path`] in this
     /// session. It separates the two things an absent file can mean to a
     /// reload: a configuration that was deleted, which must not silently reset
@@ -3670,6 +3677,11 @@ impl App {
             theme,
             theme_name,
             config_path: None,
+            default_config_target: if cfg!(test) {
+                None
+            } else {
+                crate::config::default_config_path()
+            },
             config_file_read: false,
             buffers,
             syntax,

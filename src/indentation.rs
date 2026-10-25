@@ -5,7 +5,7 @@
 use std::{collections::BTreeMap, path::Path};
 
 use regex::Regex;
-use serde::{Deserialize, Deserializer, de::Error};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error, ser::SerializeMap};
 
 use crate::config::IndentStyle;
 
@@ -18,10 +18,12 @@ pub struct Indentation {
     pub style: IndentStyle,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Values {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tab_width: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub indent: Option<IndentStyle>,
 }
 
@@ -59,12 +61,25 @@ impl FileRule {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Overrides {
     pub languages: BTreeMap<String, Values>,
-    #[serde(deserialize_with = "deserialize_files")]
+    #[serde(
+        deserialize_with = "deserialize_files",
+        serialize_with = "serialize_files"
+    )]
     pub files: Vec<FileRule>,
+}
+
+/// Written as the same pattern-keyed mapping it is read from, in rule order,
+/// since a later matching rule overrides an earlier one.
+fn serialize_files<S: Serializer>(files: &[FileRule], serializer: S) -> Result<S::Ok, S::Error> {
+    let mut map = serializer.serialize_map(Some(files.len()))?;
+    for rule in files {
+        map.serialize_entry(&rule.pattern, &rule.values)?;
+    }
+    map.end()
 }
 
 fn deserialize_files<'de, D: Deserializer<'de>>(

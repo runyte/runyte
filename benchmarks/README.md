@@ -687,3 +687,22 @@ file must equal the complete original plus all insertions. The JSON retains
 all timings, output totals, read-progress counts, geometry, and binary hash;
 it contains no credentials, fixture paths, or terminal contents. An incomplete
 sample makes the command fail and leaves `complete: false` in its output.
+
+## Configuration export and large keymaps
+
+```sh
+cargo bench --bench config_export
+```
+
+This in-process release benchmark measures configuration loading, compilation
+of both fast-pane-key variants, and validated export at 0, 1, 1,400, and
+65,536 explicit assignments. Each result is the median of three samples after
+a warm-up. Compilation retains both variants together, as startup does. A
+final case measures rejection of 65,536 mutually conflicting assignments.
+All exported files live in a temporary directory removed after the sample.
+
+The default-only case has no active `keys` section and skips configured
+compilation. Export includes serialization, prospective validation, and file
+replacement; load does not include keymap compilation. These component timings
+are not end-to-end editor readiness measurements. Stop other builds before
+collecting comparison-quality results.

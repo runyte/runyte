@@ -9,7 +9,7 @@ pub const MAX_PLUGINS: usize = 8;
 pub const MAX_COMMANDS: usize = super::application::MAX_COMMANDS;
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginConfig {
     pub id: String,

@@ -365,16 +365,52 @@ fn a_configuration_file_created_after_startup_reloads_from_it() {
 
     app.execute_command("config-reload").unwrap();
     assert!(!app.status_error, "{}", app.status);
-    assert!(
-        app.status.contains("no configuration file at"),
-        "{}",
-        app.status
-    );
+    assert!(app.status.contains("reloaded config"), "{}", app.status);
 
     fs::write(&path, "editor:\n  tab_width: 7\n").unwrap();
     app.execute_command("config-reload").unwrap();
     assert_eq!(app.config.editor.tab_width, 7);
     fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn a_key_file_edited_after_startup_reloads_without_a_configuration_file() {
+    // A directory of its own, so the shared temporary directory's
+    // `keybinds.d`, if any test ever made one, is not read here.
+    let root = config_path("fragments-only");
+    fs::create_dir_all(root.join("keybinds.d")).unwrap();
+    let path = root.join("config.yaml");
+    let fragment = root.join("keybinds.d").join("normal.yaml");
+    fs::write(&fragment, "bind:\n  normal:\n    F5: save\n").unwrap();
+    let (config, _) = Config::load(Some(&path)).unwrap();
+    let mut app = App::new(config, None).unwrap();
+    app.note_loaded_config(&path);
+    let lookup = |app: &App| match app.keymap().lookup(
+        Mode::Normal,
+        &KeySequence::from(Key::plain(KeyCode::Function(5))),
+    ) {
+        Lookup::Exact(binding) => Some(binding.target.name()),
+        _ => None,
+    };
+    assert_eq!(lookup(&app), Some("save"));
+
+    fs::write(&fragment, "bind:\n  normal:\n    F5: yank\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+
+    assert!(!app.status_error, "{}", app.status);
+    assert_eq!(lookup(&app), Some("yank"));
+    assert!(!path.exists());
+
+    // Once a configuration file has been read, losing it is still refused
+    // rather than falling back to the key files alone.
+    fs::write(&path, "editor:\n  tab_width: 7\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert_eq!(app.config.editor.tab_width, 7);
+    fs::remove_file(&path).unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert!(app.status.contains("no longer exists"), "{}", app.status);
+    assert_eq!(app.config.editor.tab_width, 7);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
