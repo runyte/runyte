@@ -6588,6 +6588,13 @@ impl App {
                 self.reload_configuration();
                 Ok(())
             }
+            (
+                Colon::WriteConfig | Colon::ForceWriteConfig,
+                InvocationParameters::OptionalPath(path),
+            ) => {
+                self.write_configuration(path, command == Colon::ForceWriteConfig);
+                Ok(())
+            }
             (Colon::LspStatus, InvocationParameters::None) => {
                 if !self.lsp_send(LspCommand::Status {
                     action: self.active_action_id,

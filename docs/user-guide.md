@@ -5622,6 +5622,8 @@ The working directory starts where Runyte was launched.
 | --- | --- | --- |
 | `:config` | `settings` | Open the settings menu |
 | `:config-reload` | | Re-read the loaded configuration file into this session |
+| `:write-config [path]` | | Write the effective configuration to a new file, by default the per-user configuration file |
+| `:write-config! [path]` | | Write the effective configuration, replacing any existing file |
 | `:theme [name]` | | Choose a theme in the settings menu, or switch straight to the named one |
 | `:help [topic]` | `?` | Open the general manual, optionally at a named section |
 | `:about` | | Show Runyte's logo, version, and getting-started guide |
@@ -6335,6 +6337,37 @@ theme: mocha
 | `themes` | Custom theme definitions | [Writing a custom theme](#writing-a-custom-theme) |
 | `plugins` | Process plugins | [Plugin guide](plugins.md) |
 
+### Themes and key bindings in their own files
+
+Two directories beside the configuration file add to it:
+
+| Directory | Each `.yaml` file holds |
+| --- | --- |
+| `themes.d/` | One theme, named after the file: `themes.d/mine.yaml` defines the theme `mine`. The file is what would go under `themes: mine:`. |
+| `keybinds.d/` | Part of the `keys` section, written as it would be under `keys:`. |
+
+```yaml
+# keybinds.d/normal.yaml
+bind:
+  normal:
+    F5: save
+```
+
+- They are read after the configuration file, in file-name order. A later
+  file wins: a theme replaces one of the same name, including a built-in or
+  one defined inline under `themes:`. Key files merge one binding at a time,
+  so a later file can change one key in `bind` or `rebind` without repeating
+  the rest; `leader` and `window` are replaced.
+- Only files ending in `.yaml` are read. Hidden files, such as an editor's
+  swap files, are skipped, and so is a directory that does not exist. At most
+  256 files are read from each.
+- They are found beside whichever file was loaded, including one given with
+  `--config`, and are read even when that file does not exist.
+- Inline `themes:` and `keys:` sections keep working alongside them.
+- A theme file that is not valid YAML stops Runyte from starting, as the
+  configuration file does. A key file in the wrong shape is reported like
+  any other `keys` problem and never stops it.
+
 ### Changing settings in the editor
 
 Open the settings page with `Space o o`, `:config`, or `:settings`.
@@ -6446,6 +6479,64 @@ Overrides apply to existing open buffers immediately. Removing one changes how
 indentation is displayed and subsequently edited; it does not rewrite existing
 text. Editing the YAML manually takes effect through `:config-reload`.
 
+### Writing configuration
+
+`:write-config [path]` writes the whole effective configuration: every setting
+at its current value, the theme in use, configured plugins, and every
+language server, including the built-in ones. Themes and keys go into
+[files of their own](#themes-and-key-bindings-in-their-own-files) beside it:
+
+| File | What it holds |
+| --- | --- |
+| `themes.d/<name>.yaml` | Each theme that is not exactly a built-in one. Built-in themes are not written. |
+| `keybinds.d/00-prefixes.yaml` | `leader`, `window`, and `rebind`, when any are set. |
+| `keybinds.d/normal.yaml`, `select.yaml`, `insert.yaml`, `replace.yaml` | Explicit bindings under `bind`, with built-in defaults as commented examples. |
+
+A theme whose name is not a portable file name, or differs from another only
+in letter case, stays inline under `themes:`. The built-in keys left out of
+the mode files are the ones `bind` cannot express, such as count keys, and
+`Ctrl-h`/`j`/`k`/`l`, so `editor.fast_pane_keys` keeps choosing those. Both
+still come from the built-in keymap. Commented defaults stay supplied by Runyte,
+so they can receive future default changes and do not consume the custom
+binding allowance. Explicit assignments stay active, including assignments
+that happen to match a current default, `null` removals, and action sequences.
+
+For a mode with custom bindings, uncomment an example entry to customize it.
+For a mode with no assignments, uncomment its `bind:` and mode headings too:
+
+```yaml
+# bind:
+#   normal:
+#     w: move-word-forward
+```
+
+An export with no custom keys leaves all four mode files as comments; loading
+it does not activate custom-keymap compilation. Exporting is a way to inspect
+and edit configuration, not a startup optimization.
+
+Without a path it writes the per-user configuration file,
+`$XDG_CONFIG_HOME/runyte/config.yaml` or `~/.config/runyte/config.yaml`
+(`%APPDATA%\runyte\config.yaml` on Windows), even when this session loaded
+another file with `--config`. A relative path is resolved from the working directory, `~` expands to
+the home directory, and missing parent directories are created.
+
+Nothing is written if any of these files already exists, and the refusal
+names it; `:write-config! [path]` replaces them. Other files in `themes.d/`
+and `keybinds.d/` are left alone and are still read. A symlink's target is
+replaced and the link itself is kept, as a settings change does. Each file is
+written atomically, with the configuration file last. Before writing, Runyte
+validates the generated documents together with retained destination fragments,
+in their load order. It checks both fast-pane-key variants and the 256-file
+limit in each directory. A validation failure leaves all files untouched.
+An I/O failure during writing can still leave a partial set of updated files;
+the multi-file export is not one filesystem transaction.
+
+What is written is the saved configuration. A setting read at startup and
+changed since, such as `editor.mouse`, is written with its new value even
+though the running editor keeps its launch value until a restart. The written
+files contain generated keybinding examples, but do not preserve comments from
+the original files. Maps are written in name order for deterministic output.
+
 ### Editing the file and reloading
 
 After editing the file by hand, run `:config-reload`. It re-reads the file
@@ -6463,8 +6554,10 @@ was.
   whole.
 - A file rewritten in place can be caught half-written. That fails as invalid
   YAML; reload again once the write finishes.
-- A path that never had a file is reported as missing, not as deleted. Create
-  the file and reload to start using it mid-session.
+- A path that never had a file is not treated as deleted. The reload reads
+  `themes.d` and `keybinds.d` beside it, so editing a key file there takes
+  effect without a configuration file. Create the file and reload to start
+  using it mid-session.
 
 **What applies immediately:** everything except the restart settings below.
 That includes the theme, `notifications.history_limit`, and the `keys`
@@ -6765,8 +6858,9 @@ The `keys` section changes the keyboard. It has four parts:
 | `keys.rebind` | Moves bindings Runyte already ships to other keys. |
 | `keys.bind` | Assigns named actions to keys, per mode. Also removes bindings. |
 
-- `keys` is read from the file only; the `[config]` page never writes it.
-  Run `:config-reload` after editing.
+- `keys` is read from the configuration file and from
+  [`keybinds.d/`](#themes-and-key-bindings-in-their-own-files) beside it; the
+  `[config]` page never writes it. Run `:config-reload` after editing.
 - Plugin commands are bound separately, with `plugins[].bindings` in the
   [plugin guide](plugins.md).
 - `:help key-actions` lists every bindable action inside the editor. The same
@@ -7051,7 +7145,7 @@ Paste stays literal, and macros record the physical keys you press, as before.
 
 | Limit | Value |
 | --- | --- |
-| Assignments in `keys.bind` | 256 |
+| Assignments in `keys.bind`, across all files | 65,536 |
 | Keys per sequence | 8 |
 | Actions per binding | 16 |
 | Argument length | 4,096 bytes, no control characters |
@@ -7412,6 +7506,8 @@ with `{ command: name, argument: text }`.
 | `plugin-stop` | `plugin-stop <configured-id>` | Stop a plugin or cancel its pending restart |
 | `plugin-restart` | `plugin-restart <configured-id>` | Restart a configured plugin after cleanup |
 | `config-reload` | `config-reload` | Re-read the loaded configuration file without restarting |
+| `write-config` | `write-config [path]` | Write the effective configuration to a new file |
+| `write-config!` | `write-config! [path]` | Write the effective configuration, replacing any existing file |
 | `service-health` | `service-health` | Inspect optional editor service health |
 | `log-open` | `log-open` | Open this process's diagnostic log |
 | `notifications` | `notifications` | Open the retained notification history |

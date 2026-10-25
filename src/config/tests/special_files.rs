@@ -113,11 +113,19 @@ fn special_file_config_fixture() {
 
     fs::remove_file(&path).unwrap();
     assert!(Config::load(Some(&path)).is_ok());
-    assert!(Config::reload(&path).unwrap().is_none());
+    assert!(Config::reload(&path).unwrap().file().is_none());
     persist_setting(&path, SettingId::EditorTabWidth, &SettingValue::Integer(8)).unwrap();
     assert_eq!(Config::load(Some(&alias)).unwrap().0.editor.tab_width, 8);
     persist_setting(&alias, SettingId::EditorTabWidth, &SettingValue::Integer(6)).unwrap();
-    assert_eq!(Config::reload(&alias).unwrap().unwrap().editor.tab_width, 6);
+    assert_eq!(
+        Config::reload(&alias)
+            .unwrap()
+            .file()
+            .unwrap()
+            .editor
+            .tab_width,
+        6
+    );
     assert!(
         fs::symlink_metadata(&alias)
             .unwrap()

@@ -168,16 +168,28 @@ fn pending_terminal_cleanup_kills_descendants_after_the_unreaped_leader_exits() 
 #[test]
 fn pending_terminal_cancel_releases_reader_accounting_while_an_external_slave_stays_open() {
     let _guard = pending_test_guard();
-    let (root, request) = fixture("tty > slave\nprintf ready\nsleep 30\n");
+    let (_root, request) = fixture("tty > slave\nprintf ready\nsleep 30\n");
     let mut sessions = TerminalSessions::new();
     let output = sessions.take_events().unwrap();
     let mut preparation = sessions.prepare_open(request, 80, 24).unwrap();
     let (finished, completion) = mpsc::channel();
     preparation.retain_until_settled(Box::new(Finished(finished)));
     let pending = preparation.spawn().unwrap();
-    let slave_path = root.path().join("slave");
-    wait_until(|| std::fs::read_to_string(&slave_path).is_ok_and(|path| path.ends_with('\n')));
-    let slave_path = std::fs::read_to_string(slave_path).unwrap();
+    // On Linux the installed child descriptor identifies the slave as soon
+    // as spawn returns. Do not wait for an external `tty` process to publish
+    // a pathname: this test concerns cancellation with an external owner,
+    // not shell startup, and that extra barrier timed out in CI.
+    #[cfg(target_os = "linux")]
+    let slave_path = {
+        let child = pending.session.as_ref().unwrap().pty.as_ref().unwrap();
+        format!("/proc/{}/fd/0", child.process_id())
+    };
+    #[cfg(not(target_os = "linux"))]
+    let slave_path = {
+        let path = _root.path().join("slave");
+        wait_until(|| std::fs::read_to_string(&path).is_ok_and(|path| path.ends_with('\n')));
+        std::fs::read_to_string(path).unwrap()
+    };
     // Retain the slave outside the child group, as an escaped descendant
     // could. No extra child is spawned and no unrelated PID is signalled.
     let slave = std::fs::OpenOptions::new()

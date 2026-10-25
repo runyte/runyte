@@ -25,7 +25,7 @@
 
 use super::App;
 use crate::{
-    config::Config,
+    config::{Config, Reloaded},
     lsp::LspCommand,
     notification::{NotificationDraft, NotificationSeverity},
 };
@@ -95,9 +95,9 @@ impl App {
             self.action_failed("no configuration file is loaded; nothing to reload");
             return;
         };
-        let loaded = match Config::reload(&path) {
-            Ok(Some(loaded)) => loaded,
-            Ok(None) if self.config_file_read => {
+        let (loaded, file_read) = match Config::reload(&path) {
+            Ok(Reloaded::File(loaded)) => (loaded, true),
+            Ok(Reloaded::Fragments(_)) if self.config_file_read => {
                 self.error_from(
                     "Runyte",
                     "Configuration reload failed",
@@ -108,12 +108,9 @@ impl App {
                 );
                 return;
             }
-            Ok(None) => {
-                // Nothing was ever read from this path, so the built-in
-                // defaults already in effect are what it would reload to.
-                self.status(format!("no configuration file at {}", path.display()));
-                return;
-            }
+            // Nothing was ever read from this path, so the themes and key
+            // files beside it are what startup would read now.
+            Ok(Reloaded::Fragments(loaded)) => (loaded, false),
             Err(error) => {
                 self.error_from(
                     "Runyte",
@@ -168,7 +165,7 @@ impl App {
         self.note_config_deprecations(&loaded);
         self.persisted_config = loaded;
         self.config = effective;
-        self.config_file_read = true;
+        self.config_file_read = file_read;
         // Dispatch, help, and key hints all read `self.keymap`, so replacing
         // the compiled maps and re-selecting through `sync_keymap` is what
         // keeps them describing the same bindings after a `keys` change.

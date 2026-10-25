@@ -2,6 +2,10 @@
 
 # Copy to ~/.config/runyte/config.yaml.
 #
+# Themes and key bindings may also live in their own files beside this one,
+# themes.d/<name>.yaml and keybinds.d/*.yaml; see "Themes and key bindings in
+# their own files" in docs/user-guide.md.
+#
 # Run :config-reload after editing this file to apply it to a running editor.
 # editor.mouse, editor.font_size, lsp.enable, mode, and workspace.state are read at startup and
 # are reported as needing a restart instead.

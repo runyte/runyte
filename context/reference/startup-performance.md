@@ -17,6 +17,92 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-10-25 — commented defaults and larger configured keymaps
+
+Follow-up to [issue #31](https://github.com/runyte/runyte/issues/31): export
+keeps explicit assignments active and writes built-in defaults as comments.
+A default-only export therefore has no active `keys` section and skips
+configured-keymap compilation on load. The assignment limit is 65,536;
+this is an admission ceiling, not a promise of fast startup at that size.
+
+`cargo bench --bench config_export` measures component costs in-process in a
+release build. Each value is the median of three samples after one warm-up.
+The compilation measurement retains both fast-pane-key variants together.
+Export includes prospective validation and file replacement. Load reads the
+exported files but does not compile keys. Files live in temporary directories.
+These are not complete editor-readiness measurements.
+
+| Explicit assignments | Load (ms) | Compile both variants (ms) | Export (ms) |
+| ---: | ---: | ---: | ---: |
+| 0 | 0.945 | skipped | 16.716 |
+| 1 | 0.910 | 31.705 | 49.006 |
+| 1,400 | 3.809 | 138.424 | 212.787 |
+| 65,536 | 57.965 | 7,616.074 | 9,846.959 |
+
+Rejection of 65,536 conflicting assignments across both variants took
+11,326.158 ms. Diagnostic lookup indexes the first violation per assignment
+instead of scanning all violations for each rejected rule.
+
+Measured on Linux x86-64, AMD Ryzen AI 9 365, Rust 1.97.1. Other builds were
+active on the machine; treat these values as an observed capacity check, not
+an isolated baseline or a comparison with the earlier measurements below.
+At the ceiling, compilation and export take seconds. Ordinary custom keymaps
+still pay the existing configured-compilation cost; `:write-config` is not a
+startup cache.
+
+## 2026-10-18 — configuration directories and written keymaps
+
+Configuration loading now lists `themes.d/` and `keybinds.d/` beside the
+configuration file on every launch, and `:write-config` writes the whole
+effective keymap into `keybinds.d/`, so a written configuration has 720
+`keys.bind` entries for startup to compile. The same work applies `bind`
+rules in one pass over the bindings instead of one pass per rule.
+
+These are not readiness measurements and `startup.py` was not rerun. They
+time the two functions on the startup path in-process: the configured keymap
+compilation, `compile_configured_keymaps`, which builds both
+`editor.fast_pane_keys` variants, and `Config::load`. Each was measured from a
+temporary ignored test in a `cargo test --release` build, not committed. A
+measurement is one warm-up and 21 samples. Each cell is the **median of the
+three rounds' medians (range of those medians), milliseconds**.
+
+- **Inputs.** A one-binding section (`bind: normal: F5: save`), and the
+  written keymap, which is what `:write-config` produces for a configuration
+  with no `keys` of its own, merged across its four mode files. For loading,
+  `config.yaml` written for the default configuration on its own, and the
+  same file with its four `keybinds.d/` files. No theme files, because the
+  default configuration has no custom theme.
+- **Revisions.** The baseline is `main` at `e5ed45f`, with the `keys.bind`
+  limit raised from 256 to 1,024 for the measurement only; unpatched, it
+  rejects the written keymap whole. The change is branch `config-split-files`
+  at `f7bd812`.
+- **Machine.** AMD Ryzen 9 3900X, 12 cores / 24 logical CPUs, Linux 6.18.56,
+  ZFS, Rust 1.97.1.
+
+| Work | Baseline | Change |
+| --- | ---: | ---: |
+| Compile one binding | 32.7 (31.9–32.7) | 34.1 (34.0–34.1) |
+| Compile the written keymap | 83.6 (82.8–84.1) | 39.9 (39.7–40.0) |
+| Load `config.yaml` alone | 1.03 (1.00–1.16) | 1.02 (1.00–1.02) |
+| Load with `keybinds.d/` | — | 1.92 (1.91–1.95) |
+
+Most of the cost of a configured keymap does not depend on its size: any
+`keys` section costs about 34 ms here, against nothing for a configuration
+without one, which reuses the built-in keymap. The written keymap adds about
+6 ms to that, where the per-rule passes added about 51 ms. The fixed part is
+the alias, namespace, and validation work that compares bindings with each
+other, for both variants. It predates this change. The one-binding case is
+about 1.4 ms slower after it; the rounds do not overlap, so it is probably the
+per-compile terminal-key set and rule grouping rather than noise.
+
+Listing two missing directories made no measurable difference to loading.
+Four written key files add about 0.9 ms of parsing.
+
+For scale only, since the machines differ: `short.txt` readiness in the
+2026-10-04 set below was 29 ms. Configured keymap compilation is the same
+order as that whole figure, so a configuration with any `keys` section,
+written or not, is likely to show in a readiness rerun.
+
 ## 2026-10-09 — bundled Hayro PDF helper versus Poppler
 
 Linux x86-64, AMD Ryzen AI 9 365, Rust 1.97.1 release build with repository
@@ -632,7 +718,8 @@ The default startup path does not compile a configured keymap: it clones one
 `Arc` from the already initialized built-in variant. When a `keys` section is
 present, startup compiles and validates both `editor.fast_pane_keys` variants
 once so a later settings preview only selects an already diagnosed map. This
-bounded, configured-only work has not been added to the measurements below.
+bounded, configured-only work has not been added to the readiness
+measurements; the 2026-10-18 set times it in-process.
 
 The file monitor's two-second reconciliation reads the directory of every open
 explorer, because a listing has no cheaper baseline to compare first. The read

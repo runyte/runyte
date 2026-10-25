@@ -7,6 +7,10 @@
 //! scalar must leave comments, unknown fields, ordering, quoting elsewhere,
 //! and line endings alone. Documents using YAML features that cannot be
 //! patched with that guarantee are rejected before any file is written.
+//!
+//! [`write_config`] is the one exception: it writes a whole new document
+//! from the effective configuration, which is why it refuses to replace an
+//! existing file unless asked to.
 
 use std::{
     collections::HashSet,
@@ -984,6 +988,8 @@ pub enum SettingError {
     },
     InvalidYaml(String),
     InvalidConfig(String),
+    /// A whole-document write would have replaced a file without being asked.
+    AlreadyExists(PathBuf),
     Io {
         operation: &'static str,
         path: PathBuf,
@@ -1007,6 +1013,7 @@ impl fmt::Display for SettingError {
             ),
             Self::InvalidYaml(message) => write!(formatter, "invalid YAML: {message}"),
             Self::InvalidConfig(message) => write!(formatter, "invalid Runyte config: {message}"),
+            Self::AlreadyExists(path) => write!(formatter, "{} already exists", path.display()),
             Self::Io {
                 operation,
                 path,
@@ -1048,10 +1055,10 @@ pub fn persist_setting(
     // Safety-shape validation deliberately precedes deserialization so an
     // anchor or duplicate is reported as the unsupported construct it is.
     scan_document(&source)?;
-    let current = parse_config(&source)?;
+    let current = parse_config_at(&source, path)?;
     setting.validate(value, &current)?;
     let patched = patch_scalar(&source, setting, value)?;
-    let updated = parse_config(&patched)?;
+    let updated = parse_config_at(&patched, path)?;
     setting.validate(value, &updated)?;
     if setting.configured_value(&updated) != *value {
         return Err(SettingError::InvalidConfig(format!(
@@ -1063,17 +1070,103 @@ pub fn persist_setting(
     Ok(updated)
 }
 
+/// Write `config` to `path` and, beside it, its custom themes in `themes.d`
+/// and its `keys` section in `keybinds.d`, returning every file written.
+///
+/// Nothing is written if any of those files, or a link to one, exists,
+/// unless `replace` is set. When it is, they are replaced, a symlink's target
+/// rather than the link as [`persist_setting`] does, and any other file in the
+/// two directories is left alone. Before writing, validate the generated files
+/// together with retained destination fragments in load order, including file
+/// counts and both keymap variants. Validation failure changes no files; an I/O
+/// failure while writing can leave a partial export. The main file is last.
+pub fn write_config(
+    path: &Path,
+    config: &Config,
+    replace: bool,
+) -> Result<Vec<PathBuf>, SettingError> {
+    let file_name = path.file_name().ok_or_else(|| {
+        SettingError::InvalidConfig(format!("{} does not name a file", path.display()))
+    })?;
+    let directory = path.parent().unwrap_or(Path::new(""));
+    let files = config
+        .to_files(Path::new(file_name))
+        .map_err(|error| SettingError::InvalidConfig(format!("{error:#}")))?;
+    if !replace {
+        for (relative, _) in &files {
+            let target = directory.join(relative);
+            match fs::symlink_metadata(&target) {
+                Ok(_) => return Err(SettingError::AlreadyExists(target)),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(source) => return Err(io_error("inspect", &target, source)),
+            }
+        }
+    }
+    let (main, fragments) = files
+        .split_first()
+        .expect("the configuration file is always among the files written");
+    let prospective = parse_config_with(&main.1, |config| {
+        config
+            .merge_prospective_fragments(path, fragments)
+            .map_err(|error| SettingError::InvalidConfig(format!("{error:#}")))
+    })?;
+    if let Some(keys) = prospective.keys.as_ref() {
+        for fast in [false, true] {
+            let compiled =
+                crate::keymap::configured::compile(keys, &crate::keymap::keymap_for(fast));
+            if let Some(error) = compiled.errors.first() {
+                let remaining = compiled.errors.len() - 1;
+                let suffix = if remaining == 0 {
+                    String::new()
+                } else {
+                    format!(" ({remaining} more key errors)")
+                };
+                return Err(SettingError::InvalidConfig(format!(
+                    "keys with editor.fast_pane_keys={fast}: {error}{suffix}"
+                )));
+            }
+        }
+    }
+    let mut written = Vec::new();
+    for (relative, text) in fragments.iter().chain([main]) {
+        let target = directory.join(relative);
+        atomic_write(&resolve_write_target(&target)?, text.as_bytes())?;
+        written.push(target);
+    }
+    Ok(written)
+}
+
+#[cfg(all(test, unix))]
 fn parse_config(source: &str) -> Result<Config, SettingError> {
+    parse_config_with(source, |_| Ok(()))
+}
+
+/// A configuration document for the file at `path`, with the `themes.d` and
+/// `keybinds.d` beside it, so a setting is checked against, and returns, the
+/// configuration a load of that file produces.
+fn parse_config_at(source: &str, path: &Path) -> Result<Config, SettingError> {
+    parse_config_with(source, |config| {
+        config
+            .merge_fragments(path)
+            .map_err(|error| SettingError::InvalidConfig(format!("{error:#}")))
+    })
+}
+
+fn parse_config_with(
+    source: &str,
+    merge: impl FnOnce(&mut Config) -> Result<(), SettingError>,
+) -> Result<Config, SettingError> {
     if !source.is_empty() {
         serde_yaml::from_str::<serde_yaml::Value>(source)
             .map_err(|error| SettingError::InvalidYaml(error.to_string()))?;
     }
-    let config = if source.is_empty() {
+    let mut config = if source.is_empty() {
         Config::default()
     } else {
         serde_yaml::from_str::<Config>(source)
             .map_err(|error| SettingError::InvalidConfig(error.to_string()))?
     };
+    merge(&mut config)?;
     let config = config.with_builtin_defaults();
     config
         .validate_settings()
@@ -1579,13 +1672,13 @@ pub fn persist_override(
         Err(source) => return Err(io_error("read", &target, source)),
     };
     let lines = scan_document(&source)?;
-    let current = parse_config(&source)?;
+    let current = parse_config_at(&source, path)?;
     if let Some(value) = value {
         setting.validate(value, &current)?;
     }
     let scalar = value.map_or_else(|| "null".to_owned(), yaml_scalar);
     let patched = patch_mapping_path(&source, &lines, &scope.path(field), &scalar, 0)?;
-    let updated = parse_config(&patched)?;
+    let updated = parse_config_at(&patched, path)?;
     if override_value(setting, scope, &updated.indentation).as_ref() != value {
         return Err(SettingError::InvalidConfig(
             "override did not resolve to the requested value".into(),
@@ -2274,6 +2367,111 @@ mod tests {
         assert_eq!(
             fs::read_to_string(&target).unwrap(),
             "editor:\n  soft_wrap: true\n"
+        );
+        assert_eq!(
+            fs::metadata(target).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+    }
+
+    #[test]
+    fn a_setting_sees_and_keeps_the_themes_and_keys_beside_the_file() {
+        let directory = TempDir::new();
+        let path = directory.path("config.yaml");
+        fs::write(&path, "editor:\n  tab_width: 4\n").unwrap();
+        fs::create_dir(directory.path("themes.d")).unwrap();
+        fs::write(directory.path("themes.d/mine.yaml"), "accent: '#000002'\n").unwrap();
+        fs::create_dir(directory.path("keybinds.d")).unwrap();
+        fs::write(
+            directory.path("keybinds.d/00-prefixes.yaml"),
+            "leader: Ctrl-x\n",
+        )
+        .unwrap();
+
+        let config =
+            persist_setting(&path, SettingId::Theme, &SettingValue::Text("mine".into())).unwrap();
+
+        assert_eq!(config.theme.as_deref(), Some("mine"));
+        assert_eq!(config.themes["mine"].accent, "#000002");
+        assert_eq!(
+            serde_yaml::to_string(config.keys.as_ref().unwrap()).unwrap(),
+            "leader: Ctrl-x\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "editor:\n  tab_width: 4\ntheme: 'mine'\n"
+        );
+    }
+
+    #[test]
+    fn write_config_refuses_when_any_file_it_would_write_exists() {
+        let directory = TempDir::new();
+        let path = directory.path("config.yaml");
+        let mut config = Config::default().with_builtin_defaults();
+        config.keys = Some(serde_yaml::from_str("bind:\n  normal:\n    F5: save\n").unwrap());
+        fs::create_dir(directory.path("keybinds.d")).unwrap();
+        fs::write(directory.path("keybinds.d/normal.yaml"), "# mine\n").unwrap();
+        fs::write(directory.path("keybinds.d/50-extra.yaml"), "# extra\n").unwrap();
+
+        let error = write_config(&path, &config, false).unwrap_err();
+        assert!(
+            matches!(error, SettingError::AlreadyExists(ref existing) if *existing == directory.path("keybinds.d/normal.yaml"))
+        );
+        assert!(!path.exists());
+
+        let written = write_config(&path, &config, true).unwrap();
+        assert_eq!(
+            written,
+            [
+                directory.path("keybinds.d/insert.yaml"),
+                directory.path("keybinds.d/normal.yaml"),
+                directory.path("keybinds.d/replace.yaml"),
+                directory.path("keybinds.d/select.yaml"),
+                path.clone(),
+            ]
+        );
+        assert!(
+            fs::read_to_string(directory.path("keybinds.d/normal.yaml"))
+                .unwrap()
+                .starts_with("bind:\n  normal:\n    F5: save\n")
+        );
+        // A file it did not write is left where it was.
+        assert_eq!(
+            fs::read_to_string(directory.path("keybinds.d/50-extra.yaml")).unwrap(),
+            "# extra\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_config_refuses_a_link_and_replaces_its_target_when_forced() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = TempDir::new();
+        let target = directory.path("actual.yaml");
+        let link = directory.path("config.yaml");
+        fs::write(&target, "# mine\n").unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o640)).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let mut config = Config::default().with_builtin_defaults();
+        config.editor.tab_width = 7;
+
+        let error = write_config(&link, &config, false).unwrap_err();
+        assert!(matches!(error, SettingError::AlreadyExists(ref path) if *path == link));
+        assert_eq!(fs::read_to_string(&target).unwrap(), "# mine\n");
+
+        write_config(&link, &config, true).unwrap();
+        assert!(
+            fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            parse_config(&fs::read_to_string(&target).unwrap())
+                .unwrap()
+                .editor
+                .tab_width,
+            7
         );
         assert_eq!(
             fs::metadata(target).unwrap().permissions().mode() & 0o777,

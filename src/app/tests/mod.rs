@@ -183,6 +183,7 @@ mod async_syntax;
 mod commands;
 mod comparisons;
 mod config_reload;
+mod config_write;
 mod diff_latency;
 mod directory_tree;
 mod editing;

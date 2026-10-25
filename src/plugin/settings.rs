@@ -67,6 +67,14 @@ impl PartialEq for Settings {
     }
 }
 
+/// Written as the configured value, so a written configuration file carries
+/// the same settings block back to the plugin when it is read.
+impl Serialize for Settings {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.value.serialize(serializer)
+    }
+}
+
 impl<'de> Deserialize<'de> for Settings {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = json::deserialize(deserializer, LIMITS)
