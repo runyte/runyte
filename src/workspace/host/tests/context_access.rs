@@ -89,8 +89,8 @@ fn key(host: &mut WorkspaceHost, code: KeyCode) {
 }
 fn review_all(host: &mut WorkspaceHost) {
     // Bounded, so a review that can never complete fails instead of hanging.
-    let pages = host.app.context_ui.surface.as_ref().unwrap().last_page() + 1;
-    for _ in 0..pages {
+    let lines = host.app.context_ui.surface.as_ref().unwrap().lines.len();
+    for _ in 0..=lines {
         host.app.note_context_frame(80, 22, 1);
         host.app.note_context_presented(1);
         if host
@@ -103,9 +103,9 @@ fn review_all(host: &mut WorkspaceHost) {
         {
             return;
         }
-        key(host, KeyCode::Char('j'));
+        key(host, KeyCode::PageDown);
     }
-    panic!("review did not complete within {pages} pages");
+    panic!("review did not complete within {lines} lines");
 }
 
 #[tokio::test]
@@ -168,7 +168,9 @@ async fn disconnect_and_revocation_invalidate_reply_leases_and_all_owner_resourc
     .lease
     .unwrap();
     let terminal = host.app.terminals.insert_test_session(20, 3);
-    let proposal = host.context_propose(1, terminal, "literal", None).unwrap();
+    let proposal = host
+        .context_propose(1, terminal, "literal", None, None)
+        .unwrap();
     assert_eq!(host.context.proposals.len(), 1);
     host.context_revoke("agent");
     assert!(!lease.active());
@@ -196,7 +198,7 @@ async fn default_reject_expiry_attachment_and_input_races_are_inert() {
     for expected in ["rejected", "expired", "cancelled", "stale"] {
         host.note_plugin_frontend(true);
         let result = host
-            .context_propose(1, terminal, "echo approved", None)
+            .context_propose(1, terminal, "echo approved", None, None)
             .unwrap();
         let id = result["proposal"].as_str().unwrap().to_owned();
         host.sync_context();
@@ -217,14 +219,14 @@ async fn default_reject_expiry_attachment_and_input_races_are_inert() {
         host.context.proposals.clear();
     }
     assert_eq!(
-        host.context_propose(1, terminal, "bad\n", None)
+        host.context_propose(1, terminal, "bad\n", None, None)
             .unwrap_err()
             .code,
         Code::InvalidArgument
     );
     host.note_plugin_frontend(false);
     assert_eq!(
-        host.context_propose(1, terminal, "ok", None)
+        host.context_propose(1, terminal, "ok", None, None)
             .unwrap_err()
             .code,
         Code::NoFrontend
@@ -324,6 +326,7 @@ async fn approval_requires_every_page_to_be_painted_and_consumes_enter() {
             terminal,
             &"a".repeat(1024),
             Some("untrusted reason".into()),
+            None,
         )
         .unwrap()["proposal"]
         .as_str()
@@ -521,7 +524,7 @@ async fn real_pty_overlay_enter_only_inserts_and_separate_native_enter_submits()
     .await
     .unwrap();
     let id = host
-        .context_propose(1, terminal, "echo literal", None)
+        .context_propose(1, terminal, "echo literal", None, None)
         .unwrap()["proposal"]
         .as_str()
         .unwrap()
@@ -573,7 +576,7 @@ async fn real_pty_overlay_enter_only_inserts_and_separate_native_enter_submits()
 }
 
 #[tokio::test]
-async fn prepared_but_unpainted_pages_cannot_be_skipped_or_approved() {
+async fn prepared_but_unpainted_lines_cannot_be_counted_or_approved() {
     let (_root, mut host, identity, _events) = fixture();
     grant(
         &mut host,
@@ -587,29 +590,567 @@ async fn prepared_but_unpainted_pages_cannot_be_skipped_or_approved() {
         &["terminal_read", "terminal_propose"],
     );
     let terminal = host.app.terminals.insert_test_session(20, 3);
-    host.context_propose(1, terminal, &"x".repeat(1024), None)
+    host.context_propose(1, terminal, &"x".repeat(1024), None, None)
         .unwrap();
     host.sync_context();
+    fn surface(host: &WorkspaceHost) -> &crate::app::context_access::Surface {
+        host.app.context_ui.surface.as_ref().unwrap()
+    }
     host.app.note_context_frame(80, 22, 10);
     key(&mut host, KeyCode::Char('j'));
-    assert_eq!(host.app.context_ui.surface.as_ref().unwrap().page, 0);
+    assert_eq!(surface(&host).top, 1);
+    // Frame 10 was prepared for the first line, which is no longer in view.
     host.app.note_context_presented(10);
-    key(&mut host, KeyCode::Char('j'));
-    assert_eq!(host.app.context_ui.surface.as_ref().unwrap().page, 1);
+    assert!(surface(&host).seen.iter().all(|seen| !seen));
     host.app.note_context_frame(80, 22, 11); // dropped/backpressured frame
-    host.app.note_context_presented(10); // frontend still displays page zero
-    key(&mut host, KeyCode::Char('j'));
+    host.app.note_context_presented(10); // frontend still displays line one
+    key(&mut host, KeyCode::Char('G'));
     key(&mut host, KeyCode::Tab);
     key(&mut host, KeyCode::Enter);
-    assert_eq!(host.app.context_ui.surface.as_ref().unwrap().page, 1);
+    assert!(surface(&host).seen.iter().all(|seen| !seen));
+    assert_eq!(surface(&host).presented_top, None);
+    assert!(host.app.context_ui.decision.is_none());
+}
+
+#[tokio::test]
+async fn direct_insertion_grant_skips_review_but_never_sends_enter() {
+    use crate::terminal::{TerminalOutput, TerminalRequest, proposal::DeliveryState};
+    let (_root, mut host, identity, _events) = fixture();
+    grant(
+        &mut host,
+        &identity,
+        [
+            Scope::TerminalRead,
+            Scope::TerminalPropose,
+            Scope::TerminalInsert,
+        ]
+        .into(),
+    );
+    // The reader negotiates nothing new: direct insertion is the grant's.
+    let registered = authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_propose"],
+    );
     assert_eq!(
+        registered.value["capabilities"],
+        json!(["terminal_read", "terminal_propose"])
+    );
+    let terminal = host.app.terminals.open(TerminalRequest {
+        program: "/bin/sh".into(),
+        // A line editor asks for bracketed paste; this one stands in for it.
+        arguments: vec!["-c".into(), "stty -echo; printf '\\033[?2004h'; printf READY; IFS= read -r line; printf 'SUBMITTED:%s' \"$line\"; IFS= read -r hold".into()],
+        directory: host.app.project_root.clone(), label: "direct fixture".into(),
+    }, 40, 10).unwrap();
+    let mut output = host.take_terminal_events().unwrap();
+    let mut bytes = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !bytes.windows(5).any(|part| part == b"READY") {
+            let event = output.recv().await.unwrap();
+            if let TerminalOutput::Bytes { bytes: part, .. } = &event {
+                bytes.extend(part);
+            }
+            host.app.terminals.apply(event);
+        }
+    })
+    .await
+    .unwrap();
+    let list = request(
+        &mut host,
+        1,
+        "list",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    let handle = list["result"]["terminals"][0]["terminal"].clone();
+    let proposed = request(
+        &mut host,
+        1,
+        "propose",
+        "terminal.input.propose",
+        json!({"terminal":handle,"text":"echo direct"}),
+    );
+    assert_eq!(proposed["result"]["state"], "queued");
+    let id = proposed["result"]["proposal"].as_str().unwrap().to_owned();
+    host.sync_context();
+    assert!(host.app.context_ui.surface.is_none(), "no review overlay");
+    let notice = host.app.notifications().entries().last().unwrap();
+    assert_eq!(notice.title, "Terminal text inserted");
+    assert!(
+        notice
+            .body
+            .contains("inserted 11 characters into terminal #1 without review"),
+        "{}",
+        notice.body
+    );
+    let delivery = host.context.proposals[&id]
+        .delivery
+        .as_ref()
+        .unwrap()
+        .clone();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while delivery.state() != DeliveryState::Delivered {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // Still blocked in read: the text arrived without Enter.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), output.recv())
+            .await
+            .is_err()
+    );
+    assert!(
+        host.app
+            .terminals
+            .get_mut(terminal)
+            .unwrap()
+            .send_key(KeyStroke::plain(KeyCode::Enter))
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        // The text arrives framed as a paste, which is what makes it inert
+        // until the person submits it.
+        while !String::from_utf8_lossy(&bytes).contains("SUBMITTED:\x1b[200~echo direct\x1b[201~") {
+            let event = output.recv().await.unwrap();
+            if let TerminalOutput::Bytes { bytes: part, .. } = &event {
+                bytes.extend(part);
+            }
+            host.app.terminals.apply(event);
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn direct_insertion_falls_back_to_review_and_ends_with_its_grant() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(
+        &mut host,
+        &identity,
+        [
+            Scope::TerminalRead,
+            Scope::TerminalPropose,
+            Scope::TerminalInsert,
+        ]
+        .into(),
+    );
+    authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_propose"],
+    );
+    // A program that has not asked for bracketed paste would read the text
+    // as keystrokes, so the person reviews it even under this grant.
+    let terminal = host.app.terminals.insert_test_session(20, 3);
+    assert!(
+        !host
+            .app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .proposal_input_signature()
+            .modes
+            .bracketed_paste
+    );
+    let list = request(
+        &mut host,
+        1,
+        "list",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    let handle = list["result"]["terminals"][0]["terminal"].clone();
+    let notices = host.app.notifications().entries().len();
+    let proposed = request(
+        &mut host,
+        1,
+        "propose",
+        "terminal.input.propose",
+        json!({"terminal":handle,"text":"y"}),
+    );
+    assert_eq!(proposed["result"]["state"], "pending");
+    assert_eq!(host.app.notifications().entries().len(), notices);
+    host.sync_context();
+    assert!(host.app.context_ui.surface.is_some(), "the review opens");
+    key(&mut host, KeyCode::Escape);
+    host.sync_context();
+
+    // Applying the grant again without `5` ends the connection that held it,
+    // so the authority cannot outlive the person's choice.
+    host.app.context_ui.decision = Some(crate::app::context_access::Decision::Grant {
+        identity: "agent".into(),
+        scopes: [Scope::TerminalRead, Scope::TerminalPropose].into(),
+        remember: false,
+    });
+    host.sync_context();
+    let stale = request(
+        &mut host,
+        1,
+        "again",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    assert!(stale.get("result").is_none(), "{stale}");
+    let registered = authenticate(
+        &mut host,
+        &identity,
+        2,
+        &["terminal_read", "terminal_propose"],
+    );
+    assert_eq!(registered.value["type"], "registered");
+    assert!(
+        !host.context.readers[&2]
+            .granted
+            .contains(&Scope::TerminalInsert)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn configured_defaults_apply_where_nothing_was_decided_and_a_revocation_sticks() {
+    let root = TestRuntimeRoot::new("context-defaults").unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let storage = root.path().join("ctx");
+    let start = || {
+        let mut app =
+            App::new_in_isolated_project(&project, HostPorts::isolated(Box::new(Clipboard)))
+                .unwrap();
+        app.config.mcp.default_grants = [(
+            "agent".to_owned(),
+            vec!["terminal_read".to_owned(), "editor_context_read".to_owned()],
+        )]
+        .into();
+        let mut host = WorkspaceHost::new(app);
+        let events = host.start_context_with_root(HostMode::Standalone, Some(storage.clone()));
+        (host, events)
+    };
+    let scopes_of = |host: &WorkspaceHost| {
+        host.context
+            .grants
+            .values()
+            .find(|(identity, _)| identity.name() == "agent")
+            .map(|(_, scopes)| scopes.clone())
+    };
+
+    // No storage yet: the default creates it and the identity, and listens.
+    let (mut host, _events) = start();
+    assert_eq!(
+        scopes_of(&host),
+        Some([Scope::TerminalRead, Scope::EditorContextRead].into())
+    );
+    assert!(host.context.defaulted.contains("agent"));
+    assert!(host.context_enabled());
+
+    // Revoking keeps an empty record, so the next start stays off.
+    host.app.context_ui.decision =
+        Some(crate::app::context_access::Decision::Revoke("agent".into()));
+    host.sync_context();
+    drop(host);
+    let (mut host, _events) = start();
+    assert_eq!(scopes_of(&host), None);
+    assert!(host.context.denied.contains("agent"));
+
+    // A remembered grant of the person's own wins over the default.
+    host.app.context_ui.decision = Some(crate::app::context_access::Decision::Grant {
+        identity: "agent".into(),
+        scopes: [Scope::TerminalRead].into(),
+        remember: true,
+    });
+    host.sync_context();
+    drop(host);
+    let (mut host, _events) = start();
+    assert_eq!(scopes_of(&host), Some([Scope::TerminalRead].into()));
+    assert!(host.context.remembered.contains("agent"));
+    assert!(!host.context.defaulted.contains("agent"));
+
+    // A grant applied for this session only leaves no record, so the
+    // default is what the next start sees.
+    host.app.context_ui.decision = Some(crate::app::context_access::Decision::Grant {
+        identity: "agent".into(),
+        scopes: [Scope::TerminalRead].into(),
+        remember: false,
+    });
+    host.sync_context();
+    drop(host);
+    let (host, _events) = start();
+    assert!(host.context.defaulted.contains("agent"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_revocation_made_without_defaults_still_holds_once_one_is_configured() {
+    let root = TestRuntimeRoot::new("context-defaults-later").unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let storage = root.path().join("ctx");
+    let start = |defaults: bool| {
+        let mut app =
+            App::new_in_isolated_project(&project, HostPorts::isolated(Box::new(Clipboard)))
+                .unwrap();
+        if defaults {
+            app.config.mcp.default_grants =
+                [("agent".to_owned(), vec!["terminal_read".to_owned()])].into();
+        }
+        let mut host = WorkspaceHost::new(app);
+        let events = host.start_context_with_root(HostMode::Standalone, Some(storage.clone()));
+        host.note_plugin_frontend(true);
+        (host, events)
+    };
+    // A workspace that never had a grant has not opened the store; revoking
+    // there must still be kept.
+    let (mut host, _events) = start(false);
+    assert!(host.context.storage.is_none());
+    host.app.context_ui.decision =
+        Some(crate::app::context_access::Decision::Revoke("agent".into()));
+    host.sync_context();
+    drop(host);
+
+    let (mut host, _events) = start(true);
+    assert!(host.context.grants.is_empty());
+    host.app.context_ui.requested_identity = Some("agent".into());
+    host.sync_context();
+    let status = |host: &WorkspaceHost| {
         host.app
             .context_ui
             .surface
             .as_ref()
             .unwrap()
-            .reviewed_through,
-        Some(0)
+            .lines
+            .iter()
+            .find(|line| line.label == "Status")
+            .unwrap()
+            .value
+            .clone()
+    };
+    assert!(
+        status(&host).starts_with("Revoked here"),
+        "{}",
+        status(&host)
     );
-    assert!(host.app.context_ui.decision.is_none());
+    drop(host);
+    // Without a default there is nothing for the revocation to hold off.
+    let (mut host, _events) = start(false);
+    host.app.context_ui.requested_identity = Some("agent".into());
+    host.sync_context();
+    assert!(
+        status(&host).starts_with("Not granted"),
+        "{}",
+        status(&host)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_default_that_cannot_be_applied_leaves_remembered_grants_in_place() {
+    let root = TestRuntimeRoot::new("context-defaults-full").unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let storage = root.path().join("ctx");
+    {
+        let store = Storage::new(storage.clone()).unwrap();
+        let agent = store.identity("agent").unwrap();
+        store
+            .grant(&project, &agent, [Scope::TerminalRead].into())
+            .unwrap();
+        // Fill the store's identity capacity, so a new default cannot be made.
+        for index in 1..32 {
+            store.identity(&format!("other{index}")).unwrap();
+        }
+    }
+    let mut app =
+        App::new_in_isolated_project(&project, HostPorts::isolated(Box::new(Clipboard))).unwrap();
+    app.config.mcp.default_grants =
+        [("newcomer".to_owned(), vec!["terminal_read".to_owned()])].into();
+    let mut host = WorkspaceHost::new(app);
+    let _events = host.start_context_with_root(HostMode::Standalone, Some(storage));
+    assert!(host.context.remembered.contains("agent"));
+    assert!(!host.context.defaulted.contains("newcomer"));
+    assert!(host.context_enabled());
+    assert!(
+        host.app
+            .notifications()
+            .entries()
+            .iter()
+            .any(|entry| entry.body.contains("newcomer"))
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn agents_share_the_channel_and_a_verified_terminal_counts_what_is_unread() {
+    use crate::terminal::TerminalRequest;
+    use crate::workspace::parent::{ParentContext, ParentLaunch};
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, [Scope::AgentChannel].into());
+    authenticate(&mut host, &identity, 1, &["agent_channel"]);
+    authenticate(&mut host, &identity, 2, &["agent_channel"]);
+    let launch = ParentLaunch::new(&host.app.project_root.join("endpoint.json")).unwrap();
+    host.app.terminals.set_parent_launch(launch.clone());
+    let terminal = host
+        .app
+        .terminals
+        .open(
+            TerminalRequest {
+                program: "/bin/cat".into(),
+                arguments: vec![],
+                directory: host.app.project_root.clone(),
+                label: "agent".to_owned(),
+            },
+            40,
+            10,
+        )
+        .unwrap();
+    let parent: ParentContext = serde_json::from_str(&launch.context(terminal)).unwrap();
+    // The first agent runs in that terminal; the second only claims to.
+    let process = host.app.terminals.get(terminal).unwrap().process_id();
+    host.context.peers.insert(1, process);
+    host.context.peers.insert(2, Some(std::process::id()));
+    let location = json!({"directory":"/work","repository":null,"worktree":null,"branch":"main"});
+    let claude = request(
+        &mut host,
+        1,
+        "join",
+        "channel.join",
+        json!({"provider":"claude","task":"refactor the parser","location":location,
+            "client":{"name":"claude-code","version":"2.0"},
+            "terminal":{"terminal":terminal.get(),"capability":parent.capability}}),
+    );
+    assert!(
+        claude["result"]["resume"].is_string(),
+        "only the joiner gets it"
+    );
+    let claude = &claude["result"]["participant"];
+    assert!(claude.get("resume").is_none());
+    assert_eq!(claude["nick"], "claude-1");
+    assert_eq!(claude["identity"], "agent");
+    assert_eq!(claude["client"]["name"], "claude-code");
+    assert_eq!(claude["terminal"]["number"], 1);
+    let codex = request(
+        &mut host,
+        2,
+        "join",
+        "channel.join",
+        json!({"provider":"codex","task":"review","location":location,
+            "terminal":{"terminal":terminal.get(),"capability":parent.capability}}),
+    );
+    assert!(
+        codex["result"]["participant"]["terminal"].is_null(),
+        "a process outside the terminal's session cannot claim it"
+    );
+
+    request(
+        &mut host,
+        2,
+        "public",
+        "channel.post",
+        json!({"text":"hello all","location":location}),
+    );
+    request(
+        &mut host,
+        2,
+        "direct",
+        "channel.post",
+        json!({"text":"just you","to":"claude-1","location":location}),
+    );
+    assert_eq!(
+        host.app.terminals.get(terminal).unwrap().channel_unread(),
+        2
+    );
+    let read = request(
+        &mut host,
+        1,
+        "read",
+        "channel.read",
+        json!({"since":0,"limit":200}),
+    );
+    let texts = read["result"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["kind"] == "message")
+        .map(|m| {
+            (
+                m["from_nick"].clone(),
+                m["to_nick"].clone(),
+                m["text"].clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        texts,
+        [
+            (json!("codex-1"), Value::Null, json!("hello all")),
+            (json!("codex-1"), json!("claude-1"), json!("just you"))
+        ]
+    );
+    assert_eq!(
+        host.app.terminals.get(terminal).unwrap().channel_unread(),
+        0
+    );
+    let who = request(&mut host, 1, "who", "channel.who", json!({}));
+    assert_eq!(who["result"]["participants"].as_array().unwrap().len(), 2);
+
+    // The person's page shows everything, direct messages included.
+    host.app.context_ui.channel_page_requested = true;
+    host.app.plugins.presentation_dirty = false;
+    host.sync_context();
+    assert!(
+        host.app.plugins.presentation_dirty,
+        "the page asks to be drawn"
+    );
+    let page = host.app.active_buffer().text().to_string();
+    assert!(
+        page.contains("claude-1  claude · refactor the parser"),
+        "{page}"
+    );
+    assert!(
+        page.contains("codex-1 → claude-1 (direct): just you"),
+        "{page}"
+    );
+    // A later message refreshes the open page.
+    request(
+        &mut host,
+        2,
+        "later",
+        "channel.post",
+        json!({"text":"done","location":location}),
+    );
+    assert!(
+        host.app
+            .active_buffer()
+            .text()
+            .to_string()
+            .contains("codex-1: done")
+    );
+
+    // A disconnected participant stays known but no longer marks its terminal,
+    // and the open page says so.
+    host.handle_context_event(Event::Closed(1));
+    assert_eq!(
+        host.app.terminals.get(terminal).unwrap().channel_unread(),
+        0
+    );
+    assert!(
+        host.app
+            .active_buffer()
+            .text()
+            .to_string()
+            .contains("· disconnected"),
+        "{}",
+        host.app.active_buffer().text()
+    );
+    let who = request(&mut host, 2, "who", "channel.who", json!({}));
+    assert!(
+        who["result"]["participants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["nick"] == "claude-1" && p["connected"] == false)
+    );
+    host.app.terminals.close(terminal);
 }

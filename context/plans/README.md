@@ -31,6 +31,10 @@ Active work:
   inside the desktop executable, one register of process boundaries and
   extension tiers, release packaging for both editions, and a manually signed
   and notarized macOS disk image.
+- [Agent channel](active/PLAN_AGENT_CHANNEL.md): a workspace-scoped conversation
+  between agents of any provider through `runyte mcp`, with verified
+  participant identity, direct messages and the person's read-only view
+  ([#29](https://github.com/runyte/runyte/issues/29)).
 
 Current desktop ownership, supported behavior and measurements are recorded in
 [the desktop edition reference](../reference/desktop-edition.md), with the

@@ -121,6 +121,7 @@ pub enum ColonCommand {
     LogOpen,
     LspTrust,
     ContextAccess,
+    AgentChannel,
     LspRestart,
     LspStatus,
     Notifications,
@@ -299,6 +300,7 @@ impl ColonCommand {
         Self::Grammar,
         Self::LspTrust,
         Self::ContextAccess,
+        Self::AgentChannel,
         Self::LspRestart,
         Self::LogOpen,
         Self::LspStatus,
@@ -395,6 +397,7 @@ impl ColonCommand {
             Self::ConfigReload
             | Self::Grammar
             | Self::ContextAccess
+            | Self::AgentChannel
             | Self::LogOpen
             | Self::ServiceHealth
             | Self::Plugins
@@ -1629,6 +1632,7 @@ impl CommandId {
             Self::Colon(
                 ColonCommand::LspTrust
                 | ColonCommand::ContextAccess
+                | ColonCommand::AgentChannel
                 | ColonCommand::Plugins
                 | ColonCommand::PluginStop
                 | ColonCommand::PluginRestart,
@@ -2523,6 +2527,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
+        ColonId(Colon::AgentChannel),
+        "agent-channel",
+        [],
+        "agent-channel",
+        "Show this workspace's agent channel",
+        NoArguments
+    ),
+    spec!(
         ColonId(Colon::ContextAccess),
         "mcp",
         ["context-access"],
@@ -3129,6 +3141,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::LogOpen
             | Colon::LspStatus
             | Colon::LspTrust
+            | Colon::AgentChannel
             | Colon::Notifications
             | Colon::Path
             | Colon::ServiceHealth
@@ -3550,6 +3563,7 @@ fn invocation_from_parts(
                 | ColonCommand::LogOpen
                 | ColonCommand::LspStatus
                 | ColonCommand::LspTrust
+                | ColonCommand::AgentChannel
                 | ColonCommand::Notifications
                 | ColonCommand::Path
                 | ColonCommand::ServiceHealth

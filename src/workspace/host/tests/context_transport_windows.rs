@@ -735,6 +735,7 @@ async fn revoke_joins_before_regrant_and_stale_events_cannot_replace_authority()
     let (reply, response) = tokio::sync::oneshot::channel();
     fixture.host.handle_context_event(Event::Frame {
         connection: old_connection,
+        peer: None,
         bytes: serde_json::to_vec(
             &json!({"type":"authenticate", "credential":fixture.identity.credential()}),
         )
@@ -779,6 +780,7 @@ async fn revoke_joins_before_regrant_and_stale_events_cannot_replace_authority()
     drop(receiver);
     fixture.host.handle_context_event(Event::Frame {
         connection: old_connection,
+        peer: None,
         bytes: b"ignored".to_vec(),
         reply,
     });

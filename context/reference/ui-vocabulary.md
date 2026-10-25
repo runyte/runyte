@@ -713,25 +713,50 @@ Cancelled callbacks cannot reopen presentation without another foreground comman
 `:context-access` remains an alias. It shows grant lifetime, connected reader
 count and the most recent request metadata, with Reject selected. No-argument
 opening prefers an existing grant; `n` cycles known identities without applying
-pending choices. Scope keys `1`–`4` use plain-language labels and maintain read
-prerequisites automatically. Remember key `r` reflects the active grant; `x`
-revokes, `j`/`k` page, Up/Down or Tab choose, and Enter applies **Apply
-permissions**. Esc closes without applying. These are local overlay keys.
+pending choices. Scope keys `1`–`6` use plain-language labels and maintain
+prerequisites automatically: `5` skips proposal review and needs `4`, which
+needs `1`; `6` admits the agent channel and needs nothing else. Remember key `r`
+reflects the active grant; `x` revokes, the review motions below scroll, Tab
+chooses, and Enter applies **Apply permissions**. Esc closes without applying.
+These are local overlay keys.
 
-A terminal proposal uses **Review terminal text**, an immutable paged native
-confirmation. The affirmative label is **Insert text (no Enter)**. The
-proposed text comes first, emphasized; labelled context and muted notes follow,
-wrapped between words to the overlay width, and the two choices are rows with
-the selection on the current one. Literal spaces, doubled backslashes and
-escaped Unicode make every character of the proposed text visible; labels and
-an optional untrusted reason are separate from it and keep printable Unicode
-while escaping invisible and space-like characters. While Insert is chosen
-before every page has been shown, the overlay names the next unread page. Every
-page must be acknowledged from an actually displayed frontend frame before a
-fresh physical action can approve. Prepared or dropped frames do not count.
+A terminal proposal uses **Review terminal text**, an immutable scrolling native
+confirmation. The affirmative label is **Insert text (no Enter)**. The proposed
+text comes first, emphasized; labelled context and muted notes follow, wrapped
+between words to the overlay width, and the two choices are rows with the
+selection on the current one. Literal spaces, doubled backslashes and escaped
+Unicode make every character of the proposed text visible; labels and an
+optional untrusted reason are separate from it and keep printable Unicode while
+escaping invisible and space-like characters. The overlay grows with its content
+up to the height the editor area leaves it, and its lines scroll with buffer
+motions: `j`/`k` and Up/Down by line, PgUp/PgDn by view, `gg`/Home to the first
+line and `G`/`ge`/End to the last. Up/Down choose instead only while every line
+fits; Tab always chooses. Every line must be acknowledged from an actually
+displayed frontend frame before a fresh physical action can approve, and a jump
+does not acknowledge the lines it passes. While Insert is chosen before then,
+the overlay names the first unread line. Prepared or dropped frames do not
+count, and once a frame for a new editor area has been prepared, frames laid out
+for the earlier area stop counting. Key hints stay hidden while a review is open
+so nothing covers a line being counted. Known limitation: a frontend reports
+which frame it presented but not the size it painted it at, so a frame prepared
+before a shrink, painted clipped and acknowledged before the next frame is
+prepared still counts its lines. Closing that needs the bundled protocol to
+carry the painted size.
 The bundled protocol 53 carries the frontend's presented frame with physical
 input. Repeats, macros, pointer input, paste and semantic commands cannot
 approve. The overlay consumes Enter; the terminal receives no submit key.
+
+## Agent channel page
+
+`:agent-channel` opens `[agent channel]`, a generated read-only page of the
+workspace host's agent channel: a header, the participants with their nickname,
+provider, task, terminal label, location, MCP identity, client and UUID, then
+the newest 200 entries with local times, direct messages marked as such and the
+person able to read them all. The host re-renders the open page whenever the
+channel changes; nothing on it is editable or selects an action. A terminal pane
+whose verified, connected participant has unread messages adds `[N unread]` to
+its title after its other markers and before `[exited]`. The marker is
+presentation: the MCP `title` of a terminal never includes it.
 
 ## Commit network
 

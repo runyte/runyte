@@ -13,6 +13,9 @@ use crate::plugin::{
 };
 
 pub const FEATURE: &str = "runyte.context.v1";
+/// Hosts carrying the agent channel name this in their hello, so a client
+/// asks for `agent_channel` only from a host that knows it.
+pub const CHANNEL_FEATURE: &str = "runyte.context.channel.v1";
 pub const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_READERS: usize = 8;
 pub const MAX_REQUESTS: usize = 16;
@@ -82,6 +85,14 @@ pub enum Scope {
     EditorContextRead,
     BufferEdit,
     TerminalPropose,
+    /// A grant setting rather than a capability a reader negotiates: a host
+    /// whose grant holds it inserts proposed text without native review. It
+    /// changes nothing on the wire, so clients and hosts of other releases
+    /// keep talking to each other, and a reader learns of it from a proposal
+    /// that is already `queued` rather than `pending`. Enter is never sent.
+    TerminalInsert,
+    /// Join the workspace's agent channel, read it and post to it.
+    AgentChannel,
 }
 
 impl Scope {
@@ -91,6 +102,8 @@ impl Scope {
             Self::EditorContextRead => "editor_context_read",
             Self::BufferEdit => "buffer_edit",
             Self::TerminalPropose => "terminal_propose",
+            Self::TerminalInsert => "terminal_insert",
+            Self::AgentChannel => "agent_channel",
         }
     }
     pub fn from_capability(value: &str) -> Option<Self> {
@@ -99,6 +112,8 @@ impl Scope {
             "editor_context_read" => Some(Self::EditorContextRead),
             "buffer_edit" => Some(Self::BufferEdit),
             "terminal_propose" => Some(Self::TerminalPropose),
+            "agent_channel" => Some(Self::AgentChannel),
+            // Never negotiated; see `TerminalInsert`.
             _ => None,
         }
     }
@@ -107,6 +122,7 @@ impl Scope {
 pub fn validate_scopes(scopes: &BTreeSet<Scope>) -> Result<(), Error> {
     if (scopes.contains(&Scope::BufferEdit) && !scopes.contains(&Scope::EditorContextRead))
         || (scopes.contains(&Scope::TerminalPropose) && !scopes.contains(&Scope::TerminalRead))
+        || (scopes.contains(&Scope::TerminalInsert) && !scopes.contains(&Scope::TerminalPropose))
     {
         return Err(Error::new(
             ErrorCode::CapabilityDenied,
@@ -185,7 +201,7 @@ pub fn parse_registration(raw: &str) -> Result<Registration, Error> {
     crate::plugin::compatibility::negotiate_features(
         &value.required_features,
         &value.optional_features,
-        &[FEATURE],
+        &[FEATURE, CHANNEL_FEATURE],
     )
     .map_err(|_| Error::new(ErrorCode::Unsupported, "Unsupported context features"))?;
     crate::plugin::compatibility::ReleaseRange::parse(&value.runyte)
@@ -331,6 +347,40 @@ pub enum Request {
     TerminalInputStatus { proposal: String },
     #[serde(rename = "terminal.input.cancel")]
     TerminalInputCancel { proposal: String },
+    #[serde(rename = "channel.join")]
+    ChannelJoin {
+        provider: String,
+        task: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        client: Option<super::channel::Client>,
+        location: super::channel::Location,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        terminal: Option<ChannelTerminal>,
+        /// The token an earlier join returned, to come back as that
+        /// participant.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume: Option<String>,
+    },
+    #[serde(rename = "channel.post")]
+    ChannelPost {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<String>,
+        location: super::channel::Location,
+    },
+    #[serde(rename = "channel.read")]
+    ChannelRead { since: u64, limit: usize },
+    #[serde(rename = "channel.who")]
+    ChannelWho(Empty),
+}
+
+/// The integrated terminal a joining agent says it runs in, with the
+/// capability Runyte handed that terminal's children.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChannelTerminal {
+    pub terminal: u64,
+    pub capability: String,
 }
 
 impl Request {
@@ -340,6 +390,10 @@ impl Request {
             Self::TerminalInputPropose { .. }
             | Self::TerminalInputStatus { .. }
             | Self::TerminalInputCancel { .. } => Scope::TerminalPropose,
+            Self::ChannelJoin { .. }
+            | Self::ChannelPost { .. }
+            | Self::ChannelRead { .. }
+            | Self::ChannelWho(_) => Scope::AgentChannel,
             Self::TerminalList { .. }
             | Self::TerminalRead { .. }
             | Self::TerminalSnapshotOpen { .. }
@@ -491,6 +545,39 @@ impl Request {
             Self::TerminalInputStatus { proposal } | Self::TerminalInputCancel { proposal } => {
                 identifier(proposal)?
             }
+            // The channel validates content; the wire bounds sizes.
+            Self::ChannelJoin {
+                provider,
+                task,
+                terminal,
+                resume,
+                ..
+            } => {
+                if provider.len() > 256
+                    || task.len() > 4096
+                    || terminal
+                        .as_ref()
+                        .is_some_and(|terminal| terminal.capability.len() > 256)
+                {
+                    return Err(invalid("Channel join fields exceed their limits"));
+                }
+                if let Some(resume) = resume {
+                    identifier(resume)?;
+                }
+            }
+            Self::ChannelPost { text, to, .. } => {
+                if text.len() > super::channel::MAX_TEXT_BYTES {
+                    return Err(Error::new(
+                        ErrorCode::LimitExceeded,
+                        "A message holds at most 16 KiB of text",
+                    ));
+                }
+                if let Some(to) = to {
+                    identifier(to)?;
+                }
+            }
+            Self::ChannelRead { limit, .. } => page(0, *limit, super::channel::MAX_READ)?,
+            Self::ChannelWho(_) => {}
         }
         Ok(())
     }

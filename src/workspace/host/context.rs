@@ -3,6 +3,7 @@
 use super::{WorkspaceHost, context_reads::ReadState};
 use crate::{
     app::context_access::{Decision, Detail, Kind, Surface, label, visible},
+    notification::{NotificationDraft, NotificationSeverity},
     plugin::application::{Error, ErrorCode as Code},
     terminal::{
         TerminalId,
@@ -27,6 +28,12 @@ type FrameSource = (usize, u64, Option<(TerminalId, u64)>);
 #[derive(Default)]
 pub(super) struct State {
     events: Option<mpsc::Sender<Event>>,
+    /// The workspace's agent channel, for as long as this host runs.
+    pub(super) channel: crate::workspace::context::channel::Channel,
+    /// The channel revision the open `[agent channel]` page last showed.
+    pub(super) channel_page_revision: u64,
+    /// The process behind each connection, where the transport knows it.
+    pub(super) peers: BTreeMap<u64, Option<u32>>,
     storage: Option<Arc<Storage>>,
     #[cfg(unix)]
     storage_root: Option<std::path::PathBuf>,
@@ -48,6 +55,10 @@ pub(super) struct State {
     environment: Option<String>,
     grants: BTreeMap<String, (Identity, BTreeSet<Scope>)>,
     remembered: BTreeSet<String>,
+    /// Identities whose grant here came from `mcp.default_grants`.
+    defaulted: BTreeSet<String>,
+    /// Identities the person revoked here, which keeps their default off.
+    denied: BTreeSet<String>,
     readers: BTreeMap<u64, Reader>,
     proposals: BTreeMap<String, Proposal>,
     recent: VecDeque<String>,
@@ -65,6 +76,16 @@ impl State {
     pub(super) fn started(&self) -> bool {
         self.events.is_some()
     }
+}
+
+#[derive(Default)]
+struct InitialGrants {
+    grants: BTreeMap<String, (Identity, BTreeSet<Scope>)>,
+    remembered: BTreeSet<String>,
+    defaulted: BTreeSet<String>,
+    denied: BTreeSet<String>,
+    /// Defaults that could not be applied, with why.
+    skipped: Vec<String>,
 }
 
 struct Reader {
@@ -137,26 +158,31 @@ impl WorkspaceHost {
         self.context.events = Some(send);
         self.context.mode = Some(mode);
         self.context.storage_root = root.clone();
-        if let Some(root) = root.filter(|root| root.exists()) {
+        // Defaults may name an identity no agent has created yet, so they
+        // need storage that can be written; otherwise nothing is created.
+        let defaults = !self.app.config.mcp.default_grants.is_empty();
+        if let Some(root) = root.filter(|root| defaults || root.exists()) {
             let loaded = (|| -> anyhow::Result<()> {
-                let store = Storage::open_existing(root.clone())?;
-                for identity in store.identities()? {
-                    let scopes = store.scopes(&self.app.project_root, &identity)?;
-                    if !scopes.is_empty() {
-                        self.context.remembered.insert(identity.name().to_owned());
-                        self.context
-                            .grants
-                            .insert(identity.fingerprint(), (identity, scopes));
-                    }
-                }
+                let initial = if defaults {
+                    self.context_open_storage(root.clone())?;
+                    let store = self.context.storage.clone().unwrap();
+                    self.context_initial_grants(&store)?
+                } else {
+                    self.context_initial_grants(&Storage::open_existing(root.clone())?)?
+                };
+                self.context_adopt_grants(initial);
                 if !self.context.grants.is_empty() {
-                    self.context_open_storage(root)?;
+                    if self.context.storage.is_none() {
+                        self.context_open_storage(root)?;
+                    }
                     self.context_enable()?;
                 }
                 Ok(())
             })();
-            if loaded.is_err() {
-                self.report_host_error("Remembered agent context access could not be loaded");
+            if let Err(error) = loaded {
+                self.report_host_error(format!(
+                    "Agent context access (remembered or default) could not be loaded: {error}"
+                ));
             }
         }
         receive
@@ -190,37 +216,122 @@ impl WorkspaceHost {
         self.context.mode = Some(mode);
         self.context.location = location.clone();
         self.context.environment = Some(environment);
-        let Some(location) = location.filter(|location| location.root().exists()) else {
+        let defaults = !self.app.config.mcp.default_grants.is_empty();
+        let Some(location) = location.filter(|location| defaults || location.root().exists())
+        else {
             return Ok(receive);
         };
         let loaded = (|| -> anyhow::Result<()> {
             self.context_validate_storage_root(location.root())?;
-            let store = Storage::open_existing(location.root().to_owned())?;
-            let mut grants = BTreeMap::new();
-            for identity in store.identities()? {
-                let scopes = store.scopes(&self.app.project_root, &identity)?;
-                if !scopes.is_empty() {
-                    grants.insert(identity.fingerprint(), (identity, scopes));
+            let initial = if defaults {
+                let store = Arc::new(Storage::open_location(location.clone())?);
+                let initial = self.context_initial_grants(&store)?;
+                self.context.storage = Some(store);
+                initial
+            } else {
+                self.context_initial_grants(&Storage::open_existing(location.root().to_owned())?)?
+            };
+            let granted = !initial.grants.is_empty();
+            self.context_adopt_grants(initial);
+            if granted {
+                if self.context.storage.is_none() {
+                    self.context.storage = Some(Arc::new(Storage::open_location(location)?));
                 }
-            }
-            if !grants.is_empty() {
-                self.context.storage = Some(Arc::new(Storage::open_location(location)?));
-                self.context.remembered = grants
-                    .values()
-                    .map(|(id, _)| id.name().to_owned())
-                    .collect();
-                self.context.grants = grants;
                 self.context_enable()?;
             }
             Ok(())
         })();
-        if loaded.is_err() {
-            self.context.grants.clear();
+        if let Err(error) = loaded {
+            self.context_adopt_grants(InitialGrants::default());
             self.context.storage = None;
             self.context.enable_failed = true;
-            self.report_host_error("Remembered agent context access could not be loaded");
+            self.report_host_error(format!(
+                "Agent context access (remembered or default) could not be loaded: {error}"
+            ));
         }
         Ok(receive)
+    }
+
+    /// The grants this workspace starts with: each identity's own record,
+    /// then the configured default for an identity that has none. An empty
+    /// record is a revocation the person made here, and keeps the default off.
+    fn context_initial_grants(&self, store: &Storage) -> anyhow::Result<InitialGrants> {
+        let mut initial = InitialGrants::default();
+        for identity in store.identities()? {
+            match store.grant_record(&self.app.project_root, &identity)? {
+                Some(scopes) if scopes.is_empty() => {
+                    initial.denied.insert(identity.name().to_owned());
+                }
+                Some(scopes) => {
+                    initial.remembered.insert(identity.name().to_owned());
+                    initial
+                        .grants
+                        .insert(identity.fingerprint(), (identity, scopes));
+                }
+                None => {}
+            }
+        }
+        for (name, scopes) in self.app.config.mcp.default_scopes() {
+            if initial.remembered.contains(name) || initial.denied.contains(name) {
+                continue;
+            }
+            // An existing identity is read without the store's lock. Creating
+            // one lets an agent started later authenticate as it; its
+            // credential stays in the private store. A default that cannot be
+            // applied is reported without costing the workspace its own grants.
+            let identity = match store.load_identity(name) {
+                Ok(Some(identity)) => Ok(identity),
+                Ok(None) => store.identity(name),
+                Err(error) => Err(error),
+            };
+            match identity {
+                Ok(identity) => {
+                    initial.defaulted.insert(name.to_owned());
+                    initial
+                        .grants
+                        .insert(identity.fingerprint(), (identity, scopes));
+                }
+                Err(error) => initial.skipped.push(format!("{name} ({error})")),
+            }
+        }
+        Ok(initial)
+    }
+
+    /// The private store, opened for writing if it is not open yet.
+    fn context_writable_storage(&mut self) -> anyhow::Result<Arc<Storage>> {
+        if self.context.storage.is_none() {
+            #[cfg(unix)]
+            self.context_open_storage(
+                self.context
+                    .storage_root
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("Private context storage unavailable"))?,
+            )?;
+            #[cfg(windows)]
+            {
+                let location = self
+                    .context
+                    .location
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("Private context storage unavailable"))?;
+                self.context_validate_storage_root(location.root())?;
+                self.context.storage = Some(Arc::new(Storage::open_location(location)?));
+            }
+        }
+        Ok(self.context.storage.clone().unwrap())
+    }
+
+    fn context_adopt_grants(&mut self, initial: InitialGrants) {
+        if !initial.skipped.is_empty() {
+            self.report_host_error(format!(
+                "Default agent access could not be applied for {}",
+                initial.skipped.join(", ")
+            ));
+        }
+        self.context.grants = initial.grants;
+        self.context.remembered = initial.remembered;
+        self.context.defaulted = initial.defaulted;
+        self.context.denied = initial.denied;
     }
 
     #[cfg(any(unix, test))]
@@ -352,6 +463,13 @@ impl WorkspaceHost {
                 .map(|reader| reader.reads.retained_bytes())
                 .sum(),
         );
+        if std::mem::take(&mut self.app.context_ui.channel_page_requested) {
+            let page = self.context_channel_page();
+            self.context.channel_page_revision = self.context.channel.revision();
+            self.app.open_agent_channel_page(&page);
+            // Opened after this frame was drawn, so ask for another.
+            self.app.plugins.presentation_dirty = true;
+        }
         if let Some(identity) = self.app.context_ui.requested_identity.take()
             && self.app.plugins.frontend_attached
             && !self.app.has_input_overlay()
@@ -406,10 +524,17 @@ impl WorkspaceHost {
                 .values()
                 .filter(|r| r.identity == identity && r.registered)
                 .count();
-            let status = if granted.is_none() {
+            let status = if granted.is_none()
+                && self.context.denied.contains(&identity)
+                && self.app.config.mcp.default_grants.contains_key(&identity)
+            {
+                "Revoked here, so mcp.default_grants stays off; apply to grant"
+            } else if granted.is_none() {
                 "Not granted; apply the selected permissions below"
             } else if remember {
                 "Enabled; remembered for this workspace"
+            } else if self.context.defaulted.contains(&identity) {
+                "Enabled by mcp.default_grants; x revokes it here"
             } else {
                 "Enabled until this editor or persistent host exits"
             };
@@ -424,7 +549,12 @@ impl WorkspaceHost {
                 Detail::note(
                     "Use the same --identity in runyte mcp. Agent start order is flexible.",
                 ),
-                Detail::note("Reads include unsaved text; terminal insertion needs approval."),
+                Detail::note(
+                    "Reads include unsaved text. Terminal text needs approval unless 5 is on.",
+                ),
+                Detail::note(
+                    "5 trusts a terminal's paste mode to mean its program reads pastes as text. Inside tmux, zellij or screen that mode is the multiplexer's, so do not use 5 there.",
+                ),
             ];
             if let Some(recent) = self.context.recent.back() {
                 explanation.push(Detail::excerpt("Last call", recent));
@@ -603,30 +733,22 @@ impl WorkspaceHost {
                 remember,
             } => {
                 wire::validate_scopes(&scopes).map_err(|e| anyhow::anyhow!(e.message))?;
-                if self.context.storage.is_none() {
-                    #[cfg(unix)]
-                    self.context_open_storage(
-                        self.context.storage_root.clone().ok_or_else(|| {
-                            anyhow::anyhow!("Private context storage unavailable")
-                        })?,
-                    )?;
-                    #[cfg(windows)]
-                    {
-                        let location = self.context.location.clone().ok_or_else(|| {
-                            anyhow::anyhow!("Private context storage unavailable")
-                        })?;
-                        self.context_validate_storage_root(location.root())?;
-                        self.context.storage = Some(Arc::new(Storage::open_location(location)?));
-                    }
-                }
-                let store = self.context.storage.as_ref().unwrap();
+                let store = self.context_writable_storage()?;
                 let identity = store.identity(&identity)?;
-                if remember {
+                // Applying nothing is a revocation and is kept like one.
+                if remember || scopes.is_empty() {
                     store.grant(&self.app.project_root, &identity, scopes.clone())?;
                 } else {
                     store.revoke(&self.app.project_root, &identity)?;
                 }
                 self.context_revoke(identity.name());
+                // An applied grant replaces a default and clears a revocation.
+                self.context.defaulted.remove(identity.name());
+                if scopes.is_empty() {
+                    self.context.denied.insert(identity.name().to_owned());
+                } else {
+                    self.context.denied.remove(identity.name());
+                }
                 if remember && !scopes.is_empty() {
                     self.context.remembered.insert(identity.name().to_owned());
                 } else {
@@ -653,12 +775,16 @@ impl WorkspaceHost {
             }
             Decision::Revoke(name) => {
                 self.context.remembered.remove(&name);
+                self.context.defaulted.remove(&name);
                 self.context_revoke(&name);
-                if let Some(store) = &self.context.storage
-                    && let Some(identity) = store.load_identity(&name)?
-                {
-                    store.revoke(&self.app.project_root, &identity)?;
-                }
+                // Kept as an empty record, so a default configured now or
+                // later does not grant again what the person took away. A
+                // workspace that never had a grant has not opened the store
+                // yet, and that is just where a revocation must be kept.
+                let store = self.context_writable_storage()?;
+                let identity = store.identity(&name)?;
+                store.grant(&self.app.project_root, &identity, BTreeSet::new())?;
+                self.context.denied.insert(name);
             }
             Decision::Proposal { id, accepted } => {
                 let Some(proposal) = self.context.proposals.get_mut(&id) else {
@@ -740,6 +866,9 @@ impl WorkspaceHost {
         if let Some(reader) = self.context.readers.remove(&id) {
             reader.lease.cancel();
         }
+        self.context.peers.remove(&id);
+        self.context.channel.disconnect(id);
+        self.context_channel_changed();
         self.context.proposals.retain(|_, p| {
             if p.owner == id {
                 if let Some(d) = &p.delivery {
@@ -867,9 +996,11 @@ impl WorkspaceHost {
             Event::Closed(id) => self.context_disconnect(id),
             Event::Frame {
                 connection,
+                peer,
                 bytes,
                 reply,
             } => {
+                self.context.peers.entry(connection).or_insert(peer);
                 #[cfg(windows)]
                 if self.context.server.is_none() || self.context.stopping {
                     self.context_disconnect(connection);
@@ -948,7 +1079,7 @@ impl WorkspaceHost {
                 },
             );
             return Reply {
-                value: json!({"type":"hello","version":"runyte-1","host_version":crate::plugin::compatibility::HOST_VERSION,"features":[wire::FEATURE],"capabilities":wire::CAPABILITIES,"limits":wire::limits(),"workspace":self.context.registration}),
+                value: json!({"type":"hello","version":"runyte-1","host_version":crate::plugin::compatibility::HOST_VERSION,"features":[wire::FEATURE,wire::CHANNEL_FEATURE],"capabilities":wire::CAPABILITIES.iter().copied().chain([Scope::AgentChannel.capability()]).collect::<Vec<_>>(),"limits":wire::limits(),"workspace":self.context.registration}),
                 lease: Some(lease),
                 close: false,
             };
@@ -989,8 +1120,16 @@ impl WorkspaceHost {
                     .collect();
                 wire::validate_scopes(&reader.scopes)?;
                 reader.registered = true;
+                let mut features = vec![wire::FEATURE];
+                if registration
+                    .required_features
+                    .union(&registration.optional_features)
+                    .any(|feature| feature == wire::CHANNEL_FEATURE)
+                {
+                    features.push(wire::CHANNEL_FEATURE);
+                }
                 Ok(
-                    json!({"type":"registered","runyte":registration.runyte,"features":[wire::FEATURE],"commands":[],"capabilities":reader.scopes,"limits":wire::limits()}),
+                    json!({"type":"registered","runyte":registration.runyte,"features":features,"commands":[],"capabilities":reader.scopes,"limits":wire::limits()}),
                 )
             })();
             match result {
@@ -1051,6 +1190,10 @@ impl WorkspaceHost {
             Request::TerminalInputCancel { proposal } => {
                 ("terminal.input.cancel", proposal.as_str())
             }
+            Request::ChannelJoin { .. } => ("channel.join", "channel"),
+            Request::ChannelPost { .. } => ("channel.post", "channel"),
+            Request::ChannelRead { .. } => ("channel.read", "channel"),
+            Request::ChannelWho(_) => ("channel.who", "channel"),
         };
         let inspection = format!(
             "{}: {} {} at {:?}",
@@ -1082,7 +1225,13 @@ impl WorkspaceHost {
                     reason,
                 } => {
                     let terminal = reader.reads.terminal(&terminal);
-                    terminal.and_then(|terminal| self.context_propose(id, terminal, &text, reason))
+                    let direct = reader
+                        .granted
+                        .contains(&Scope::TerminalInsert)
+                        .then_some(reader.identity.as_str());
+                    terminal.and_then(|terminal| {
+                        self.context_propose(id, terminal, &text, reason, direct)
+                    })
                 }
                 Request::TerminalInputStatus { proposal } => self
                     .context
@@ -1108,6 +1257,12 @@ impl WorkspaceHost {
                     }
                     None => Err(Error::new(Code::NotFound, "Unknown proposal")),
                 },
+                request @ (Request::ChannelJoin { .. }
+                | Request::ChannelPost { .. }
+                | Request::ChannelRead { .. }
+                | Request::ChannelWho(_)) => {
+                    self.context_channel_request(id, &reader.identity, request)
+                }
                 request => self.context_read_request(&mut reader.reads, &reader.scopes, request),
             }
         };
@@ -1142,12 +1297,17 @@ impl WorkspaceHost {
         }
     }
 
+    /// Queue proposed text for review, or with `direct` (the identity of a
+    /// reader whose grant skips review) for insertion now when the terminal
+    /// reads pasted text. Either way the text is never followed by Enter, and
+    /// the person must be attached.
     fn context_propose(
         &mut self,
         owner: u64,
         terminal: TerminalId,
         text: &str,
         reason: Option<String>,
+        direct: Option<&str>,
     ) -> Result<Value, Error> {
         if !self.app.plugins.frontend_attached {
             return Err(Error::new(
@@ -1191,28 +1351,58 @@ impl WorkspaceHost {
         let session = self
             .app
             .terminals
-            .get(terminal)
+            .get_mut(terminal)
             .filter(|t| t.live())
             .ok_or_else(|| Error::new(Code::Closed, "Terminal is not live"))?;
         let text = Text::new(text)
             .map_err(|_| Error::new(Code::InvalidArgument, "Invalid terminal text"))?;
         let id = storage::random_token()
             .map_err(|_| Error::new(Code::Unavailable, "Cannot allocate proposal"))?;
-        self.context.proposals.insert(
-            id.clone(),
-            Proposal {
-                owner,
-                terminal,
-                text,
-                reason,
-                signature: session.proposal_input_signature(),
-                attachment: self.app.plugins.attachment_generation,
-                deadline: Instant::now() + Duration::from_secs(wire::PROPOSAL_EXPIRY_SECONDS),
-                status: "pending",
-                delivery: None,
-            },
-        );
-        Ok(json!({"proposal":id,"state":"pending"}))
+        let mut proposal = Proposal {
+            owner,
+            terminal,
+            reason,
+            signature: session.proposal_input_signature(),
+            attachment: self.app.plugins.attachment_generation,
+            deadline: Instant::now() + Duration::from_secs(wire::PROPOSAL_EXPIRY_SECONDS),
+            status: "pending",
+            delivery: None,
+            text,
+        };
+        // Skipping review is safe only where the text arrives as a paste: a
+        // shell or an agent's prompt asks for bracketed paste, while a pager,
+        // a single-key prompt or an editor in normal mode would read the same
+        // bytes as keystrokes. Those still go to the person. The mode is the
+        // terminal's, not necessarily the program's: a multiplexer enables it
+        // for itself and may strip the framing for whatever runs in its pane,
+        // which is why the grant note and the guide warn against it there.
+        let direct = direct.filter(|_| proposal.signature.modes.bracketed_paste);
+        if let Some(identity) = direct {
+            let delivery = session
+                .append_proposal(&proposal.text)
+                .map_err(|_| Error::new(Code::Unavailable, "Terminal cannot accept text"))?;
+            proposal.delivery = Some(delivery);
+            proposal.status = "queued";
+            let target = match session.number() {
+                Some(number) => format!("terminal #{number}"),
+                None => "a terminal".to_owned(),
+            };
+            // Nothing asks the person first, so say what arrived and from
+            // whom where it can still be traced afterwards.
+            self.app.push_notification(NotificationDraft::new(
+                NotificationSeverity::Info,
+                "MCP",
+                "Terminal text inserted",
+                format!(
+                    "{} inserted {} characters into {target} without review. Enter was not sent.",
+                    visible(identity),
+                    proposal.text.as_str().chars().count(),
+                ),
+            ));
+        }
+        let state = proposal.status;
+        self.context.proposals.insert(id.clone(), proposal);
+        Ok(json!({"proposal":id,"state":state}))
     }
 
     pub fn context_delay(&self) -> Option<Duration> {

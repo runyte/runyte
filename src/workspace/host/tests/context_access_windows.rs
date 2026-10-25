@@ -36,8 +36,8 @@ fn key(host: &mut WorkspaceHost, code: KeyCode) {
 }
 
 fn review_all(host: &mut WorkspaceHost) {
-    let pages = host.app.context_ui.surface.as_ref().unwrap().last_page() + 1;
-    for frame in 1..=pages as u64 {
+    let lines = host.app.context_ui.surface.as_ref().unwrap().lines.len();
+    for frame in 1..=lines as u64 + 1 {
         host.app.note_context_frame(80, 22, frame);
         host.app.note_context_presented(frame);
         if host
@@ -50,9 +50,9 @@ fn review_all(host: &mut WorkspaceHost) {
         {
             return;
         }
-        key(host, KeyCode::Char('j'));
+        key(host, KeyCode::PageDown);
     }
-    panic!("context review did not finish within {pages} pages");
+    panic!("context review did not finish within {lines} lines");
 }
 
 fn frame(host: &mut WorkspaceHost, connection: u64, value: Value) -> Reply {
@@ -365,7 +365,9 @@ async fn native_proposal_approval_rejects_nonphysical_and_stale_attempts() {
     authenticate(&mut host, &identity, 7);
     let terminal = host.app.terminals.insert_test_session(20, 3);
 
-    let proposal = host.context_propose(7, terminal, "literal", None).unwrap()["proposal"]
+    let proposal = host
+        .context_propose(7, terminal, "literal", None, None)
+        .unwrap()["proposal"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -393,7 +395,9 @@ async fn native_proposal_approval_rejects_nonphysical_and_stale_attempts() {
     host.sync_context();
     assert_eq!(host.context.proposals[&proposal].status, "stale");
 
-    let stale_attachment = host.context_propose(7, terminal, "second", None).unwrap()["proposal"]
+    let stale_attachment = host
+        .context_propose(7, terminal, "second", None, None)
+        .unwrap()["proposal"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -411,7 +415,7 @@ async fn native_proposal_approval_rejects_nonphysical_and_stale_attempts() {
 
     host.note_plugin_frontend(false);
     assert_eq!(
-        host.context_propose(7, terminal, "detached", None)
+        host.context_propose(7, terminal, "detached", None, None)
             .unwrap_err()
             .code,
         Code::NoFrontend
@@ -492,7 +496,7 @@ async fn conpty_approval_inserts_exactly_once_and_a_separate_enter_submits() {
     .unwrap();
 
     let proposal = host
-        .context_propose(9, terminal, "echo exact", None)
+        .context_propose(9, terminal, "echo exact", None, None)
         .unwrap()["proposal"]
         .as_str()
         .unwrap()

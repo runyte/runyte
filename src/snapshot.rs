@@ -2196,6 +2196,17 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
 /// looking at history rather than at the live screen, and that the child has
 /// gone. Neither is a buffer property, so neither has a field of its own.
 ///
+/// The label a terminal's pane title begins with, without the markers for how
+/// the person is viewing it. A context reader is shown this rather than the
+/// whole title, so the name it finds a terminal by does not change because the
+/// person scrolled or opened a review.
+pub(crate) fn terminal_label(session: &crate::terminal::TerminalSession) -> String {
+    match session.number() {
+        Some(number) => format!("[terminal #{number}] {}", session.name()),
+        None => format!("[terminal] {}", session.name()),
+    }
+}
+
 /// The title exposes the number accepted by `:terminal-send` without
 /// requiring the terminal list preview. An exited terminal has none, so its
 /// title carries only the kind.
@@ -2205,10 +2216,7 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
 /// spelling it out here would repeat the mode line on the title of the one
 /// pane that has other things to say.
 fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Option<Mode>) -> String {
-    let mut name = match session.number() {
-        Some(number) => format!("[terminal #{number}] {}", session.name()),
-        None => format!("[terminal] {}", session.name()),
-    };
+    let mut name = terminal_label(session);
     if active_mode == Some(Mode::Insert) {
         name.push_str(" [insert]");
     }
@@ -2224,6 +2232,12 @@ fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Optio
     if session.history_truncated() {
         name.push_str(" [history truncated]");
     }
+    // The agent here has messages waiting in the agent channel.
+    match session.channel_unread() {
+        0 => {}
+        1 => name.push_str(" [1 unread]"),
+        count => name.push_str(&format!(" [{count} unread]")),
+    }
     if !session.live() {
         name.push_str(match session.exit_code() {
             Some(Some(code)) if code != 0 => return format!("{name} [exited {code}]"),
@@ -2236,6 +2250,10 @@ fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Optio
 #[cfg(test)]
 #[path = "snapshot/tests/long_lines.rs"]
 mod long_line_tests;
+
+#[cfg(test)]
+#[path = "snapshot/tests/terminal_titles.rs"]
+mod terminal_title_tests;
 
 #[cfg(test)]
 mod tests {

@@ -36,7 +36,7 @@ CI verifies that this named test ran. The Python scenario fails if its fixture
 environment is absent and the Rust driver rejects skipped acceptance results.
 It needs only the Python standard library on Windows.
 
-Host operations outside the nine-tool MCP catalog remain covered by
+Host operations outside the thirteen-tool MCP catalog remain covered by
 [src/workspace/host/tests/context_reads.rs](../../src/workspace/host/tests/context_reads.rs):
 pane listing, selection/viewport ownership and invalidation, immutable buffer
 and terminal snapshots, Unicode offsets, and retention budgets. Native

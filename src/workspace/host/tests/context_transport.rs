@@ -293,6 +293,7 @@ async fn regrant_changes_incarnation_and_old_events_cannot_disconnect_new_reader
     drop(receiver);
     host.handle_context_event(Event::Frame {
         connection: old_id,
+        peer: None,
         bytes: b"ignored".to_vec(),
         reply,
     });
@@ -325,7 +326,7 @@ async fn expired_queued_and_writing_proposals_stop_delivery_polling() {
     let terminal = host.app.terminals.insert_test_session(20, 3);
     for writing in [false, true] {
         let id = host
-            .context_propose(owner, terminal, "literal", None)
+            .context_propose(owner, terminal, "literal", None, None)
             .unwrap()["proposal"]
             .as_str()
             .unwrap()

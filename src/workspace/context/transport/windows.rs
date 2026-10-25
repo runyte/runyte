@@ -291,6 +291,7 @@ async fn connection(
         let (reply, response) = oneshot::channel();
         let event = Event::Frame {
             connection: id,
+            peer: None,
             bytes,
             reply,
         };

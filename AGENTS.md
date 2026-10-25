@@ -303,9 +303,12 @@ and the order of the push. Do not infer any of those from the commit history.
   `src/workspace/host/context.rs` owns admission and proposal lifetime;
   `context_reads.rs` owns connection-scoped reads and revision-checked edits.
   `src/app/context_access.rs` owns native grants and terminal-text approval.
+  `src/workspace/context/channel.rs` is the agent channel's bounded, in-memory
+  conversation; `src/workspace/host/context_channel.rs` serves it, verifies
+  participants' terminals and renders `[agent channel]`.
   `src/mcp.rs` and `src/mcp/` implement the built-in `runyte mcp` stdio adapter;
   the host remains the authorization boundary. This is the supported MCP
-  integration, with nine tools. Pane, selection, viewport and snapshot operations
+  integration, with thirteen tools. Pane, selection, viewport and snapshot operations
   remain part of the host context protocol, outside the MCP tool catalog.
   MCP acceptance tests and editor/PTY fixtures live in `tests/mcp/`. Terminal
   insertion never submits Enter.

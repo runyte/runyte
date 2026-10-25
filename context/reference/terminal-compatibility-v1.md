@@ -233,10 +233,16 @@ remain unchanged after subsequent output or terminal destruction.
 text. It rejects C0/C1 controls, DEL, CR/LF and Unicode line/paragraph separators,
 including escape sequences and injected paste terminators. It does not grant
 permission to send text. The context host captures a proposal and requires a
-fresh native approval before the dedicated PTY queue accepts it. The overlay
-spells whitespace, backslashes and Unicode visibly, and requires acknowledged
-frontend display of every page. Arbitrary child programs may react to printable
-input without Enter; the overlay states this limitation.
+fresh native approval before the dedicated PTY queue accepts it, unless the
+person's grant skips review (`terminal_insert`) and the terminal has bracketed
+paste enabled, so the text arrives framed as a paste. The overlay spells
+whitespace, backslashes and Unicode visibly, and requires acknowledged frontend
+display of every line. Arbitrary child programs may react to printable input
+without Enter; the overlay states this limitation, which is why a terminal
+without bracketed paste is always reviewed. The gate reads the emulator's mode,
+which inside a multiplexer belongs to the multiplexer rather than to the
+program in its pane; tmux enables the mode for itself and forwards pasted text
+as keystrokes to a pane that did not, so the gate does not hold there.
 
 The internal boundary is covered by `terminal::read::tests` in
 `src/terminal/tests/read.rs` and `terminal::proposal::tests` in

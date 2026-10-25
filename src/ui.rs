@@ -9621,6 +9621,47 @@ mod tests {
     }
 
     #[test]
+    fn a_scrolling_review_with_its_refusal_fits_beside_the_session_strip() {
+        use crate::app::context_access::{Kind, Surface};
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.context_ui.surface = Some(Surface::new(
+            Kind::Proposal { id: "p".into() },
+            "Review terminal text".into(),
+            Vec::new(),
+            &"x".repeat(64 * 40),
+            app.plugins.attachment_generation,
+        ));
+        // 80 x 22 editor area, one row of it taken by the session strip.
+        app.note_context_frame_in(80, 22, 21, 1);
+        app.note_context_presented(1);
+        app.context_ui.surface.as_mut().unwrap().accept_selected = true;
+        let overlay = app.context_overlay().unwrap();
+        assert!(overlay.message.is_some(), "the refusal is showing");
+        let area = confirmation_overlay_area(
+            Rect {
+                x: 0,
+                y: 0,
+                width: 80,
+                height: 21,
+            },
+            &overlay,
+        );
+        assert_eq!(
+            usize::from(area.height),
+            overlay.rows.len() + 3,
+            "every row, the refusal and the border: {area:?}"
+        );
+        let screen = rendered(&mut app, 80, 23);
+        for row in &overlay.rows {
+            assert!(
+                screen.contains(row.label.as_str()),
+                "{:?} in {screen:?}",
+                row.label
+            );
+        }
+    }
+
+    #[test]
     fn standalone_render_draws_the_shared_confirmation_overlay() {
         let root = std::env::temp_dir().join(format!(
             "runyte-ui-confirmation-{}-{}",

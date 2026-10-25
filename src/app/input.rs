@@ -6570,6 +6570,10 @@ impl App {
                 self.open_lsp_trust();
                 Ok(())
             }
+            (Colon::AgentChannel, InvocationParameters::None) => {
+                self.request_agent_channel();
+                Ok(())
+            }
             (Colon::ContextAccess, InvocationParameters::OptionalText(identity)) => {
                 self.request_context_access(identity);
                 Ok(())

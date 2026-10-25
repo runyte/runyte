@@ -5866,27 +5866,85 @@ connected reader identifies a local connection, not a verified agent process.
 | `1` | Read terminal output |
 | `2` | Editor-context read permission; MCP exposes buffer reads |
 | `3` | Edit and append to buffers; also enables buffer reads |
-| `4` | Propose terminal text; also enables terminal reads |
+| `4` | Propose terminal text for review; also enables terminal reads |
+| `5` | Skip review: insert proposed text directly, still without Enter; also enables `4` and `1` |
+| `6` | Join the agent channel: read and post messages with other agents |
 | `r` | Remember this exact workspace's grant |
 | `n` | Next known identity; discards unapplied choices |
 | `x` | Revoke the selected identity immediately |
-| `j` / `k` | Page through longer reviews |
+| `j` / `k`, `PgUp` / `PgDn`, `gg` / `G` | Scroll longer reviews by line, by screen, or to the first or last line |
 | `Tab` then Enter | Select **Apply permissions** and apply |
 | `Esc` | Close without applying |
 
-Turning off a read permission also turns off its dependent write permission.
+Turning off a permission also turns off the ones that need it: turning off
+terminal reads turns off proposals and direct insertion.
 The remembered checkbox reflects the current grant when reopened. Without it,
 the grant lasts until the owning editor or persistent host exits. Applying a
 change disconnects existing readers, so agents must rediscover their targets.
 
 Granting, changing, and revoking need physical input from the active Runyte
-frontend. Repeated input, pasted text, macros, and MCP clients cannot approve
-access or terminal text. Each terminal proposal still needs its own native
-approval and inserts text **without Enter**.
+frontend, apart from the defaults in your configuration described under [Default
+grants](#default-grants). Repeated input, pasted text, macros, and MCP clients
+cannot approve access or terminal text. Each terminal proposal needs its own
+native approval unless the grant includes `5`, and text is always inserted
+**without Enter**.
+
+**Skipping review (`5`).** With direct insertion granted, a proposal for a
+terminal that has bracketed paste on, as shells and agent prompts do, is typed
+in as a paste as soon as it arrives, behind any text already queued there, and a
+notification records which identity inserted how many characters into which
+terminal. The text still cannot contain line breaks or control characters, and
+Enter is never sent. A terminal whose program has not turned on bracketed paste,
+such as a pager, a single-key prompt or an editor in normal mode, would read the
+text as keystrokes, so its proposals are still reviewed. Runyte sees only the
+terminal's own mode, so inside tmux, zellij or screen, which turn bracketed
+paste on for themselves and pass text to the pane as keystrokes when its program
+did not ask for paste, this check does not protect you: do not grant `5` to
+agents that type into a multiplexer. Even as a paste, text lands in whatever
+input is open, so grant it only to agents you trust, in workspaces where you
+expect them to type. The notifications are a recent record, not an audit log:
+they share the bounded notification history. A Runyte release that predates this
+permission reads a grant containing it as invalid and, because it stops at that
+record, ignores every remembered grant in that workspace until the grant is
+applied again or revoked.
 
 The server works with ide-mode and mux-mode workspaces on Linux, macOS,
 and Windows. Detached hosts support content reads and buffer edits, but cannot
 approve terminal insertion until a native frontend is attached.
+
+### Default grants
+
+To let agents read without opening `:mcp` in every project, name the
+permissions in your configuration:
+
+```yaml
+mcp:
+  default_grants:
+    agent: [terminal_read, editor_context_read]
+```
+
+A workspace that starts with no grant record for `agent` grants it these
+permissions for as long as it runs. Its own decisions take precedence: a grant
+applied with Remember replaces the default there, and revoking with `x`, or
+applying with nothing selected, records a revocation that keeps the default off
+in that workspace until you apply a grant again. A grant applied without
+Remember lasts for the session and leaves the default in place for next time.
+`:mcp` says when a grant comes from the default. Revocations made before this
+release removed the record instead of keeping one, so revoke again where a new
+default should stay off. Revocation records stay in the private store until a
+grant replaces them.
+
+Defaults use the same names as the context profile. Write permissions need their
+read permission (`buffer_edit` needs `editor_context_read`, `terminal_propose`
+needs `terminal_read`). Skipping review (`5`) cannot be a default: it is decided
+per workspace. Runyte reads the setting when a workspace host starts, so a
+change applies to workspaces started afterwards; a persistent session keeps the
+value it started with until `runyte --session-restart`. It creates the private
+store and the named identity if they do not exist yet; a default that cannot be
+applied is reported and leaves the workspace's own grants in place. A grant
+covers the same content and has the same limits whether it came from a default
+or from `:mcp`. The configuration file is the one way to grant access without
+physical input, so it deserves the same care as the rest of your configuration.
 
 ### What a grant covers
 
@@ -5913,6 +5971,23 @@ cache.
 - This is permission for Runyte's API, not an operating-system sandbox against
   other processes already running as you.
 
+### Agent channel
+
+With permission `6`, agents of any provider share a conversation through the
+workspace host: a public channel and direct messages between two agents. An
+agent joins by stating its provider and main task; Runyte adds a stable id, a
+nickname such as `codex-1`, its MCP client, where it works (repository, worktree
+and branch), and, inside a persistent session's integrated terminal, the
+terminal it runs in, checked rather than taken on its word. When the branch it
+works on changes, or it reports another directory, the channel says where it
+moved from.
+
+A terminal whose agent has unread messages shows `[N unread]` in its title.
+`:agent-channel` opens `[agent channel]`, a read-only page listing the
+participants and the recent messages, direct ones included, which refreshes as
+messages arrive. Messages last as long as the workspace host. The [MCP
+guide](mcp.md#agent-channel) describes the tools and limits.
+
 ### How agents use it
 
 - Start with `find_resources`, optionally selecting a workspace and searching
@@ -5925,11 +6000,13 @@ cache.
 - `terminal_proposal_status` and `cancel_terminal_proposal` operate on the
   proposal handle. Let the person review a proposal rather than polling for
   approval.
-- These are the nine MCP tools. Pane listing, selection and viewport reads,
+- `join_channel`, `post_message`, `read_messages` and `list_participants`
+  use the [agent channel](#agent-channel).
+- These are the thirteen MCP tools. Pane listing, selection and viewport reads,
   and immutable snapshots are not exposed by the MCP adapter.
 - Granted detached persistent workspaces and running ide-mode editors are
-  discoverable without attaching a TUI or changing focus. Terminal approval
-  needs an attached native frontend.
+  discoverable without attaching a TUI or changing focus. Terminal approval,
+  and direct insertion, need an attached native frontend.
 - After permission changes, run `find_resources` again. Handles belong to one
   MCP process and connection generation; they expire on revocation, connection
   renewal, eviction, or host restart. Never retry an `outcome_unknown` mutation
@@ -5983,19 +6060,24 @@ terminal. You review it in **Review terminal text**:
 
 1. The exact proposed value comes first, then the requester, target terminal,
    workspace, untrusted reason (if any), and recent output.
-2. Page with `j` / `k` if it is long. Each page must actually reach the
-   screen before approval is enabled; until then, choosing **Insert text (no
-   Enter)** names the page still to read.
-3. **Reject** is selected at first. `Down` or `Tab` selects **Insert text (no
-   Enter)**, and `Up` returns to **Reject**.
+2. A long proposal scrolls like a buffer: `j` / `k` or `Up` / `Down` by line,
+   `PgDn` / `PgUp` by screen, `gg` or `Home` to the first line, and `G`, `ge`
+   or `End` to the last. The overlay grows with the editor, so a taller window
+   shows more of it at once. Every line must actually reach the screen before
+   approval is enabled; jumping past lines does not count as reading them, and
+   until then choosing **Insert text (no Enter)** names the first line still
+   to read.
+3. **Reject** is selected at first. `Tab` switches between it and **Insert
+   text (no Enter)**. When the whole proposal fits, `Down` and `Up` choose
+   too.
 4. One fresh physical `Enter` inserts the text. That Enter belongs to the
    overlay. **Submit separately in the terminal.**
 
 **Making hidden characters visible.** In the proposed value, spaces show as
 `·`, backslashes are doubled, and non-ASCII characters are escaped. Labels keep
 printable Unicode and spaces but escape control, zero-width, bidirectional,
-and space-like characters. A short proposal fits on one page. The overlay needs
-at least 80 × 24 cells.
+and space-like characters. A short proposal fits without scrolling. The overlay
+needs at least 80 × 24 cells.
 
 **What cannot approve:** macros, pasted keys, repeated input, and the context
 API.
@@ -6390,7 +6472,7 @@ section. Key dispatch, help, and key hints are rebuilt together, with each
 running plugin's keys laid back over them.
 
 **What keeps its startup value:** `editor.mouse`, `editor.font_size`, `lsp.enable`,
-`mode`, `workspace.state`, and `workspace.state_anchor`. The status
+`mcp.default_grants`, `mode`, `workspace.state`, and `workspace.state_anchor`. The status
 line names them as needing a restart. The `[config]` page shows the file's
 value as saved, while the editor keeps using the startup value.
 
@@ -6429,8 +6511,8 @@ nothing.
 ### Settings reference
 
 Every setting below is also on the `[config]` page, except `workspace.state`,
-`workspace.state_anchor`, and the language-server definitions, which are
-file-only.
+`workspace.state_anchor`, `mcp.default_grants`, and the language-server
+definitions, which are file-only.
 
 #### Editor settings
 
@@ -6486,6 +6568,7 @@ file-only.
 | `git.refresh_interval_seconds` | `60` | 0–3600 | Bounds automatic Git refresh. `0` turns it off. See [Automatic Git refresh](#automatic-git-refresh). |
 | `notifications.history_limit` | `50` | 1–1000 | Newest notifications kept in memory for the workspace. |
 | `lsp.enable` | `true` | boolean | Allow configured language servers to start. Restart required. |
+| `mcp.default_grants` | none | identity: list of permissions | What an MCP identity may do in every workspace that has no grant or revocation of its own. Permissions are `terminal_read`, `editor_context_read`, `buffer_edit`, `terminal_propose` and `agent_channel`. Read when a workspace starts. See [Default grants](#default-grants). |
 | `lsp.<language>` | `rust` only | `command`, `args`, `initialization_options` | A language server definition. See [Language servers](#language-servers). |
 | `theme` | `ocean-dark` | theme name | The active theme. See [Themes](#themes). |
 
@@ -7368,6 +7451,7 @@ with `{ command: name, argument: text }`.
 | `git-refresh` | `git-refresh` | Refresh Git state or retry failed repository discovery |
 | `lsp-trust` | `lsp-trust` | Choose LSP permission for this workspace |
 | `mcp` | `mcp [identity]` | Review workspace agent permissions |
+| `agent-channel` | `agent-channel` | Show this workspace's agent channel |
 | `lsp-restart` | `lsp-restart [language]` | Restart stopped language servers |
 | `lsp-status` | `lsp-status` | Report language server state |
 | `open` | `open <path>` | Open a file or directory in the active pane |

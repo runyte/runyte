@@ -18,10 +18,34 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub(crate) struct ContextUi {
     pub identities: Vec<String>,
     pub requested_identity: Option<String>,
+    /// `:agent-channel` waits for the workspace host to render the page.
+    pub channel_page_requested: bool,
     pub surface: Option<Surface>,
     pub decision: Option<Decision>,
+    /// The editor area. Approval needs at least 80 × 22 of it.
     pub width: u16,
     pub height: u16,
+    /// Rows the overlay can actually use, once the session strip has taken
+    /// its row. `None` means the whole editor area.
+    pub overlay_height: Option<u16>,
+}
+
+impl ContextUi {
+    fn view_height(&self) -> u16 {
+        self.overlay_height.unwrap_or(self.height)
+    }
+}
+
+/// A frame prepared while a review was open, and what it would show.
+#[derive(Clone, Copy)]
+pub(crate) struct PreparedFrame {
+    id: u64,
+    top: usize,
+    shown: usize,
+    /// Whether the editor area was large enough to approve.
+    room: bool,
+    /// The editor area and overlay height it was laid out for.
+    area: (u16, u16, u16),
 }
 
 #[cfg(test)]
@@ -56,12 +80,20 @@ pub(crate) struct Surface {
     pub kind: Kind,
     pub title: String,
     pub lines: Vec<ReviewLine>,
-    pub page: usize,
-    pub reviewed_through: Option<usize>,
+    /// First line in view.
+    pub top: usize,
+    /// Lines a presented frame has shown. Approval needs all of them, so a
+    /// jump past unread lines is allowed but does not count as reading them.
+    pub seen: Vec<bool>,
     pub accept_selected: bool,
     pub attachment: u64,
-    pub presented_page: Option<usize>,
-    pub prepared: VecDeque<(u64, usize, bool)>,
+    /// The first line of the view the frontend last presented, while that is
+    /// still the current view.
+    pub presented_top: Option<usize>,
+    /// Recently prepared frames, all laid out for the current area.
+    pub prepared: VecDeque<PreparedFrame>,
+    /// `g` was pressed and waits for `g` (first line) or `e` (last line).
+    pub pending_g: bool,
 }
 
 /// How a reviewed line is drawn: proposed text stands out, labels and notes
@@ -113,6 +145,45 @@ pub(crate) struct ReviewLine {
     pub label: &'static str,
     pub value: String,
     pub tone: Tone,
+}
+
+/// The grant toggles in key order: `1` is the first.
+const SCOPES: [Scope; 6] = [
+    Scope::TerminalRead,
+    Scope::EditorContextRead,
+    Scope::BufferEdit,
+    Scope::TerminalPropose,
+    Scope::TerminalInsert,
+    Scope::AgentChannel,
+];
+
+/// The scope another one needs. Turning a scope on turns on what it needs,
+/// and turning one off turns off what needs it, so a grant is always valid.
+fn prerequisite(scope: Scope) -> Option<Scope> {
+    match scope {
+        Scope::BufferEdit => Some(Scope::EditorContextRead),
+        Scope::TerminalPropose => Some(Scope::TerminalRead),
+        Scope::TerminalInsert => Some(Scope::TerminalPropose),
+        Scope::TerminalRead | Scope::EditorContextRead | Scope::AgentChannel => None,
+    }
+}
+
+fn toggle(scopes: &mut BTreeSet<Scope>, scope: Scope) {
+    if scopes.remove(&scope) {
+        while let Some(orphan) = scopes
+            .iter()
+            .copied()
+            .find(|s| prerequisite(*s).is_some_and(|needed| !scopes.contains(&needed)))
+        {
+            scopes.remove(&orphan);
+        }
+    } else {
+        let mut next = Some(scope);
+        while let Some(scope) = next {
+            scopes.insert(scope);
+            next = prerequisite(scope);
+        }
+    }
 }
 
 /// Width of the label column, which holds the longest label and a gap.
@@ -217,7 +288,7 @@ impl Surface {
             ));
         }
         details.extend(explanation);
-        let lines = details
+        let lines: Vec<ReviewLine> = details
             .into_iter()
             .flat_map(|detail| {
                 wrap(&detail.value, detail.tone, VALUE_WIDTH)
@@ -233,28 +304,43 @@ impl Surface {
         Self {
             kind,
             title,
+            seen: vec![false; lines.len()],
             lines,
-            page: 0,
-            reviewed_through: None,
+            top: 0,
             accept_selected: false,
             attachment,
-            presented_page: None,
+            presented_top: None,
             prepared: VecDeque::new(),
+            pending_g: false,
         }
     }
-    /// Rows per page. A grant also lists its scopes above the page, so its
-    /// pages are shorter; both still fit the smallest approving editor area.
-    fn page_rows(&self) -> usize {
-        match self.kind {
-            Kind::Grant { .. } => 8,
-            Kind::Proposal { .. } => 12,
-        }
+    /// Lines in view for an overlay that may use `height` rows, the editor
+    /// area less any session strip: everything but the border, the position
+    /// row, the choices, and room for a two-row message. A grant also lists
+    /// its scopes above the lines. At the smallest approving area a proposal
+    /// shows 14 lines and a grant 6, one fewer of each beside the session
+    /// strip, and a taller editor shows more, so a long prompt reads in fewer
+    /// screens.
+    pub(crate) fn view_rows(&self, height: u16) -> usize {
+        let chrome = match self.kind {
+            Kind::Grant { .. } => 16,
+            Kind::Proposal { .. } => 8,
+        };
+        usize::from(height).saturating_sub(chrome).max(1)
     }
-    pub(crate) fn last_page(&self) -> usize {
-        self.lines.len().saturating_sub(1) / self.page_rows()
+    fn last_top(&self, rows: usize) -> usize {
+        self.lines.len().saturating_sub(rows)
+    }
+    fn scroll_to(&mut self, top: usize, rows: usize) {
+        let top = top.min(self.last_top(rows));
+        if top != self.top {
+            // The frontend has not shown this view yet.
+            self.presented_top = None;
+        }
+        self.top = top;
     }
     pub(crate) fn fully_reviewed(&self) -> bool {
-        self.reviewed_through == Some(self.last_page())
+        self.seen.iter().all(|seen| *seen)
     }
     pub fn proposal(&self) -> Option<&str> {
         match &self.kind {
@@ -265,37 +351,103 @@ impl Surface {
 }
 
 impl App {
+    /// A frame for an editor area without a session strip.
+    #[cfg(test)]
     pub(crate) fn note_context_frame(&mut self, width: u16, height: u16, frame: u64) {
+        self.note_context_frame_in(width, height, height, frame);
+    }
+    /// Records a frame about to be drawn in an editor area `width` × `height`
+    /// whose overlay may use `overlay_height` rows.
+    pub(crate) fn note_context_frame_in(
+        &mut self,
+        width: u16,
+        height: u16,
+        overlay_height: u16,
+        frame: u64,
+    ) {
         self.context_ui.width = width;
         self.context_ui.height = height;
+        self.context_ui.overlay_height = Some(overlay_height);
         if let Some(surface) = self.context_ui.surface.as_mut() {
-            surface
+            let area = (width, height, overlay_height);
+            // A frame laid out for an area the window no longer has may be
+            // painted clipped, so once the area changes only frames laid out
+            // for the new one count.
+            if surface
                 .prepared
-                .push_back((frame, surface.page, width >= 80 && height >= 22));
+                .back()
+                .is_some_and(|last| last.area != area)
+            {
+                surface.prepared.clear();
+            }
+            let rows = surface.view_rows(overlay_height);
+            surface.scroll_to(surface.top, rows);
+            let shown = rows.min(surface.lines.len() - surface.top);
+            surface.prepared.push_back(PreparedFrame {
+                id: frame,
+                top: surface.top,
+                shown,
+                room: width >= 80 && height >= 22,
+                area,
+            });
             while surface.prepared.len() > 8 {
                 surface.prepared.pop_front();
             }
         }
     }
     pub(crate) fn note_context_presented(&mut self, frame: u64) {
-        if let Some(surface) = self.context_ui.surface.as_mut()
-            && surface
-                .prepared
-                .iter()
-                .any(|&(id, page, enough)| id == frame && page == surface.page && enough)
-            && (surface.page == 0
-                || surface
-                    .reviewed_through
-                    .is_some_and(|last| surface.page <= last + 1))
+        let Some(surface) = self.context_ui.surface.as_mut() else {
+            return;
+        };
+        if let Some(prepared) = surface
+            .prepared
+            .iter()
+            .find(|prepared| prepared.id == frame && prepared.top == surface.top && prepared.room)
+            .copied()
         {
-            surface.reviewed_through =
-                Some(surface.reviewed_through.unwrap_or(0).max(surface.page));
-            surface.presented_page = Some(surface.page);
+            surface.seen[prepared.top..prepared.top + prepared.shown].fill(true);
+            surface.presented_top = Some(prepared.top);
         }
     }
 
     pub fn context_overlay_active(&self) -> bool {
         self.context_ui.surface.is_some()
+    }
+
+    pub(super) fn request_agent_channel(&mut self) {
+        self.context_ui.channel_page_requested = true;
+    }
+
+    /// Shows the channel page the workspace host rendered.
+    pub(crate) fn open_agent_channel_page(&mut self, page: &str) {
+        self.open_virtual_page(
+            crate::buffer::GeneratedViewIdentity::AgentChannel,
+            crate::buffer::AGENT_CHANNEL_NAME.to_owned(),
+            page,
+            super::ContentAlignment::default(),
+        );
+    }
+
+    fn agent_channel_page(&self) -> Option<usize> {
+        self.buffers.iter().enumerate().find_map(|(index, buffer)| {
+            (!self.closed_buffers.contains(&index)
+                && buffer.generated_view_identity()
+                    == Some(&crate::buffer::GeneratedViewIdentity::AgentChannel))
+            .then_some(index)
+        })
+    }
+
+    pub(crate) fn agent_channel_page_open(&self) -> bool {
+        self.agent_channel_page().is_some()
+    }
+
+    /// Replaces the page's text if it is open; nothing opens otherwise.
+    pub(crate) fn refresh_agent_channel_page(&mut self, page: &str) {
+        if let Some(index) = self.agent_channel_page() {
+            self.buffers[index].replace_virtual_text(page);
+            self.normalize_buffer(index);
+            self.plugins.presentation_dirty = true;
+        }
     }
 
     pub(super) fn request_context_access(&mut self, identity: Option<String>) {
@@ -310,6 +462,8 @@ impl App {
         let Some(mut surface) = self.context_ui.surface.take() else {
             return;
         };
+        // Whatever arrives next, a pending `g` is spent on it.
+        let pending_g = std::mem::take(&mut surface.pending_g);
         if self.recording_macro.is_some()
             || self.macro_replay.is_some()
             || surface.attachment != self.plugins.attachment_generation
@@ -320,11 +474,25 @@ impl App {
             self.context_ui.surface = Some(surface);
             return;
         };
+        // Shift is part of the character (`G`), not a modifier to refuse.
+        let key = key.canonical_for_binding();
         if !key.modifiers.is_empty() {
             self.context_ui.surface = Some(surface);
             return;
         }
         let enough_room = self.context_ui.width >= 80 && self.context_ui.height >= 22;
+        let rows = surface.view_rows(self.context_ui.view_height());
+        let scrollable = surface.lines.len() > rows;
+        if pending_g {
+            // `gg` and `ge` move; anything else cancels, as in a buffer.
+            match key.code {
+                KeyCode::Char('g') => surface.scroll_to(0, rows),
+                KeyCode::Char('e') => surface.scroll_to(usize::MAX, rows),
+                _ => {}
+            }
+            self.context_ui.surface = Some(surface);
+            return;
+        }
         match key.code {
             KeyCode::Escape => {
                 if let Kind::Proposal { id } = surface.kind {
@@ -336,17 +504,20 @@ impl App {
                 return;
             }
             KeyCode::Tab => surface.accept_selected = !surface.accept_selected,
-            // The arrows move between the two choice rows, which sit one
-            // above the other; paging stays on j/k.
-            KeyCode::Up => surface.accept_selected = false,
-            KeyCode::Down => surface.accept_selected = true,
-            KeyCode::Char('j') => {
-                if surface.presented_page == Some(surface.page) {
-                    surface.page = (surface.page + 1).min(surface.last_page());
-                    surface.presented_page = None;
-                }
+            // With nothing to scroll the arrows move between the two choice
+            // rows, which sit one above the other. Once the text is longer
+            // than the view they scroll it like a buffer, and Tab chooses.
+            KeyCode::Up if !scrollable => surface.accept_selected = false,
+            KeyCode::Down if !scrollable => surface.accept_selected = true,
+            KeyCode::Up | KeyCode::Char('k') => {
+                surface.scroll_to(surface.top.saturating_sub(1), rows);
             }
-            KeyCode::Char('k') => surface.page = surface.page.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => surface.scroll_to(surface.top + 1, rows),
+            KeyCode::PageUp => surface.scroll_to(surface.top.saturating_sub(rows), rows),
+            KeyCode::PageDown => surface.scroll_to(surface.top + rows, rows),
+            KeyCode::Home => surface.scroll_to(0, rows),
+            KeyCode::End | KeyCode::Char('G') => surface.scroll_to(usize::MAX, rows),
+            KeyCode::Char('g') => surface.pending_g = true,
             KeyCode::Char('x') => {
                 if let Kind::Grant { identity, .. } = surface.kind {
                     self.context_ui.decision = Some(Decision::Revoke(identity));
@@ -373,43 +544,16 @@ impl App {
                     return;
                 }
             }
-            KeyCode::Char(character @ '1'..='4') => {
+            KeyCode::Char(character @ '1'..='6') => {
                 if let Kind::Grant { scopes, .. } = &mut surface.kind {
-                    let scope = [
-                        Scope::TerminalRead,
-                        Scope::EditorContextRead,
-                        Scope::BufferEdit,
-                        Scope::TerminalPropose,
-                    ][character as usize - '1' as usize];
-                    if !scopes.remove(&scope) {
-                        scopes.insert(scope);
-                        match scope {
-                            Scope::BufferEdit => {
-                                scopes.insert(Scope::EditorContextRead);
-                            }
-                            Scope::TerminalPropose => {
-                                scopes.insert(Scope::TerminalRead);
-                            }
-                            _ => {}
-                        }
-                    } else {
-                        match scope {
-                            Scope::EditorContextRead => {
-                                scopes.remove(&Scope::BufferEdit);
-                            }
-                            Scope::TerminalRead => {
-                                scopes.remove(&Scope::TerminalPropose);
-                            }
-                            _ => {}
-                        }
-                    }
+                    toggle(scopes, SCOPES[character as usize - '1' as usize]);
                 }
             }
             KeyCode::Enter if approval => {
                 let accepted = surface.accept_selected
                     && enough_room
                     && surface.fully_reviewed()
-                    && surface.presented_page == Some(surface.page);
+                    && surface.presented_top == Some(surface.top);
                 if surface.accept_selected && !accepted {
                     self.context_ui.surface = Some(surface);
                     return;
@@ -441,15 +585,7 @@ impl App {
             scopes, remember, ..
         } = &surface.kind
         {
-            for (index, scope) in [
-                Scope::TerminalRead,
-                Scope::EditorContextRead,
-                Scope::BufferEdit,
-                Scope::TerminalPropose,
-            ]
-            .iter()
-            .enumerate()
-            {
+            for (index, scope) in SCOPES.iter().enumerate() {
                 rows.push(review_row(
                     format!(
                         "{} [{}] {}",
@@ -459,7 +595,10 @@ impl App {
                             Scope::TerminalRead => "Read terminal output",
                             Scope::EditorContextRead => "Read buffers and selections",
                             Scope::BufferEdit => "Edit and append to buffers",
-                            Scope::TerminalPropose => "Propose terminal text (approval each time)",
+                            Scope::TerminalPropose => "Propose terminal text for review",
+                            Scope::TerminalInsert =>
+                                "Skip review: insert proposals directly (no Enter)",
+                            Scope::AgentChannel => "Join the agent channel: read and post messages",
                         }
                     ),
                     Vec::new(),
@@ -476,13 +615,9 @@ impl App {
             ));
             rows.push(review_row(String::new(), Vec::new(), Vec::new()));
         }
-        let page_rows = surface.page_rows();
-        for line in surface
-            .lines
-            .iter()
-            .skip(surface.page * page_rows)
-            .take(page_rows)
-        {
+        let view_rows = surface.view_rows(self.context_ui.view_height());
+        let top = surface.top.min(surface.last_top(view_rows));
+        for line in surface.lines.iter().skip(top).take(view_rows) {
             let label = format!("{:<LABEL_WIDTH$}", line.label);
             let label_end = label.chars().count();
             let end = label_end + line.value.chars().count();
@@ -497,12 +632,13 @@ impl App {
                 emphasis,
             ));
         }
-        let last_page = surface.last_page();
-        if last_page > 0 {
+        let total = surface.lines.len();
+        let scrollable = total > view_rows;
+        if scrollable {
             let text = format!(
-                "Page {}/{} · j next page · k previous page",
-                surface.page + 1,
-                last_page + 1
+                "Lines {}–{} of {total} · j/k line · PgUp/PgDn page · gg/G first/last",
+                top + 1,
+                (top + view_rows).min(total),
             );
             let end = text.chars().count();
             rows.push(review_row(text, (0..end).collect(), Vec::new()));
@@ -519,24 +655,26 @@ impl App {
         // leaving it to look like an unresponsive key.
         let message = if self.context_ui.width < 80 || self.context_ui.height < 22 {
             Some("Enlarge terminal to at least 80 × 24 to approve".to_owned())
-        } else if surface.accept_selected && last_page > 0 && !surface.fully_reviewed() {
-            let next = surface.reviewed_through.map_or(0, |last| last + 1);
+        } else if surface.accept_selected
+            && scrollable
+            && let Some(unread) = surface.seen.iter().position(|seen| !seen)
+        {
             Some(format!(
-                "Read page {}/{} first: press j until the last page has been shown.",
-                (next + 1).min(last_page + 1),
-                last_page + 1
+                "Read the rest first: line {} of {total} has not been shown.",
+                unread + 1
             ))
         } else {
             None
         };
-        let mut actions = vec![
-            OverlayAction::new("↑/↓/Tab", "choose"),
+        let actions = vec![
+            if scrollable {
+                OverlayAction::new("Tab", "choose")
+            } else {
+                OverlayAction::new("↑/↓/Tab", "choose")
+            },
             OverlayAction::new("Enter", "apply choice"),
             OverlayAction::new("Esc", "reject"),
         ];
-        if last_page > 0 {
-            actions.insert(0, OverlayAction::new("j/k", "page"));
-        }
         Some(OverlaySnapshot {
             kind: OverlayKind::Confirmation,
             purpose: OverlayPurpose::Confirmation,

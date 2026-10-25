@@ -746,6 +746,9 @@ pub struct TerminalSession {
     /// The small number a person reads and types, held only while the child
     /// runs. See [`TerminalSession::number`].
     number: Option<u32>,
+    /// Agent channel messages the agent running here has not read, as the
+    /// workspace host last counted them.
+    channel_unread: usize,
     label: String,
     user_name: Option<String>,
     directory: PathBuf,
@@ -789,6 +792,14 @@ impl Drop for TerminalSession {
 impl TerminalSession {
     pub fn id(&self) -> TerminalId {
         self.id
+    }
+
+    pub fn channel_unread(&self) -> usize {
+        self.channel_unread
+    }
+
+    pub fn set_channel_unread(&mut self, count: usize) {
+        self.channel_unread = count;
     }
 
     /// The number a title shows and a command accepts, or `None` once the
@@ -1856,13 +1867,39 @@ impl TerminalSession {
     }
 
     /// Native approval alone may call this after checking the captured target,
-    /// grant, and input signature. It does not change native presentation state.
+    /// grant, and input signature. Like typing, the approval supersedes text
+    /// still queued. It does not change native presentation state.
     #[cfg_attr(not(unix), allow(dead_code))]
     pub(crate) fn enqueue_proposal(
         &mut self,
         text: &proposal::Text,
     ) -> std::io::Result<proposal::Delivery> {
         self.note_input_intent();
+        self.queue_proposal(text)
+    }
+
+    /// For a grant that skips review, checked by the caller: the text joins
+    /// the queue behind whatever is already there, so one agent's insertion
+    /// never cancels another's. It still changes the input line, so a review
+    /// captured before it goes stale.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn append_proposal(
+        &mut self,
+        text: &proposal::Text,
+    ) -> std::io::Result<proposal::Delivery> {
+        self.input_generation = self.input_generation.wrapping_add(1);
+        self.queue_proposal(text)
+    }
+
+    fn queue_proposal(&mut self, text: &proposal::Text) -> std::io::Result<proposal::Delivery> {
+        // Insertions without review supersede nothing, so finished records
+        // would otherwise accumulate until the person next types.
+        self.proposal_deliveries.retain(|delivery| {
+            matches!(
+                delivery.state(),
+                proposal::DeliveryState::Queued | proposal::DeliveryState::Writing
+            )
+        });
         self.sent_text = None;
         if !self.live() {
             return Err(std::io::Error::new(
@@ -2969,6 +3006,7 @@ impl TerminalSessions {
             TerminalSession {
                 id,
                 number,
+                channel_unread: 0,
                 label: request.label,
                 user_name: None,
                 directory: request.directory.clone(),
@@ -3228,6 +3266,7 @@ mod tests {
         TerminalSession {
             id: TerminalId(1),
             number: None,
+            channel_unread: 0,
             label: "test".to_owned(),
             user_name: None,
             directory: PathBuf::from("/"),

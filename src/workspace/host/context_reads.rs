@@ -501,7 +501,10 @@ impl WorkspaceHost {
                             })
                         })
                         .transpose()?;
-                    terminals.push(json!({"terminal":state.terminal_handle(id)?,"name":value.name(),"live":value.live(),"exit_code":value.exit_code(),"pane":pane,"columns":value.columns(),"screen_rows":value.plain_line_count()-value.scrollback_rows(),"alternate_screen":value.alternate_screen(),"revision":revision(value.read_revision())}));
+                    // The number and title are what the person sees on the pane, so an
+                    // agent told "terminal #2" can find it. Neither is a target:
+                    // every later request names the stable handle.
+                    terminals.push(json!({"terminal":state.terminal_handle(id)?,"number":value.number(),"title":crate::snapshot::terminal_label(value),"name":value.name(),"live":value.live(),"exit_code":value.exit_code(),"pane":pane,"columns":value.columns(),"screen_rows":value.plain_line_count()-value.scrollback_rows(),"alternate_screen":value.alternate_screen(),"revision":revision(value.read_revision())}));
                 }
                 Ok(json!({"terminals":terminals,"next":next}))
             }
@@ -622,6 +625,13 @@ impl WorkspaceHost {
             | Request::TerminalInputCancel { .. } => Err(Error::new(
                 Code::Unsupported,
                 "Terminal proposals require the native review coordinator",
+            )),
+            Request::ChannelJoin { .. }
+            | Request::ChannelPost { .. }
+            | Request::ChannelRead { .. }
+            | Request::ChannelWho(_) => Err(Error::new(
+                Code::Unsupported,
+                "The agent channel is served by the workspace host",
             )),
         }
     }

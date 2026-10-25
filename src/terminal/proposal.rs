@@ -2,7 +2,8 @@
 
 //! Literal text admissible in a native terminal proposal. Validation
 //! grants no permission to send it: physical, one-shot approval and a captured
-//! live target are still required. Delivery records describe PTY writes, never
+//! live target are still required, unless the person's grant skips review for
+//! a terminal reading pasted text. Delivery records describe PTY writes, never
 //! acceptance or execution by the child application.
 
 use std::sync::{

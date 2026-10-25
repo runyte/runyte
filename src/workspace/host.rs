@@ -252,6 +252,8 @@ struct CompletedGitSnapshot {
 #[cfg(any(unix, windows))]
 mod context;
 #[cfg(any(unix, windows))]
+mod context_channel;
+#[cfg(any(unix, windows))]
 mod context_reads;
 mod pipe;
 mod plugin_activity;
@@ -1242,8 +1244,14 @@ impl WorkspaceHost {
             // owner, bounding this loop by the eight-owner admission limit.
             view = self.app.prepare_view(geometry);
         }
-        self.app
-            .note_context_frame(geometry.editor.width, geometry.editor.height, id.0);
+        // Room to approve is judged on the editor area; the overlay itself
+        // gets what the session strip leaves of it.
+        self.app.note_context_frame_in(
+            geometry.editor.width,
+            geometry.editor.height,
+            view.geometry.editor.height,
+            id.0,
+        );
         let editor = self.app.snapshot(&view);
         #[cfg(any(unix, windows))]
         if self.context_enabled() {
@@ -1282,8 +1290,10 @@ impl WorkspaceHost {
                 .collect();
         }
         let mut overlays = self.app.overlay_snapshots();
+        // A review counts the lines it has shown, so nothing may cover them.
         if let Some(key_hints) = key_hints
             && key_hints.is_visible()
+            && !self.app.context_overlay_active()
             && let Some(mode) = self.app.key_hint_mode()
         {
             let capabilities = self.app.command_capabilities();
@@ -2695,6 +2705,29 @@ mod tests {
         assert_eq!(overlay.row_offset, 0);
         assert_eq!(overlay.scroll_anchor, Some(0));
         assert!(!overlay.rows.is_empty());
+    }
+
+    #[test]
+    fn key_hints_never_cover_an_open_review() {
+        use crate::app::context_access::{Kind, Surface};
+        let mut host = host();
+        let generation = host.app.plugins.attachment_generation;
+        host.app.context_ui.surface = Some(Surface::new(
+            Kind::Proposal { id: "p".into() },
+            "Review terminal text".into(),
+            Vec::new(),
+            &"x".repeat(64 * 40),
+            generation,
+        ));
+        let mut hints = KeyHintState::default();
+        hints.push(KeyStroke::char('g'));
+        let frame = host.prepare_frame_with_hints(geometry(), Some(&hints));
+        assert!(
+            frame
+                .overlays
+                .iter()
+                .all(|overlay| overlay.kind != crate::snapshot::OverlayKind::KeyHints)
+        );
     }
 
     #[test]
