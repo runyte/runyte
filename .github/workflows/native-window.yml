@@ -16,6 +16,11 @@ concurrency:
   group: native-window-${{ github.ref }}
   cancel-in-progress: true
 
+# Preserve failures from Cargo and acceptance commands piped through tee.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   native:
     strategy:
@@ -50,6 +55,8 @@ jobs:
         run: |
           xcodebuild -version
           brew install cmake pkgconf poppler
+          # Use the bundle deployment floor for every native compilation.
+          echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> "$GITHUB_ENV"
       - name: Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
@@ -57,19 +64,22 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: native-window
+          env-vars: MACOSX_DEPLOYMENT_TARGET
       - name: Format and lint
         run: |
           cargo fmt --all --check
-          cargo clippy --locked -p runyte-native -p runyte-desktop -p runyte-preview --all-targets -- -D warnings
-          cargo clippy --locked -p runyte-desktop --features app-launcher --all-targets -- -D warnings
+          cargo clippy --locked --timings -p runyte-native -p runyte-desktop -p runyte-preview --all-targets -- -D warnings
+          cargo clippy --locked --timings -p runyte-desktop --features app-launcher --all-targets -- -D warnings
       - name: Core and adapter tests
         run: |
           python3 -m unittest discover -s contrib/packaging -p 'test_*.py'
-          cargo test --locked -p runyte-native -p runyte-desktop -p runyte-preview
-          cargo test --locked -p runyte-desktop --features app-launcher --bin runyte-app-launcher
-          cargo test --locked -p runyte-native --lib media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count -- --ignored --exact | tee "$RUNNER_TEMP/pdf-test.log"
+          cargo test --locked --timings -p runyte-native -p runyte-desktop -p runyte-preview
+          cargo test --locked --timings -p runyte-desktop --features app-launcher --bin runyte-app-launcher
+          # Keep the ordinary suite's package selection: selecting only native
+          # changes dependency feature unification and rebuilds its test binary.
+          cargo test --locked --timings -p runyte-native -p runyte-desktop -p runyte-preview media::tests::pdf_rasterizes_distinct_pages_and_reports_total_count -- --ignored --exact | tee "$RUNNER_TEMP/pdf-test.log"
           grep -Eq "test result: ok\. 1 passed;" "$RUNNER_TEMP/pdf-test.log"
-          cargo test --locked -p runyte-native --lib media::tests::mixed_pdf_backends_align_cropped_rotated_text_and_detail -- --ignored --exact | tee "$RUNNER_TEMP/pdf-test.log"
+          cargo test --locked --timings -p runyte-native -p runyte-desktop -p runyte-preview media::tests::mixed_pdf_backends_align_cropped_rotated_text_and_detail -- --ignored --exact | tee "$RUNNER_TEMP/pdf-test.log"
           grep -Eq "test result: ok\. 1 passed;" "$RUNNER_TEMP/pdf-test.log"
       - name: Install desktop coverage tool
         if: runner.os == 'Linux'
@@ -85,7 +95,7 @@ jobs:
       - name: Build native binary
         shell: bash
         run: |
-          cargo build --locked -p runyte-desktop --future-incompat-report 2>&1 | tee "$RUNNER_TEMP/native-build.log"
+          cargo build --locked --timings -p runyte-desktop --future-incompat-report 2>&1 | tee "$RUNNER_TEMP/native-build.log"
           python3 - "$RUNNER_TEMP/native-build.log" <<'PY'
           import pathlib, sys
           report = pathlib.Path(sys.argv[1]).read_text()
@@ -122,16 +132,16 @@ jobs:
           xvfb-run -a -s '-screen 0 1280x960x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --window-controls --mux
       - name: Construct universal macOS app bundle
         if: runner.os == 'macOS'
-        env:
-          MACOSX_DEPLOYMENT_TARGET: '11.0'
         run: |
-          rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --locked -p runyte-desktop --features app-launcher --bins --target "$target"
-          done
+          # macos-15 is Apple Silicon. Reuse its already tested host build;
+          # an explicit native --target creates a second dependency tree.
+          test "$(rustc -vV | sed -n 's/^host: //p')" = aarch64-apple-darwin
+          rustup target add x86_64-apple-darwin
+          cargo build --locked --timings -p runyte-desktop --features app-launcher --bins
+          cargo build --locked --timings -p runyte-desktop --features app-launcher --bins --target x86_64-apple-darwin
           mkdir "$RUNNER_TEMP/universal"
           for binary in runyte-desktop runyte-app-launcher; do
-            lipo -create "target/aarch64-apple-darwin/debug/$binary" \
+            lipo -create "target/debug/$binary" \
               "target/x86_64-apple-darwin/debug/$binary" -output "$RUNNER_TEMP/universal/$binary"
           done
           python3 contrib/packaging/package.py macos --binary "$RUNNER_TEMP/universal/runyte-desktop" \
@@ -139,3 +149,10 @@ jobs:
           python3 contrib/packaging/check_package.py "$RUNNER_TEMP/Runyte.app"
           python3 contrib/packaging/package.py dmg --app "$RUNNER_TEMP/Runyte.app" --output "$RUNNER_TEMP/Runyte-unsigned.dmg"
           python3 contrib/packaging/check_dmg.py "$RUNNER_TEMP/Runyte-unsigned.dmg"
+      - name: Retain Cargo build timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: desktop-cargo-timings-${{ matrix.os }}
+          path: target/**/cargo-timings/*.html
+          retention-days: 7

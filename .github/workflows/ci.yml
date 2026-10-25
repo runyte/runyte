@@ -60,6 +60,15 @@ jobs:
         run: cargo fmt --check
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Compile native tests
+        run: cargo test --locked --no-run --timings
+      - name: Retain Windows build timings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-cargo-timings
+          path: target/cargo-timings/*.html
+          retention-days: 7
       - name: Test native editing, Git and ConPTY
         env:
           XDG_CONFIG_HOME: ${{ runner.temp }}/runyte-test-config
@@ -147,7 +156,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Install advisory checker
-        run: cargo install cargo-audit --locked --version 0.22.2
+        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
+        with:
+          tool: cargo-audit@0.22.2
+          fallback: none
       - name: Check locked dependencies
         run: cargo audit --deny unsound
 
