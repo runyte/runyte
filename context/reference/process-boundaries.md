@@ -100,7 +100,8 @@ include `channel_nudge`, a grant setting that is never negotiated, needs
 the terminal's line may hold unsubmitted person or proposal input, for 30
 seconds after the person's last physical input, while a proposal for that
 terminal is outstanding, and while the terminal is not reading pastes. It drops
-the Enter if any other input reached the terminal after the paste. One nudge per
+the Enter if any other input reached the terminal after the paste, and then
+treats the line as an unsubmitted draft. One nudge per
 terminal is outstanding until the participant reads. Runyte does not inspect the
 screen, so an approval prompt showing at that moment may receive the Enter; the
 grant description states this. Implementation: `src/workspace/host/context_channel.rs`

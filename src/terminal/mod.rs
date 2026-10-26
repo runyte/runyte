@@ -1890,6 +1890,11 @@ impl TerminalSession {
         self.typed = self.typed.map(|typed| typed - by);
     }
 
+    /// Something may now wait on the input line unsubmitted.
+    pub(crate) fn note_draft(&mut self) {
+        self.draft = true;
+    }
+
     fn note_typing(&mut self, draft: bool) {
         self.typed = Some(std::time::Instant::now());
         self.draft = draft;
@@ -1994,13 +1999,18 @@ impl TerminalSession {
     pub fn send_key(&mut self, key: KeyStroke) -> bool {
         self.note_input_intent();
         // Enter submits the line and `Ctrl-c` abandons it; any other key may
-        // leave something on it.
-        let interrupt = key.modifiers.contains(crate::input::Modifiers::CONTROL)
-            && matches!(key.code, crate::input::KeyCode::Char('c' | 'C'));
+        // leave something on it. With Alt, Enter arrives after an Escape that
+        // line editors read as "new line", not "submit".
+        use crate::input::{KeyCode, Modifiers};
+        let alt = key.modifiers.contains(Modifiers::ALT);
+        let interrupt = !alt
+            && key.modifiers.contains(Modifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('c' | 'C'));
+        let submit = !alt && key.code == KeyCode::Enter;
         let Some(bytes) = keys::encode(key, self.emulator.modes) else {
             return false;
         };
-        self.note_typing(!(key.code == crate::input::KeyCode::Enter || interrupt));
+        self.note_typing(!(submit || interrupt));
         // Whatever this key does to the child's input area, the pasted text is
         // no longer the last thing at the cursor, so deletes counted from its
         // length would land on the wrong characters.
@@ -4292,6 +4302,22 @@ mod tests {
         assert!(
             session.has_draft(),
             "only Enter or Ctrl-c is known to clear it"
+        );
+        session.send_key(KeyStroke::new(
+            crate::input::KeyCode::Enter,
+            crate::input::Modifiers::ALT,
+        ));
+        assert!(
+            session.has_draft(),
+            "Alt-Enter starts a new line in a prompt"
+        );
+        session.send_key(KeyStroke::new(
+            crate::input::KeyCode::Enter,
+            crate::input::Modifiers::SHIFT,
+        ));
+        assert!(
+            !session.has_draft(),
+            "Shift-Enter reaches the child as Enter"
         );
         let typed = session.typed_at().unwrap();
         session.backdate_typing(Duration::from_secs(30));

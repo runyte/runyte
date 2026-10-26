@@ -6,7 +6,8 @@ Stage 3 includes the storage foundation and a tested opt-in live MCP trial;
 it is deferred as of 2026-10-26, and general deployment remains unfinished.
 The initial delivery is the cooperative skill and its
 installer. Stage 4 selects sender-requested channel nudges on the legacy
-channel as the wake-up mechanism; its design is decided and unimplemented.
+channel as the wake-up mechanism; it is implemented on the
+`feature/channel-nudges` branch and verified in a sandboxed live trial.
 Lifecycle hooks remain tentative.
 
 This extends the [completed agent-channel plan](../completed/PLAN_AGENT_CHANNEL.md)
@@ -626,7 +627,8 @@ Acceptance:
 ### 4. Channel nudges
 
 Decided 2026-10-26 after the manual user test above and tracked in
-[#40](https://github.com/runyte/runyte/issues/40); not implemented. It
+[#40](https://github.com/runyte/runyte/issues/40); implemented on the
+`feature/channel-nudges` branch (see the evidence below). It
 applies to the legacy in-memory channel, since Stage 3 is deferred. Agents
 still never send Enter. Instead, when a sender asks for it, the host may submit
 one fixed line, a nudge, into a recipient agent's terminal to tell it to read
@@ -673,7 +675,8 @@ Decided rules:
   messages or move read state.
 - A nudge is held while the person may be typing in that terminal. The terminal
   records the time of its last physical input and whether that input left the
-  line unsubmitted: any key or paste other than Enter marks a draft, and Enter
+  line unsubmitted: any key or paste other than Enter marks a draft, as does a proposal's
+  inserted text; Enter without Alt
   or Ctrl-C clears it. Hold the nudge while there is a draft, and until a quiet
   interval of 30 seconds has passed since the last physical input. Also hold it
   while a terminal proposal for that terminal is queued.
@@ -707,6 +710,38 @@ Tests cover nudge validation (DM recipient only, sender, unknown and duplicate
 names rejecting the post), each outcome, each hold condition, the
 one-outstanding rule and its reset on read, the bracketed-paste refusal, grant
 revocation while a nudge is held, and that a nudge never changes read state.
+
+#### Implementation and trial evidence, 2026-10-26
+
+The host types the line as a bracketed paste, waits 250 ms after it is written,
+and then writes a single carriage return only if the terminal's input generation
+is unchanged; otherwise the line is left as a draft and the nudge stays
+outstanding. A paste cancelled by typing before it was written returns the nudge
+to held. A held nudge needs a timer only for the end of its quiet interval;
+typing, Enter, proposals and paste-mode changes already wake the event loop.
+A post's nudge advances only the nudge it adds, because the sender's own reader
+is out of the host's table while its request runs. Unit and host tests cover
+validation, every outcome, each hold, the stray-Enter guard, a sender keeping its
+own pending nudge, revocation while held, and unchanged read state. One
+independent review found two should-fix state-machine defects, an Alt-Enter
+draft defect and test gaps; all were fixed before the trial below was repeated.
+
+A sandboxed live trial used a real persistent host, an attached `--mux` frontend
+on a PTY and three integrated terminals, each running a stand-in prompt that
+reads pastes and owns its own `runyte mcp` adapter, so every participant's
+terminal was verified. All runtime state lived in temporary directories. Two
+subagents played a coordinator and an idle worker that woke only on prompt
+input. Observed: every nudge reached the worker's prompt within about 0.1–0.6 s
+and was followed by a read about 3 s later; request-to-reply rounds took 9–11 s;
+a second nudge 33 ms after the first reported `already_pending` and produced one
+line; an identity without `7` reported `unavailable` while its message was
+stored; a nudge naming a non-recipient, the sender or an unknown participant
+rejected the post without storing it; the worker's nudge back reached the
+coordinator. Typing a draft in the worker's terminal held a nudge for over 40 s;
+after Enter submitted the draft, the nudge arrived 31 s later.
+
+This trial does not establish behavior of real Claude Code or Codex prompts,
+including how they treat an Enter arriving while an approval prompt is shown.
 
 Lifecycle hooks (SessionStart, tool-boundary, Stop) remain a tentative
 complement for reminding agents while they work. They are optional, separately

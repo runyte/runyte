@@ -36,8 +36,8 @@ pub(super) const NUDGE_QUIET: Duration = Duration::from_secs(30);
 /// Between a nudge's paste reaching the terminal and its Enter, so the child
 /// reads the two apart rather than as one burst it might take for a paste.
 const NUDGE_ENTER_DELAY: Duration = Duration::from_millis(250);
-/// How often a held nudge looks again at what holds it.
-const NUDGE_RECHECK: Duration = Duration::from_secs(1);
+/// How often a nudge being typed looks for its paste to be written.
+const NUDGE_POLL: Duration = Duration::from_millis(50);
 
 /// A nudge a terminal has outstanding. It stays until its participant reads
 /// the channel, so a terminal is nudged at most once per read.
@@ -46,6 +46,9 @@ pub(super) struct Nudge {
     /// The sender's nickname, for the notification.
     from: String,
     phase: NudgePhase,
+    /// The participant read the channel while this was being typed, so it
+    /// ends once its Enter is sent rather than waiting for another read.
+    read: bool,
 }
 
 enum NudgePhase {
@@ -125,23 +128,24 @@ impl WorkspaceHost {
                     now_ms,
                 )?;
                 if nudge.is_none() {
-                    return self.context_channel_posted(json!({"seq":posted.seq}));
+                    Ok(json!({"seq":posted.seq}))
+                } else {
+                    let from = self
+                        .context
+                        .channel
+                        .joined(connection)
+                        .map(|p| p.nick.clone())
+                        .unwrap_or_default();
+                    let nudges = posted
+                        .nudge
+                        .iter()
+                        .map(|participant| {
+                            let state = self.context_nudge(&from, participant);
+                            json!({"participant":participant,"nick":self.context.channel.nick(participant),"state":state})
+                        })
+                        .collect::<Vec<_>>();
+                    Ok(json!({"seq":posted.seq,"nudges":nudges}))
                 }
-                let from = self
-                    .context
-                    .channel
-                    .joined(connection)
-                    .map(|p| p.nick.clone())
-                    .unwrap_or_default();
-                let nudges = posted
-                    .nudge
-                    .iter()
-                    .map(|participant| {
-                        let state = self.context_nudge(&from, participant);
-                        json!({"participant":participant,"nick":self.context.channel.nick(participant),"state":state})
-                    })
-                    .collect::<Vec<_>>();
-                Ok(json!({"seq":posted.seq,"nudges":nudges}))
             }
             Request::ChannelRead { since, limit } => {
                 let read = self.context.channel.read(connection, since, limit)?;
@@ -155,7 +159,11 @@ impl WorkspaceHost {
                     .map(|p| p.id.clone())
                 {
                     self.context.nudges.retain(|_, nudge| {
-                        nudge.participant != me || matches!(nudge.phase, NudgePhase::Pasting { .. })
+                        if nudge.participant != me {
+                            return true;
+                        }
+                        nudge.read = true;
+                        matches!(nudge.phase, NudgePhase::Pasting { .. })
                     });
                 }
                 let messages = read
@@ -182,19 +190,16 @@ impl WorkspaceHost {
         result
     }
 
-    fn context_channel_posted(&mut self, value: Value) -> Result<Value, Error> {
-        self.context_channel_changed();
-        Ok(value)
-    }
-
     /// Asks for a nudge of `participant` and says what became of it: `sent`
     /// once its line is queued, `held` while the terminal is not ready,
     /// `already_pending` when the terminal has one outstanding, and
     /// `unavailable` for every reason it cannot be nudged at all, which the
     /// sender is not told apart.
+    ///
+    /// Runs while the sender's own reader is out of the host's table, so it
+    /// moves on only the nudge it adds: any other nudge, the sender's own
+    /// included, waits for `sync_context`, where every reader is in place.
     fn context_nudge(&mut self, from: &str, participant: &str) -> &'static str {
-        // Drops outstanding nudges whose participant can no longer be reached.
-        self.context_channel_nudges();
         let Some(terminal) = self.context_nudge_target(participant) else {
             return "unavailable";
         };
@@ -209,20 +214,22 @@ impl WorkspaceHost {
         if self.context.nudges.contains_key(&terminal) {
             return "already_pending";
         }
-        self.context.nudges.insert(
-            terminal,
-            Nudge {
-                participant: participant.to_owned(),
-                from: from.to_owned(),
-                phase: NudgePhase::Held,
-            },
-        );
-        self.context_channel_nudges();
-        match self.context.nudges.get(&terminal).map(|n| &n.phase) {
-            Some(NudgePhase::Held) => "held",
-            Some(_) => "sent",
+        let nudge = Nudge {
+            participant: participant.to_owned(),
+            from: from.to_owned(),
+            phase: NudgePhase::Held,
+            read: false,
+        };
+        if let Some(nudge) = self.context_advance_nudge(terminal, nudge, Instant::now()) {
+            let state = match nudge.phase {
+                NudgePhase::Held => "held",
+                _ => "sent",
+            };
+            self.context.nudges.insert(terminal, nudge);
+            state
+        } else {
             // Refused by the terminal as it was typed.
-            None => "unavailable",
+            "unavailable"
         }
     }
 
@@ -249,111 +256,151 @@ impl WorkspaceHost {
         let terminals = self.context.nudges.keys().copied().collect::<Vec<_>>();
         for terminal in terminals {
             let nudge = self.context.nudges.remove(&terminal).expect("listed nudge");
-            if self.context_nudge_target(&nudge.participant) != Some(terminal) {
-                if let NudgePhase::Pasting { delivery, .. } = &nudge.phase {
-                    delivery.cancel();
-                }
-                continue;
+            if let Some(nudge) = self.context_advance_nudge(terminal, nudge, now) {
+                self.context.nudges.insert(terminal, nudge);
             }
-            let id = TerminalId::from_raw(terminal);
-            let proposed = self.context_terminal_proposed(id);
-            let Some(session) = self.app.terminals.get_mut(id) else {
-                continue;
-            };
-            let phase = match nudge.phase {
-                NudgePhase::Held => {
-                    let typing = session
-                        .typed_at()
-                        .is_some_and(|typed| now.duration_since(typed) < NUDGE_QUIET);
-                    if typing
-                        || session.has_draft()
-                        || proposed
-                        || !session.proposal_input_signature().modes.bracketed_paste
-                    {
-                        NudgePhase::Held
-                    } else {
-                        let text = Text::new(NUDGE_TEXT).expect("valid nudge text");
-                        match session.paste_nudge(&text) {
-                            Ok((delivery, generation)) => NudgePhase::Pasting {
-                                delivery,
-                                generation,
-                                written: None,
-                            },
-                            Err(_) => continue,
-                        }
-                    }
-                }
-                NudgePhase::Pasting {
-                    delivery,
-                    generation,
-                    written,
-                } => match (delivery.state(), written) {
-                    (DeliveryState::Queued | DeliveryState::Writing, _) => NudgePhase::Pasting {
-                        delivery,
-                        generation,
-                        written,
-                    },
-                    (DeliveryState::Delivered, None) => NudgePhase::Pasting {
-                        delivery,
-                        generation,
-                        written: Some(now),
-                    },
-                    (DeliveryState::Delivered, Some(at))
-                        if now.duration_since(at) < NUDGE_ENTER_DELAY =>
-                    {
-                        NudgePhase::Pasting {
-                            delivery,
-                            generation,
-                            written,
-                        }
-                    }
-                    (DeliveryState::Delivered, Some(_)) => {
-                        if !session.submit_nudge(generation) {
-                            continue;
-                        }
-                        let target = match session.number() {
-                            Some(number) => format!("terminal #{number}"),
-                            None => "a terminal".to_owned(),
-                        };
-                        let to = self
-                            .context
-                            .channel
-                            .nick(&nudge.participant)
-                            .unwrap_or("?")
-                            .to_owned();
-                        // Enter reached an agent's prompt on someone else's
-                        // request; say so where it can be traced afterwards.
-                        self.app.push_notification(NotificationDraft::new(
-                            NotificationSeverity::Info,
-                            "Agent channel",
-                            "Channel nudge sent",
-                            format!(
-                                "{} nudged {} in {target} to read the agent channel.",
-                                visible(&nudge.from),
-                                visible(&to),
-                            ),
-                        ));
-                        NudgePhase::Sent
-                    }
-                    // Typing cancelled it, or its outcome is unknown.
-                    _ => continue,
-                },
-                NudgePhase::Sent => NudgePhase::Sent,
-            };
-            self.context
-                .nudges
-                .insert(terminal, Nudge { phase, ..nudge });
         }
     }
 
-    /// When outstanding nudges next need looking at.
-    pub(super) fn context_nudge_delay(&self) -> Option<Duration> {
+    /// One nudge's next step, or none once it has nothing left to do.
+    fn context_advance_nudge(
+        &mut self,
+        terminal: u64,
+        nudge: Nudge,
+        now: Instant,
+    ) -> Option<Nudge> {
+        if self.context_nudge_target(&nudge.participant) != Some(terminal) {
+            if let NudgePhase::Pasting { delivery, .. } = &nudge.phase {
+                delivery.cancel();
+            }
+            return None;
+        }
+        let id = TerminalId::from_raw(terminal);
+        let proposed = self.context_terminal_proposed(id);
+        let session = self.app.terminals.get_mut(id)?;
+        let phase = match nudge.phase {
+            NudgePhase::Held => {
+                let typing = session
+                    .typed_at()
+                    .is_some_and(|typed| now.duration_since(typed) < NUDGE_QUIET);
+                if typing
+                    || session.has_draft()
+                    || proposed
+                    || !session.proposal_input_signature().modes.bracketed_paste
+                {
+                    NudgePhase::Held
+                } else {
+                    let text = Text::new(NUDGE_TEXT).expect("valid nudge text");
+                    let (delivery, generation) = session.paste_nudge(&text).ok()?;
+                    NudgePhase::Pasting {
+                        delivery,
+                        generation,
+                        written: None,
+                    }
+                }
+            }
+            NudgePhase::Pasting {
+                delivery,
+                generation,
+                written,
+            } => match (delivery.state(), written) {
+                (DeliveryState::Queued | DeliveryState::Writing, _) => NudgePhase::Pasting {
+                    delivery,
+                    generation,
+                    written,
+                },
+                (DeliveryState::Delivered, None) => NudgePhase::Pasting {
+                    delivery,
+                    generation,
+                    written: Some(now),
+                },
+                (DeliveryState::Delivered, Some(at))
+                    if now.duration_since(at) < NUDGE_ENTER_DELAY =>
+                {
+                    NudgePhase::Pasting {
+                        delivery,
+                        generation,
+                        written,
+                    }
+                }
+                (DeliveryState::Delivered, Some(_)) if session.submit_nudge(generation) => {
+                    let target = match session.number() {
+                        Some(number) => format!("terminal #{number}"),
+                        None => "a terminal".to_owned(),
+                    };
+                    let to = self
+                        .context
+                        .channel
+                        .nick(&nudge.participant)
+                        .unwrap_or("?")
+                        .to_owned();
+                    // Enter reached an agent's prompt on someone else's
+                    // request; say so where it can be traced afterwards.
+                    self.app.push_notification(NotificationDraft::new(
+                        NotificationSeverity::Info,
+                        "Agent channel",
+                        "Channel nudge sent",
+                        format!(
+                            "{} nudged {} in {target} to read the agent channel.",
+                            visible(&nudge.from),
+                            visible(&to),
+                        ),
+                    ));
+                    self.app.plugins.presentation_dirty = true;
+                    NudgePhase::Sent
+                }
+                // Typing cancelled the paste before any of it was written,
+                // so the nudge waits again as if it had never started.
+                (DeliveryState::Cancelled, _) => NudgePhase::Held,
+                // Other input reached the terminal after the line, or how
+                // much of it was written is unknown. Either way the line may
+                // sit there without its Enter: treat it like the person's
+                // unsubmitted text, and keep the nudge outstanding so the
+                // terminal gets no second line before its agent reads.
+                _ => {
+                    session.note_draft();
+                    NudgePhase::Sent
+                }
+            },
+            NudgePhase::Sent => NudgePhase::Sent,
+        };
+        if nudge.read && matches!(phase, NudgePhase::Sent) {
+            return None;
+        }
+        Some(Nudge { phase, ..nudge })
+    }
+
+    /// The phase of the nudge `terminal` has outstanding, by name.
+    #[cfg(test)]
+    pub(super) fn context_nudge_phase(&self, terminal: TerminalId) -> Option<&'static str> {
         self.context
             .nudges
-            .values()
-            .filter_map(|nudge| match nudge.phase {
-                NudgePhase::Held => Some(NUDGE_RECHECK),
-                NudgePhase::Pasting { .. } => Some(Duration::from_millis(50)),
+            .get(&terminal.get())
+            .map(|nudge| match nudge.phase {
+                NudgePhase::Held => "held",
+                NudgePhase::Pasting { written: None, .. } => "pasting",
+                NudgePhase::Pasting { .. } => "written",
+                NudgePhase::Sent => "sent",
+            })
+    }
+
+    /// When outstanding nudges next need looking at. Typing, a submitted
+    /// line, a proposal's end and a change of paste mode each wake the event
+    /// loop by themselves, so a held nudge needs a timer only for the end of
+    /// its quiet interval.
+    pub(super) fn context_nudge_delay(&self) -> Option<Duration> {
+        let now = Instant::now();
+        self.context
+            .nudges
+            .iter()
+            .filter_map(|(terminal, nudge)| match nudge.phase {
+                NudgePhase::Held => self
+                    .app
+                    .terminals
+                    .get(TerminalId::from_raw(*terminal))
+                    .and_then(|session| session.typed_at())
+                    .map(|typed| (typed + NUDGE_QUIET).saturating_duration_since(now)),
+                NudgePhase::Pasting { .. } => Some(NUDGE_POLL),
                 NudgePhase::Sent => None,
             })
             .min()

@@ -300,7 +300,7 @@ The reply adds `nudges`, one entry per name with its `participant`, `nick` and
 
 | State | Meaning |
 | --- | --- |
-| `sent` | The line was queued for the terminal; Enter follows once it is written |
+| `sent` | The line was queued for the terminal; Enter follows unless other input reaches the terminal first, which leaves the line for the person |
 | `held` | The person may be typing there; it is sent when they stop |
 | `already_pending` | That terminal was nudged and its agent has not read the channel since |
 | `unavailable` | It cannot be nudged, for a reason the sender is not told |
@@ -310,13 +310,16 @@ connected, its terminal is verified (Unix integrated terminals of a persistent
 session), and that terminal is reading pastes. A held nudge waits while the
 line may hold unsubmitted text, for 30 seconds after the person's last
 keystroke there, and while a terminal proposal for it is waiting. A terminal
-has at most one nudge outstanding; the participant's next read clears it. The
+has at most one nudge outstanding; the participant's next read clears it, or,
+for a nudge still being typed, its Enter does. The
 person sees a notification for each nudge sent. A host that predates nudges
 does not offer them, and a post asking for one is refused as `unsupported`.
 
 Nudge only a participant that must act on the message and is probably waiting
 at its prompt. If that agent shows an approval prompt when the nudge arrives,
-Enter may answer it; the person accepts that risk by granting `7`.
+Enter may answer it; the person accepts that risk by granting `7`. A sender that
+can also read the recipient's terminal could time a nudge for such a prompt, so
+grant `7` only to identities whose peers you trust that far.
 
 ## Migrating from Python
 

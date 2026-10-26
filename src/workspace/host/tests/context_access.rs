@@ -1495,3 +1495,304 @@ async fn a_requested_nudge_types_one_fixed_line_and_enter_once_the_person_stops_
     );
     assert_eq!(states(&gone), ["unavailable"]);
 }
+
+/// Agents at line-editor prompts in their own verified terminals, with each
+/// terminal's output kept apart.
+#[cfg(unix)]
+struct Prompts {
+    output: crate::terminal::TerminalEvents,
+    bytes: BTreeMap<TerminalId, Vec<u8>>,
+    launch: crate::workspace::parent::ParentLaunch,
+}
+
+#[cfg(unix)]
+impl Prompts {
+    fn new(host: &mut WorkspaceHost) -> Self {
+        let launch = crate::workspace::parent::ParentLaunch::new(
+            &host.app.project_root.join("endpoint.json"),
+        )
+        .unwrap();
+        host.app.terminals.set_parent_launch(launch.clone());
+        Self {
+            output: host.take_terminal_events().unwrap(),
+            bytes: BTreeMap::new(),
+            launch,
+        }
+    }
+
+    /// Opens a terminal whose program reports every submitted line, reading
+    /// pastes when `paste` says so, and joins `connection` from inside it.
+    async fn open(
+        &mut self,
+        host: &mut WorkspaceHost,
+        connection: u64,
+        provider: &str,
+        paste: bool,
+    ) -> TerminalId {
+        let mode = if paste { "printf '\\033[?2004h'; " } else { "" };
+        let terminal = host
+            .app
+            .terminals
+            .open(
+                crate::terminal::TerminalRequest {
+                    program: "/bin/sh".into(),
+                    arguments: vec![
+                        "-c".into(),
+                        format!("stty -echo; {mode}printf READY; while IFS= read -r line; do printf 'SUBMITTED:%s;' \"$line\"; done"),
+                    ],
+                    directory: host.app.project_root.clone(),
+                    label: provider.into(),
+                },
+                80,
+                10,
+            )
+            .unwrap();
+        self.wait(host, terminal, "READY").await;
+        let parent: crate::workspace::parent::ParentContext =
+            serde_json::from_str(&self.launch.context(terminal)).unwrap();
+        let process = host.app.terminals.get(terminal).unwrap().process_id();
+        host.context.peers.insert(connection, process);
+        let joined = request(
+            host,
+            connection,
+            "join",
+            "channel.join",
+            json!({"provider":provider,"task":"work","location":{"directory":"/work"},
+                "terminal":{"terminal":terminal.get(),"capability":parent.capability}}),
+        );
+        assert!(
+            joined["result"]["participant"]["terminal"].is_object(),
+            "{joined}"
+        );
+        terminal
+    }
+
+    fn text(&self, terminal: TerminalId) -> String {
+        String::from_utf8_lossy(self.bytes.get(&terminal).map_or(&[][..], Vec::as_slice))
+            .into_owned()
+    }
+
+    /// Moves the host on as its event loop would until `terminal` printed
+    /// `needle`.
+    async fn wait(&mut self, host: &mut WorkspaceHost, terminal: TerminalId, needle: &str) {
+        let found = tokio::time::timeout(Duration::from_secs(5), async {
+            while !self.text(terminal).contains(needle) {
+                self.step(host).await;
+            }
+        })
+        .await;
+        assert!(found.is_ok(), "no {needle:?} in {:?}", self.text(terminal));
+    }
+
+    async fn step(&mut self, host: &mut WorkspaceHost) {
+        host.sync_context();
+        if let Ok(Some(event)) =
+            tokio::time::timeout(Duration::from_millis(20), self.output.recv()).await
+        {
+            if let crate::terminal::TerminalOutput::Bytes { id, bytes } = &event {
+                self.bytes.entry(*id).or_default().extend(bytes);
+            }
+            host.app.terminals.apply(event);
+        }
+    }
+
+    /// Runs the host for `period`, for checking that nothing happens.
+    async fn idle(&mut self, host: &mut WorkspaceHost, period: Duration) {
+        let until = tokio::time::Instant::now() + period;
+        while tokio::time::Instant::now() < until {
+            self.step(host).await;
+        }
+    }
+}
+
+#[cfg(unix)]
+fn nudge_post(host: &mut WorkspaceHost, from: u64, id: &str, params: Value) -> Value {
+    let mut params = params;
+    params["location"] = json!({"directory":"/work"});
+    let reply = request(host, from, id, "channel.post", params);
+    assert!(reply.get("error").is_none(), "{reply}");
+    reply["result"]["nudges"][0]["state"].clone()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn nudges_wait_for_proposals_survive_their_senders_posts_and_never_send_a_stray_enter() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(
+        &mut host,
+        &identity,
+        [
+            Scope::TerminalRead,
+            Scope::TerminalPropose,
+            Scope::AgentChannel,
+            Scope::ChannelNudge,
+        ]
+        .into(),
+    );
+    for connection in 1..=3 {
+        frame(
+            &mut host,
+            connection,
+            json!({"type":"authenticate","credential":identity.credential()}),
+        );
+        let registered = frame(
+            &mut host,
+            connection,
+            json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"fixture","commands":[],"required_capabilities":["agent_channel"],"optional_capabilities":["terminal_read","terminal_propose"],"required_features":[wire::FEATURE],"optional_features":[wire::CHANNEL_FEATURE,wire::NUDGE_FEATURE]}),
+        );
+        assert_eq!(registered.value["type"], "registered");
+    }
+    let mut prompts = Prompts::new(&mut host);
+    let claude = prompts.open(&mut host, 1, "claude", true).await;
+    let codex = prompts.open(&mut host, 2, "codex", true).await;
+    let pager = prompts.open(&mut host, 3, "gemini", false).await;
+    let line = format!(
+        "SUBMITTED:\x1b[200~{}\x1b[201~;",
+        super::super::context_channel::NUDGE_TEXT
+    );
+
+    // A terminal that is not reading pastes would take the line as keys.
+    assert_eq!(
+        nudge_post(&mut host, 1, "p1", json!({"text":"x","nudge":["gemini-1"]})),
+        "unavailable"
+    );
+    assert_eq!(host.context_nudge_phase(pager), None);
+
+    // A proposal waiting for the person holds the nudge, and so does the
+    // person's draft; a second request while held is already pending.
+    let list = request(
+        &mut host,
+        1,
+        "list",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    let handle = list["result"]["terminals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["title"].as_str().is_some_and(|t| t.contains("claude")))
+        .unwrap()["terminal"]
+        .clone();
+    let proposed = request(
+        &mut host,
+        1,
+        "propose",
+        "terminal.input.propose",
+        json!({"terminal":handle,"text":"echo hi"}),
+    );
+    assert_eq!(proposed["result"]["state"], "pending");
+    let unread = host
+        .context
+        .channel
+        .unread(&host.context.channel.joined(1).unwrap().id.clone());
+    assert_eq!(
+        nudge_post(
+            &mut host,
+            2,
+            "p2",
+            json!({"text":"for you","nudge":["claude-1"]})
+        ),
+        "held"
+    );
+    assert_eq!(
+        nudge_post(
+            &mut host,
+            3,
+            "p3",
+            json!({"text":"me too","nudge":["claude-1"]})
+        ),
+        "already_pending"
+    );
+    prompts.idle(&mut host, Duration::from_millis(400)).await;
+    assert_eq!(host.context_nudge_phase(claude), Some("held"));
+    assert!(!prompts.text(claude).contains(&line));
+    assert_eq!(
+        host.context
+            .channel
+            .unread(&host.context.channel.joined(1).unwrap().id.clone()),
+        unread + 2,
+        "a nudge moves no read state"
+    );
+
+    // The nudged agent posting with a nudge of its own keeps the one it is
+    // waiting for.
+    assert_eq!(
+        nudge_post(
+            &mut host,
+            1,
+            "p4",
+            json!({"text":"back at you","to":"codex-1","nudge":["codex-1"]})
+        ),
+        "sent"
+    );
+    assert_eq!(host.context_nudge_phase(claude), Some("held"));
+    prompts.wait(&mut host, codex, &line).await;
+
+    // Reading discards a held nudge.
+    request(
+        &mut host,
+        1,
+        "read",
+        "channel.read",
+        json!({"since":0,"limit":200}),
+    );
+    assert_eq!(host.context_nudge_phase(claude), None);
+
+    // Input between the line and its Enter keeps the Enter back: the line is
+    // then the person's to submit, and stays outstanding until a read.
+    request(
+        &mut host,
+        2,
+        "read",
+        "channel.read",
+        json!({"since":0,"limit":200}),
+    );
+    assert_eq!(
+        nudge_post(
+            &mut host,
+            1,
+            "p5",
+            json!({"text":"again","nudge":["codex-1"]})
+        ),
+        "sent"
+    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while host.context_nudge_phase(codex) != Some("written") {
+            prompts.step(&mut host).await;
+        }
+    })
+    .await
+    .unwrap();
+    let session = host.app.terminals.get_mut(codex).unwrap();
+    assert!(session.send_key(KeyStroke::char('y')));
+    session.backdate_typing(super::super::context_channel::NUDGE_QUIET * 2);
+    prompts.idle(&mut host, Duration::from_millis(600)).await;
+    assert_eq!(prompts.text(codex).matches(&line).count(), 1, "no Enter");
+    assert_eq!(host.context_nudge_phase(codex), Some("sent"));
+    assert!(host.app.terminals.get(codex).unwrap().has_draft());
+    assert_eq!(
+        nudge_post(
+            &mut host,
+            1,
+            "p6",
+            json!({"text":"ping","nudge":["codex-1"]})
+        ),
+        "already_pending"
+    );
+
+    // Revoking the grant ends a held nudge with the reader it belonged to.
+    assert_eq!(
+        nudge_post(
+            &mut host,
+            2,
+            "p7",
+            json!({"text":"held","nudge":["claude-1"]})
+        ),
+        "held"
+    );
+    host.context_disconnect(1);
+    host.sync_context();
+    assert_eq!(host.context_nudge_phase(claude), None);
+    assert_eq!(host.context_nudge_delay(), None, "nothing left to time");
+}

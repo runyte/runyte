@@ -6007,16 +6007,23 @@ The terminal must be reading pastes, as agent prompts do.
 A nudge waits while you may be typing there: while the line holds text you
 typed or pasted, or an agent's proposal inserted, and nothing submitted it with
 Enter or abandoned it with `Ctrl-c`; for 30 seconds after your last keystroke in
-that terminal; and while a terminal proposal for it is waiting. A terminal gets
-at most one nudge until its agent reads the channel again. Each nudge leaves a
-notification naming the sender, the participant and the terminal.
+that terminal; and while a terminal proposal for it is waiting. Alt-Enter does
+not count as submitting, since prompts use it for a new line, but Runyte cannot
+tell when a program continues a line itself, as after a trailing `\` or an
+unclosed quote, and then counts Enter as submitting. If anything reaches the
+terminal between the nudge's line and its Enter, the Enter is not sent and the
+line waits for you like your own text. A terminal gets at most one nudge until
+its agent reads the channel again. Each nudge leaves a notification naming the
+sender, the participant and the terminal.
 
 Grant `7` only where an unexpected Enter is acceptable. If the agent is showing
 an approval prompt when the nudge arrives, Enter may choose the highlighted
 option, which is often approval. The waits above make this less likely but do
 not prevent it; Runyte does not read the screen to guess. Inside tmux, zellij or
 screen the paste mode is the multiplexer's, as with `5`. `7` cannot be given by
-`mcp.default_grants`.
+`mcp.default_grants`. A remembered grant that includes `7` cannot be read by an
+earlier Runyte release, which then loads no remembered grants for that
+workspace; reapply them there with `:mcp` after going back.
 
 An opt-in [SQLite channel trial](mcp.md#experimental-sqlite-channel-trial)
 adds durable public and fixed-group conversations through a separate MCP tool.

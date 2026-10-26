@@ -449,14 +449,21 @@ impl Channel {
         let mut nudged = Vec::with_capacity(nudge.len());
         for target in nudge {
             let id = self.find(target)?.id.clone();
+            // The name was checked as a context identifier, so it is plain.
+            let refuse = |why: &str| {
+                Err(Error::new(
+                    ErrorCode::InvalidArgument,
+                    &format!("Cannot nudge {target}: {why}; nothing was posted"),
+                ))
+            };
             if id == from {
-                return Err(invalid("A nudge goes to someone else"));
+                return refuse("a nudge goes to someone else");
             }
             if to.as_ref().is_some_and(|to| *to != id) {
-                return Err(invalid("A direct message can nudge only its recipient"));
+                return refuse("a direct message can nudge only its recipient");
             }
             if nudged.contains(&id) {
-                return Err(invalid("Name each participant to nudge once"));
+                return refuse("it is named twice");
             }
             nudged.push(id);
         }
@@ -469,7 +476,12 @@ impl Channel {
         self.participants
             .values()
             .find(|p| p.id == target || p.nick == target)
-            .ok_or_else(|| Error::new(ErrorCode::NotFound, "No such participant"))
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorCode::NotFound,
+                    &format!("No participant {target}; nothing was posted"),
+                )
+            })
     }
 
     pub fn read(&mut self, connection: u64, since: u64, limit: usize) -> Result<Read, Error> {
