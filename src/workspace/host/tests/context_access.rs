@@ -1472,6 +1472,11 @@ async fn a_requested_nudge_types_one_fixed_line_and_enter_once_the_person_stops_
         .get_mut(terminal)
         .unwrap()
         .backdate_typing(super::super::context_channel::NUDGE_QUIET * 2);
+    assert_eq!(
+        host.context_nudge_delay(),
+        Some(Duration::ZERO),
+        "a nudge whose interval ended before a pass ran is due, not untimed"
+    );
     pump_until(
         &mut host,
         &mut output,

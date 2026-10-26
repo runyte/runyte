@@ -406,8 +406,9 @@ impl WorkspaceHost {
                     {
                         return None;
                     }
-                    let quiet = session.typed_at()? + NUDGE_QUIET;
-                    (quiet > now).then(|| quiet - now)
+                    // Due already when this pass began just short of it: the
+                    // next pass types it rather than leaving it untimed.
+                    Some((session.typed_at()? + NUDGE_QUIET).saturating_duration_since(now))
                 }
                 NudgePhase::Pasting { .. } => Some(NUDGE_POLL),
                 NudgePhase::Sent => None,
