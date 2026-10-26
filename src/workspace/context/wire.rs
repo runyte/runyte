@@ -17,6 +17,9 @@ pub const FEATURE: &str = "runyte.context.v1";
 /// asks for `agent_channel` only from a host that knows it.
 pub const DURABLE_FEATURE: &str = "runyte.context.channel.durable.v1";
 pub const CHANNEL_FEATURE: &str = "runyte.context.channel.v1";
+/// Hosts that accept `nudge` on `channel.post` name this in their hello, so a
+/// client sends the field only to a host that will not refuse it as unknown.
+pub const NUDGE_FEATURE: &str = "runyte.context.channel.nudge.v1";
 pub const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_READERS: usize = 8;
 pub const MAX_REQUESTS: usize = 16;
@@ -94,6 +97,10 @@ pub enum Scope {
     TerminalInsert,
     /// Join the workspace's agent channel, read it and post to it.
     AgentChannel,
+    /// A grant setting like `TerminalInsert`: an agent of this identity in a
+    /// verified terminal may be nudged there by a sender that asks for it,
+    /// which types one fixed line and Enter. Never negotiated.
+    ChannelNudge,
 }
 
 impl Scope {
@@ -105,6 +112,7 @@ impl Scope {
             Self::TerminalPropose => "terminal_propose",
             Self::TerminalInsert => "terminal_insert",
             Self::AgentChannel => "agent_channel",
+            Self::ChannelNudge => "channel_nudge",
         }
     }
     pub fn from_capability(value: &str) -> Option<Self> {
@@ -114,7 +122,7 @@ impl Scope {
             "buffer_edit" => Some(Self::BufferEdit),
             "terminal_propose" => Some(Self::TerminalPropose),
             "agent_channel" => Some(Self::AgentChannel),
-            // Never negotiated; see `TerminalInsert`.
+            // Never negotiated; see `TerminalInsert` and `ChannelNudge`.
             _ => None,
         }
     }
@@ -124,6 +132,7 @@ pub fn validate_scopes(scopes: &BTreeSet<Scope>) -> Result<(), Error> {
     if (scopes.contains(&Scope::BufferEdit) && !scopes.contains(&Scope::EditorContextRead))
         || (scopes.contains(&Scope::TerminalPropose) && !scopes.contains(&Scope::TerminalRead))
         || (scopes.contains(&Scope::TerminalInsert) && !scopes.contains(&Scope::TerminalPropose))
+        || (scopes.contains(&Scope::ChannelNudge) && !scopes.contains(&Scope::AgentChannel))
     {
         return Err(Error::new(
             ErrorCode::CapabilityDenied,
@@ -370,6 +379,10 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<String>,
         location: super::channel::Location,
+        /// Participants the sender asks to nudge; only from a reader that
+        /// negotiated `NUDGE_FEATURE`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        nudge: Option<Vec<String>>,
     },
     #[serde(rename = "channel.read")]
     ChannelRead { since: u64, limit: usize },
@@ -569,7 +582,9 @@ impl Request {
                     identifier(resume)?;
                 }
             }
-            Self::ChannelPost { text, to, .. } => {
+            Self::ChannelPost {
+                text, to, nudge, ..
+            } => {
                 if text.len() > super::channel::MAX_TEXT_BYTES {
                     return Err(Error::new(
                         ErrorCode::LimitExceeded,
@@ -578,6 +593,14 @@ impl Request {
                 }
                 if let Some(to) = to {
                     identifier(to)?;
+                }
+                if let Some(nudge) = nudge {
+                    if nudge.is_empty() || nudge.len() >= super::channel::MAX_PARTICIPANTS {
+                        return Err(invalid("Nudge names 1 to 63 participants"));
+                    }
+                    for participant in nudge {
+                        identifier(participant)?;
+                    }
                 }
             }
             Self::ChannelRead { limit, .. } => page(0, *limit, super::channel::MAX_READ)?,

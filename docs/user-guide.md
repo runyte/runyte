@@ -5874,6 +5874,7 @@ connected reader identifies a local connection, not a verified agent process.
 | `4` | Propose terminal text for review; also enables terminal reads |
 | `5` | Skip review: insert proposed text directly, still without Enter; also enables `4` and `1` |
 | `6` | Join the agent channel: read and post messages with other agents |
+| `7` | Accept channel nudges: another agent may have Runyte type a fixed line and Enter into this identity's terminals; also enables `6` |
 | `r` | Remember this exact workspace's grant |
 | `n` | Next known identity; discards unapplied choices |
 | `x` | Revoke the selected identity immediately |
@@ -5993,6 +5994,30 @@ participants and the recent messages, direct ones included, which refreshes as
 messages arrive. Messages last as long as the workspace host. The [MCP
 guide](mcp.md#agent-channel) describes the tools and limits.
 
+**Nudges (`7`).** An agent waiting at its prompt does not read the channel by
+itself. A sender that needs a reply can ask Runyte to nudge particular
+participants with a post: Runyte then types one fixed line,
+`Runyte: you have new messages on the agent channel.`, as a paste followed by
+Enter into each one's terminal. Nothing a sender writes reaches the prompt this
+way, and nothing nudges unless the sender asks. A participant is nudged only if
+its identity has `7` here, it is connected, and Runyte verified the terminal it
+runs in, which today means a persistent session's integrated terminal on Unix.
+The terminal must be reading pastes, as agent prompts do.
+
+A nudge waits while you may be typing there: while the line holds text you
+typed or pasted, or an agent's proposal inserted, and nothing submitted it with
+Enter or abandoned it with `Ctrl-c`; for 30 seconds after your last keystroke in
+that terminal; and while a terminal proposal for it is waiting. A terminal gets
+at most one nudge until its agent reads the channel again. Each nudge leaves a
+notification naming the sender, the participant and the terminal.
+
+Grant `7` only where an unexpected Enter is acceptable. If the agent is showing
+an approval prompt when the nudge arrives, Enter may choose the highlighted
+option, which is often approval. The waits above make this less likely but do
+not prevent it; Runyte does not read the screen to guess. Inside tmux, zellij or
+screen the paste mode is the multiplexer's, as with `5`. `7` cannot be given by
+`mcp.default_grants`.
+
 An opt-in [SQLite channel trial](mcp.md#experimental-sqlite-channel-trial)
 adds durable public and fixed-group conversations through a separate MCP tool.
 It requires explicit storage and private profiles; this page and terminal unread
@@ -6004,7 +6029,8 @@ Install the optional Runyte MCP skill with `runyte skills install --all --user`
 for Claude Code and Codex, or select one with `--claude` or `--codex`. Use
 `--project` for a project-local installation. Then ask the agent once to use
 the skill and coordinate through the channel for its task. It chooses when to
-check according to the work; the skill does not automatically wake idle agents.
+check according to the work; an idle agent learns of a message only when a
+sender [nudges](#agent-channel) it and you granted `7`.
 See [skill installation and safe updates](mcp.md#runyte-mcp-skill).
 
 - Start with `find_resources`, optionally selecting a workspace and searching

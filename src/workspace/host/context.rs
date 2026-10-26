@@ -36,6 +36,8 @@ pub(super) struct State {
     pub(super) channel: crate::workspace::context::channel::Channel,
     /// The channel revision the open `[agent channel]` page last showed.
     pub(super) channel_page_revision: u64,
+    /// The channel nudge each terminal has outstanding, by terminal id.
+    pub(super) nudges: BTreeMap<u64, super::context_channel::Nudge>,
     /// The process behind each connection, where the transport knows it.
     pub(super) peers: BTreeMap<u64, Option<u32>>,
     storage: Option<Arc<Storage>>,
@@ -95,6 +97,8 @@ struct InitialGrants {
 struct Reader {
     fingerprint: String,
     durable: bool,
+    /// Negotiated `wire::NUDGE_FEATURE`, so its posts may ask for nudges.
+    nudge: bool,
     identity: String,
     granted: BTreeSet<Scope>,
     scopes: BTreeSet<Scope>,
@@ -571,6 +575,9 @@ impl WorkspaceHost {
                 Detail::note(
                     "5 trusts a terminal's paste mode to mean its program reads pastes as text. Inside tmux, zellij or screen that mode is the multiplexer's, so do not use 5 there.",
                 ),
+                Detail::note(
+                    "7 lets another agent's post type one fixed line and Enter into this identity's terminals, 30 seconds after you last typed there. If the agent is showing an approval prompt then, that Enter may approve it.",
+                ),
             ];
             if let Some(recent) = self.context.recent.back() {
                 explanation.push(Detail::excerpt("Last call", recent));
@@ -654,6 +661,7 @@ impl WorkspaceHost {
                 };
             }
         }
+        self.context_channel_nudges();
         if self
             .app
             .context_ui
@@ -1091,6 +1099,7 @@ impl WorkspaceHost {
                 Reader {
                     fingerprint,
                     durable: false,
+                    nudge: false,
                     identity: identity.name().to_owned(),
                     granted: scopes.clone(),
                     scopes: BTreeSet::new(),
@@ -1100,7 +1109,7 @@ impl WorkspaceHost {
                     requests: BTreeSet::new(),
                 },
             );
-            let mut features = vec![wire::FEATURE, wire::CHANNEL_FEATURE];
+            let mut features = vec![wire::FEATURE, wire::CHANNEL_FEATURE, wire::NUDGE_FEATURE];
             if self.context.durable_root.is_some() {
                 features.push(wire::DURABLE_FEATURE);
             }
@@ -1153,6 +1162,13 @@ impl WorkspaceHost {
                     .any(|feature| feature == wire::CHANNEL_FEATURE)
                 {
                     features.push(wire::CHANNEL_FEATURE);
+                }
+                reader.nudge = registration
+                    .required_features
+                    .union(&registration.optional_features)
+                    .any(|feature| feature == wire::NUDGE_FEATURE);
+                if reader.nudge {
+                    features.push(wire::NUDGE_FEATURE);
                 }
                 if registration
                     .required_features
@@ -1302,6 +1318,10 @@ impl WorkspaceHost {
                     }
                     None => Err(Error::new(Code::NotFound, "Unknown proposal")),
                 },
+                Request::ChannelPost { nudge: Some(_), .. } if !reader.nudge => Err(Error::new(
+                    Code::Unsupported,
+                    "Nudges were not negotiated on this connection",
+                )),
                 request @ (Request::ChannelJoin { .. }
                 | Request::ChannelPost { .. }
                 | Request::ChannelRead { .. }
@@ -1457,6 +1477,31 @@ impl WorkspaceHost {
                 return None;
             }
         }
+        let proposals = self.context_proposal_delay();
+        match (proposals, self.context_nudge_delay()) {
+            (Some(proposals), Some(nudges)) => Some(proposals.min(nudges)),
+            (proposals, nudges) => proposals.or(nudges),
+        }
+    }
+
+    /// Whether `connection` is a reader whose grant holds `scope`, negotiated
+    /// or not.
+    pub(super) fn context_granted(&self, connection: u64, scope: Scope) -> bool {
+        self.context
+            .readers
+            .get(&connection)
+            .is_some_and(|reader| reader.registered && reader.granted.contains(&scope))
+    }
+
+    /// Whether a proposal for `terminal` still waits for review or delivery.
+    pub(super) fn context_terminal_proposed(&self, terminal: TerminalId) -> bool {
+        self.context.proposals.values().any(|proposal| {
+            proposal.terminal == terminal
+                && matches!(proposal.status, "pending" | "queued" | "writing")
+        })
+    }
+
+    fn context_proposal_delay(&self) -> Option<Duration> {
         if self
             .context
             .proposals

@@ -176,6 +176,14 @@ pub struct Join<'a> {
     pub now_ms: u64,
 }
 
+/// What a post stored, and whom its sender asked to nudge.
+#[derive(Debug)]
+pub struct Posted {
+    pub seq: u64,
+    /// Participant ids, in the order the sender named them.
+    pub nudge: Vec<String>,
+}
+
 pub struct Read {
     pub messages: Vec<Message>,
     /// The sequence number to read from next.
@@ -397,14 +405,18 @@ impl Channel {
         true
     }
 
+    /// Stores a message. `nudge` names participants the sender wants told to
+    /// read the channel; a name this refuses refuses the whole post, so
+    /// nothing is stored that the sender would then retry.
     pub fn post(
         &mut self,
         connection: u64,
         to: Option<&str>,
         text: &str,
         location: Location,
+        nudge: &[String],
         now_ms: u64,
-    ) -> Result<u64, Error> {
+    ) -> Result<Posted, Error> {
         let from = self.joined(connection).ok_or_else(not_joined)?.id.clone();
         if text.trim().is_empty() {
             return Err(invalid("A message needs text"));
@@ -427,19 +439,37 @@ impl Channel {
         let to = match to {
             None => None,
             Some(target) => {
-                let found = self
-                    .participants
-                    .values()
-                    .find(|p| p.id == target || p.nick == target)
-                    .ok_or_else(|| Error::new(ErrorCode::NotFound, "No such participant"))?;
+                let found = self.find(target)?;
                 if found.id == from {
                     return Err(invalid("A direct message goes to someone else"));
                 }
                 Some(found.id.clone())
             }
         };
+        let mut nudged = Vec::with_capacity(nudge.len());
+        for target in nudge {
+            let id = self.find(target)?.id.clone();
+            if id == from {
+                return Err(invalid("A nudge goes to someone else"));
+            }
+            if to.as_ref().is_some_and(|to| *to != id) {
+                return Err(invalid("A direct message can nudge only its recipient"));
+            }
+            if nudged.contains(&id) {
+                return Err(invalid("Name each participant to nudge once"));
+            }
+            nudged.push(id);
+        }
         self.relocate(&from, location.clone(), now_ms);
-        Ok(self.record(Kind::Message, &from, to, text.to_owned(), location, now_ms))
+        let seq = self.record(Kind::Message, &from, to, text.to_owned(), location, now_ms);
+        Ok(Posted { seq, nudge: nudged })
+    }
+
+    fn find(&self, target: &str) -> Result<&Participant, Error> {
+        self.participants
+            .values()
+            .find(|p| p.id == target || p.nick == target)
+            .ok_or_else(|| Error::new(ErrorCode::NotFound, "No such participant"))
     }
 
     pub fn read(&mut self, connection: u64, since: u64, limit: usize) -> Result<Read, Error> {

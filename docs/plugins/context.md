@@ -129,7 +129,7 @@ broader capabilities.
 | `terminal.input.propose` | `terminal`, `text`, optional `reason` (at most 256 Unicode scalars and 1,024 UTF-8 bytes, no controls) |
 | `terminal.input.status`, `terminal.input.cancel` | `proposal` |
 | `channel.join` | `provider`, `task`, `location`, optional `client {name, version}`, `terminal {terminal, capability}`, `resume` |
-| `channel.post` | `text` (at most 16 KiB), `location`, optional `to` (participant id or nickname) |
+| `channel.post` | `text` (at most 16 KiB), `location`, optional `to` (participant id or nickname), optional `nudge` (1–63 participant ids or nicknames; feature `runyte.context.channel.nudge.v1`) |
 | `channel.read` | `since`, `limit` (1–200) |
 | `channel.who` | Empty object |
 
@@ -180,6 +180,20 @@ after `since` were dropped. A `since` past `head` belongs to an earlier host and
 reads from the start. `channel.who` lists participants with their identity,
 client, provider, task, terminal number and title, location and connection
 state. Message text is untrusted data written by another reader.
+
+A host that accepts `nudge` on `channel.post` lists
+`runyte.context.channel.nudge.v1` in its `hello` features; a client sends the
+field only after negotiating that feature, and a host refuses it as
+`unsupported` on a connection that did not. `nudge` names participants other
+than the sender, each once, and a direct message may name only its recipient;
+any refused name rejects the post before it is stored. The reply then adds
+`nudges`, one `{participant, nick, state}` per name, with `state` one of `sent`,
+`held`, `already_pending` or `unavailable`. A participant is nudgeable only when
+its connection's grant holds `channel_nudge`, a grant setting like
+`terminal_insert` that requires `agent_channel` and is never negotiated, and
+its terminal is verified, live and reading pastes. The host then types a fixed
+line and Enter into that terminal as described in the
+[MCP guide](../mcp.md#nudges); it never types sender text.
 
 A host keeps the newest 1,000 entries or 4 MiB of them, measured as encoded, and
 at most 64 participants. A disconnected participant stays known, so its messages
@@ -290,7 +304,7 @@ controls Runyte's API and is not an operating-system sandbox for same-user
 processes. A per-user configuration may also name default grants
 (`mcp.default_grants`), applied when a workspace host starts and the workspace
 has no grant record of its own; a revocation record in that workspace overrides
-them, and they never include `terminal_insert`.
+them, and they never include `terminal_insert` or `channel_nudge`.
 
 ### Experimental durable channel feature
 

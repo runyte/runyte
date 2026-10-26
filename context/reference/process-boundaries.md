@@ -87,7 +87,26 @@ distinct from the fuller context operation catalog. The agent channel
 (`agent_channel`, feature `runyte.context.channel.v1`) lets readers of one host
 exchange messages; the host verifies a participant's terminal from the
 capability Runyte handed that terminal's children and the connecting process's
-session, and treats every message as untrusted text. The
+session, and treats every message as untrusted text.
+
+Channel nudges (feature `runyte.context.channel.nudge.v1`) are the one path by
+which the host submits Enter into a terminal. A sender's `channel.post` may name
+participants to nudge; the host, not the sender, then types one fixed constant
+line as a bracketed paste and, after it is written, a single carriage return,
+into each named participant's verified terminal. Sender text never reaches the
+terminal. The authority belongs to the recipient: its identity's grant must
+include `channel_nudge`, a grant setting that is never negotiated, needs
+`agent_channel`, and is never a configured default. The host holds a nudge while
+the terminal's line may hold unsubmitted person or proposal input, for 30
+seconds after the person's last physical input, while a proposal for that
+terminal is outstanding, and while the terminal is not reading pastes. It drops
+the Enter if any other input reached the terminal after the paste. One nudge per
+terminal is outstanding until the participant reads. Runyte does not inspect the
+screen, so an approval prompt showing at that moment may receive the Enter; the
+grant description states this. Implementation: `src/workspace/host/context_channel.rs`
+and the typing record in `src/terminal/mod.rs`.
+
+The
 [context contract](../../docs/plugins/context.md) defines the profile and its
 bounds, and the MCP guide defines adapter discovery and usage.
 Implementation: `src/workspace/context/`, `src/workspace/host/context.rs`,

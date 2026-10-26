@@ -26,6 +26,8 @@ struct State {
     direct_insert: bool,
     /// The host advertises the agent channel.
     channel: bool,
+    /// It also advertises channel nudges.
+    nudge: bool,
     joins: Vec<Value>,
     posts: Vec<Value>,
 }
@@ -103,11 +105,16 @@ impl Host {
                         .await;
                         return;
                     }
-                    let channel = shared.lock().unwrap().channel;
-                    let features = if channel {
-                        json!([wire::FEATURE, wire::CHANNEL_FEATURE])
-                    } else {
-                        json!([wire::FEATURE])
+                    let (channel, nudge) = {
+                        let s = shared.lock().unwrap();
+                        (s.channel, s.nudge)
+                    };
+                    let features = match (channel, nudge) {
+                        (true, true) => {
+                            json!([wire::FEATURE, wire::CHANNEL_FEATURE, wire::NUDGE_FEATURE])
+                        }
+                        (true, false) => json!([wire::FEATURE, wire::CHANNEL_FEATURE]),
+                        _ => json!([wire::FEATURE]),
                     };
                     let hello = json!({"type":"hello","version":"runyte-1","host_version":"0.4.0","features":features,"workspace":record,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
                     if write_frame(socket.get_mut(), &hello, wire::MAX_FRAME_BYTES)
@@ -903,6 +910,62 @@ async fn a_channel_only_grant_keeps_its_connection_between_calls() {
         host.state.lock().unwrap().joins.len(),
         1,
         "no reconnect, so no rejoin"
+    );
+}
+
+#[tokio::test]
+async fn a_post_asks_for_nudges_only_from_a_host_that_offers_them() {
+    let host = Host::new();
+    {
+        let mut s = host.state.lock().unwrap();
+        s.channel = true;
+        s.scopes.insert("agent_channel".into());
+    }
+    let mut bridge = host.bridge();
+    bridge
+        .call("join_channel", json!({"provider":"claude","task":"review"}))
+        .await
+        .unwrap();
+    let refused = bridge
+        .call("post_message", json!({"text":"ready","nudge":["codex-1"]}))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code, "unsupported");
+    assert!(
+        host.state.lock().unwrap().posts.is_empty(),
+        "nothing was posted"
+    );
+    assert_eq!(
+        bridge
+            .call("post_message", json!({"text":"ready","nudge":[]}))
+            .await
+            .unwrap_err()
+            .code,
+        "invalid_argument"
+    );
+
+    host.state.lock().unwrap().nudge = true;
+    let mut bridge = host.bridge();
+    bridge
+        .call("join_channel", json!({"provider":"claude","task":"review"}))
+        .await
+        .unwrap();
+    bridge
+        .call(
+            "post_message",
+            json!({"text":"ready","to":"codex-1","nudge":["codex-1"]}),
+        )
+        .await
+        .unwrap();
+    bridge
+        .call("post_message", json!({"text":"quiet"}))
+        .await
+        .unwrap();
+    let posts = host.state.lock().unwrap().posts.clone();
+    assert_eq!(posts[0]["nudge"], json!(["codex-1"]));
+    assert!(
+        posts[1].get("nudge").is_none(),
+        "nothing nudges unless asked"
     );
 }
 

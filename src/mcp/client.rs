@@ -26,6 +26,8 @@ const SUPPORTED_HOSTS: &str = ">=0.3.0, <0.5.0";
 pub(super) const HIDDEN_HELP: &str = "Running Runyte workspaces exist but were registered from a different environment: XDG_RUNTIME_DIR or XDG_CACHE_HOME here differs from the editor's. Configure the MCP client to pass both variables through to runyte mcp and restart it, or rerun with include_hidden=true.";
 struct Connection {
     durable: bool,
+    /// The host takes `nudge` on channel posts.
+    nudge: bool,
     socket: BufReader<Box<dyn Stream>>,
     scopes: BTreeSet<Scope>,
     generation: u64,
@@ -96,6 +98,7 @@ impl Connection {
         let socket = discovery::connect(record).await?;
         let mut connection = Self {
             durable: false,
+            nudge: false,
             socket: BufReader::new(Box::new(socket)),
             scopes: BTreeSet::new(),
             generation: 0,
@@ -149,6 +152,12 @@ impl Connection {
         if channel {
             features.push(wire::CHANNEL_FEATURE);
             capabilities.push(Scope::AgentChannel.capability());
+            connection.nudge = hello["features"]
+                .as_array()
+                .is_some_and(|v| v.contains(&json!(wire::NUDGE_FEATURE)));
+            if connection.nudge {
+                features.push(wire::NUDGE_FEATURE);
+            }
         }
         connection.durable = hello["features"]
             .as_array()
@@ -262,6 +271,10 @@ impl Bridge {
     pub(super) fn generation(&self, workspace: &str) -> Option<u64> {
         self.connections.get(workspace).map(|c| c.generation)
     }
+    pub(super) fn nudge_supported(&self, workspace: &str) -> bool {
+        self.connections.get(workspace).is_some_and(|c| c.nudge)
+    }
+
     pub(super) fn durable_supported(&self, workspace: &str) -> bool {
         self.connections.get(workspace).is_some_and(|c| c.durable)
     }
