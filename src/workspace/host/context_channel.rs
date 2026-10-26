@@ -351,6 +351,7 @@ impl WorkspaceHost {
                 }
                 // Typing cancelled the paste before any of it was written,
                 // so the nudge waits again as if it had never started.
+                (DeliveryState::Cancelled, _) if nudge.read => return None,
                 (DeliveryState::Cancelled, _) => NudgePhase::Held,
                 // Other input reached the terminal after the line, or how
                 // much of it was written is unknown. Either way the line may
@@ -394,12 +395,20 @@ impl WorkspaceHost {
             .nudges
             .iter()
             .filter_map(|(terminal, nudge)| match nudge.phase {
-                NudgePhase::Held => self
-                    .app
-                    .terminals
-                    .get(TerminalId::from_raw(*terminal))
-                    .and_then(|session| session.typed_at())
-                    .map(|typed| (typed + NUDGE_QUIET).saturating_duration_since(now)),
+                NudgePhase::Held => {
+                    let id = TerminalId::from_raw(*terminal);
+                    let session = self.app.terminals.get(id)?;
+                    // Held by anything but the interval, it waits for the
+                    // event that ends that hold instead of a timer.
+                    if session.has_draft()
+                        || self.context_terminal_proposed(id)
+                        || !session.proposal_input_signature().modes.bracketed_paste
+                    {
+                        return None;
+                    }
+                    let quiet = session.typed_at()? + NUDGE_QUIET;
+                    (quiet > now).then(|| quiet - now)
+                }
                 NudgePhase::Pasting { .. } => Some(NUDGE_POLL),
                 NudgePhase::Sent => None,
             })

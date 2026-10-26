@@ -1449,9 +1449,10 @@ async fn a_requested_nudge_types_one_fixed_line_and_enter_once_the_person_stops_
         .unwrap()
         .backdate_typing(super::super::context_channel::NUDGE_QUIET * 2);
     host.sync_context();
-    assert!(
-        matches!(host.context_nudge_delay(), Some(delay) if delay <= Duration::from_secs(1)),
-        "a held nudge keeps the host looking"
+    assert_eq!(
+        host.context_nudge_delay(),
+        None,
+        "a draft, not a timer, holds it now"
     );
     let session = host.app.terminals.get_mut(terminal).unwrap();
     assert!(session.send_key(KeyStroke::plain(KeyCode::Enter)));
@@ -1781,12 +1782,38 @@ async fn nudges_wait_for_proposals_survive_their_senders_posts_and_never_send_a_
         "already_pending"
     );
 
-    // Revoking the grant ends a held nudge with the reader it belonged to.
+    // A nudge held past its quiet interval by a draft sets no timer: the
+    // keystroke that ends the draft wakes the loop by itself.
     assert_eq!(
         nudge_post(
             &mut host,
             2,
             "p7",
+            json!({"text":"held","nudge":["claude-1"]})
+        ),
+        "held"
+    );
+    let session = host.app.terminals.get_mut(claude).unwrap();
+    assert!(session.send_key(KeyStroke::char('z')));
+    session.backdate_typing(super::super::context_channel::NUDGE_QUIET * 2);
+    host.sync_context();
+    assert_eq!(host.context_nudge_phase(claude), Some("held"));
+    assert_eq!(host.context_nudge_delay(), None, "no timer for a draft");
+    request(
+        &mut host,
+        1,
+        "read-again",
+        "channel.read",
+        json!({"since":0,"limit":200}),
+    );
+
+    // Disconnecting, as revoking the grant does, ends a held nudge with the
+    // reader it belonged to.
+    assert_eq!(
+        nudge_post(
+            &mut host,
+            2,
+            "p8",
             json!({"text":"held","nudge":["claude-1"]})
         ),
         "held"
