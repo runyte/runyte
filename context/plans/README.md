@@ -29,7 +29,8 @@ Active work:
 - [Runyte MCP skill and durable agent channels](active/PLAN_AGENT_CHANNEL_SKILL_AND_STORAGE.md):
   a cooperative MCP skill and safe installer first, followed by user testing;
   SQLite storage across workspaces with retained public history and acknowledged
-  DM/group cleanup. Hooks and terminal wake-up remain tentative.
+  DM/group cleanup, now deferred. Fixed channel nudges, requested per message by
+  the sender, are the decided wake-up mechanism; hooks remain tentative.
 
 - [Terminal and desktop editions](active/PLAN_EDITIONS_AND_EXTENSIONS.md):
   two editions built from one Cargo workspace, PDF and document-preview helpers

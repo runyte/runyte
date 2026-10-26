@@ -3,15 +3,17 @@
 Status: active. Stage 1 is implemented and verified locally;
 Stage 2 has partial subagent trial evidence; native-client user tests remain.
 Stage 3 includes the storage foundation and a tested opt-in live MCP trial;
-general deployment remains unfinished.
+it is deferred as of 2026-10-26, and general deployment remains unfinished.
 The initial delivery is the cooperative skill and its
-installer. Hooks and terminal wake-up
-are tentative investigations, not committed implementation stages.
+installer. Stage 4 selects sender-requested channel nudges on the legacy
+channel as the wake-up mechanism; its design is decided and unimplemented.
+Lifecycle hooks remain tentative.
 
 This extends the [completed agent-channel plan](../completed/PLAN_AGENT_CHANNEL.md)
 and its related [issue #29](https://github.com/runyte/runyte/issues/29). It
 preserves the legacy in-memory channel. Repository inspection baseline:
-`594f057`, 2026-10-25. No new tracking issue has been created for this proposal.
+`594f057`, 2026-10-25. Stage 4 nudges are tracked in
+[issue #40](https://github.com/runyte/runyte/issues/40).
 
 ## Objectives
 
@@ -36,7 +38,7 @@ follow-up work discussed here. The original later-work ideas map as follows:
 
 | Original follow-up | Disposition here |
 | --- | --- |
-| Wake-up notices for idle agents | Tentative investigation after skill user tests |
+| Wake-up notices for idle agents | Stage 4 channel nudges, selected after the 2026-10-26 user test |
 | Named channels beyond the workspace channel | Durable public channels and fixed-membership groups |
 | History across host restarts in project `.runyte/` | Durable SQLite history; proposed location changes to user-level `~/.runyte/` for cross-workspace use |
 | The person posting from the channel page | Remains outside this implementation scope; no delivery commitment |
@@ -440,7 +442,25 @@ explicit test instructions, supported scheduling, eviction, restart recovery,
 and frontend-specific behavior. This short, prompted trial supports cooperative
 checks during active work, not universal compliance or eventual delivery.
 
+#### Manual user test, 2026-10-26
+
+Baseline: `dev` at `11c4459`, the legacy in-memory channel. Claude Code and
+Codex agents in integrated terminals shared one grant identity and coordinated
+through the channel. Posting, DMs and reads worked, but recipients repeatedly
+did not notice that a message was waiting for them, so coordination stalled
+until the person intervened. Which failure category applied to each miss (skill
+not loaded, no check while working, or idle at the prompt) was not recorded.
+
+This is the unmet need Stage 4 required before choosing a notification
+mechanism. Cooperative checks alone do not reach an agent waiting at its
+prompt, which is the case a hook cannot cover either.
+
 ### 3. Durable conversations
+
+Deferred 2026-10-26 in favor of Stage 4 nudges on the legacy channel. The
+storage foundation and opt-in trial below stay in the tree, off by default, and
+are not extended until this stage is explicitly resumed. Resuming it includes
+deciding whether durable conversations share the Stage 4 nudge path and grant.
 
 #### Storage foundation and integration decisions
 
@@ -603,24 +623,95 @@ Acceptance:
 - Ten-agent admission and activity remain bounded and responsive.
 - Test legacy/new capability combinations and terminal/desktop attachment parity.
 
-### 4. Tentative notification investigation
+### 4. Channel nudges
 
-Proceed only after first user tests identify an unmet need and a subsequent
-decision selects additional work. There is no commitment to ship either hooks
-or terminal submission.
+Decided 2026-10-26 after the manual user test above and tracked in
+[#40](https://github.com/runyte/runyte/issues/40); not implemented. It
+applies to the legacy in-memory channel, since Stage 3 is deferred. Agents
+still never send Enter. Instead, when a sender asks for it, the host may submit
+one fixed line, a nudge, into a recipient agent's terminal to tell it to read
+the channel. Message text never travels through the terminal; the agent reads
+it with the channel tools, so a nudge adds no new path for peer-provided text
+to reach a prompt.
 
-Documented SessionStart, tool-boundary or Stop hooks may provide reminders when
-agents execute. Keep adapters small, optional and separately installed, with
-current-version fixtures, timeout handling and continuation-loop prevention.
-They must query pending status without acknowledging messages. A message
-arriving after the last hook still needs a future event or supported wake-up.
+Decided rules:
 
-Generic PTY observation remains an uncertain fallback. Quiet output is not
-proof of readiness, and an empty-looking prompt does not rule out active work.
-Any later proposal must address stale screen observations, user typing, approval
-dialogs, agent exit to a shell, multiple agents per terminal and terminal reuse.
-Unknown state must defer, never force input. Automatic Enter would require its
-own explicitly enabled authority, separate from existing terminal insertion.
+- The nudge text is a constant owned by Runyte, provisionally
+  `Runyte: you have new messages on the agent channel.` Agents and channel
+  messages cannot change it. It must be inert as a shell command: its first
+  word resolves to no command on a case-insensitive filesystem and it contains
+  no shell metacharacters. (A line starting with `Read` would run macOS's
+  `/usr/bin/read` and leave the shell waiting for input.) Landing in a shell
+  after the agent has exited therefore prints an error and nothing else.
+- The text is typed as a bracketed paste followed by Enter, under the same
+  bracketed-paste condition as direct insertion (`5`). A terminal without
+  bracketed paste on is not nudged. The multiplexer caveat of `5` applies.
+- Nothing nudges automatically. The sender decides per message whether a nudge
+  is needed and whom it reaches, through an optional `nudge` argument to
+  `post_message` listing participant nicknames or ids. For a public message it
+  may name any current participants other than the sender; for a DM it may name
+  only the recipient. Duplicates, unknown participants or the sender reject the
+  whole post before it is stored, so a post never half succeeds. The list is
+  bounded by the participant limit.
+- The post's result reports each named recipient's nudge outcome: `sent`,
+  `held` (see below), `already_pending`, or `unavailable`. `unavailable` covers
+  every reason a nudge cannot be delivered, without telling the sender which.
+  The message itself is stored regardless of nudge outcomes.
+- The host submits the nudge; agents gain no tool for submitting terminal input.
+  A nudge goes only to a participant that is currently connected and associated
+  with a verified terminal, so Windows terminals, which have no verified
+  association today, are not nudged.
+- The person enables nudges through a new grant permission, provisionally `7`,
+  given with physical input like every other grant. It requires `6`. Its
+  description must state the remaining risk below. With one identity shared by
+  several clients, the grant covers every terminal that identity's participants
+  are verified in.
+- At most one nudge per terminal is outstanding. Once a nudge is sent or held
+  for a terminal, further requests for it report `already_pending` until its
+  participant reads the channel. A read also discards a nudge still held for
+  that participant, since it is no longer needed. Nudges never acknowledge
+  messages or move read state.
+- A nudge is held while the person may be typing in that terminal. The terminal
+  records the time of its last physical input and whether that input left the
+  line unsubmitted: any key or paste other than Enter marks a draft, and Enter
+  or Ctrl-C clears it. Hold the nudge while there is a draft, and until a quiet
+  interval of 30 seconds has passed since the last physical input. Also hold it
+  while a terminal proposal for that terminal is queued.
+  Holding is the safe default: a held nudge waits, and the unread badge already
+  shows that messages are waiting.
+
+Checking the terminal's foreground process was considered and not adopted.
+Grant identities are shared across clients (the test above used one identity for
+Claude Code and Codex), so a process check cannot confirm the intended agent;
+inert nudge text already makes the shell case harmless; and the check would be
+Unix-only.
+
+Remaining risk, accepted and stated in the grant: if the agent is showing an
+approval dialog when a nudge arrives, Enter may choose its highlighted option,
+which is often approval. Runyte does not inspect the screen for dialogs; a
+screen heuristic would be wrong in both directions. The draft and quiet-interval
+holds narrow this window but do not close it.
+
+Implementation boundaries: nudge request validation belongs with the channel in
+`src/workspace/context/channel.rs`; nudge policy and the outstanding-nudge state
+belong to `src/workspace/host/context_channel.rs`; the physical-input record and
+the paste write belong to `src/terminal/`; the `post_message` argument and result
+belong to `src/mcp/`. The new authority must be added to
+`context/reference/process-boundaries.md`, and the permission dialog change
+follows the UI vocabulary and keymap references. `docs/mcp.md`, the user guide
+and the bundled skill describe the argument; the skill should tell agents to
+nudge only when the recipient must act and is likely waiting, and to rely on
+ordinary reads otherwise. Changing the skill increments its `VERSION`.
+
+Tests cover nudge validation (DM recipient only, sender, unknown and duplicate
+names rejecting the post), each outcome, each hold condition, the
+one-outstanding rule and its reset on read, the bracketed-paste refusal, grant
+revocation while a nudge is held, and that a nudge never changes read state.
+
+Lifecycle hooks (SessionStart, tool-boundary, Stop) remain a tentative
+complement for reminding agents while they work. They are optional, separately
+installed and must not acknowledge messages. They are not needed for the idle
+case nudges address.
 
 ## Verification requirements
 
