@@ -752,6 +752,13 @@ was submitted.
 This trial does not establish behavior of real Claude Code or Codex prompts,
 including how they treat an Enter arriving while an approval prompt is shown.
 
+Confirmed after the trial, 2026-10-27: nudges do not require an attached
+frontend, unlike direct insertion, so agents can wake each other while the
+persistent session is detached; the holds and the grant still apply. A
+remembered grant that includes `7` cannot be read by earlier releases, which
+then load none of that workspace's remembered grants, as already happens with
+`6`; the user guide states this and no compatibility shim is planned.
+
 Lifecycle hooks (SessionStart, tool-boundary, Stop) remain a tentative
 complement for reminding agents while they work. They are optional, separately
 installed and must not acknowledge messages. They are not needed for the idle
