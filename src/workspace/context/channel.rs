@@ -89,6 +89,8 @@ pub struct Participant {
     pub task: String,
     /// The terminal the host verified it runs in.
     pub terminal: Option<u64>,
+    /// A native choice overrides automatic claims, including an explicit unbind.
+    pub terminal_bound: bool,
     pub location: Location,
     pub joined_at_ms: u64,
     pub connection: Option<u64>,
@@ -223,6 +225,39 @@ impl Channel {
         self.participants.get(id)
     }
 
+    /// Native host action; no context request exposes this mutation.
+    pub(crate) fn bind_terminal(
+        &mut self,
+        id: &str,
+        connection: u64,
+        terminal: Option<u64>,
+    ) -> bool {
+        let Some(participant) = self.participants.get_mut(id) else {
+            return false;
+        };
+        if participant.connection != Some(connection) {
+            return false;
+        }
+        participant.terminal = terminal;
+        participant.terminal_bound = true;
+        self.revision += 1;
+        true
+    }
+
+    pub(crate) fn clear_terminal_bindings(&mut self, identity: &str) {
+        for participant in self
+            .participants
+            .values_mut()
+            .filter(|p| p.identity == identity)
+        {
+            if participant.terminal_bound {
+                participant.terminal = None;
+                participant.terminal_bound = false;
+                self.revision += 1;
+            }
+        }
+    }
+
     pub fn joined(&self, connection: u64) -> Option<&Participant> {
         self.participants
             .values()
@@ -300,7 +335,9 @@ impl Channel {
             participant.connection = Some(join.connection);
             participant.left = None;
             participant.client = join.client.or(participant.client.take());
-            participant.terminal = join.terminal;
+            if !participant.terminal_bound {
+                participant.terminal = join.terminal;
+            }
             let changed = participant.provider != provider || participant.task != task;
             participant.provider = provider;
             participant.task = task.to_owned();
@@ -344,6 +381,7 @@ impl Channel {
                 provider,
                 task: task.to_owned(),
                 terminal: join.terminal,
+                terminal_bound: false,
                 location: join.location.clone(),
                 joined_at_ms: join.now_ms,
                 connection: Some(join.connection),
@@ -472,7 +510,7 @@ impl Channel {
         Ok(Posted { seq, nudge: nudged })
     }
 
-    fn find(&self, target: &str) -> Result<&Participant, Error> {
+    pub(crate) fn find(&self, target: &str) -> Result<&Participant, Error> {
         self.participants
             .values()
             .find(|p| p.id == target || p.nick == target)

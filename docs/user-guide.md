@@ -5635,6 +5635,7 @@ The working directory starts where Runyte was launched.
 | `:notifications` | `not` | Open retained notification history |
 | `:service-health` | `health` | Inspect syntax, LSP, providers, and helper health |
 | `:log-open` | | Open the diagnostic log owned by the process that holds this workspace |
+| `:agent-bind <participant> <terminal-number\|none>` | | Review a workspace-local agent terminal binding |
 | `:mcp [identity]` | | Review, grant, inspect, or revoke agent context access |
 
 #### Plugin commands
@@ -5989,6 +5990,14 @@ works on changes, or it reports another directory, the channel says where it
 moved from.
 
 A terminal whose agent has unread messages shows `[N unread]` in its title.
+When an agent's terminal is unknown, use `:agent-bind codex-1 2` in the
+workspace containing its terminal, then review the workspace and terminal title
+and approve with Tab and Enter. The number is the pane title's `#2`; terminal
+numbers in other workspaces are unrelated. The binding captures the underlying
+terminal, so closing it and reusing its number never redirects nudges. Use
+`:agent-bind codex-1 none` to remove the binding. Authenticated reconnects keep
+it; reapplying permissions clears it. See [terminal binding](mcp.md#binding-a-participant-to-a-terminal).
+
 `:agent-channel` opens `[agent channel]`, a read-only page listing the
 participants and the recent messages, direct ones included, which refreshes as
 messages arrive. Messages last as long as the workspace host. The [MCP
@@ -7600,6 +7609,7 @@ with `{ command: name, argument: text }`.
 | `lsp-trust` | `lsp-trust` | Choose LSP permission for this workspace |
 | `mcp` | `mcp [identity]` | Review workspace agent permissions |
 | `agent-channel` | `agent-channel` | Show this workspace's agent channel |
+| `agent-bind` | `agent-bind <participant> <terminal-number\|none>` | Review a workspace-local agent terminal binding |
 | `lsp-restart` | `lsp-restart [language]` | Restart stopped language servers |
 | `lsp-status` | `lsp-status` | Report language server state |
 | `open` | `open <path>` | Open a file or directory in the active pane |

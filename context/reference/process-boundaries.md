@@ -87,7 +87,15 @@ distinct from the fuller context operation catalog. The agent channel
 (`agent_channel`, feature `runyte.context.channel.v1`) lets readers of one host
 exchange messages; the host verifies a participant's terminal from the
 capability Runyte handed that terminal's children and the connecting process's
-session, and treats every message as untrusted text.
+session, and treats every message as untrusted text. For daemon-launched adapters,
+`:agent-bind <participant> <terminal-number|none>` offers a native, physically
+approved binding. It resolves the visible terminal number only within the current
+workspace and captures the stable terminal ID and participant connection before
+review. Approval rechecks that connection, grant and live terminal; authenticated
+resume retains the native binding, while reapplying/revoking permissions clears it.
+Neither the public context wire nor MCP exposes this authority. A binding change
+cancels pending nudges and preserves a draft hold if a paste may already have
+reached the terminal. See [issue #42](https://github.com/runyte/runyte/issues/42).
 
 Channel nudges (feature `runyte.context.channel.nudge.v1`) are the one path by
 which the host submits Enter into a terminal. A sender's `channel.post` may name

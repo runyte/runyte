@@ -755,7 +755,11 @@ workspace host's agent channel: a header, the participants with their nickname,
 provider, task, terminal label, location, MCP identity, client and UUID, then
 the newest 200 entries with local times, direct messages marked as such and the
 person able to read them all. The host re-renders the open page whenever the
-channel changes; nothing on it is editable or selects an action. A terminal pane
+channel changes; nothing on it is editable or selects an action. Its command hint
+points to `:agent-bind <participant> <terminal-number|none>`. This opens a native
+confirmation showing the workspace, participant, identity, task and terminal
+title. The supplied number is the workspace-local pane-title number, captured
+as a stable terminal ID before review; only presented physical approval applies it. A terminal pane
 whose verified, connected participant has unread messages adds `[N unread]` to
 its title after its other markers and before `[exited]`. The marker is
 presentation: the MCP `title` of a terminal never includes it.

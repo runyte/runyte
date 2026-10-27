@@ -21,6 +21,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub(crate) struct ContextUi {
     pub identities: Vec<String>,
     pub requested_identity: Option<String>,
+    pub requested_binding: Option<String>,
     /// `:agent-channel` waits for the workspace host to render the page.
     pub channel_page_requested: bool,
     pub surface: Option<Surface>,
@@ -72,7 +73,15 @@ pub(crate) struct PreparedFrame {
 #[path = "tests/context_access.rs"]
 mod tests;
 
+#[derive(Clone)]
+pub(crate) struct ChannelBinding {
+    pub participant: String,
+    pub connection: u64,
+    pub terminal: Option<u64>,
+}
+
 pub(crate) enum Decision {
+    ChannelBinding(ChannelBinding),
     Grant {
         identity: String,
         scopes: BTreeSet<Scope>,
@@ -86,6 +95,7 @@ pub(crate) enum Decision {
 }
 
 pub(crate) enum Kind {
+    ChannelBinding(ChannelBinding),
     Grant {
         identity: String,
         scopes: BTreeSet<Scope>,
@@ -379,6 +389,7 @@ impl Surface {
         let chrome = match self.kind {
             Kind::Grant { .. } => 16,
             Kind::Proposal { .. } => 10,
+            Kind::ChannelBinding(_) => 8,
         };
         usize::from(height).saturating_sub(chrome).max(1)
     }
@@ -521,6 +532,14 @@ impl App {
             self.normalize_buffer(index);
             self.plugins.presentation_dirty = true;
         }
+    }
+
+    pub(super) fn request_channel_binding(&mut self, binding: String) {
+        if self.recording_macro.is_some() || self.macro_replay.is_some() {
+            self.status("Terminal binding requires native input outside a macro");
+            return;
+        }
+        self.context_ui.requested_binding = Some(binding);
     }
 
     pub(super) fn request_context_access(&mut self, identity: Option<String>) {
@@ -695,6 +714,9 @@ impl App {
                         remember,
                     }),
                     Kind::Proposal { id } => Some(Decision::Proposal { id, accepted }),
+                    Kind::ChannelBinding(binding) if accepted => {
+                        Some(Decision::ChannelBinding(binding))
+                    }
                     _ => None,
                 };
                 return;
@@ -801,6 +823,7 @@ impl App {
         let action = match surface.kind {
             Kind::Grant { .. } => "Apply permissions",
             Kind::Proposal { .. } => "Insert text (no Enter)",
+            Kind::ChannelBinding(_) => "Apply terminal binding",
         };
         rows.push(review_row("Reject".into(), Vec::new(), Vec::new()));
         rows.push(review_row(action.into(), Vec::new(), Vec::new()));

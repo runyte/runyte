@@ -461,6 +461,7 @@ impl WorkspaceHost {
         {
             if self.context.events.is_none() {
                 self.app.context_ui.requested_identity = None;
+                self.app.context_ui.requested_binding = None;
                 self.app.context_ui.decision = None;
                 self.app.context_ui.surface = None;
                 return;
@@ -489,6 +490,13 @@ impl WorkspaceHost {
             self.app.open_agent_channel_page(&page);
             // Opened after this frame was drawn, so ask for another.
             self.app.plugins.presentation_dirty = true;
+        }
+        if let Some(binding) = self.app.context_ui.requested_binding.take()
+            && self.app.plugins.frontend_attached
+            && !self.app.has_input_overlay()
+            && let Err(error) = self.context_review_binding(&binding)
+        {
+            self.report_host_error(error.to_string());
         }
         if let Some(identity) = self.app.context_ui.requested_identity.take()
             && self.app.plugins.frontend_attached
@@ -751,6 +759,7 @@ impl WorkspaceHost {
 
     fn context_decision(&mut self, decision: Decision) -> anyhow::Result<()> {
         match decision {
+            Decision::ChannelBinding(binding) => self.context_apply_binding(binding)?,
             Decision::Grant {
                 identity,
                 scopes,
@@ -851,6 +860,7 @@ impl WorkspaceHost {
     }
 
     fn context_revoke(&mut self, name: &str) {
+        self.context.channel.clear_terminal_bindings(name);
         let ids = self
             .context
             .readers

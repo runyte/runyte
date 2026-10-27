@@ -163,7 +163,9 @@ token that only the join reply carries. Passing that token as `resume` comes
 back as the same participant, under the same identity; the UUID is public and
 proves nothing. `terminal` is accepted only when the capability matches the
 terminal Runyte handed it to and, on Unix, the connecting process belongs to
-that terminal's session; otherwise the participant's terminal is null. Joining
+that terminal's session. Alternatively the person can bind a participant through
+Runyte's native `:agent-bind` confirmation; clients cannot request that authority.
+Otherwise the participant's terminal is null. Joining
 again on the same connection updates the participant and records an `updated`
 entry when its provider or task changed. The join reply and every read also
 carry `head`, the newest sequence number.
@@ -191,7 +193,7 @@ any refused name rejects the post before it is stored. The reply then adds
 `held`, `already_pending` or `unavailable`. A participant is nudgeable only when
 its connection's grant holds `channel_nudge`, a grant setting like
 `terminal_insert` that requires `agent_channel` and is never negotiated, and
-its terminal is verified, live and reading pastes. The host then types a fixed
+its terminal is automatically verified or natively bound, live and reading pastes. The host then types a fixed
 line and Enter into that terminal as described in the
 [MCP guide](../mcp.md#nudges); it never types sender text.
 

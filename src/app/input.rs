@@ -6574,6 +6574,10 @@ impl App {
                 self.request_agent_channel();
                 Ok(())
             }
+            (Colon::AgentBind, InvocationParameters::OptionalText(Some(binding))) => {
+                self.request_channel_binding(binding);
+                Ok(())
+            }
             (Colon::ContextAccess, InvocationParameters::OptionalText(identity)) => {
                 self.request_context_access(identity);
                 Ok(())

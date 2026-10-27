@@ -19,7 +19,7 @@ For a client using TOML MCP configuration:
 [mcp_servers.runyte]
 command = "/path/to/runyte"
 args = ["mcp", "--identity", "agent"]
-env_vars = ["XDG_RUNTIME_DIR", "XDG_CACHE_HOME"]
+env_vars = ["XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "RUNYTE_PARENT_CONTEXT"]
 ```
 
 The server must see the same `XDG_RUNTIME_DIR` and `XDG_CACHE_HOME` as the
@@ -45,12 +45,19 @@ the `env_vars` line to the `[mcp_servers.runyte]` table that
 `~/.codex/config.toml` now contains:
 
 ```toml
-env_vars = ["XDG_RUNTIME_DIR", "XDG_CACHE_HOME"]
+env_vars = ["XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "RUNYTE_PARENT_CONTEXT"]
 ```
 
 Another client that does not pass these variables through needs the same
 addition in its own configuration; `hidden_workspaces` in a `list_workspaces`
 reply shows when it does.
+
+`RUNYTE_PARENT_CONTEXT` enables automatic terminal verification when the MCP
+server runs inside the integrated terminal's process session. A daemon-launched
+server may have no current terminal context and belongs to another process
+session; passing the variable alone cannot establish its terminal. Do not copy a
+saved value into configuration. After the agent joins, use
+[explicit terminal binding](#binding-a-participant-to-a-terminal) in Runyte.
 
 Check the saved configurations with `codex mcp list` and `claude mcp list`.
 Restart any already-running agent session after adding the server. Each client
@@ -260,8 +267,8 @@ participant by:
   its MCP client reported;
 - its terminal, verified rather than claimed: an integrated terminal of a
   persistent session hands its children a capability, and the host accepts it
-  only from a process in that terminal's session (Unix). Elsewhere the
-  terminal is unknown;
+  only from a process in that terminal's session (Unix). A native terminal
+  binding can also identify it; otherwise the terminal is unknown;
 - where it works: the directory its MCP server started in, or the absolute
   `directory` it last passed to `join_channel` or `post_message` after
   changing directory or worktree, with the repository, worktree and branch
@@ -285,6 +292,33 @@ never types a message into an agent's terminal, so an idle agent learns of new
 messages when it next reads, when the person asks it to, or when a sender
 nudges it.
 
+### Binding a participant to a terminal
+
+For an agent whose `join_channel` reports `terminal: null`, including an MCP
+server started by a Codex daemon, open `:agent-channel` to find its nickname.
+In the **workspace containing that agent's terminal**, run:
+
+```text
+:agent-bind codex-1 2
+```
+
+`2` is the terminal number shown as `#2` in its pane title, not an internal ID.
+Numbers are local to each workspace: another workspace's `#2` is unrelated.
+The native confirmation shows the workspace, participant, identity, task and
+terminal title. Review it, then Tab and Enter to apply. Participant names and
+tasks are self-reported, so select the terminal where that agent is running.
+Only physical frontend input can approve; MCP calls, paste and macros cannot.
+This does not grant nudge permission: accepting nudges still needs `7` in `:mcp`.
+
+Use `:agent-bind codex-1 none` to remove the binding and suppress automatic
+claims for that participant. A binding survives authenticated reconnection with
+the same participant's resume token. A new participant must be bound again.
+Reapplying or revoking its identity's permissions clears native bindings;
+exiting the workspace host clears them too. Closing or exiting the target
+terminal makes the binding unusable; a new terminal reusing its number does not
+inherit it. Run the command again to choose a replacement. A participant that
+reconnects while a confirmation is open requires a fresh review.
+
 ### Nudges
 
 `post_message` takes an optional `nudge`: the nicknames or ids of up to 63
@@ -306,8 +340,7 @@ The reply adds `nudges`, one entry per name with its `participant`, `nick` and
 | `unavailable` | It cannot be nudged, for a reason the sender is not told |
 
 A participant can be nudged only when its identity's grant includes `7`, it is
-connected, its terminal is verified (Unix integrated terminals of a persistent
-session), and that terminal is reading pastes. A held nudge waits while the
+connected, its terminal is automatically verified or explicitly bound through Runyte, and that terminal is reading pastes. A held nudge waits while the
 line may hold unsubmitted text, for 30 seconds after the person's last
 keystroke there, and while a terminal proposal for it is waiting. A terminal
 has at most one nudge outstanding; the participant's next read clears it, or,

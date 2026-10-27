@@ -1828,3 +1828,209 @@ async fn nudges_wait_for_proposals_survive_their_senders_posts_and_never_send_a_
     assert_eq!(host.context_nudge_phase(claude), None);
     assert_eq!(host.context_nudge_delay(), None, "nothing left to time");
 }
+
+fn binding_join(host: &mut WorkspaceHost, connection: u64, resume: Option<&str>) -> Value {
+    let request_id = format!(
+        "binding-join-{connection}-{}",
+        host.context.channel.revision()
+    );
+    let mut params = json!({"provider":"codex", "task":"review", "location":{"directory":"/work"}});
+    if let Some(resume) = resume {
+        params["resume"] = json!(resume);
+    }
+    let reply = request(host, connection, &request_id, "channel.join", params);
+    assert!(reply.get("error").is_none(), "{reply}");
+    reply
+}
+
+fn binding_review(
+    host: &mut WorkspaceHost,
+    argument: &str,
+) -> crate::app::context_access::ChannelBinding {
+    host.context_review_binding(argument).unwrap();
+    let Kind::ChannelBinding(binding) = &host.app.context_ui.surface.as_ref().unwrap().kind else {
+        panic!("binding review");
+    };
+    binding.clone()
+}
+
+fn binding_terminal(host: &mut WorkspaceHost) -> TerminalId {
+    host.app
+        .terminals
+        .open(
+            crate::terminal::TerminalRequest {
+                program: "/bin/cat".into(),
+                arguments: vec![],
+                directory: host.app.project_root.clone(),
+                label: "agent".into(),
+            },
+            80,
+            24,
+        )
+        .unwrap()
+}
+
+#[tokio::test]
+async fn native_binding_resolves_workspace_local_numbers_and_survives_authenticated_rejoin() {
+    let (_root, mut host, identity, _events) = fixture();
+    let (_other_root, mut other, other_identity, _other_events) = fixture();
+    for (host, identity) in [(&mut host, &identity), (&mut other, &other_identity)] {
+        grant(
+            host,
+            identity,
+            [Scope::AgentChannel, Scope::ChannelNudge].into(),
+        );
+        authenticate(host, identity, 1, &["agent_channel"]);
+    }
+    let gone = binding_terminal(&mut host);
+    host.app.terminals.close(gone);
+    let terminal = binding_terminal(&mut host);
+    let other_terminal = binding_terminal(&mut other);
+    assert_eq!(host.app.terminals.get(terminal).unwrap().number(), Some(1));
+    assert_eq!(
+        other.app.terminals.get(other_terminal).unwrap().number(),
+        Some(1)
+    );
+    assert_ne!(terminal.get(), 1, "stable ID differs from visible number");
+    let joined = binding_join(&mut host, 1, None);
+    let other_joined = binding_join(&mut other, 1, None);
+    let id = joined["result"]["participant"]["participant"]
+        .as_str()
+        .unwrap();
+    let resume = joined["result"]["resume"].as_str().unwrap();
+    assert!(joined["result"]["participant"]["terminal"].is_null());
+    let binding = binding_review(&mut host, "codex-1 1");
+    assert_eq!(binding.terminal, Some(terminal.get()));
+    let lines = &host.app.context_ui.surface.as_ref().unwrap().lines;
+    assert!(lines.iter().any(|line| line.value.contains("#1")));
+    review_all(&mut host);
+    key(&mut host, KeyCode::Tab);
+    key(&mut host, KeyCode::Enter);
+    host.sync_context();
+    assert_eq!(
+        host.context.channel.participant(id).unwrap().terminal,
+        Some(terminal.get())
+    );
+    let other_id = other_joined["result"]["participant"]["participant"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        other
+            .context
+            .channel
+            .participant(other_id)
+            .unwrap()
+            .terminal,
+        None
+    );
+    host.context_disconnect(1);
+    authenticate(&mut host, &identity, 2, &["agent_channel"]);
+    let rejoined = binding_join(&mut host, 2, Some(resume));
+    assert_eq!(rejoined["result"]["participant"]["terminal"]["number"], 1);
+    assert!(
+        host.context_apply_binding(binding).is_err(),
+        "old connection review is stale"
+    );
+    let unbind = binding_review(&mut host, "codex-1 none");
+    host.context_apply_binding(unbind).unwrap();
+    assert!(binding_join(&mut host, 2, None)["result"]["participant"]["terminal"].is_null());
+    let binding = binding_review(&mut host, "codex-1 1");
+    host.context_apply_binding(binding).unwrap();
+    host.context_revoke(identity.name());
+    assert!(!host.context.channel.participant(id).unwrap().terminal_bound);
+    assert!(
+        host.context
+            .channel
+            .participant(id)
+            .unwrap()
+            .terminal
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn native_binding_rejects_stale_terminals_and_invalid_targets() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, [Scope::AgentChannel].into());
+    authenticate(&mut host, &identity, 1, &["agent_channel"]);
+    binding_join(&mut host, 1, None);
+    let terminal = binding_terminal(&mut host);
+    for argument in [
+        "",
+        "codex-1",
+        "codex-1 1 extra",
+        "unknown 1",
+        "codex-1 999",
+        "codex-1 name",
+    ] {
+        assert!(host.context_review_binding(argument).is_err(), "{argument}");
+    }
+    let binding = binding_review(&mut host, "codex-1 1");
+    host.app.terminals.close(terminal);
+    let replacement = binding_terminal(&mut host);
+    assert_eq!(
+        host.app.terminals.get(replacement).unwrap().number(),
+        Some(1)
+    );
+    assert!(host.context_apply_binding(binding).is_err());
+    let binding = binding_review(&mut host, "codex-1 1");
+    host.context_apply_binding(binding).unwrap();
+    host.app.terminals.close(replacement);
+    binding_terminal(&mut host);
+    let who = request(&mut host, 1, "who", "channel.who", json!({}));
+    assert!(who["result"]["participants"][0]["terminal"].is_null());
+    host.context_disconnect(1);
+    assert!(host.context_review_binding("codex-1 1").is_err());
+}
+
+#[tokio::test]
+async fn native_binding_enables_daemon_nudges_and_cancellation_preserves_an_unsubmitted_draft() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(
+        &mut host,
+        &identity,
+        [Scope::AgentChannel, Scope::ChannelNudge].into(),
+    );
+    for connection in 1..=2 {
+        frame(
+            &mut host,
+            connection,
+            json!({"type":"authenticate","credential":identity.credential()}),
+        );
+        frame(
+            &mut host,
+            connection,
+            json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"fixture","commands":[],"required_capabilities":["agent_channel"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[wire::CHANNEL_FEATURE,wire::NUDGE_FEATURE]}),
+        );
+    }
+    let mut prompts = Prompts::new(&mut host);
+    let terminal = prompts.open(&mut host, 1, "codex", true).await;
+    // Rejoin from a daemon with no parent claim: automatic association is lost.
+    host.context.peers.insert(1, Some(std::process::id()));
+    binding_join(&mut host, 1, None);
+    binding_join(&mut host, 2, None);
+    let post = json!({"text":"review ready", "nudge":["codex-1"]});
+    assert_eq!(
+        nudge_post(&mut host, 2, "before", post.clone()),
+        "unavailable"
+    );
+    let binding = binding_review(&mut host, "codex-1 1");
+    host.context_apply_binding(binding).unwrap();
+    assert_eq!(nudge_post(&mut host, 2, "after", post.clone()), "sent");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while host.context_nudge_phase(terminal) != Some("written") {
+            prompts.step(&mut host).await;
+        }
+    })
+    .await
+    .unwrap();
+    // Cancel after the fixed line reached the PTY, before its delayed Enter.
+    let binding = binding_review(&mut host, "codex-1 1");
+    host.context_apply_binding(binding).unwrap();
+    assert!(host.app.terminals.get(terminal).unwrap().has_draft());
+    assert_eq!(host.context_nudge_phase(terminal), None);
+    assert_eq!(nudge_post(&mut host, 2, "again", post), "held");
+    prompts.idle(&mut host, Duration::from_millis(350)).await;
+    assert!(!prompts.text(terminal).contains("SUBMITTED:"));
+    assert_eq!(host.context_nudge_phase(terminal), Some("held"));
+}

@@ -708,6 +708,10 @@ file. Paths are literal and relative to the workspace root unless absolute.
 
 ### Agent context permission command
 
+`:agent-bind <participant> <terminal-number|none>` is a Runyte-specific,
+command-only action for a native terminal-binding review; it adds no default
+binding and uses the existing physical confirmation controls.
+
 `:mcp [identity]` is Runyte-specific and opens native workspace
 permissions for MCP access. `:agent-channel` is Runyte-specific too and opens
 the read-only `[agent channel]` page; it has no default binding either. `:context-access` remains an alias. It adds no

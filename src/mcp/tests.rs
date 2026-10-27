@@ -159,3 +159,32 @@ async fn joining_with_no_host_running_says_so() {
 #[cfg(unix)]
 #[path = "tests/host.rs"]
 mod host;
+
+#[cfg(unix)]
+#[test]
+fn channel_terminal_claim_handles_filtered_standalone_and_invalid_environment() {
+    use super::channel::terminal_claim;
+    for value in [
+        None,
+        Some("standalone"),
+        Some("not-json"),
+        Some("{}"),
+        Some(""),
+    ] {
+        assert!(terminal_claim(value).is_none());
+    }
+    let launch = crate::workspace::parent::ParentLaunch::new(std::path::Path::new(
+        "/tmp/fixture/endpoint.json",
+    ))
+    .unwrap();
+    let value = launch.context(crate::terminal::TerminalId::from_raw(42));
+    let claim = terminal_claim(Some(&value)).unwrap();
+    assert_eq!(claim["terminal"], 42);
+    assert!(launch.validates(
+        crate::terminal::TerminalId::from_raw(42),
+        claim["capability"].as_str().unwrap()
+    ));
+    let mut stale: Value = serde_json::from_str(&value).unwrap();
+    stale["protocol"] = json!(0);
+    assert!(terminal_claim(Some(&stale.to_string())).is_none());
+}

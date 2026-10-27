@@ -124,6 +124,7 @@ pub enum ColonCommand {
     LspTrust,
     ContextAccess,
     AgentChannel,
+    AgentBind,
     LspRestart,
     LspStatus,
     Notifications,
@@ -306,6 +307,7 @@ impl ColonCommand {
         Self::LspTrust,
         Self::ContextAccess,
         Self::AgentChannel,
+        Self::AgentBind,
         Self::LspRestart,
         Self::LogOpen,
         Self::LspStatus,
@@ -407,6 +409,7 @@ impl ColonCommand {
             | Self::Grammar
             | Self::ContextAccess
             | Self::AgentChannel
+            | Self::AgentBind
             | Self::LogOpen
             | Self::ServiceHealth
             | Self::Plugins
@@ -1642,6 +1645,7 @@ impl CommandId {
                 ColonCommand::LspTrust
                 | ColonCommand::ContextAccess
                 | ColonCommand::AgentChannel
+                | ColonCommand::AgentBind
                 | ColonCommand::Plugins
                 | ColonCommand::PluginStop
                 | ColonCommand::PluginRestart,
@@ -2560,6 +2564,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
+        ColonId(Colon::AgentBind),
+        "agent-bind",
+        [],
+        "agent-bind <participant> <terminal-number|none>",
+        "Review a participant's terminal binding",
+        Required(FreeText)
+    ),
+    spec!(
         ColonId(Colon::ContextAccess),
         "mcp",
         ["context-access"],
@@ -3224,7 +3236,9 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
         (Colon::GitNetworkRef, InvocationParameters::OptionalText(Some(value))) => {
             value.starts_with("refs/") && !value.contains(['\0', '\n'])
         }
-        (Colon::Pipe, InvocationParameters::OptionalText(Some(value))) => !value.trim().is_empty(),
+        (Colon::Pipe | Colon::AgentBind, InvocationParameters::OptionalText(Some(value))) => {
+            !value.trim().is_empty()
+        }
         (Colon::Grammar, InvocationParameters::Grammar(_)) => true,
         _ => false,
     }
@@ -3662,10 +3676,12 @@ fn invocation_from_parts(
             (ColonCommand::GitNetworkRef, ParsedArgument::Text(Some(value))) => Ok(
                 CommandInvocation::new(id, InvocationParameters::OptionalText(Some(value))),
             ),
-            (ColonCommand::Pipe, ParsedArgument::Text(Some(value))) => Ok(CommandInvocation::new(
-                id,
-                InvocationParameters::OptionalText(Some(value)),
-            )),
+            (ColonCommand::Pipe | ColonCommand::AgentBind, ParsedArgument::Text(Some(value))) => {
+                Ok(CommandInvocation::new(
+                    id,
+                    InvocationParameters::OptionalText(Some(value)),
+                ))
+            }
             (
                 ColonCommand::LspRestart | ColonCommand::ContextAccess,
                 ParsedArgument::Text(value),

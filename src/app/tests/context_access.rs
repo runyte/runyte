@@ -469,7 +469,7 @@ fn skipping_review_brings_its_prerequisites_and_leaves_with_them() {
     ));
     let scopes = |app: &App| match &app.context_ui.surface.as_ref().unwrap().kind {
         Kind::Grant { scopes, .. } => scopes.clone(),
-        Kind::Proposal { .. } => unreachable!(),
+        Kind::Proposal { .. } | Kind::ChannelBinding(_) => unreachable!(),
     };
     press(&mut app, KeyCode::Char('5'));
     assert_eq!(
@@ -731,4 +731,61 @@ fn a_refreshed_agent_channel_page_shows_its_newest_message() {
     view(&mut app);
     let scroll = app.active().scroll_row;
     assert!(scroll > 0 && scroll <= newest && newest < scroll + 12);
+}
+
+#[test]
+fn terminal_binding_requires_presented_physical_approval() {
+    let mut app = ready();
+    app.context_ui.surface = Some(Surface::new(
+        Kind::ChannelBinding(ChannelBinding {
+            participant: "participant".into(),
+            connection: 4,
+            terminal: Some(99),
+        }),
+        "Agent terminal binding".into(),
+        vec![Detail::note("Confirm terminal #2")],
+        "",
+        app.plugins.attachment_generation,
+    ));
+    app.context_ui.surface.as_mut().unwrap().accept_selected = true;
+    app.handle_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+        .unwrap();
+    assert!(app.context_ui.decision.is_none(), "unseen review");
+    app.note_context_frame(80, 22, 2);
+    app.note_context_presented(2);
+    app.handle_replayed_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+        .unwrap();
+    app.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+        .unwrap();
+    app.handle_input(InputEvent::Text("\r\n".into())).unwrap();
+    assert!(app.context_ui.decision.is_none());
+    app.handle_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+        .unwrap();
+    assert!(matches!(
+        app.context_ui.decision,
+        Some(Decision::ChannelBinding(ChannelBinding {
+            terminal: Some(99),
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn terminal_binding_command_uses_registry_and_does_not_apply_without_review() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    for character in ":agent-bind codex-1 2".chars() {
+        app.handle_input(InputEvent::Key(KeyStroke::plain(KeyCode::Char(character))))
+            .unwrap();
+    }
+    app.handle_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+        .unwrap();
+    assert_eq!(
+        app.context_ui.requested_binding.as_deref(),
+        Some("codex-1 2")
+    );
+    assert!(app.context_ui.decision.is_none());
+    app.context_ui.requested_binding = None;
+    app.recording_macro = Some('a');
+    app.request_channel_binding("codex-1 2".into());
+    assert!(app.context_ui.requested_binding.is_none());
 }

@@ -25,6 +25,13 @@ const LOCATION_REUSE: Duration = Duration::from_secs(5);
 /// Longest pause between polls while a read waits for something new.
 const LONGEST_POLL: Duration = Duration::from_secs(2);
 
+/// Missing or unusable launch context never becomes a terminal claim. The
+/// native binding action remains available to daemon-launched MCP clients.
+pub(super) fn terminal_claim(value: Option<&str>) -> Option<Value> {
+    let parent = crate::workspace::parent::ParentContext::parse(value?).ok()?;
+    Some(json!({"terminal":parent.terminal,"capability":parent.capability}))
+}
+
 impl Bridge {
     pub(super) async fn channel_call(&mut self, name: &str, args: Value) -> Result<Value> {
         let workspace = self
@@ -183,8 +190,9 @@ impl Bridge {
         }
         // An integrated terminal of a persistent session hands its children
         // a capability naming it; the host checks it before believing it.
-        if let Ok(Some(parent)) = crate::workspace::parent::ParentContext::from_environment() {
-            params["terminal"] = json!({"terminal":parent.terminal,"capability":parent.capability});
+        let parent = std::env::var(crate::workspace::parent::ENVIRONMENT).ok();
+        if let Some(terminal) = terminal_claim(parent.as_deref()) {
+            params["terminal"] = terminal;
         }
         let earlier = self.joined.get(workspace).map(|j| j.next);
         let directory = PathBuf::from(&location.directory);

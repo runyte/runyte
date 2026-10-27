@@ -7,7 +7,7 @@
 
 use super::WorkspaceHost;
 use crate::{
-    app::context_access::visible,
+    app::context_access::{ChannelBinding, Detail, Kind as ReviewKind, Surface, label, visible},
     notification::{NotificationDraft, NotificationSeverity},
     plugin::application::{Error, ErrorCode as Code},
     terminal::{
@@ -66,6 +66,117 @@ enum NudgePhase {
 }
 
 impl WorkspaceHost {
+    pub(super) fn context_review_binding(&mut self, argument: &str) -> anyhow::Result<()> {
+        let fields = argument.split_whitespace().collect::<Vec<_>>();
+        anyhow::ensure!(
+            fields.len() == 2,
+            "Use :agent-bind <participant> <terminal-number|none>"
+        );
+        let participant = self
+            .context
+            .channel
+            .find(fields[0])
+            .map_err(|error| anyhow::anyhow!(error.message))?;
+        let connection = participant.connection.ok_or_else(|| {
+            anyhow::anyhow!("Participant is disconnected; have the agent join again")
+        })?;
+        anyhow::ensure!(
+            self.context_granted(connection, Scope::AgentChannel),
+            "Participant no longer has channel access"
+        );
+        // Resolve the visible number once. The review and decision carry the
+        // stable terminal ID, so a reused pane-title number cannot redirect it.
+        let terminal = if fields[1] == "none" {
+            None
+        } else {
+            let number = fields[1].parse::<u32>().map_err(|_| {
+                anyhow::anyhow!("Use the terminal number shown in its pane title, or none")
+            })?;
+            Some(
+                self.app
+                    .terminals
+                    .resolve(&number.to_string())
+                    .map_err(anyhow::Error::msg)?,
+            )
+        };
+        let title = terminal
+            .and_then(|id| self.app.terminals.get(id))
+            .map(crate::snapshot::terminal_label)
+            .unwrap_or_else(|| "None (disable this participant's terminal binding)".into());
+        let details = vec![
+            Detail::value("Workspace", label(&self.app.project_root.to_string_lossy())),
+            Detail::value("Participant", label(&participant.nick)),
+            Detail::value("Identity", label(&participant.identity)),
+            Detail::value("Task", label(&participant.task)),
+            Detail::value("Terminal", label(&title)),
+            Detail::note(
+                "Confirm that this participant runs in the selected terminal. Agent labels and tasks are self-reported.",
+            ),
+            Detail::note(
+                "With permission 7, other agents may send a fixed nudge and Enter here. Enter may accept a pending approval prompt.",
+            ),
+            Detail::note(
+                "The binding survives this participant's authenticated reconnects, until changed, permissions are reapplied, or this workspace host exits.",
+            ),
+        ];
+        self.app.context_ui.surface = Some(Surface::new(
+            ReviewKind::ChannelBinding(ChannelBinding {
+                participant: participant.id.clone(),
+                connection,
+                terminal: terminal.map(TerminalId::get),
+            }),
+            "Agent terminal binding".into(),
+            details,
+            "",
+            self.app.plugins.attachment_generation,
+        ));
+        self.app.plugins.presentation_dirty = true;
+        Ok(())
+    }
+
+    pub(super) fn context_apply_binding(&mut self, binding: ChannelBinding) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.context_granted(binding.connection, Scope::AgentChannel),
+            "Participant access changed; open a fresh terminal binding review"
+        );
+        if let Some(terminal) = binding.terminal {
+            anyhow::ensure!(
+                self.app
+                    .terminals
+                    .get(TerminalId::from_raw(terminal))
+                    .is_some_and(|t| t.live()),
+                "Terminal exited or closed; open a fresh terminal binding review"
+            );
+        }
+        anyhow::ensure!(
+            self.context.channel.bind_terminal(
+                &binding.participant,
+                binding.connection,
+                binding.terminal
+            ),
+            "Participant connection changed; open a fresh terminal binding review"
+        );
+        // A previously requested nudge must not carry across a native binding
+        // change, even if the new choice is the same terminal.
+        self.context.nudges.retain(|terminal, nudge| {
+            if nudge.participant != binding.participant {
+                return true;
+            }
+            if let NudgePhase::Pasting { delivery, .. } = &nudge.phase {
+                delivery.cancel();
+                if delivery.state() != DeliveryState::Cancelled
+                    && let Some(session) =
+                        self.app.terminals.get_mut(TerminalId::from_raw(*terminal))
+                {
+                    session.note_draft();
+                }
+            }
+            false
+        });
+        self.context_channel_changed();
+        Ok(())
+    }
+
     pub(super) fn context_channel_request(
         &mut self,
         connection: u64,
@@ -443,6 +554,7 @@ impl WorkspaceHost {
         let terminal = participant
             .terminal
             .and_then(|id| self.app.terminals.get(TerminalId::from_raw(id)))
+            .filter(|terminal| terminal.live())
             .map(|terminal| {
                 json!({"number":terminal.number(),"title":crate::snapshot::terminal_label(terminal)})
             });
@@ -521,11 +633,12 @@ impl WorkspaceHost {
             );
             return page;
         }
-        page.push_str("Participants\n\n");
+        page.push_str("Bind a participant to a pane-title terminal number: :agent-bind codex-1 2\nRemove a binding: :agent-bind codex-1 none\n\nParticipants\n\n");
         for participant in participants {
             let terminal = participant
                 .terminal
                 .and_then(|id| self.app.terminals.get(TerminalId::from_raw(id)))
+                .filter(|terminal| terminal.live())
                 .map_or_else(
                     || "terminal unknown".to_owned(),
                     crate::snapshot::terminal_label,
