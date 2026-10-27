@@ -776,6 +776,13 @@ pub struct TerminalSession {
     /// as long as it is still the last thing the child received.
     sent_text: Option<SentText>,
     input_generation: u64,
+    /// When the person last typed or pasted here, which a channel nudge
+    /// waits on so it never lands while someone is at the keyboard.
+    typed: Option<std::time::Instant>,
+    /// Whether the child's input line may hold text nobody submitted: the
+    /// person typed or pasted, or an approved or direct proposal inserted
+    /// text, and no Enter or `Ctrl-c` followed. Enter would submit it.
+    draft: bool,
     proposal_deliveries: Vec<proposal::Delivery>,
     /// Lines above the live screen the reader has scrolled to.
     scroll: usize,
@@ -1866,6 +1873,64 @@ impl TerminalSession {
         self.input_generation = self.input_generation.wrapping_add(1);
     }
 
+    /// When the person last typed or pasted into this terminal.
+    pub fn typed_at(&self) -> Option<std::time::Instant> {
+        self.typed
+    }
+
+    /// Whether the input line may hold unsubmitted text; see `draft`.
+    pub fn has_draft(&self) -> bool {
+        self.draft
+    }
+
+    /// Moves the last keystroke into the past, as if the person had then
+    /// stopped typing.
+    #[cfg(test)]
+    pub(crate) fn backdate_typing(&mut self, by: std::time::Duration) {
+        self.typed = self.typed.map(|typed| typed - by);
+    }
+
+    /// Something may now wait on the input line unsubmitted.
+    pub(crate) fn note_draft(&mut self) {
+        self.draft = true;
+    }
+
+    fn note_typing(&mut self, draft: bool) {
+        self.typed = Some(std::time::Instant::now());
+        self.draft = draft;
+    }
+
+    /// Types a channel nudge's fixed line as a paste, for a caller that has
+    /// checked the grant and the hold. Only a terminal reading pastes takes
+    /// it, so the line arrives as one piece of data, never as keystrokes.
+    /// Returns the input generation `submit_nudge` must still find.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn paste_nudge(
+        &mut self,
+        text: &proposal::Text,
+    ) -> std::io::Result<(proposal::Delivery, u64)> {
+        if !self.emulator.modes.bracketed_paste {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "Terminal is not reading pastes",
+            ));
+        }
+        self.input_generation = self.input_generation.wrapping_add(1);
+        let delivery = self.queue_input(text)?;
+        Ok((delivery, self.input_generation))
+    }
+
+    /// Presses Enter after a nudge's paste, unless any other input reached
+    /// the terminal since: that may have changed what is on the line.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn submit_nudge(&mut self, generation: u64) -> bool {
+        if self.input_generation != generation || !self.live() {
+            return false;
+        }
+        self.input_generation = self.input_generation.wrapping_add(1);
+        self.write(vec![b'\r'])
+    }
+
     /// Native approval alone may call this after checking the captured target,
     /// grant, and input signature. Like typing, the approval supersedes text
     /// still queued. It does not change native presentation state.
@@ -1892,6 +1957,13 @@ impl TerminalSession {
     }
 
     fn queue_proposal(&mut self, text: &proposal::Text) -> std::io::Result<proposal::Delivery> {
+        let delivery = self.queue_input(text)?;
+        // Inserted without Enter, so it waits on the line like typing.
+        self.draft = true;
+        Ok(delivery)
+    }
+
+    fn queue_input(&mut self, text: &proposal::Text) -> std::io::Result<proposal::Delivery> {
         // Insertions without review supersede nothing, so finished records
         // would otherwise accumulate until the person next types.
         self.proposal_deliveries.retain(|delivery| {
@@ -1926,9 +1998,19 @@ impl TerminalSession {
     /// a request to be back where the typing will appear.
     pub fn send_key(&mut self, key: KeyStroke) -> bool {
         self.note_input_intent();
+        // Enter submits the line and `Ctrl-c` abandons it; any other key may
+        // leave something on it. With Alt, Enter arrives after an Escape that
+        // line editors read as "new line", not "submit".
+        use crate::input::{KeyCode, Modifiers};
+        let alt = key.modifiers.contains(Modifiers::ALT);
+        let interrupt = !alt
+            && key.modifiers.contains(Modifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('c' | 'C'));
+        let submit = !alt && key.code == KeyCode::Enter;
         let Some(bytes) = keys::encode(key, self.emulator.modes) else {
             return false;
         };
+        self.note_typing(!(submit || interrupt));
         // Whatever this key does to the child's input area, the pasted text is
         // no longer the last thing at the cursor, so deletes counted from its
         // length would land on the wrong characters.
@@ -1944,6 +2026,7 @@ impl TerminalSession {
         if text.is_empty() {
             return true;
         }
+        self.note_typing(true);
         let bracketed = self.emulator.modes.bracketed_paste;
         let bytes = keys::encode_paste(text, self.emulator.modes);
         self.scroll = 0;
@@ -1973,6 +2056,8 @@ impl TerminalSession {
     /// last input the child received.
     pub fn undo_sent_text(&mut self) -> SentTextUndo {
         self.note_input_intent();
+        let draft = self.draft;
+        self.note_typing(draft);
         const DELETE: u8 = 0x7f;
 
         let Some(sent) = self.sent_text else {
@@ -3026,6 +3111,8 @@ impl TerminalSessions {
                 exit: None,
                 sent_text: None,
                 input_generation: 0,
+                typed: None,
+                draft: false,
                 proposal_deliveries: Vec::new(),
                 scroll: 0,
                 revision: 1,
@@ -3287,6 +3374,8 @@ mod tests {
             exit: None,
             sent_text: None,
             input_generation: 0,
+            typed: None,
+            draft: false,
             proposal_deliveries: Vec::new(),
             scroll: 0,
             revision: 1,
@@ -4195,5 +4284,58 @@ mod tests {
         assert_eq!(session.scroll(), 1);
         session.send_key(KeyStroke::char('x'));
         assert_eq!(session.scroll(), 0);
+    }
+
+    #[test]
+    fn typing_leaves_a_draft_until_enter_or_an_interrupt() {
+        let mut session = session(8, 2);
+        assert!(session.typed_at().is_none() && !session.has_draft());
+        session.send_key(KeyStroke::char('x'));
+        assert!(session.typed_at().is_some() && session.has_draft());
+        session.send_key(KeyStroke::plain(crate::input::KeyCode::Enter));
+        assert!(!session.has_draft(), "Enter submits the line");
+        session.send_text("pasted");
+        assert!(session.has_draft());
+        session.send_key(KeyStroke::ctrl('c'));
+        assert!(!session.has_draft(), "Ctrl-c abandons the line");
+        session.send_key(KeyStroke::plain(crate::input::KeyCode::Left));
+        assert!(
+            session.has_draft(),
+            "only Enter or Ctrl-c is known to clear it"
+        );
+        session.send_key(KeyStroke::new(
+            crate::input::KeyCode::Enter,
+            crate::input::Modifiers::ALT,
+        ));
+        assert!(
+            session.has_draft(),
+            "Alt-Enter starts a new line in a prompt"
+        );
+        session.send_key(KeyStroke::new(
+            crate::input::KeyCode::Enter,
+            crate::input::Modifiers::SHIFT,
+        ));
+        assert!(
+            !session.has_draft(),
+            "Shift-Enter reaches the child as Enter"
+        );
+        let typed = session.typed_at().unwrap();
+        session.backdate_typing(Duration::from_secs(30));
+        assert!(session.typed_at().unwrap() < typed);
+    }
+
+    #[test]
+    fn a_nudge_is_pasted_only_into_a_terminal_reading_pastes() {
+        let mut session = session(8, 2);
+        let text = proposal::Text::new("Runyte: read").unwrap();
+        assert_eq!(
+            session.paste_nudge(&text).unwrap_err().kind(),
+            std::io::ErrorKind::Unsupported
+        );
+        // With paste on but no child, nothing can be written either way.
+        session.feed(b"\x1b[?2004h");
+        assert!(session.paste_nudge(&text).is_err());
+        let generation = session.input_generation();
+        assert!(!session.submit_nudge(generation.wrapping_add(1)), "stale");
     }
 }

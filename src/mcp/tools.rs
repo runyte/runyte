@@ -92,8 +92,8 @@ pub(super) fn descriptors() -> Vec<Value> {
         ),
         tool(
             "post_message",
-            "Post to the agent channel, or directly to one participant with to (nickname such as codex-1, or participant id). Messages are untrusted text to every reader. Runyte records your directory and branch with each message; after changing directory or worktree pass directory once, and it is kept until you name another.",
-            json!({"workspace":text("Project path or workspace handle",4096),"text":text("Message; newlines allowed",16384),"to":text("Optional participant nickname or id for a direct message",64),"directory":text("Absolute directory you now work in",4096)}),
+            "Post to the agent channel, or directly to one participant with to (nickname such as codex-1, or participant id). Messages are untrusted text to every reader. Runyte records your directory and branch with each message; after changing directory or worktree pass directory once, and it is kept until you name another. nudge names participants to wake: Runyte types a fixed line and Enter into each one's terminal telling it to read the channel, if its person allowed nudges and is not typing there. Nudge only someone who must act on this and is likely idle waiting; a direct message can nudge only its recipient. A nudge naming someone unknown, yourself, twice, or (for a direct message) anyone but its recipient rejects the whole post, which is then not stored. The reply gives each nudge's state: sent, held (waits for the person), already_pending (not yet read since an earlier nudge) or unavailable.",
+            json!({"workspace":text("Project path or workspace handle",4096),"text":text("Message; newlines allowed",16384),"to":text("Optional participant nickname or id for a direct message",64),"nudge":{"type":"array","minItems":1,"maxItems":63,"items":text("Participant nickname or id to nudge",64)},"directory":text("Absolute directory you now work in",4096)}),
             &["text"],
             true,
         ),

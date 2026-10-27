@@ -170,13 +170,14 @@ pub(crate) struct ReviewLine {
 }
 
 /// The grant toggles in key order: `1` is the first.
-const SCOPES: [Scope; 6] = [
+const SCOPES: [Scope; 7] = [
     Scope::TerminalRead,
     Scope::EditorContextRead,
     Scope::BufferEdit,
     Scope::TerminalPropose,
     Scope::TerminalInsert,
     Scope::AgentChannel,
+    Scope::ChannelNudge,
 ];
 
 /// The scope another one needs. Turning a scope on turns on what it needs,
@@ -186,6 +187,7 @@ fn prerequisite(scope: Scope) -> Option<Scope> {
         Scope::BufferEdit => Some(Scope::EditorContextRead),
         Scope::TerminalPropose => Some(Scope::TerminalRead),
         Scope::TerminalInsert => Some(Scope::TerminalPropose),
+        Scope::ChannelNudge => Some(Scope::AgentChannel),
         Scope::TerminalRead | Scope::EditorContextRead | Scope::AgentChannel => None,
     }
 }
@@ -668,7 +670,7 @@ impl App {
                     return;
                 }
             }
-            KeyCode::Char(character @ '1'..='6') => {
+            KeyCode::Char(character @ '1'..='7') => {
                 if let Kind::Grant { scopes, .. } = &mut surface.kind {
                     toggle(scopes, SCOPES[character as usize - '1' as usize]);
                 }
@@ -723,6 +725,7 @@ impl App {
                             Scope::TerminalInsert =>
                                 "Skip review: insert proposals directly (no Enter)",
                             Scope::AgentChannel => "Join the agent channel: read and post messages",
+                            Scope::ChannelNudge => "Accept channel nudges: a fixed line and Enter",
                         }
                     ),
                     Vec::new(),

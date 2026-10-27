@@ -495,6 +495,21 @@ fn skipping_review_brings_its_prerequisites_and_leaves_with_them() {
         scopes(&app).is_empty(),
         "reading is what everything else needs"
     );
+    press(&mut app, KeyCode::Char('7'));
+    assert_eq!(
+        scopes(&app),
+        BTreeSet::from([Scope::AgentChannel, Scope::ChannelNudge]),
+        "accepting nudges needs the channel"
+    );
+    assert!(
+        app.context_overlay()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.label == "7 [x] Accept channel nudges: a fixed line and Enter")
+    );
+    press(&mut app, KeyCode::Char('6'));
+    assert!(scopes(&app).is_empty());
 }
 
 #[test]

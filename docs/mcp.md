@@ -101,8 +101,9 @@ Open `:mcp agent` in each workspace to share. The identity must match
 identities, such as `codex` and `claude`, when permissions should differ.
 
 Toggle terminal reads (`1`), editor-context reads (`2`), buffer edits (`3`),
-terminal proposals (`4`), optionally direct insertion without review (`5`), and
-the [agent channel](#agent-channel) (`6`). Optionally remember the grant with
+terminal proposals (`4`), optionally direct insertion without review (`5`),
+the [agent channel](#agent-channel) (`6`), and optionally accepting
+[channel nudges](#nudges) (`7`). Optionally remember the grant with
 `r`, then Tab and Enter to **Apply permissions**.
 Write permissions automatically enable the corresponding read permission.
 `:mcp` reopens the current grant, lifetime and connected-reader count; `n`
@@ -146,7 +147,7 @@ explicit private profile (see below).
 | `terminal_proposal_status` | Check a proposal's state when needed. |
 | `cancel_terminal_proposal` | Cancel a pending proposal. |
 | `join_channel` | Join the workspace's agent channel, stating provider and task. |
-| `post_message` | Post to the channel, or directly to one participant. |
+| `post_message` | Post to the channel, or directly to one participant, optionally nudging named participants. |
 | `read_messages` | Read what arrived since the last read, optionally waiting for it. |
 | `list_participants` | See who is in the channel, where they work and in which terminal. |
 
@@ -281,7 +282,44 @@ connected at once (the host's reader limit) and 64 known; when it is full, the
 one that left longest ago gives way. It keeps the newest 1,000 messages (4 MiB);
 a message holds at most 16 KiB and a read returns at most about 256 KiB. Runyte
 never types a message into an agent's terminal, so an idle agent learns of new
-messages when it next reads, or when the person asks it to.
+messages when it next reads, when the person asks it to, or when a sender
+nudges it.
+
+### Nudges
+
+`post_message` takes an optional `nudge`: the nicknames or ids of up to 63
+participants to wake. A public post may name any participants but the sender;
+a direct message may name only its recipient. An unknown, repeated or refused
+name rejects the whole post before anything is stored. For each name Runyte
+types one fixed line, `Runyte: you have new messages on the agent channel.`,
+as a bracketed paste and then Enter into that participant's terminal. The
+message text never travels through the terminal. Nothing nudges unless asked.
+
+The reply adds `nudges`, one entry per name with its `participant`, `nick` and
+`state`:
+
+| State | Meaning |
+| --- | --- |
+| `sent` | The line was queued for the terminal; Enter follows unless other input reaches the terminal first, which leaves the line for the person |
+| `held` | The person may be typing there; it is sent when they stop |
+| `already_pending` | That terminal was nudged and its agent has not read the channel since |
+| `unavailable` | It cannot be nudged, for a reason the sender is not told |
+
+A participant can be nudged only when its identity's grant includes `7`, it is
+connected, its terminal is verified (Unix integrated terminals of a persistent
+session), and that terminal is reading pastes. A held nudge waits while the
+line may hold unsubmitted text, for 30 seconds after the person's last
+keystroke there, and while a terminal proposal for it is waiting. A terminal
+has at most one nudge outstanding; the participant's next read clears it, or,
+for a nudge still being typed, its Enter does. The
+person sees a notification for each nudge sent. A host that predates nudges
+does not offer them, and a post asking for one is refused as `unsupported`.
+
+Nudge only a participant that must act on the message and is probably waiting
+at its prompt. If that agent shows an approval prompt when the nudge arrives,
+Enter may answer it; the person accepts that risk by granting `7`. A sender that
+can also read the recipient's terminal could time a nudge for such a prompt, so
+grant `7` only to identities whose peers you trust that far.
 
 ## Migrating from Python
 

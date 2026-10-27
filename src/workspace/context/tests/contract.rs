@@ -438,6 +438,35 @@ fn direct_insertion_is_a_grant_setting_that_needs_proposals_and_is_never_negotia
 }
 
 #[test]
+fn accepting_nudges_is_a_grant_setting_that_needs_the_channel() {
+    assert_eq!(
+        serde_json::to_value(Scope::ChannelNudge).unwrap(),
+        "channel_nudge"
+    );
+    assert_eq!(Scope::from_capability("channel_nudge"), None);
+    assert!(!CAPABILITIES.contains(&"channel_nudge"));
+    assert!(validate_scopes(&[Scope::ChannelNudge].into()).is_err());
+    assert!(validate_scopes(&[Scope::AgentChannel, Scope::ChannelNudge].into()).is_ok());
+    let mut requested = registration();
+    requested["optional_capabilities"] = json!(["channel_nudge"]);
+    assert!(parse_registration(&requested.to_string()).is_err());
+}
+
+#[test]
+fn a_post_bounds_whom_it_nudges() {
+    let post = |nudge: serde_json::Value| {
+        parse_request(
+            &json!({"type":"request","id":"1","method":"channel.post","params":{"text":"hi","location":{"directory":"/w","repository":null,"worktree":null,"branch":null},"nudge":nudge}})
+                .to_string(),
+        )
+    };
+    assert!(post(json!(["codex-1"])).is_ok());
+    assert!(post(json!([])).is_err(), "an empty list asks for nothing");
+    assert!(post(json!(vec!["codex-1"; 64])).is_err());
+    assert!(post(json!(["codex 1"])).is_err());
+}
+
+#[test]
 fn the_agent_channel_is_negotiated_through_its_feature_and_capability() {
     assert_eq!(
         Scope::from_capability("agent_channel"),

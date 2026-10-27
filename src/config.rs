@@ -189,6 +189,11 @@ impl McpConfig {
                         "mcp.default_grants.{identity}: terminal_insert skips review and is granted per workspace with :mcp, never by default"
                     ));
                 }
+                if name == Scope::ChannelNudge.capability() {
+                    return Err(format!(
+                        "mcp.default_grants.{identity}: channel_nudge sends Enter and is granted per workspace with :mcp, never by default"
+                    ));
+                }
                 let Some(scope) = Scope::from_capability(name) else {
                     return Err(format!(
                         "mcp.default_grants.{identity}: unknown permission {name:?}; use terminal_read, editor_context_read, buffer_edit, terminal_propose or agent_channel"
@@ -2044,6 +2049,7 @@ themes:
                 "agent: [terminal_insert, terminal_propose, terminal_read]",
                 "never by default",
             ),
+            ("agent: [channel_nudge, agent_channel]", "never by default"),
             ("agent: [terminal_write]", "unknown permission"),
             (
                 "agent: [terminal_propose]",

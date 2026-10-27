@@ -61,6 +61,15 @@ impl Bridge {
                 if let Some(to) = args["to"].as_str() {
                     params["to"] = json!(to);
                 }
+                if let Some(nudge) = args.get("nudge") {
+                    if !self.nudge_supported(&workspace) {
+                        return Err(Failure::new(
+                            "unsupported",
+                            "This Runyte cannot nudge; post without nudge, or update Runyte",
+                        ));
+                    }
+                    params["nudge"] = nudge.clone();
+                }
                 self.request(&workspace, "channel.post", params).await
             }
             "read_messages" => {

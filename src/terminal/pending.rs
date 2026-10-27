@@ -205,6 +205,8 @@ impl TerminalPreparation {
                 exit: None,
                 sent_text: None,
                 input_generation: 0,
+                typed: None,
+                draft: false,
                 proposal_deliveries: Vec::new(),
                 scroll: 0,
                 revision: 1,
