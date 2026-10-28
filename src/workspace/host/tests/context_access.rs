@@ -2034,3 +2034,205 @@ async fn native_binding_enables_daemon_nudges_and_cancellation_preserves_an_unsu
     assert!(!prompts.text(terminal).contains("SUBMITTED:"));
     assert_eq!(host.context_nudge_phase(terminal), Some("held"));
 }
+
+fn notification_authenticate(
+    host: &mut WorkspaceHost,
+    identity: &Identity,
+    connection: u64,
+) -> Reply {
+    frame(
+        host,
+        connection,
+        json!({"type":"authenticate","credential":identity.credential()}),
+    );
+    let reply = frame(
+        host,
+        connection,
+        json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"notification-fixture","commands":[],"required_capabilities":["agent_channel"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[wire::CHANNEL_FEATURE,wire::NUDGE_FEATURE,wire::NOTIFY_FEATURE]}),
+    );
+    assert!(reply.value.get("error").is_none(), "{}", reply.value);
+    reply
+}
+
+fn notification_join(
+    host: &mut WorkspaceHost,
+    connection: u64,
+    provider: &str,
+    enabled: bool,
+    resume: Option<&str>,
+) -> Value {
+    let mut params = json!({"provider":provider,"task":"notification test","location":{"directory":"/work"},"notifications":enabled});
+    if let Some(resume) = resume {
+        params["resume"] = json!(resume);
+    }
+    let reply = request(
+        host,
+        connection,
+        &format!("notify-join-{}", host.context.channel.revision()),
+        "channel.join",
+        params,
+    );
+    assert!(reply.get("error").is_none(), "{reply}");
+    reply
+}
+
+fn notification_post(host: &mut WorkspaceHost, target: &str, id: &str, transport: &str) -> Value {
+    let reply = request(
+        host,
+        1,
+        id,
+        "channel.post",
+        json!({"text":"peer text is never a wake prompt","location":{"directory":"/work"},"nudge":[target],"nudge_transport":transport}),
+    );
+    assert!(reply.get("error").is_none(), "{reply}");
+    reply["result"]["nudges"][0]["state"].clone()
+}
+
+#[tokio::test]
+async fn channel_notifications_need_no_terminal_coalesce_and_clear_after_read_or_disable() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(
+        &mut host,
+        &identity,
+        [Scope::AgentChannel, Scope::ChannelNudge].into(),
+    );
+    notification_authenticate(&mut host, &identity, 1);
+    notification_authenticate(&mut host, &identity, 2);
+    notification_join(&mut host, 1, "codex", true, None);
+    let recipient = notification_join(&mut host, 2, "claude", true, None);
+    assert!(recipient["result"]["participant"]["terminal"].is_null());
+    assert_eq!(
+        notification_post(&mut host, "claude-1", "notify-first", "notification"),
+        "queued"
+    );
+    assert_eq!(
+        notification_post(&mut host, "claude-1", "notify-second", "notification"),
+        "already_pending"
+    );
+    assert!(host.context.nudges.is_empty());
+    let read = request(
+        &mut host,
+        2,
+        "notify-read",
+        "channel.read",
+        json!({"since":0,"limit":200}),
+    );
+    assert_eq!(
+        read["result"]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|message| message["text"] == "peer text is never a wake prompt")
+            .count(),
+        2
+    );
+    assert_eq!(
+        notification_post(&mut host, "claude-1", "notify-after-read", "notification"),
+        "queued"
+    );
+    notification_join(&mut host, 2, "claude", false, None);
+    assert_eq!(
+        notification_post(&mut host, "claude-1", "notify-disabled", "notification"),
+        "unavailable"
+    );
+    notification_join(&mut host, 2, "claude", true, None);
+    assert_eq!(
+        notification_post(&mut host, "claude-1", "notify-reenabled", "notification"),
+        "queued"
+    );
+    assert!(host.context.nudges.is_empty());
+}
+
+#[tokio::test]
+async fn channel_notifications_require_recipient_grant_and_end_with_the_connection() {
+    let (_root, mut host, identity, _events) = fixture();
+    let recipient_identity = host
+        .context
+        .storage
+        .as_ref()
+        .unwrap()
+        .identity("recipient")
+        .unwrap();
+    grant(
+        &mut host,
+        &identity,
+        [Scope::AgentChannel, Scope::ChannelNudge].into(),
+    );
+    grant(&mut host, &recipient_identity, [Scope::AgentChannel].into());
+    notification_authenticate(&mut host, &identity, 1);
+    notification_join(&mut host, 1, "codex", true, None);
+    let recipient_lease = notification_authenticate(&mut host, &recipient_identity, 2)
+        .lease
+        .unwrap();
+    let recipient = notification_join(&mut host, 2, "claude", true, None);
+    let resume = recipient["result"]["resume"].as_str().unwrap();
+    assert_eq!(
+        notification_post(&mut host, "claude-1", "notify-no-grant", "notification"),
+        "unavailable"
+    );
+    host.context_disconnect(2);
+    assert!(!recipient_lease.active());
+    grant(
+        &mut host,
+        &recipient_identity,
+        [Scope::AgentChannel, Scope::ChannelNudge].into(),
+    );
+    let next_lease = notification_authenticate(&mut host, &recipient_identity, 3)
+        .lease
+        .unwrap();
+    notification_join(&mut host, 3, "claude", true, Some(resume));
+    assert_eq!(
+        notification_post(&mut host, "claude-1", "notify-granted", "notification"),
+        "queued"
+    );
+    host.context_disconnect(3);
+    assert!(!next_lease.active());
+    assert_eq!(
+        notification_post(&mut host, "claude-1", "notify-disconnected", "notification"),
+        "unavailable"
+    );
+    let fresh_lease = notification_authenticate(&mut host, &recipient_identity, 4)
+        .lease
+        .unwrap();
+    notification_join(&mut host, 4, "claude", true, Some(resume));
+    assert_eq!(
+        notification_post(&mut host, "claude-1", "notify-reconnected", "notification"),
+        "queued"
+    );
+    host.context_revoke(recipient_identity.name());
+    assert!(!fresh_lease.active());
+    assert_eq!(
+        notification_post(&mut host, "claude-1", "notify-revoked", "notification"),
+        "unavailable"
+    );
+    assert!(host.context.nudges.is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn unavailable_notifications_never_fall_back_to_bound_terminal_but_explicit_terminal_works() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(
+        &mut host,
+        &identity,
+        [Scope::AgentChannel, Scope::ChannelNudge].into(),
+    );
+    notification_authenticate(&mut host, &identity, 1);
+    notification_authenticate(&mut host, &identity, 2);
+    notification_join(&mut host, 1, "claude", true, None);
+    let mut prompts = Prompts::new(&mut host);
+    let terminal = prompts.open(&mut host, 2, "codex", true).await;
+    let binding = binding_review(&mut host, "codex-1 1");
+    host.context_apply_binding(binding).unwrap();
+    assert_eq!(
+        notification_post(&mut host, "codex-1", "notify-no-fallback", "notification"),
+        "unavailable"
+    );
+    assert_eq!(host.context_nudge_phase(terminal), None);
+    assert!(host.context.nudges.is_empty());
+    assert_eq!(
+        notification_post(&mut host, "codex-1", "notify-explicit-terminal", "terminal"),
+        "sent"
+    );
+    assert!(host.context_nudge_phase(terminal).is_some());
+}

@@ -26,6 +26,10 @@ current sources take precedence.
 
 Active work:
 
+- [Terminal-free channel notifications](active/PLAN_CHANNEL_NOTIFICATIONS.md):
+  experimental Claude MCP channel and Codex queue delivery for [#43](https://github.com/runyte/runyte/issues/43),
+  with explicit terminal backup, local to `exp`.
+
 - [Runyte MCP skill and durable agent channels](active/PLAN_AGENT_CHANNEL_SKILL_AND_STORAGE.md):
   a cooperative MCP skill and safe installer first, followed by user testing;
   SQLite storage across workspaces with retained public history and acknowledged

@@ -5875,7 +5875,7 @@ connected reader identifies a local connection, not a verified agent process.
 | `4` | Propose terminal text for review; also enables terminal reads |
 | `5` | Skip review: insert proposed text directly, still without Enter; also enables `4` and `1` |
 | `6` | Join the agent channel: read and post messages with other agents |
-| `7` | Accept channel nudges: another agent may have Runyte type a fixed line and Enter into this identity's terminals; also enables `6` |
+| `7` | Accept channel wakes: configured notifications or explicit terminal backup (which sends Enter); also enables `6` |
 | `r` | Remember this exact workspace's grant |
 | `n` | Next known identity; discards unapplied choices |
 | `x` | Revoke the selected identity immediately |
@@ -5990,6 +5990,11 @@ works on changes, or it reports another directory, the channel says where it
 moved from.
 
 A terminal whose agent has unread messages shows `[N unread]` in its title.
+Sender-requested wakes default to terminal-free delivery through an explicitly
+configured Claude channel or Codex queue adapter. Permission `7` is still
+required. See [notification setup](mcp.md#nudges). Legacy terminal wakes remain
+an explicit backup and can answer an agent's pending dialog with Enter.
+
 When an agent's terminal is unknown, use `:agent-bind codex-1 2` in the
 workspace containing its terminal, then review the workspace and terminal title
 and approve with Tab and Enter. The number is the pane title's `#2`; terminal
@@ -6003,15 +6008,18 @@ participants and the recent messages, direct ones included, which refreshes as
 messages arrive. Messages last as long as the workspace host. The [MCP
 guide](mcp.md#agent-channel) describes the tools and limits.
 
-**Nudges (`7`).** An agent waiting at its prompt does not read the channel by
-itself. A sender that needs a reply can ask Runyte to nudge particular
-participants with a post: Runyte then types one fixed line,
-`Runyte: you have new messages on the agent channel.`, as a paste followed by
-Enter into each one's terminal. Nothing a sender writes reaches the prompt this
-way, and nothing nudges unless the sender asks. A participant is nudged only if
-its identity has `7` here, it is connected, and Runyte verified the terminal it
-runs in, which today means a persistent session's integrated terminal on Unix.
-The terminal must be reading pastes, as agent prompts do.
+**Nudges (`7`).** A sender can request a fixed wake reminder with a post.
+The updated MCP adapter defaults to notifications, which need an explicitly
+configured recipient and permission `7`, but no terminal. A `queued` result
+means the host accepted the notification, not that the agent acted. See
+[Claude and Codex setup](mcp.md#nudges). Unsupported receivers never cause an
+automatic terminal fallback.
+
+**Explicit terminal backup.** A sender selecting `nudge_transport: "terminal"`
+uses the legacy paste followed by Enter. Runyte types only the fixed line
+`Runyte: you have new messages on the agent channel.` The recipient needs `7`,
+a connected participant, and a live, automatically verified or natively bound
+terminal reading bracketed pastes. Peer message text never reaches that terminal.
 
 A nudge waits while you may be typing there: while the line holds text you
 typed or pasted, or an agent's proposal inserted, and nothing submitted it with
@@ -6025,7 +6033,8 @@ line waits for you like your own text. A terminal gets at most one nudge until
 its agent reads the channel again. Each nudge leaves a notification naming the
 sender, the participant and the terminal.
 
-Grant `7` only where an unexpected Enter is acceptable. If the agent is showing
+Permission `7` also allows the explicit terminal backup, so grant it only where
+that unexpected Enter is acceptable. If the agent is showing
 an approval prompt when the nudge arrives, Enter may choose the highlighted
 option, which is often approval. The waits above make this less likely but do
 not prevent it; Runyte does not read the screen to guess. Inside tmux, zellij or

@@ -65,3 +65,25 @@ reopens the same profile. The host driver also supports `restart_host` and
 its stdin stops the isolated host and removes temporary state, so stop the agent
 drivers first. This harness does not establish automatic skill selection or
 agent wake-up behavior.
+
+## Terminal-free wakes
+
+`test_channel_notifications.py` is included in `run.py`. Real Runyte adapters
+and temporary editor hosts exercise terminal-free idle delivery, recipient
+grants, coalescing, revocation, unsupported recipients, and delivery during a
+long read in another workspace. No vendor client or model service is required.
+
+Optional vendor probes require the installed CLI and a sandbox that permits
+local sockets/PTYs:
+
+```sh
+python3 tests/mcp/codex_queue_probe.py target/debug/runyte
+python3 tests/mcp/claude_channel_probe.py target/debug/runyte
+```
+
+They use temporary configuration and fake localhost model services, not real
+API credentials. Codex is version-tested at 0.164.0. The Claude probe simulates
+rollout eligibility in fixture-owned configuration; it does not prove account
+or organization availability. These optional probes are not CI dependencies.
+See the [notification experiment](../../context/plans/active/PLAN_CHANNEL_NOTIFICATIONS.md)
+for decisions and validation limits.

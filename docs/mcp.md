@@ -321,38 +321,105 @@ reconnects while a confirmation is open requires a fresh review.
 
 ### Nudges
 
-`post_message` takes an optional `nudge`: the nicknames or ids of up to 63
-participants to wake. A public post may name any participants but the sender;
-a direct message may name only its recipient. An unknown, repeated or refused
-name rejects the whole post before anything is stored. For each name Runyte
-types one fixed line, `Runyte: you have new messages on the agent channel.`,
-as a bracketed paste and then Enter into that participant's terminal. The
-message text never travels through the terminal. Nothing nudges unless asked.
+`post_message` can name up to 63 participants in `nudge`. A public post can
+name any connected peer; a DM can name only its recipient. Unknown, repeated,
+or self names reject the entire post. The recipient needs permission `7`
+(which requires `6`) in `:mcp`; it cannot be a configured default.
 
-The reply adds `nudges`, one entry per name with its `participant`, `nick` and
-`state`:
+The default `nudge_transport` is `notification`. A notification carries a fixed
+Runyte-authored reminder and the adapter's workspace handle, never peer message
+text. The recipient then calls `read_messages`. No terminal or terminal binding
+is needed. Configure each recipient adapter explicitly as described below.
+Unconfigured or unsupported recipients return `unavailable`; an older host
+returns `unsupported`. Neither case silently sends terminal input.
 
 | State | Meaning |
 | --- | --- |
-| `sent` | The line was queued for the terminal; Enter follows unless other input reaches the terminal first, which leaves the line for the person |
-| `held` | The person may be typing there; it is sent when they stop |
-| `already_pending` | That terminal was nudged and its agent has not read the channel since |
-| `unavailable` | It cannot be nudged, for a reason the sender is not told |
+| `queued` | The host accepted a notification; it does not prove the client received it or started a turn |
+| `already_pending` | A wake is outstanding until that participant reads the channel |
+| `unavailable` | The recipient lacks a live configured receiver or permission |
+| `sent` | Explicit terminal backup queued its fixed line; Enter follows subject to input guards |
+| `held` | Explicit terminal backup is waiting for its typing/proposal guards |
 
-A participant can be nudged only when its identity's grant includes `7`, it is
-connected, its terminal is automatically verified or explicitly bound through Runyte, and that terminal is reading pastes. A held nudge waits while the
-line may hold unsubmitted text, for 30 seconds after the person's last
-keystroke there, and while a terminal proposal for it is waiting. A terminal
-has at most one nudge outstanding; the participant's next read clears it, or,
-for a nudge still being typed, its Enter does. The
-person sees a notification for each nudge sent. A host that predates nudges
-does not offer them, and a post asking for one is refused as `unsupported`.
+Notifications are bounded and coalesced per recipient connection. Reading the
+channel clears the outstanding notification; disconnecting or changing grants
+invalidates that connection. Messages remain available even if delivery fails.
+Delivery is not retried automatically: a timeout may have delivered. Already
+emitted client notifications cannot be recalled on revocation. These wakes
+apply to the workspace channel, not the deferred durable SQLite channel.
 
-Nudge only a participant that must act on the message and is probably waiting
-at its prompt. If that agent shows an approval prompt when the nudge arrives,
-Enter may answer it; the person accepts that risk by granting `7`. A sender that
-can also read the recipient's terminal could time a nudge for such a prompt, so
-grant `7` only to identities whose peers you trust that far.
+#### Claude Code
+
+Configure the MCP command as:
+
+```text
+runyte mcp --identity claude --channel-notifications claude
+```
+
+Start Claude interactively with the configured MCP server name:
+
+```sh
+claude --dangerously-load-development-channels server:runyte
+```
+
+Accept Claude's development-channel confirmation. This is a research-preview
+client requirement for custom channels, separate from Runyte's grant. The
+adapter advertises `experimental.claude/channel` and emits
+`notifications/claude/channel`. It does not advertise the permission-relay
+capability and never sends permission responses. Claude queues events while
+busy; pending approvals still require the person. Channels require supported
+Anthropic authentication, feature availability and organization policy. The
+custom-channel development flag does not enable this in `claude -p` or the
+Agent SDK. A disabled channel can silently discard events.
+
+Contract: [Claude channels reference](https://code.claude.com/docs/en/channels-reference)
+and [channel availability](https://code.claude.com/docs/en/channels).
+
+#### Codex CLI
+
+Codex has no documented equivalent MCP channel wake notification. Runyte uses
+its client-specific queue command instead; **Codex CLI 0.164.0 is the tested
+version**. Configure the adapter for one exact persisted recipient thread:
+
+```text
+runyte mcp --identity codex --channel-notifications codex --codex-thread THREAD_UUID
+```
+
+Create or choose a persisted Codex thread first, obtain its exact UUID from
+Codex's thread metadata, and configure this adapter for that thread before
+resuming it. Replace `THREAD_UUID` with that UUID. This is trusted launch
+configuration, never a peer-supplied tool argument. Do not reuse a
+thread-bound adapter configuration for another agent or thread. The adapter
+must inherit the same `CODEX_HOME` and have `codex` on `PATH` so it addresses
+the matching managed daemon. Ephemeral threads cannot receive queued input.
+There is no automatic thread inference from a daemon's environment.
+
+Runyte executes `codex queue --thread UUID --message FIXED_REMINDER` with an
+argument vector, discarded output and a five-second deadline. The reminder
+includes the adapter's workspace handle so a multi-workspace recipient reads
+the right channel. The bounded worker preserves MCP request processing while
+the CLI runs. Idle threads start a turn; input waits behind an active command
+approval. A failure is reported on adapter stderr and leaves the channel
+message for a later read; it does not cause a retry or terminal fallback.
+
+The [Codex App Server documentation](https://learn.chatgpt.com/docs/app-server)
+documents thread and approval behavior but does not currently document the
+queue interface. This integration is experimental and version-tested, not a
+portable MCP guarantee. Recheck it when upgrading Codex.
+
+#### Explicit terminal backup
+
+Set `nudge_transport: "terminal"` in `post_message` to choose the legacy path.
+This requires the recipient's permission `7`, a verified or natively bound
+live terminal, and bracketed paste. Runyte pastes one fixed line and then Enter.
+It holds while a draft or proposal is outstanding and for 30 seconds after
+physical typing. Other input between paste and Enter cancels submission.
+
+**Enter can answer a pending agent dialog.** Only choose the terminal backup
+when that risk is acceptable and the recipient is known to be at its input
+prompt. The notification transport never uses terminal input as a fallback.
+Old context clients retain their original terminal semantics; the updated MCP
+adapter explicitly selects notifications by default.
 
 ## Migrating from Python
 

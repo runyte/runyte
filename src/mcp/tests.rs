@@ -188,3 +188,5 @@ fn channel_terminal_claim_handles_filtered_standalone_and_invalid_environment() 
     stale["protocol"] = json!(0);
     assert!(terminal_claim(Some(&stale.to_string())).is_none());
 }
+
+mod notifications;

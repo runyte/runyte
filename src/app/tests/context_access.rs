@@ -506,7 +506,7 @@ fn skipping_review_brings_its_prerequisites_and_leaves_with_them() {
             .unwrap()
             .rows
             .iter()
-            .any(|row| row.label == "7 [x] Accept channel nudges: a fixed line and Enter")
+            .any(|row| row.label == "7 [x] Accept channel wakes (terminal backup sends Enter)")
     );
     press(&mut app, KeyCode::Char('6'));
     assert!(scopes(&app).is_empty());

@@ -19,6 +19,7 @@ pub const DURABLE_FEATURE: &str = "runyte.context.channel.durable.v1";
 pub const CHANNEL_FEATURE: &str = "runyte.context.channel.v1";
 /// Hosts that accept `nudge` on `channel.post` name this in their hello, so a
 /// client sends the field only to a host that will not refuse it as unknown.
+pub const NOTIFY_FEATURE: &str = "runyte.context.channel.notify.v1";
 pub const NUDGE_FEATURE: &str = "runyte.context.channel.nudge.v1";
 pub const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_READERS: usize = 8;
@@ -97,9 +98,9 @@ pub enum Scope {
     TerminalInsert,
     /// Join the workspace's agent channel, read it and post to it.
     AgentChannel,
-    /// A grant setting like `TerminalInsert`: an agent of this identity in a
-    /// verified terminal may be nudged there by a sender that asks for it,
-    /// which types one fixed line and Enter. Never negotiated.
+    /// A grant setting like `TerminalInsert`: permits fixed channel wakes.
+    /// Explicit terminal backup types one fixed line and Enter into a verified
+    /// terminal; notifications need no terminal. Never negotiated.
     ChannelNudge,
 }
 
@@ -211,7 +212,13 @@ pub fn parse_registration(raw: &str) -> Result<Registration, Error> {
     crate::plugin::compatibility::negotiate_features(
         &value.required_features,
         &value.optional_features,
-        &[FEATURE, CHANNEL_FEATURE, DURABLE_FEATURE],
+        &[
+            FEATURE,
+            CHANNEL_FEATURE,
+            DURABLE_FEATURE,
+            NUDGE_FEATURE,
+            NOTIFY_FEATURE,
+        ],
     )
     .map_err(|_| Error::new(ErrorCode::Unsupported, "Unsupported context features"))?;
     crate::plugin::compatibility::ReleaseRange::parse(&value.runyte)
@@ -361,6 +368,8 @@ pub enum Request {
     TerminalInputCancel { proposal: String },
     #[serde(rename = "channel.join")]
     ChannelJoin {
+        #[serde(default, skip_serializing_if = "is_false")]
+        notifications: bool,
         provider: String,
         task: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -375,6 +384,8 @@ pub enum Request {
     },
     #[serde(rename = "channel.post")]
     ChannelPost {
+        #[serde(default, skip_serializing_if = "NudgeTransport::is_terminal")]
+        nudge_transport: NudgeTransport,
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<String>,
@@ -388,6 +399,25 @@ pub enum Request {
     ChannelRead { since: u64, limit: usize },
     #[serde(rename = "channel.who")]
     ChannelWho(Empty),
+}
+
+/// Old context clients retain their terminal semantics. New MCP adapters always
+/// send an explicit transport and default to notifications, never to Enter.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum NudgeTransport {
+    Notification,
+    #[default]
+    Terminal,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+impl NudgeTransport {
+    fn is_terminal(&self) -> bool {
+        *self == Self::Terminal
+    }
 }
 
 /// The integrated terminal a joining agent says it runs in, with the
