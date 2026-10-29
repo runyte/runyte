@@ -229,8 +229,12 @@ fn interrupted_initial_install_and_both_update_boundaries_recover() {
     );
 }
 
+/// Release on close is checked in `tests/skills_lock.rs` on Unix: here a
+/// child that another test forks at the wrong moment holds a copy of the lock
+/// descriptor until it execs, and `flock` stays held while any copy is open.
+/// A copy can only keep the lock held, so the refusal below cannot flake.
 #[test]
-fn live_lock_refuses_another_installer_and_releases_on_close() {
+fn live_lock_refuses_another_installer() {
     let f = Fixture::new();
     let path = f.skill();
     manage(&f.0, &path, Action::Install).unwrap();
@@ -239,6 +243,8 @@ fn live_lock_refuses_another_installer_and_releases_on_close() {
     assert!(manage(&f.0, &path, Action::Update).is_err());
     assert!(manage(&f.0, &path, Action::Status).is_ok());
     drop(lock);
+    // Windows handles are not inherited, so the release can be checked here.
+    #[cfg(windows)]
     assert!(manage(&f.0, &path, Action::Update).is_ok());
 }
 

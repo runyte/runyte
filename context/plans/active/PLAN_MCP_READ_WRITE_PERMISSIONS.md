@@ -210,7 +210,9 @@ Completed on Linux on 2026-10-29, on top of `6493093`:
   `cli::skills::tests::live_lock_refuses_another_installer_and_releases_on_close`,
   which passes alone. Its `flock` descriptor can be held briefly by a child
   that another test forks at the same moment; the skills installer is
-  unchanged by this work.
+  unchanged by this work. The release check has since moved to
+  `tests/skills_lock.rs`, a binary with no other test, so nothing can fork in
+  between.
 - `cargo test -p runyte-native -p runyte-desktop -p runyte-preview`: 129
   passed, three ignored as before.
 - `cargo llvm-cov --locked --package runyte`: 92.20% of lines, above the
