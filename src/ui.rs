@@ -4684,7 +4684,21 @@ fn draw_completion(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.accent))
-                .title(format!(" {title} · ↑/↓ Ctrl-n/p · Tab accept ")),
+                .title(format!(
+                    " {title} · {} / {} · {} accept ",
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::Completion,
+                        crate::keymap::ui::Action::Previous
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::Completion,
+                        crate::keymap::ui::Action::Next
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::Completion,
+                        crate::keymap::ui::Action::Accept
+                    )
+                )),
         )
         .style(
             Style::default()

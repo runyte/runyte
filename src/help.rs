@@ -448,6 +448,13 @@ pub(crate) fn render_document_with_descriptions(
     let _ = writeln!(out, "{}", HELP_TRAILER);
 
     let _ = writeln!(out, "Mouse");
+    let gestures = keymap.pane_gestures();
+    let _ = writeln!(
+        out,
+        "{} rearranges panes; {} extends a pane into its neighbours.\n",
+        gestures.labels(crate::keymap::pointer::PaneAction::Move),
+        gestures.labels(crate::keymap::pointer::PaneAction::Extend)
+    );
     for paragraph in MOUSE_OVERVIEW {
         let _ = writeln!(out, "{paragraph}\n");
     }

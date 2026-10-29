@@ -36,17 +36,15 @@ impl<T> Queue<T> {
     /// Keep an editor-owned Alt-left gesture out of native image panning and
     /// document selection, including when Alt is released before the button.
     fn editor_pane_gesture(&mut self, input: &NativeInput) -> bool {
-        use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEventKind};
+        use crossterm::event::{Event, MouseEventKind};
         if self.pane_gesture != Some(input.attachment) {
             self.pane_gesture = None;
         }
         match &input.event {
             Event::Mouse(event) => match event.kind {
-                MouseEventKind::Down(button) => {
-                    self.pane_gesture = (button == MouseButton::Left
-                        && [KeyModifiers::ALT, KeyModifiers::ALT | KeyModifiers::SHIFT]
-                            .contains(&event.modifiers))
-                    .then_some(input.attachment);
+                MouseEventKind::Down(_) => {
+                    let claimed = matches!(runyte::tui::input::convert_event(input.event.clone()), Ok(Some(runyte::input::InputEvent::Pointer(pointer))) if input.pane_gestures.action(pointer).is_some());
+                    self.pane_gesture = claimed.then_some(input.attachment);
                     self.pane_gesture.is_some()
                 }
                 MouseEventKind::Up(_) => self.pane_gesture.take().is_some(),

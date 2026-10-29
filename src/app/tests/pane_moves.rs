@@ -5,6 +5,128 @@ use super::*;
 const WIDTH: u16 = 80;
 const HEIGHT: u16 = 30;
 
+fn configure_pointer(app: &mut App, source: &str) {
+    let section = serde_yaml::from_str(source).unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+}
+
+#[test]
+fn remapped_pane_extension_latches_action_across_modifier_release_and_reload() {
+    let mut app = wide_top_over_two_columns();
+    configure_pointer(&mut app, "pointer: {pane-extend: [Ctrl-Alt-LeftDrag]}");
+    let start = area(&mut app, 2);
+    let selection = app.panes[&2].selection.clone();
+    pointer(
+        &mut app,
+        PointerEventKind::Down(PointerButton::Left),
+        start.x + start.width / 2,
+        start.y + start.height / 2,
+        Modifiers::CONTROL | Modifiers::ALT,
+    );
+    configure_pointer(&mut app, "pointer: {pane-extend: []}");
+    pointer(
+        &mut app,
+        PointerEventKind::Drag(PointerButton::Left),
+        60,
+        5,
+        Modifiers::NONE,
+    );
+    assert_eq!(drop_preview(&mut app), Some(full(40, 0, 40, 30)));
+    pointer(
+        &mut app,
+        PointerEventKind::Up(PointerButton::Left),
+        60,
+        5,
+        Modifiers::NONE,
+    );
+    assert_eq!(area(&mut app, 2), full(40, 0, 40, 30));
+    assert_eq!(app.panes[&2].selection, selection);
+    assert!(app.pointer_drag.is_none());
+}
+
+#[test]
+fn replaced_and_removed_pane_gestures_do_not_start_pane_drags() {
+    for source in [
+        "pointer: {pane-extend: [Ctrl-Alt-LeftDrag]}",
+        "pointer: {pane-move: [], pane-extend: []}",
+    ] {
+        for modifiers in [
+            Modifiers::ALT | Modifiers::SHIFT,
+            Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT,
+        ] {
+            let mut app = wide_top_over_two_columns();
+            configure_pointer(&mut app, source);
+            pointer(
+                &mut app,
+                PointerEventKind::Down(PointerButton::Left),
+                60,
+                22,
+                modifiers,
+            );
+            pointer(
+                &mut app,
+                PointerEventKind::Drag(PointerButton::Left),
+                60,
+                5,
+                modifiers,
+            );
+            assert_eq!(drop_preview(&mut app), None);
+            release(&mut app, 60, 5);
+            assert_eq!(area(&mut app, 2), full(40, 15, 40, 15));
+        }
+    }
+}
+
+#[test]
+fn swapped_pane_gestures_choose_action_instead_of_inferring_shift() {
+    let mut app = wide_top_over_two_columns();
+    configure_pointer(
+        &mut app,
+        "pointer: {pane-move: [Shift-Alt-LeftDrag], pane-extend: [Alt-LeftDrag]}",
+    );
+    alt_drag(&mut app, 2, 60, 5);
+    release(&mut app, 60, 5);
+    assert_eq!(area(&mut app, 2), full(40, 0, 40, 30));
+}
+
+#[test]
+fn configured_native_pane_gesture_precedes_link_click() {
+    let mut app = wide_top_over_two_columns();
+    app.native_media = true;
+    let modifier = if cfg!(target_os = "macos") {
+        Modifiers::SUPER
+    } else {
+        Modifiers::CONTROL
+    };
+    let spelling = if cfg!(target_os = "macos") {
+        "Super"
+    } else {
+        "Ctrl"
+    };
+    configure_pointer(
+        &mut app,
+        &format!("pointer: {{pane-extend: [{spelling}-LeftDrag]}}"),
+    );
+    pointer(
+        &mut app,
+        PointerEventKind::Down(PointerButton::Left),
+        60,
+        22,
+        modifier,
+    );
+    pointer(
+        &mut app,
+        PointerEventKind::Drag(PointerButton::Left),
+        60,
+        5,
+        modifier,
+    );
+    release(&mut app, 60, 5);
+    assert_eq!(area(&mut app, 2), full(40, 0, 40, 30));
+}
+
 fn geometry() -> FrameGeometry {
     FrameGeometry {
         screen: Rect {
@@ -409,7 +531,7 @@ fn releasing_a_pane_over_the_directory_sidebar_cancels_the_drag() {
 #[test]
 fn refused_and_cancelled_pane_gestures_never_report_an_unmatched_terminal_release() {
     for modifiers in [Modifiers::ALT, Modifiers::ALT | Modifiers::SHIFT] {
-        for state in ["single", "maximized", "cancelled", "semantic"] {
+        for state in ["single", "maximized", "cancelled", "semantic", "stale"] {
             let mut app = wide_top_over_two_columns();
             app.active_pane = 1;
             if state == "single" {
@@ -434,13 +556,17 @@ fn refused_and_cancelled_pane_gestures_never_report_an_unmatched_terminal_releas
             let body = app.prepare_view(geometry()).pane(1).unwrap().body;
             let (column, row) = (body.x + 3, body.y + 3);
             let generation = app.terminals.get(terminal).unwrap().input_generation();
-            pointer(
-                &mut app,
-                PointerEventKind::Down(PointerButton::Left),
-                column,
-                row,
-                modifiers,
-            );
+            if state == "stale" {
+                app.discard_pointer_gesture();
+            } else {
+                pointer(
+                    &mut app,
+                    PointerEventKind::Down(PointerButton::Left),
+                    column,
+                    row,
+                    modifiers,
+                );
+            }
             // Passive motion must also remain editor-owned with any-motion reporting.
             pointer(
                 &mut app,

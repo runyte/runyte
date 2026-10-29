@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 
 use super::{
-    App, Axis, Edge, InputGrammar, Layout, Modifiers, PointerButton, PointerDrag, PointerEvent,
+    App, Axis, Edge, InputGrammar, Layout, PointerButton, PointerDrag, PointerEvent,
     PointerEventKind, PreparedView, Rect, pointer_pane, pointer_resize_pair, rect_contains,
 };
 
@@ -40,6 +40,13 @@ pub(super) enum PaneDrop {
 }
 
 impl App {
+    /// A stale configuration must not reinterpret a new press or deliver its
+    /// orphaned motion/release to terminal content beneath it.
+    pub(crate) fn discard_pointer_gesture(&mut self) {
+        self.cancel_pointer_drag();
+        self.pane_pointer_owned = true;
+    }
+
     /// Whether a release needs to resolve a pane drop against its visible frame.
     pub fn pointer_pane_drag_active(&self) -> bool {
         matches!(self.pointer_drag, Some(PointerDrag::MovePane { .. }))
@@ -92,10 +99,10 @@ impl App {
             }
             return true;
         }
-        if event.kind != PointerEventKind::Down(PointerButton::Left)
-            || ![Modifiers::ALT, Modifiers::ALT | Modifiers::SHIFT].contains(&event.modifiers)
-            || pointer_resize_pair(view, event.column, event.row).is_some()
-        {
+        let Some(action) = self.keymap.pane_gestures().action(event) else {
+            return false;
+        };
+        if pointer_resize_pair(view, event.column, event.row).is_some() {
             return false;
         }
         let Some(pane) = pointer_pane(view, event.column, event.row) else {
@@ -117,7 +124,7 @@ impl App {
         }
         self.activate_pane_from_pointer(pane);
         self.dismiss_popups();
-        let expand = event.modifiers.contains(Modifiers::SHIFT);
+        let expand = action == crate::keymap::pointer::PaneAction::Extend;
         self.pointer_drag = Some(PointerDrag::MovePane {
             pane,
             expand,

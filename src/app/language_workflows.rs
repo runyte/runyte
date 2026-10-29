@@ -2489,14 +2489,15 @@ impl App {
     /// Insert-mode dispatch continues and the popup re-filters against what
     /// was typed.
     pub(super) fn handle_completion_key(&mut self, key: KeyStroke) -> bool {
+        use crate::keymap::ui::{Action, Owner};
+        let action = self.keymap.ui().lookup(Owner::Completion, key);
         let directory_buffer = self.active_buffer().is_directory();
         let Some(state) = self.completion.as_mut() else {
             return false;
         };
         let source = state.source;
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, control) {
-            (KeyCode::Escape, _) => {
+        match action {
+            Some(Action::CancelOrContinue) => {
                 self.completion = None;
                 // Word completion appears automatically during ordinary
                 // prose, so dismissing it must not interpose an extra modal
@@ -2513,19 +2514,19 @@ impl App {
                 // the popup instead of requiring a second press.
                 !directory_buffer
             }
-            (KeyCode::Char('c'), true) => {
+            Some(Action::Cancel) => {
                 self.completion = None;
                 true
             }
-            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
+            Some(Action::Next) => {
                 state.step(true);
                 true
             }
-            (KeyCode::Up, _) | (KeyCode::Char('p'), true) => {
+            Some(Action::Previous) => {
                 state.step(false);
                 true
             }
-            (KeyCode::Tab, _) => {
+            Some(Action::Accept) => {
                 self.accept_completion();
                 true
             }
@@ -2537,7 +2538,7 @@ impl App {
             // accepts only with Tab; Enter always dismisses and falls
             // through to its usual newline, the same as if nothing had
             // opened.
-            (KeyCode::Enter, _) => {
+            Some(Action::DismissAndContinue) => {
                 self.completion = None;
                 false
             }

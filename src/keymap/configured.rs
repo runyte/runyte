@@ -287,10 +287,12 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
         return compiled;
     }
     errors.extend(ignored_rebinds);
-    let keymap = match complete {
+    let mut keymap = match complete {
         Some(complete) => super::actions::name_scoped_prefixes(keymap, &complete.namespaces),
         None => keymap,
     };
+    keymap.pane_gestures = super::pointer::compile(section.get("pointer"), &mut errors);
+    keymap.ui = super::ui::compile(section.get("ui"), &mut errors);
     CompiledKeymap {
         keymap: Arc::new(keymap),
         errors,
@@ -307,7 +309,10 @@ fn parse_section(section: &Value, errors: &mut Vec<String>) -> Option<Parsed> {
             errors.push("keys section rejected: member names must be strings".to_owned());
             return None;
         };
-        if !matches!(key, "leader" | "window" | "rebind" | "bind" | "defaults") {
+        if !matches!(
+            key,
+            "leader" | "window" | "rebind" | "bind" | "defaults" | "pointer" | "ui"
+        ) {
             errors.push(format!("keys section rejected: unknown member {key:?}"));
             return None;
         }

@@ -1877,10 +1877,7 @@ impl App {
                     OverlayPurpose::Context,
                     OverlayInput::None,
                     OverlayLayout::Anchored,
-                    vec![
-                        OverlayAction::new("Enter", "accept"),
-                        OverlayAction::new("Esc", "dismiss"),
-                    ],
+                    Vec::new(),
                 ),
                 OverlayKind::Signature | OverlayKind::Hover => (
                     OverlayPurpose::Context,
@@ -2886,9 +2883,34 @@ impl App {
                 // `/` — so only Tab accepts; Enter is reserved for its usual
                 // newline everywhere.
                 snapshot.actions = vec![
-                    OverlayAction::new("↑/↓, Ctrl-n/p", "navigate"),
-                    OverlayAction::new("Tab", "accept"),
-                    OverlayAction::new("Esc", "dismiss"),
+                    OverlayAction::new(
+                        format!(
+                            "{}, {}",
+                            self.keymap.ui().label(
+                                crate::keymap::ui::Owner::Completion,
+                                crate::keymap::ui::Action::Previous
+                            ),
+                            self.keymap.ui().label(
+                                crate::keymap::ui::Owner::Completion,
+                                crate::keymap::ui::Action::Next
+                            )
+                        ),
+                        "navigate",
+                    ),
+                    OverlayAction::new(
+                        self.keymap.ui().label(
+                            crate::keymap::ui::Owner::Completion,
+                            crate::keymap::ui::Action::Accept,
+                        ),
+                        "accept",
+                    ),
+                    OverlayAction::new(
+                        self.keymap.ui().label(
+                            crate::keymap::ui::Owner::Completion,
+                            crate::keymap::ui::Action::CancelOrContinue,
+                        ),
+                        "dismiss",
+                    ),
                 ];
                 overlays.push(snapshot);
             }

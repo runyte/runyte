@@ -176,6 +176,7 @@ pub struct EditorSnapshot {
     /// The area a pane being Alt-dragged would occupy if it were released
     /// now, outlined over the panes it would displace.
     pub pane_drop: Option<Rect>,
+    pub pane_gestures: crate::keymap::pointer::PaneGestures,
     pub status: StatusSnapshot,
     pub session_strip: Option<SessionStripSnapshot>,
 }
@@ -968,6 +969,7 @@ impl App {
             mode: self.mode,
             panes,
             pane_drop: self.pane_drop_preview(prepared),
+            pane_gestures: self.keymap().pane_gestures(),
             status: StatusSnapshot {
                 mode: self.mode,
                 workspace_number: self.workspace_number,

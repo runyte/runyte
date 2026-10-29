@@ -213,6 +213,8 @@ struct PreparedFrame {
     geometry: FrameGeometry,
     id: FrameId,
     pointer_compatible_since: FrameId,
+    gesture_compatible_since: FrameId,
+    pane_gestures: crate::keymap::pointer::PaneGestures,
     view: PreparedView,
 }
 
@@ -1424,10 +1426,18 @@ impl WorkspaceHost {
             .as_ref()
             .filter(|prepared| prepared.view == view)
             .map_or(id, |prepared| prepared.pointer_compatible_since);
+        let pane_gestures = self.app.keymap().pane_gestures();
+        let gesture_compatible_since = self
+            .prepared
+            .as_ref()
+            .filter(|prepared| prepared.pane_gestures == pane_gestures)
+            .map_or(id, |prepared| prepared.gesture_compatible_since);
         self.prepared = Some(PreparedFrame {
             geometry,
             id,
             pointer_compatible_since,
+            gesture_compatible_since,
+            pane_gestures,
             view,
         });
         if self.app.plugins.deferred_presentation {
@@ -1603,6 +1613,13 @@ impl WorkspaceHost {
                     }
                     return Ok(HostInputOutcome::IgnoredStaleFrame);
                 };
+                if matches!(event.kind, crate::input::PointerEventKind::Down(_))
+                    && (frame < prepared.gesture_compatible_since
+                        || prepared.pane_gestures != self.app.keymap().pane_gestures())
+                {
+                    self.app.discard_pointer_gesture();
+                    return Ok(HostInputOutcome::IgnoredStaleFrame);
+                }
                 let continued_selection = self.app.pointer_selection_drag_active()
                     && matches!(
                         event.kind,
@@ -2501,6 +2518,91 @@ mod tests {
             HostInputOutcome::IgnoredStaleFrame
         );
         assert_eq!(&host.app().active().selection, &after_compatible_input);
+    }
+
+    #[test]
+    fn pointer_configuration_reload_rejects_old_presses_but_preserves_captured_drags() {
+        for press_before_reload in [false, true] {
+            let mut host = host();
+            host.app_mut()
+                .execute(
+                    CommandInvocation::editor(
+                        EditorCommand::SplitVertical,
+                        CommandExecutionContext::default(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let pane = host.app().active_pane;
+            let first = host.prepare_frame(geometry());
+            let source = first.editor.pane(pane).unwrap().area;
+            let press = PointerEvent {
+                kind: PointerEventKind::Down(PointerButton::Left),
+                column: source.x + source.width / 2,
+                row: source.y + source.height / 2,
+                modifiers: Modifiers::ALT,
+            };
+            if press_before_reload {
+                host.execute(HostCommand::Pointer {
+                    event: press,
+                    frame: first.id,
+                    repetitions: 1,
+                })
+                .unwrap();
+                assert!(host.app().pointer_pane_drag_active());
+            }
+            let section =
+                serde_yaml::from_str("pointer: {pane-move: [], pane-extend: []}").unwrap();
+            let configured =
+                crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+            host.app_mut().set_keymap(configured.keymap);
+            let second = host.prepare_frame(geometry());
+            if !press_before_reload {
+                assert_eq!(
+                    host.execute(HostCommand::Pointer {
+                        event: press,
+                        frame: first.id,
+                        repetitions: 1
+                    })
+                    .unwrap(),
+                    HostInputOutcome::IgnoredStaleFrame
+                );
+            }
+            let drag = PointerEvent {
+                kind: PointerEventKind::Drag(PointerButton::Left),
+                column: 40,
+                row: 0,
+                modifiers: Modifiers::NONE,
+            };
+            host.execute(HostCommand::Pointer {
+                event: drag,
+                frame: second.id,
+                repetitions: 1,
+            })
+            .unwrap();
+            let preview = host.prepare_frame(geometry());
+            assert_eq!(preview.editor.pane_drop.is_some(), press_before_reload);
+            host.execute(HostCommand::Pointer {
+                event: PointerEvent {
+                    kind: PointerEventKind::Up(PointerButton::Left),
+                    ..drag
+                },
+                frame: preview.id,
+                repetitions: 1,
+            })
+            .unwrap();
+            assert!(!host.app().pointer_pane_drag_active());
+            if !press_before_reload {
+                assert_eq!(
+                    host.prepare_frame(geometry())
+                        .editor
+                        .pane(pane)
+                        .unwrap()
+                        .area,
+                    source
+                );
+            }
+        }
     }
 
     #[test]

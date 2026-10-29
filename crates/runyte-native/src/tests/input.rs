@@ -83,6 +83,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
         event: enter.clone(),
         presented: Some(first),
         presentation_only: false,
+        pane_gestures: Default::default(),
         routing_serial: 0,
     })
     .await
@@ -116,6 +117,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
         event: enter,
         presented: Some(confirmation),
         presentation_only: false,
+        pane_gestures: Default::default(),
         routing_serial: 0,
     })
     .await
@@ -136,6 +138,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
         event: Event::Resize(80, 24),
         presented: None,
         presentation_only: false,
+        pane_gestures: Default::default(),
         routing_serial: 0,
     })
     .await
@@ -148,6 +151,7 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
         event: Event::FocusGained,
         presented: host.current_frame_id(),
         presentation_only: true,
+        pane_gestures: Default::default(),
         routing_serial: 0,
     })
     .await
@@ -222,6 +226,7 @@ fn retained_media_preserves_overlay_pixels_but_blocks_hidden_row_pointer_input()
         cursor: None,
         overlays: vec![overlay],
         media_input: false,
+        pane_gestures: Default::default(),
         routing_serial: 0,
         metadata_paths: Vec::new(),
     };
@@ -282,6 +287,7 @@ async fn attachment_handoff_keeps_window_resize_but_drops_old_document_input() {
             event,
             presented: Some(runyte::protocol::FrameId::from_raw(7).into()),
             presentation_only,
+            pane_gestures: Default::default(),
             routing_serial: 0,
         })
         .await
@@ -318,6 +324,7 @@ fn media_actions_wait_for_their_visual_frame_and_do_not_cross_attachments() {
         cursor: None,
         overlays: Vec::new(),
         media_input: true,
+        pane_gestures: Default::default(),
         routing_serial: 0,
         metadata_paths: Vec::new(),
     };
@@ -567,6 +574,7 @@ async fn queued_native_keys_publish_bounded_batches_without_reordering_text() {
             event: Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)),
             presented: Some(painted),
             presentation_only: false,
+            pane_gestures: Default::default(),
             routing_serial: 0,
         })
         .unwrap();
@@ -616,6 +624,7 @@ async fn native_batching_never_waits_for_acknowledgements_or_crosses_pointer_and
         event: Event::FocusGained,
         presented: None,
         presentation_only: true,
+        pane_gestures: Default::default(),
         routing_serial: 0,
     })
     .unwrap();
@@ -640,6 +649,7 @@ async fn native_batching_never_waits_for_acknowledgements_or_crosses_pointer_and
             event: barrier.clone(),
             presented: None,
             presentation_only: false,
+            pane_gestures: Default::default(),
             routing_serial: 0,
         })
         .unwrap();
@@ -648,6 +658,7 @@ async fn native_batching_never_waits_for_acknowledgements_or_crosses_pointer_and
             event: Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)),
             presented: None,
             presentation_only: false,
+            pane_gestures: Default::default(),
             routing_serial: 0,
         })
         .unwrap();
@@ -695,6 +706,7 @@ async fn native_batch_pending_blocks_approval_even_before_frame_identity_changes
         event: Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
         presented: Some(painted),
         presentation_only: false,
+        pane_gestures: Default::default(),
         routing_serial: 0,
     })
     .unwrap();

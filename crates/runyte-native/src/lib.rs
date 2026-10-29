@@ -124,6 +124,7 @@ struct FrameData {
     cursor: Option<ratatui::layout::Position>,
     overlays: Vec<runyte::layout::Rect>,
     media_input: bool,
+    pane_gestures: runyte::keymap::pointer::PaneGestures,
     routing_serial: u64,
     metadata_paths: Vec<PathBuf>,
 }
@@ -164,6 +165,7 @@ pub(crate) struct NativeInput {
     event: Event,
     presented: Option<runyte::workspace::FrameId>,
     presentation_only: bool,
+    pane_gestures: runyte::keymap::pointer::PaneGestures,
     routing_serial: u64,
 }
 struct PendingMediaRequest {
@@ -205,9 +207,11 @@ struct Bridge {
     media: Mutex<Vec<MediaPane>>,
     previews: Mutex<Vec<preview::Pane>>,
     painted_media: Mutex<Vec<MediaPane>>,
+    painted_pane_gestures: Mutex<runyte::keymap::pointer::PaneGestures>,
     overlays: Mutex<Vec<runyte::layout::Rect>>,
     default_colors: Mutex<(u32, u32)>,
     media_input: AtomicBool,
+    pane_gestures: Mutex<runyte::keymap::pointer::PaneGestures>,
     dequeued_serial: AtomicU64,
     remote_serial: AtomicU64,
     metadata_paths: Mutex<Vec<PathBuf>>,
@@ -242,6 +246,7 @@ impl Bridge {
             event,
             presented: *self.presented.lock().unwrap(),
             presentation_only: false,
+            pane_gestures: *self.painted_pane_gestures.lock().unwrap(),
             routing_serial: 0,
         }
     }
@@ -328,6 +333,7 @@ pub(crate) fn capture_media(
 
 fn capture_snapshot_media(snapshot: &runyte::workspace::HostFrame, counts: &[media::PageCount]) {
     let Some(bridge) = BRIDGE.get() else { return };
+    *bridge.pane_gestures.lock().unwrap() = snapshot.editor.pane_gestures;
     let (background, foreground) = runyte::ui::native_default_colors(&snapshot.editor.theme);
     *bridge.default_colors.lock().unwrap() = (
         rgb_value(background, FALLBACK_BACKGROUND),
@@ -566,6 +572,7 @@ impl Surface {
                     previews: bridge.previews.lock().unwrap().clone(),
                     overlays: bridge.overlays.lock().unwrap().clone(),
                     media_input: bridge.media_input.load(Ordering::Acquire),
+                    pane_gestures: *bridge.pane_gestures.lock().unwrap(),
                     routing_serial: if snapshot_area.is_some() {
                         bridge.remote_serial.load(Ordering::Acquire)
                     } else {
@@ -737,9 +744,11 @@ pub(crate) fn launch(
         media: Mutex::new(Vec::new()),
         previews: Mutex::new(Vec::new()),
         painted_media: Mutex::new(Vec::new()),
+        painted_pane_gestures: Mutex::new(Default::default()),
         overlays: Mutex::new(Vec::new()),
         default_colors: Mutex::new((FALLBACK_BACKGROUND, FALLBACK_FOREGROUND)),
         media_input: AtomicBool::new(true),
+        pane_gestures: Mutex::new(Default::default()),
         dequeued_serial: AtomicU64::new(0),
         remote_serial: AtomicU64::new(0),
         metadata_paths: Mutex::new(Vec::new()),
@@ -1313,6 +1322,7 @@ impl Render for NativeView {
                         } else {
                             Vec::new()
                         };
+                        *bridge.painted_pane_gestures.lock().unwrap() = frame.pane_gestures;
                         let previous =
                             std::mem::replace(&mut *bridge.presented.lock().unwrap(), frame.id);
                         if previous != frame.id || previous_attachment != frame.attachment {
@@ -1322,6 +1332,7 @@ impl Render for NativeView {
                                 event: Event::FocusGained,
                                 presented: frame.id,
                                 presentation_only: true,
+                                pane_gestures: frame.pane_gestures,
                                 routing_serial: 0,
                             });
                         }

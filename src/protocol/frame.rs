@@ -207,6 +207,7 @@ impl EditorDamageFrame {
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.pane_drop != next.editor.pane_drop
+            || base.editor.pane_gestures != next.editor.pane_gestures
             || base.editor.directory_tree != next.editor.directory_tree
             || base.editor.panes.len() != next.editor.panes.len()
         {
@@ -356,6 +357,7 @@ impl TerminalDamageFrame {
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.pane_drop != next.editor.pane_drop
+            || base.editor.pane_gestures != next.editor.pane_gestures
             || base.editor.directory_tree != next.editor.directory_tree
             || base.editor.panes.len() != next.editor.panes.len()
         {
@@ -578,6 +580,7 @@ pub struct EditorSnapshot {
     pub directory_tree: Option<DirectoryTreeSnapshot>,
     pub panes: Vec<PaneSnapshot>,
     pub pane_drop: Option<Rect>,
+    pub pane_gestures: [u64; 2],
     pub status: StatusSnapshot,
     pub session_strip: Option<SessionStripSnapshot>,
 }
@@ -593,6 +596,10 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
             directory_tree: value.directory_tree.map(Into::into),
             panes: value.panes.into_iter().map(Into::into).collect(),
             pane_drop: value.pane_drop.map(Into::into),
+            pane_gestures: [
+                value.pane_gestures.move_pane,
+                value.pane_gestures.extend_pane,
+            ],
             status: value.status.into(),
             session_strip: value.session_strip.map(Into::into),
         }
@@ -602,6 +609,9 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
 impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
     type Error = String;
     fn try_from(value: EditorSnapshot) -> Result<Self, Self::Error> {
+        if value.pane_gestures[0] & value.pane_gestures[1] != 0 {
+            return Err("overlapping pane gestures".into());
+        }
         Ok(Self {
             geometry: value.geometry.into(),
             theme: value.theme.into(),
@@ -615,6 +625,10 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
                 .map(TryInto::try_into)
                 .collect::<Result<_, _>>()?,
             pane_drop: value.pane_drop.map(Into::into),
+            pane_gestures: crate::keymap::pointer::PaneGestures {
+                move_pane: value.pane_gestures[0],
+                extend_pane: value.pane_gestures[1],
+            },
             status: value.status.into(),
             session_strip: value.session_strip.map(TryInto::try_into).transpose()?,
         })
@@ -1010,6 +1024,7 @@ mod tests {
                 directory_tree: None,
                 session_strip: None,
                 pane_drop: None,
+                pane_gestures: [1 << 4, 1 << 5],
                 geometry: FrameGeometry::default(),
                 theme: theme.into(),
                 terminal_theme_colors: true,
@@ -1251,6 +1266,23 @@ mod tests {
         let wire = serde_json::to_vec(&next).unwrap();
         let decoded: HostFrame = serde_json::from_slice(&wire).unwrap();
         assert_eq!(decoded.editor.pane_drop, next.editor.pane_drop);
+    }
+
+    #[test]
+    fn changed_pane_bindings_require_a_full_frame_and_round_trip() {
+        let base = terminal_frame(1, 1, 'x');
+        let mut next = base.clone();
+        next.id = FrameId::from_raw(2);
+        next.editor.pane_gestures = [0, 1 << 6];
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        let wire = serde_json::to_vec(&next).unwrap();
+        let decoded: HostFrame = serde_json::from_slice(&wire).unwrap();
+        let editor: core::EditorSnapshot = decoded.editor.try_into().unwrap();
+        assert_eq!(editor.pane_gestures.move_pane, 0);
+        assert_eq!(editor.pane_gestures.extend_pane, 1 << 6);
+        next.editor.pane_gestures = [1 << 6, 1 << 6];
+        assert!(core::EditorSnapshot::try_from(next.editor).is_err());
     }
 
     #[test]

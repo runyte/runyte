@@ -1,6 +1,6 @@
 ## Custom key bindings
 
-The `keys` section changes the keyboard. It has five parts:
+The `keys` section configures keyboard actions and pane gestures:
 
 | Key | What it does |
 | --- | --- |
@@ -9,6 +9,8 @@ The `keys` section changes the keyboard. It has five parts:
 | `keys.rebind` | Moves bindings Runyte already ships to other keys. |
 | `keys.bind` | Assigns named actions to keys, per mode. Also removes bindings. |
 | `keys.defaults` | `false` starts `bind` from an empty keyboard instead of Runyte's. See [Without the built-in keys](custom-key-bindings.md#without-the-built-in-keys). |
+| `keys.pointer` | Replaces pane move/extend drag gestures. |
+| `keys.ui` | Replaces completion popup action bindings. |
 
 - `keys` is read from the configuration file and from
   [`keybinds.d/`](configuration.md#themes-and-key-bindings-in-their-own-files) beside it; the
@@ -124,6 +126,62 @@ keys:
 - move most direct single-key editing bindings.
 
 ### Binding actions
+
+Completion popup actions can be assigned separately from Insert/Replace editing:
+
+```yaml
+keys:
+  ui:
+    completion:
+      next: [Ctrl-j]
+      previous: [Ctrl-k]
+      accept: [Ctrl-y]
+```
+
+Each action list replaces all its default bindings. `[]` removes them; omitted
+actions retain defaults. UI actions are independent of `keys.defaults`.
+Configuration fragments merge by owner and action. A conflict with another
+effective action restores the owner's defaults with a diagnostic.
+
+| Completion action | Default keys | Effect |
+| --- | --- | --- |
+| `next` | Down, Ctrl-n | Select the next candidate |
+| `previous` | Up, Ctrl-p | Select the previous candidate |
+| `accept` | Tab | Insert the selected candidate |
+| `cancel` | Ctrl-c | Dismiss and consume the key |
+| `cancel-or-continue` | Esc | Dismiss; word completion and directory buffers pass the key to ordinary editing |
+| `dismiss-and-continue` | Enter | Dismiss and pass the key to ordinary editing |
+
+The continuation actions pass the **actual pressed key** once, including its
+modifiers. If remapped to F9, they run the underlying F9 binding, not the old
+Esc/Enter binding. They never synthesize input. UI bindings currently accept
+single strokes, with up to 32 aliases per action. Configured modifiers match
+exactly using the same character Shift normalization as editor bindings.
+Unchanged defaults retain their existing handling of additional modifiers.
+
+Pane drag gestures can be changed independently of keyboard bindings:
+
+```yaml
+keys:
+  pointer:
+    pane-extend: [Ctrl-Alt-LeftDrag]
+    # pane-move: [Alt-LeftDrag]     # default
+    # pane-extend: [Shift-Alt-LeftDrag] # default
+```
+
+Each list replaces all gestures for that action; `[]` disables the action's
+pointer bindings. Omitted actions retain their defaults, including with
+`keys.defaults: false`. Modifiers match exactly. Pane gestures currently accept
+`LeftDrag`, with optional `Ctrl-`, `Alt-`, `Shift-`, `Super-`, `Hyper-`, or
+`Meta-` modifiers. Shared pane borders retain resizing priority. The action is
+captured when the button is pressed and lasts through release, even when the
+modifiers or configuration change. Conflicting or invalid pointer bindings
+retain both default pane gestures and produce a configuration diagnostic.
+Contextual help shows the effective gestures. Configuration fragments merge
+`pointer` by action; a later action list replaces the earlier list.
+
+`Ctrl-Alt-LeftDrag` avoids terminals that reserve Shift for native selection.
+The terminal or window manager still needs to deliver the configured gesture.
 
 `keys.bind` has one map per mode: `normal`, `select`, `insert`, and
 `replace`. Each maps a key sequence to one of four values:

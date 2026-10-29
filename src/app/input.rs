@@ -1081,6 +1081,11 @@ impl App {
             }
             return Ok(PointerOutcome::Changed);
         }
+        if self.handle_pane_drag(event, view) {
+            self.invalidate_all_partial_guards();
+            self.status_error = false;
+            return Ok(PointerOutcome::Changed);
+        }
         if self.native_media
             && event.kind == PointerEventKind::Down(PointerButton::Left)
             && event.modifiers
@@ -1126,11 +1131,6 @@ impl App {
             self.retire_detached_ephemeral_buffers();
             self.note_destination_activation();
             self.refresh_navigator();
-            return Ok(PointerOutcome::Changed);
-        }
-        if self.handle_pane_drag(event, view) {
-            self.invalidate_all_partial_guards();
-            self.status_error = false;
             return Ok(PointerOutcome::Changed);
         }
         let active_pane = self.active_pane;

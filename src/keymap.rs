@@ -17,6 +17,8 @@ use crate::{
 pub mod actions;
 pub mod configured;
 pub mod native_window;
+pub mod pointer;
+pub mod ui;
 pub mod validate;
 
 /// Compatibility name for a keymap key while callers migrate to the owned
@@ -668,6 +670,8 @@ impl std::error::Error for DuplicateBinding {}
 
 #[derive(Clone, Debug)]
 pub struct Keymap {
+    pane_gestures: pointer::PaneGestures,
+    ui: ui::Bindings,
     bindings: Vec<Binding>,
     lookup_index: Arc<HashMap<(Mode, BindingScope), HashMap<KeySequence, IndexedLookup>>>,
     fast_pane_keys: bool,
@@ -691,6 +695,13 @@ impl Default for Keymap {
 }
 
 impl Keymap {
+    pub fn pane_gestures(&self) -> pointer::PaneGestures {
+        self.pane_gestures
+    }
+
+    pub fn ui(&self) -> &ui::Bindings {
+        &self.ui
+    }
     pub(crate) fn fast_pane_keys(&self) -> bool {
         self.fast_pane_keys
     }
@@ -817,6 +828,8 @@ impl Keymap {
             }
         }
         let mut keymap = Self {
+            pane_gestures: pointer::PaneGestures::default(),
+            ui: ui::Bindings::default(),
             bindings,
             lookup_index: Arc::new(HashMap::new()),
             fast_pane_keys: false,
