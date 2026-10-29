@@ -16,7 +16,7 @@ use std::{
 };
 
 const SKILL: &[u8] = include_bytes!("../../skills/runyte-mcp/SKILL.md");
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const PAYLOAD: &str = "SKILL.md";
 const METADATA: &str = ".runyte-skill.json";
 const HELP: &str = "Usage: runyte skills <install|update|status> <--claude|--codex|--all> <--user|--project>\n\nManage the bundled runyte-mcp skill offline. Scope is required.\n--user uses your operating-system account home; --project uses the current\nGit or Runyte project root. Modified files are preserved. Use update for\nolder managed installations. No agent configuration or grants are changed.";

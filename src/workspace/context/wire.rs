@@ -17,9 +17,10 @@ pub const FEATURE: &str = "runyte.context.v1";
 /// asks for `agent_channel` only from a host that knows it.
 pub const DURABLE_FEATURE: &str = "runyte.context.channel.durable.v1";
 pub const CHANNEL_FEATURE: &str = "runyte.context.channel.v1";
-/// Hosts that accept `nudge` on `channel.post` name this in their hello, so a
-/// client sends the field only to a host that will not refuse it as unknown.
-pub const NUDGE_FEATURE: &str = "runyte.context.channel.nudge.v1";
+/// Hosts that accept `terminal.input.write` and `terminal.input.enter` name
+/// this in their hello, so a client asks for `terminal_write` only from a host
+/// that will not refuse it as unknown.
+pub const TERMINAL_WRITE_FEATURE: &str = "runyte.context.terminal.write.v1";
 pub const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_READERS: usize = 8;
 pub const MAX_REQUESTS: usize = 16;
@@ -29,9 +30,13 @@ pub const MAX_TERMINAL_SNAPSHOT_BYTES: usize = 4 * 1024 * 1024;
 pub const MAX_RETAINED_BYTES: usize = 8 * 1024 * 1024;
 pub const MAX_HOST_RETAINED_BYTES: usize = 64 * 1024 * 1024;
 pub const SNAPSHOT_IDLE_SECONDS: u64 = 30;
-pub const MAX_PROPOSALS: usize = 4;
-pub const MAX_HOST_PROPOSALS: usize = 16;
-pub const PROPOSAL_EXPIRY_SECONDS: u64 = 120;
+/// Enters one reader, and all readers together, may have waiting.
+pub const MAX_ENTERS: usize = 4;
+pub const MAX_HOST_ENTERS: usize = 16;
+/// How long a requested Enter waits, visibly, before it is pressed.
+pub const ENTER_DELAY_MILLIS: u64 = 5000;
+/// How long a finished Enter's outcome stays readable.
+pub const ENTER_RECORD_SECONDS: u64 = 120;
 pub const MAX_IDENTIFIER_BYTES: usize = 256;
 pub const MAX_REQUEST_ID_BYTES: usize = 128;
 pub const MAX_DEDUPLICATED_REQUESTS: usize = 1024;
@@ -40,12 +45,12 @@ pub const MAX_DEDUPLICATED_REQUESTS: usize = 1024;
 pub const MAX_EXPECTED_TAIL_BYTES: usize = 4096;
 /// Enough of the inserted text to show escaping or formatting mistakes.
 pub const APPEND_PREVIEW_CHARS: usize = 256;
-pub const CAPABILITIES: &[&str] = &[
-    "terminal_read",
-    "editor_context_read",
-    "buffer_edit",
-    "terminal_propose",
-];
+/// What a client may ask every host for. `terminal_write` and
+/// `agent_channel` follow their features, which older hosts do not name.
+pub const CAPABILITIES: &[&str] = &["terminal_read", "editor_context_read", "buffer_edit"];
+/// Names older clients ask for, accepted at registration and never granted,
+/// so such a client keeps the access it still has a use for.
+const RETIRED_CAPABILITIES: &[&str] = &["terminal_propose"];
 
 /// The context feature adds its resource bounds to the stable hello envelope.
 /// Unsupported application resources advertise zero authority and capacity.
@@ -73,8 +78,8 @@ pub fn limits() -> serde_json::Value {
         "read_cells":crate::terminal::read::MAX_CELLS,"snapshots":MAX_SNAPSHOTS,
         "terminal_snapshot_bytes":MAX_TERMINAL_SNAPSHOT_BYTES,"retained_bytes":MAX_RETAINED_BYTES,
         "host_retained_bytes":MAX_HOST_RETAINED_BYTES,"snapshot_idle_seconds":SNAPSHOT_IDLE_SECONDS,
-        "proposals":MAX_PROPOSALS,"host_proposals":MAX_HOST_PROPOSALS,
-        "proposal_text_bytes":crate::terminal::proposal::MAX_TEXT_BYTES,"proposal_expiry_seconds":PROPOSAL_EXPIRY_SECONDS,
+        "enters":MAX_ENTERS,"host_enters":MAX_HOST_ENTERS,"enter_delay_ms":ENTER_DELAY_MILLIS,
+        "terminal_text_bytes":crate::terminal::proposal::MAX_TEXT_BYTES,
         "edit_changes":editor::MAX_CHANGES,"edit_replacement_bytes":editor::MAX_REPLACEMENT_BYTES,
         "request_ids":MAX_DEDUPLICATED_REQUESTS,"append_tail_bytes":MAX_EXPECTED_TAIL_BYTES,
         "append_preview_chars":APPEND_PREVIEW_CHARS
@@ -82,25 +87,19 @@ pub fn limits() -> serde_json::Value {
     value
 }
 
+/// A capability a reader negotiates. The person grants permissions, not
+/// capabilities: see [`Permission`].
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Ord, PartialOrd)]
 #[serde(rename_all = "snake_case")]
 pub enum Scope {
     TerminalRead,
     EditorContextRead,
     BufferEdit,
-    TerminalPropose,
-    /// A grant setting rather than a capability a reader negotiates: a host
-    /// whose grant holds it inserts proposed text without native review. It
-    /// changes nothing on the wire, so clients and hosts of other releases
-    /// keep talking to each other, and a reader learns of it from a proposal
-    /// that is already `queued` rather than `pending`. Enter is never sent.
-    TerminalInsert,
+    /// Type a line into a terminal, and press Enter there after a visible
+    /// delay that any output or other input cancels.
+    TerminalWrite,
     /// Join the workspace's agent channel, read it and post to it.
     AgentChannel,
-    /// A grant setting like `TerminalInsert`: an agent of this identity in a
-    /// verified terminal may be nudged there by a sender that asks for it,
-    /// which types one fixed line and Enter. Never negotiated.
-    ChannelNudge,
 }
 
 impl Scope {
@@ -109,10 +108,8 @@ impl Scope {
             Self::TerminalRead => "terminal_read",
             Self::EditorContextRead => "editor_context_read",
             Self::BufferEdit => "buffer_edit",
-            Self::TerminalPropose => "terminal_propose",
-            Self::TerminalInsert => "terminal_insert",
+            Self::TerminalWrite => "terminal_write",
             Self::AgentChannel => "agent_channel",
-            Self::ChannelNudge => "channel_nudge",
         }
     }
     pub fn from_capability(value: &str) -> Option<Self> {
@@ -120,19 +117,82 @@ impl Scope {
             "terminal_read" => Some(Self::TerminalRead),
             "editor_context_read" => Some(Self::EditorContextRead),
             "buffer_edit" => Some(Self::BufferEdit),
-            "terminal_propose" => Some(Self::TerminalPropose),
+            "terminal_write" => Some(Self::TerminalWrite),
             "agent_channel" => Some(Self::AgentChannel),
-            // Never negotiated; see `TerminalInsert` and `ChannelNudge`.
             _ => None,
         }
     }
 }
 
+/// What the person grants an identity in one workspace. Write includes Read.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Ord, PartialOrd)]
+#[serde(rename_all = "snake_case")]
+pub enum Permission {
+    /// Every buffer, pane and terminal, scrollback and titles included, and
+    /// the agent channel.
+    Read,
+    /// Editing buffers, typing into terminals and pressing Enter there.
+    Write,
+}
+
+impl Permission {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+        }
+    }
+    /// The capabilities this permission adds to the ones below it.
+    fn scopes(self) -> &'static [Scope] {
+        match self {
+            Self::Read => &[
+                Scope::TerminalRead,
+                Scope::EditorContextRead,
+                Scope::AgentChannel,
+            ],
+            Self::Write => &[Scope::BufferEdit, Scope::TerminalWrite],
+        }
+    }
+}
+
+/// A grant's permissions, which always include Read when they include Write.
+pub fn validate_permissions(permissions: &BTreeSet<Permission>) -> Result<(), Error> {
+    if permissions.contains(&Permission::Write) && !permissions.contains(&Permission::Read) {
+        return Err(Error::new(
+            ErrorCode::CapabilityDenied,
+            "Write requires read",
+        ));
+    }
+    Ok(())
+}
+
+/// Every capability a grant of `permissions` allows a reader to negotiate.
+pub fn granted_scopes(permissions: &BTreeSet<Permission>) -> BTreeSet<Scope> {
+    permissions
+        .iter()
+        .flat_map(|permission| permission.scopes().iter().copied())
+        .collect()
+}
+
+/// The permissions a set of negotiated capabilities amounts to, for showing
+/// an agent what it was granted.
+pub fn permissions_of(scopes: &BTreeSet<Scope>) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if scopes.contains(&Scope::TerminalRead)
+        || scopes.contains(&Scope::EditorContextRead)
+        || scopes.contains(&Scope::AgentChannel)
+    {
+        names.push(Permission::Read.name());
+    }
+    if scopes.contains(&Scope::BufferEdit) || scopes.contains(&Scope::TerminalWrite) {
+        names.push(Permission::Write.name());
+    }
+    names
+}
+
 pub fn validate_scopes(scopes: &BTreeSet<Scope>) -> Result<(), Error> {
     if (scopes.contains(&Scope::BufferEdit) && !scopes.contains(&Scope::EditorContextRead))
-        || (scopes.contains(&Scope::TerminalPropose) && !scopes.contains(&Scope::TerminalRead))
-        || (scopes.contains(&Scope::TerminalInsert) && !scopes.contains(&Scope::TerminalPropose))
-        || (scopes.contains(&Scope::ChannelNudge) && !scopes.contains(&Scope::AgentChannel))
+        || (scopes.contains(&Scope::TerminalWrite) && !scopes.contains(&Scope::TerminalRead))
     {
         return Err(Error::new(
             ErrorCode::CapabilityDenied,
@@ -211,7 +271,12 @@ pub fn parse_registration(raw: &str) -> Result<Registration, Error> {
     crate::plugin::compatibility::negotiate_features(
         &value.required_features,
         &value.optional_features,
-        &[FEATURE, CHANNEL_FEATURE, DURABLE_FEATURE],
+        &[
+            FEATURE,
+            CHANNEL_FEATURE,
+            DURABLE_FEATURE,
+            TERMINAL_WRITE_FEATURE,
+        ],
     )
     .map_err(|_| Error::new(ErrorCode::Unsupported, "Unsupported context features"))?;
     crate::plugin::compatibility::ReleaseRange::parse(&value.runyte)
@@ -223,13 +288,25 @@ pub fn parse_registration(raw: &str) -> Result<Registration, Error> {
     {
         return Err(invalid("Invalid context registration name or commands"));
     }
+    if value
+        .required_capabilities
+        .iter()
+        .any(|name| RETIRED_CAPABILITIES.contains(&name.as_str()))
+    {
+        return Err(Error::new(
+            ErrorCode::CapabilityDenied,
+            "Terminal proposals no longer exist; use terminal_write",
+        ));
+    }
     if !value
         .required_capabilities
         .is_disjoint(&value.optional_capabilities)
         || value
             .required_capabilities
             .union(&value.optional_capabilities)
-            .any(|name| Scope::from_capability(name).is_none())
+            .any(|name| {
+                Scope::from_capability(name).is_none() && !RETIRED_CAPABILITIES.contains(&&**name)
+            })
     {
         return Err(Error::new(
             ErrorCode::CapabilityDenied,
@@ -348,17 +425,19 @@ pub enum Request {
     },
     #[serde(rename = "terminal.snapshot.close")]
     TerminalSnapshotClose { snapshot: String },
-    #[serde(rename = "terminal.input.propose")]
-    TerminalInputPropose {
+    /// One line typed into a terminal, never followed by Enter.
+    #[serde(rename = "terminal.input.write")]
+    TerminalInputWrite { terminal: String, text: String },
+    /// One Enter, pressed after a visible delay only if the terminal still
+    /// shows the read revision the agent looked at and nothing else was
+    /// typed there meanwhile.
+    #[serde(rename = "terminal.input.enter")]
+    TerminalInputEnter {
         terminal: String,
-        text: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reason: Option<String>,
+        expected_revision: String,
     },
-    #[serde(rename = "terminal.input.status")]
-    TerminalInputStatus { proposal: String },
-    #[serde(rename = "terminal.input.cancel")]
-    TerminalInputCancel { proposal: String },
+    #[serde(rename = "terminal.input.enter.status")]
+    TerminalInputEnterStatus { enter: String },
     #[serde(rename = "channel.join")]
     ChannelJoin {
         provider: String,
@@ -379,10 +458,6 @@ pub enum Request {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<String>,
         location: super::channel::Location,
-        /// Participants the sender asks to nudge; only from a reader that
-        /// negotiated `NUDGE_FEATURE`.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        nudge: Option<Vec<String>>,
     },
     #[serde(rename = "channel.read")]
     ChannelRead { since: u64, limit: usize },
@@ -403,9 +478,9 @@ impl Request {
     pub fn required_scope(&self) -> Scope {
         match self {
             Self::BufferEdit { .. } | Self::BufferAppend { .. } => Scope::BufferEdit,
-            Self::TerminalInputPropose { .. }
-            | Self::TerminalInputStatus { .. }
-            | Self::TerminalInputCancel { .. } => Scope::TerminalPropose,
+            Self::TerminalInputWrite { .. }
+            | Self::TerminalInputEnter { .. }
+            | Self::TerminalInputEnterStatus { .. } => Scope::TerminalWrite,
             Self::ChannelDurable(_)
             | Self::ChannelJoin { .. }
             | Self::ChannelPost { .. }
@@ -540,28 +615,20 @@ impl Request {
                 identifier(snapshot)?;
                 page(*offset, *limit, crate::terminal::read::MAX_ROWS)?;
             }
-            Self::TerminalInputPropose {
-                terminal,
-                text,
-                reason,
-            } => {
+            Self::TerminalInputWrite { terminal, text } => {
                 identifier(terminal)?;
-                if reason.as_ref().is_some_and(|reason| {
-                    reason.len() > 1024
-                        || reason.chars().count() > 256
-                        || reason
-                            .chars()
-                            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}'))
-                }) {
-                    return Err(invalid("Invalid terminal proposal reason"));
-                }
                 crate::terminal::proposal::Text::new(text).map_err(|_| {
-                    invalid("Terminal proposal must be bounded single-line text without controls")
+                    invalid("Terminal text must be bounded single-line text without controls")
                 })?;
             }
-            Self::TerminalInputStatus { proposal } | Self::TerminalInputCancel { proposal } => {
-                identifier(proposal)?
+            Self::TerminalInputEnter {
+                terminal,
+                expected_revision,
+            } => {
+                identifier(terminal)?;
+                identifier(expected_revision)?;
             }
+            Self::TerminalInputEnterStatus { enter } => identifier(enter)?,
             // The channel validates content; the wire bounds sizes.
             Self::ChannelJoin {
                 provider,
@@ -582,9 +649,7 @@ impl Request {
                     identifier(resume)?;
                 }
             }
-            Self::ChannelPost {
-                text, to, nudge, ..
-            } => {
+            Self::ChannelPost { text, to, .. } => {
                 if text.len() > super::channel::MAX_TEXT_BYTES {
                     return Err(Error::new(
                         ErrorCode::LimitExceeded,
@@ -593,14 +658,6 @@ impl Request {
                 }
                 if let Some(to) = to {
                     identifier(to)?;
-                }
-                if let Some(nudge) = nudge {
-                    if nudge.is_empty() || nudge.len() >= super::channel::MAX_PARTICIPANTS {
-                        return Err(invalid("Nudge names 1 to 63 participants"));
-                    }
-                    for participant in nudge {
-                        identifier(participant)?;
-                    }
                 }
             }
             Self::ChannelRead { limit, .. } => page(0, *limit, super::channel::MAX_READ)?,

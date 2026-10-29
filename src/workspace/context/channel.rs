@@ -89,8 +89,6 @@ pub struct Participant {
     pub task: String,
     /// The terminal the host verified it runs in.
     pub terminal: Option<u64>,
-    /// A native choice overrides automatic claims, including an explicit unbind.
-    pub terminal_bound: bool,
     pub location: Location,
     pub joined_at_ms: u64,
     pub connection: Option<u64>,
@@ -178,14 +176,6 @@ pub struct Join<'a> {
     pub now_ms: u64,
 }
 
-/// What a post stored, and whom its sender asked to nudge.
-#[derive(Debug)]
-pub struct Posted {
-    pub seq: u64,
-    /// Participant ids, in the order the sender named them.
-    pub nudge: Vec<String>,
-}
-
 pub struct Read {
     pub messages: Vec<Message>,
     /// The sequence number to read from next.
@@ -223,39 +213,6 @@ impl Channel {
 
     pub fn participant(&self, id: &str) -> Option<&Participant> {
         self.participants.get(id)
-    }
-
-    /// Native host action; no context request exposes this mutation.
-    pub(crate) fn bind_terminal(
-        &mut self,
-        id: &str,
-        connection: u64,
-        terminal: Option<u64>,
-    ) -> bool {
-        let Some(participant) = self.participants.get_mut(id) else {
-            return false;
-        };
-        if participant.connection != Some(connection) {
-            return false;
-        }
-        participant.terminal = terminal;
-        participant.terminal_bound = true;
-        self.revision += 1;
-        true
-    }
-
-    pub(crate) fn clear_terminal_bindings(&mut self, identity: &str) {
-        for participant in self
-            .participants
-            .values_mut()
-            .filter(|p| p.identity == identity)
-        {
-            if participant.terminal_bound {
-                participant.terminal = None;
-                participant.terminal_bound = false;
-                self.revision += 1;
-            }
-        }
     }
 
     pub fn joined(&self, connection: u64) -> Option<&Participant> {
@@ -335,9 +292,7 @@ impl Channel {
             participant.connection = Some(join.connection);
             participant.left = None;
             participant.client = join.client.or(participant.client.take());
-            if !participant.terminal_bound {
-                participant.terminal = join.terminal;
-            }
+            participant.terminal = join.terminal;
             let changed = participant.provider != provider || participant.task != task;
             participant.provider = provider;
             participant.task = task.to_owned();
@@ -381,7 +336,6 @@ impl Channel {
                 provider,
                 task: task.to_owned(),
                 terminal: join.terminal,
-                terminal_bound: false,
                 location: join.location.clone(),
                 joined_at_ms: join.now_ms,
                 connection: Some(join.connection),
@@ -443,18 +397,15 @@ impl Channel {
         true
     }
 
-    /// Stores a message. `nudge` names participants the sender wants told to
-    /// read the channel; a name this refuses refuses the whole post, so
-    /// nothing is stored that the sender would then retry.
+    /// Stores a message and returns its sequence number.
     pub fn post(
         &mut self,
         connection: u64,
         to: Option<&str>,
         text: &str,
         location: Location,
-        nudge: &[String],
         now_ms: u64,
-    ) -> Result<Posted, Error> {
+    ) -> Result<u64, Error> {
         let from = self.joined(connection).ok_or_else(not_joined)?.id.clone();
         if text.trim().is_empty() {
             return Err(invalid("A message needs text"));
@@ -484,30 +435,8 @@ impl Channel {
                 Some(found.id.clone())
             }
         };
-        let mut nudged = Vec::with_capacity(nudge.len());
-        for target in nudge {
-            let id = self.find(target)?.id.clone();
-            // The name was checked as a context identifier, so it is plain.
-            let refuse = |why: &str| {
-                Err(Error::new(
-                    ErrorCode::InvalidArgument,
-                    &format!("Cannot nudge {target}: {why}; nothing was posted"),
-                ))
-            };
-            if id == from {
-                return refuse("a nudge goes to someone else");
-            }
-            if to.as_ref().is_some_and(|to| *to != id) {
-                return refuse("a direct message can nudge only its recipient");
-            }
-            if nudged.contains(&id) {
-                return refuse("it is named twice");
-            }
-            nudged.push(id);
-        }
         self.relocate(&from, location.clone(), now_ms);
-        let seq = self.record(Kind::Message, &from, to, text.to_owned(), location, now_ms);
-        Ok(Posted { seq, nudge: nudged })
+        Ok(self.record(Kind::Message, &from, to, text.to_owned(), location, now_ms))
     }
 
     pub(crate) fn find(&self, target: &str) -> Result<&Participant, Error> {

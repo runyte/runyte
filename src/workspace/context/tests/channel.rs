@@ -119,9 +119,7 @@ fn a_join_must_state_a_provider_and_a_task() {
             "{provider:?} {task:?}"
         );
     }
-    let error = channel
-        .post(1, None, "hello", here("main"), &[], 1)
-        .unwrap_err();
+    let error = channel.post(1, None, "hello", here("main"), 1).unwrap_err();
     assert_eq!(error.code, ErrorCode::CapabilityDenied);
 }
 
@@ -130,7 +128,7 @@ fn moving_is_recorded_before_the_message_with_both_places() {
     let mut channel = Channel::default();
     let claude = join(&mut channel, 1, "claude", None);
     channel
-        .post(1, None, "now on a branch", here("feature"), &[], 2)
+        .post(1, None, "now on a branch", here("feature"), 2)
         .unwrap();
     let kinds = channel
         .messages()
@@ -184,11 +182,9 @@ fn direct_messages_reach_only_the_two_participants() {
     let codex = join(&mut channel, 2, "codex", None);
     join(&mut channel, 3, "gemini", None);
     channel
-        .post(1, Some("codex-1"), "just you", here("main"), &[], 2)
+        .post(1, Some("codex-1"), "just you", here("main"), 2)
         .unwrap();
-    channel
-        .post(1, None, "everyone", here("main"), &[], 3)
-        .unwrap();
+    channel.post(1, None, "everyone", here("main"), 3).unwrap();
     let texts = |channel: &mut Channel, connection| {
         channel
             .read(connection, 0, 200)
@@ -204,14 +200,14 @@ fn direct_messages_reach_only_the_two_participants() {
     assert_eq!(texts(&mut channel, 3), ["everyone"]);
     assert_eq!(
         channel
-            .post(1, Some(&claude), "me", here("main"), &[], 4)
+            .post(1, Some(&claude), "me", here("main"), 4)
             .unwrap_err()
             .code,
         ErrorCode::InvalidArgument
     );
     assert_eq!(
         channel
-            .post(1, Some("nobody"), "hi", here("main"), &[], 4)
+            .post(1, Some("nobody"), "hi", here("main"), 4)
             .unwrap_err()
             .code,
         ErrorCode::NotFound
@@ -224,8 +220,8 @@ fn unread_counts_other_peoples_messages_since_the_last_read() {
     let mut channel = Channel::default();
     let claude = join(&mut channel, 1, "claude", None);
     let codex = join(&mut channel, 2, "codex", None);
-    channel.post(1, None, "one", here("main"), &[], 2).unwrap();
-    channel.post(1, None, "two", here("main"), &[], 3).unwrap();
+    channel.post(1, None, "one", here("main"), 2).unwrap();
+    channel.post(1, None, "two", here("main"), 3).unwrap();
     assert_eq!(channel.unread(&codex), 2);
     assert_eq!(channel.unread(&claude), 0, "its own messages are read");
     // Both joins, then "one".
@@ -249,7 +245,7 @@ fn the_log_is_bounded_and_a_read_of_dropped_messages_says_so() {
     join(&mut channel, 2, "codex", None);
     for index in 0..MAX_MESSAGES + 10 {
         channel
-            .post(1, None, &format!("m{index}"), here("main"), &[], 2)
+            .post(1, None, &format!("m{index}"), here("main"), 2)
             .unwrap();
     }
     assert_eq!(channel.messages().count(), MAX_MESSAGES);
@@ -258,19 +254,19 @@ fn the_log_is_bounded_and_a_read_of_dropped_messages_says_so() {
     assert_eq!(read.messages.len(), 5);
     let big = "x".repeat(MAX_TEXT_BYTES);
     for _ in 0..(MAX_RETAINED_BYTES / MAX_TEXT_BYTES) + 4 {
-        channel.post(1, None, &big, here("main"), &[], 3).unwrap();
+        channel.post(1, None, &big, here("main"), 3).unwrap();
     }
     assert!(channel.retained_bytes <= MAX_RETAINED_BYTES);
     assert_eq!(
         channel
-            .post(1, None, &format!("{big}x"), here("main"), &[], 4)
+            .post(1, None, &format!("{big}x"), here("main"), 4)
             .unwrap_err()
             .code,
         ErrorCode::LimitExceeded
     );
     assert_eq!(
         channel
-            .post(1, None, "bell\u{7}", here("main"), &[], 4)
+            .post(1, None, "bell\u{7}", here("main"), 4)
             .unwrap_err()
             .code,
         ErrorCode::InvalidArgument
@@ -284,7 +280,7 @@ fn a_full_channel_makes_room_by_dropping_the_longest_departed() {
     let mut channel = Channel::default();
     let first = join(&mut channel, 0, "claude", None);
     channel
-        .post(0, None, "remember me", here("main"), &[], 2)
+        .post(0, None, "remember me", here("main"), 2)
         .unwrap();
     channel.disconnect(0);
     for connection in 1..MAX_PARTICIPANTS as u64 {
@@ -324,9 +320,7 @@ fn a_read_is_bounded_by_encoded_size_and_skips_others_direct_messages() {
     // Quotes double when encoded, so the budget counts them twice.
     let quoted = "\"".repeat(MAX_TEXT_BYTES);
     for _ in 0..12 {
-        channel
-            .post(1, None, &quoted, here("main"), &[], 2)
-            .unwrap();
+        channel.post(1, None, &quoted, here("main"), 2).unwrap();
     }
     let read = channel.read(2, 0, 200).unwrap();
     let returned = read.messages.iter().map(|m| m.bytes()).sum::<usize>();
@@ -343,13 +337,13 @@ fn a_read_is_bounded_by_encoded_size_and_skips_others_direct_messages() {
     join(&mut channel, 3, "gemini", None);
     let head = channel.head();
     channel
-        .post(1, Some("codex-1"), "private", here("main"), &[], 2)
+        .post(1, Some("codex-1"), "private", here("main"), 2)
         .unwrap();
     channel
-        .post(1, None, "public one", here("main"), &[], 3)
+        .post(1, None, "public one", here("main"), 3)
         .unwrap();
     channel
-        .post(1, None, "public two", here("main"), &[], 4)
+        .post(1, None, "public two", here("main"), 4)
         .unwrap();
     let read = channel.read(3, head, 1).unwrap();
     assert_eq!(read.messages.len(), 1);
@@ -372,70 +366,4 @@ fn the_participant_that_left_longest_ago_gives_way_first() {
     join(&mut channel, 200, "gemini", None);
     assert!(channel.participant(&later).is_none());
     assert!(channel.participant(&early).is_some(), "it can still resume");
-}
-
-#[test]
-fn a_post_names_whom_to_nudge_and_a_refused_name_stores_nothing() {
-    let mut channel = Channel::default();
-    let claude = join(&mut channel, 1, "claude", None);
-    let codex = join(&mut channel, 2, "codex", None);
-    let gemini = join(&mut channel, 3, "gemini", None);
-    let names = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
-
-    let posted = channel
-        .post(
-            1,
-            None,
-            "review ready",
-            here("main"),
-            &names(&["gemini-1", &codex]),
-            2,
-        )
-        .unwrap();
-    assert_eq!(
-        posted.nudge,
-        [gemini.clone(), codex.clone()],
-        "in the order named"
-    );
-    let direct = channel
-        .post(
-            1,
-            Some("codex-1"),
-            "yours",
-            here("main"),
-            &names(&["codex-1"]),
-            3,
-        )
-        .unwrap();
-    assert_eq!(direct.nudge, std::slice::from_ref(&codex));
-    assert!(
-        channel
-            .post(1, None, "quiet", here("main"), &[], 4)
-            .unwrap()
-            .nudge
-            .is_empty(),
-        "nothing nudges unless asked"
-    );
-
-    let head = channel.head();
-    for (to, nudge, code) in [
-        (None, vec![claude.clone()], ErrorCode::InvalidArgument),
-        (
-            Some("codex-1"),
-            names(&["gemini-1"]),
-            ErrorCode::InvalidArgument,
-        ),
-        (
-            None,
-            names(&["codex-1", &codex]),
-            ErrorCode::InvalidArgument,
-        ),
-        (None, names(&["nobody"]), ErrorCode::NotFound),
-    ] {
-        let error = channel
-            .post(1, to, "refused", here("main"), &nudge, 5)
-            .unwrap_err();
-        assert_eq!(error.code, code, "{nudge:?}");
-    }
-    assert_eq!(channel.head(), head, "a refused nudge stores no message");
 }

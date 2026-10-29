@@ -757,7 +757,6 @@ with `{ command: name, argument: text }`.
 | `lsp-trust` | `lsp-trust` | Choose LSP permission for this workspace |
 | `mcp` | `mcp [identity]` | Review workspace agent permissions |
 | `agent-channel` | `agent-channel` | Show this workspace's agent channel |
-| `agent-bind` | `agent-bind <participant> <terminal-number\|none>` | Review a workspace-local agent terminal binding |
 | `lsp-restart` | `lsp-restart [language]` | Restart stopped language servers |
 | `lsp-status` | `lsp-status` | Report language server state |
 | `open` | `open <path>` | Open a file or directory in the active pane |

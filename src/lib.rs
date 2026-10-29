@@ -13,7 +13,6 @@ pub mod clipboard;
 pub mod command;
 pub mod config;
 pub mod content_alignment;
-pub(crate) mod context_review_layout;
 #[cfg(windows)]
 pub mod cwd_handoff;
 pub mod diff;

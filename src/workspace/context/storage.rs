@@ -3,7 +3,7 @@
 //! Private, bounded bridge identity, remembered grant, and live-host records.
 //! Opening a store is an explicit opt-in; discovery never attaches to a host.
 
-use super::wire::Scope;
+use super::wire::Permission;
 use crate::private_storage::Directory;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
@@ -110,7 +110,36 @@ impl Drop for Publication {
 struct Grant {
     root: Vec<u8>,
     identity: String,
-    scopes: BTreeSet<Scope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    permissions: Option<BTreeSet<Permission>>,
+    /// The capability names releases before read and write permissions kept.
+    /// Both reads among them read as Read, never as Write. Fewer read as a
+    /// revocation: Read is wider than what was granted, and the person's own
+    /// narrower choice must still keep a configured default off. None is a
+    /// revocation too.
+    #[serde(default, skip_serializing)]
+    scopes: Option<Vec<String>>,
+}
+
+impl Grant {
+    fn permissions(&self) -> io::Result<BTreeSet<Permission>> {
+        let permissions = match (&self.permissions, &self.scopes) {
+            (Some(permissions), None) => permissions.clone(),
+            (None, Some(scopes)) if scopes.is_empty() => BTreeSet::new(),
+            (None, Some(scopes)) if scopes.len() <= 32 => {
+                let named = |name: &str| scopes.iter().any(|s| s == name);
+                if named("terminal_read") && named("editor_context_read") {
+                    [Permission::Read].into()
+                } else {
+                    BTreeSet::new()
+                }
+            }
+            _ => return Err(invalid("invalid context grant permissions")),
+        };
+        super::wire::validate_permissions(&permissions)
+            .map_err(|_| invalid("invalid context grant permissions"))?;
+        Ok(permissions)
+    }
 }
 
 #[derive(Debug)]
@@ -383,20 +412,25 @@ impl Storage {
         &self,
         root: &Path,
         identity: &Identity,
-        scopes: BTreeSet<Scope>,
+        permissions: BTreeSet<Permission>,
     ) -> io::Result<()> {
         let root = self.workspace_root(root)?;
-        super::wire::validate_scopes(&scopes)
-            .map_err(|_| invalid("invalid context grant scopes"))?;
+        super::wire::validate_permissions(&permissions)
+            .map_err(|_| invalid("invalid context grant permissions"))?;
         let record = Grant {
             root: path_bytes(&root),
             identity: identity.fingerprint(),
-            scopes,
+            permissions: Some(permissions),
+            scopes: None,
         };
         self.write(&grant_file(&record.root, &record.identity), &record)
     }
 
-    pub fn scopes(&self, root: &Path, identity: &Identity) -> io::Result<BTreeSet<Scope>> {
+    pub fn permissions(
+        &self,
+        root: &Path,
+        identity: &Identity,
+    ) -> io::Result<BTreeSet<Permission>> {
         Ok(self.grant_record(root, identity)?.unwrap_or_default())
     }
 
@@ -407,7 +441,7 @@ impl Storage {
         &self,
         root: &Path,
         identity: &Identity,
-    ) -> io::Result<Option<BTreeSet<Scope>>> {
+    ) -> io::Result<Option<BTreeSet<Permission>>> {
         let root = path_bytes(&self.workspace_root(root)?);
         let fingerprint = identity.fingerprint();
         let Some(record): Option<Grant> = self.read(&grant_file(&root, &fingerprint))? else {
@@ -418,9 +452,7 @@ impl Storage {
                 "context grant names a different workspace or identity",
             ));
         }
-        super::wire::validate_scopes(&record.scopes)
-            .map_err(|_| invalid("invalid context grant scopes"))?;
-        Ok(Some(record.scopes))
+        record.permissions().map(Some)
     }
 
     pub fn revoke(&self, root: &Path, identity: &Identity) -> io::Result<()> {

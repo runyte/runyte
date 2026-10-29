@@ -5,7 +5,7 @@ use crate::{
     app::{App, HostPorts},
     clipboard::SystemClipboard,
     input::{InputEvent, KeyCode, KeyStroke},
-    terminal::{TerminalOutput, TerminalRequest, proposal::DeliveryState},
+    terminal::{TerminalOutput, TerminalRequest},
     test_support::TestRuntimeRoot,
     workspace::context::storage::{HostMode, StorageLocation, random_token},
 };
@@ -62,6 +62,21 @@ fn frame(host: &mut WorkspaceHost, connection: u64, value: Value) -> Reply {
     )
 }
 
+fn request(
+    host: &mut WorkspaceHost,
+    connection: u64,
+    id: &str,
+    method: &str,
+    params: Value,
+) -> Value {
+    frame(
+        host,
+        connection,
+        json!({"type":"request","id":id,"method":method,"params":params}),
+    )
+    .value
+}
+
 fn authenticate(host: &mut WorkspaceHost, identity: &Identity, connection: u64) {
     assert_eq!(
         frame(
@@ -76,7 +91,7 @@ fn authenticate(host: &mut WorkspaceHost, identity: &Identity, connection: u64) 
         frame(
             host,
             connection,
-            json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"windows-host-fixture","commands":[],"required_capabilities":["terminal_read","terminal_propose"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]})
+            json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"windows-host-fixture","commands":[],"required_capabilities":["terminal_read","terminal_write"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[wire::TERMINAL_WRITE_FEATURE]})
         )
         .value["type"],
         "registered"
@@ -132,7 +147,7 @@ async fn remembered_grants_are_staged_then_reopened_writable() {
         .grant(
             &first.app.project_root,
             &identity,
-            [Scope::EditorContextRead].into(),
+            [Permission::Read].into(),
         )
         .unwrap();
     first.shutdown_context().await.unwrap();
@@ -143,7 +158,7 @@ async fn remembered_grants_are_staged_then_reopened_writable() {
         .unwrap();
     assert_eq!(
         second.context.grants[&identity.fingerprint()].1,
-        [Scope::EditorContextRead].into()
+        [Permission::Read].into()
     );
     assert!(second.context_enabled());
     assert_eq!(
@@ -175,7 +190,7 @@ async fn cancelled_host_shutdown_retains_owner_for_retry() {
     let identity = storage.identity("agent").unwrap();
     host.context.grants.insert(
         identity.fingerprint(),
-        (identity, [Scope::EditorContextRead].into()),
+        (identity, [Permission::Read].into()),
     );
     host.context_enable().unwrap();
     let mut shutdown = Box::pin(host.shutdown_context());
@@ -229,13 +244,14 @@ async fn native_grants_default_to_reject_and_only_remembered_access_reopens() {
     first.app.context_ui.requested_identity = Some("agent".into());
     first.sync_context();
     review_all(&mut first);
+    key(&mut first, KeyCode::Char('1'));
     key(&mut first, KeyCode::Tab);
     key(&mut first, KeyCode::Enter);
     first.sync_context();
     assert!(first.context_enabled());
     let storage = first.context.storage.as_ref().unwrap().clone();
     let identity = storage.identity("agent").unwrap();
-    assert!(storage.scopes(&project, &identity).unwrap().is_empty());
+    assert!(storage.permissions(&project, &identity).unwrap().is_empty());
     first.shutdown_context().await.unwrap();
 
     let mut second = host(&project);
@@ -251,6 +267,7 @@ async fn native_grants_default_to_reject_and_only_remembered_access_reopens() {
     second.app.context_ui.requested_identity = Some("agent".into());
     second.sync_context();
     review_all(&mut second);
+    key(&mut second, KeyCode::Char('1'));
     key(&mut second, KeyCode::Char('r'));
     key(&mut second, KeyCode::Tab);
     key(&mut second, KeyCode::Enter);
@@ -262,9 +279,9 @@ async fn native_grants_default_to_reject_and_only_remembered_access_reopens() {
             .storage
             .as_ref()
             .unwrap()
-            .scopes(&project, &identity)
+            .permissions(&project, &identity)
             .unwrap(),
-        [Scope::TerminalRead, Scope::EditorContextRead].into()
+        [Permission::Read].into()
     );
     second.shutdown_context().await.unwrap();
 
@@ -281,7 +298,7 @@ async fn native_grants_default_to_reject_and_only_remembered_access_reopens() {
     third.sync_context();
     assert!(!third.context_enabled());
     assert!(third.context.readers.is_empty());
-    assert!(storage.scopes(&project, &identity).unwrap().is_empty());
+    assert!(storage.permissions(&project, &identity).unwrap().is_empty());
     third.shutdown_context().await.unwrap();
     assert!(storage.discover(&environment, true).unwrap().is_empty());
     assert_ne!(registration.host_incarnation, "");
@@ -308,10 +325,9 @@ fn ungranted_workspace_lists_paired_identities_without_enabling_access() {
     host.app.context_ui.requested_identity = Some(String::new());
     host.sync_context();
     assert_eq!(host.app.context_ui.identities, ["codex"]);
-    assert!(matches!(
-        &host.app.context_ui.surface.as_ref().unwrap().kind,
-        Kind::Grant { identity, remember: false, .. } if identity == "codex"
-    ));
+    let surface = host.app.context_ui.surface.as_ref().unwrap();
+    assert_eq!(surface.grant.identity, "codex");
+    assert!(!surface.grant.remember);
     key(&mut host, KeyCode::Escape);
 
     store.identity("agent").unwrap();
@@ -320,25 +336,26 @@ fn ungranted_workspace_lists_paired_identities_without_enabling_access() {
     assert_eq!(host.app.context_ui.identities, ["agent", "codex"]);
     key(&mut host, KeyCode::Char('n'));
     host.sync_context();
-    assert!(matches!(
-        &host.app.context_ui.surface.as_ref().unwrap().kind,
-        Kind::Grant { identity, .. } if identity == "codex"
-    ));
+    assert_eq!(
+        host.app.context_ui.surface.as_ref().unwrap().grant.identity,
+        "codex"
+    );
     assert!(host.context.storage.is_none());
     assert!(host.context.grants.is_empty());
     assert!(!host.context_enabled());
     assert!(host.context_delay().is_none());
-    assert!(store.scopes(&project, &codex).unwrap().is_empty());
+    assert!(store.permissions(&project, &codex).unwrap().is_empty());
 }
 
-#[tokio::test]
-async fn native_proposal_approval_rejects_nonphysical_and_stale_attempts() {
-    let root = TestRuntimeRoot::new("context-host-approval-input").unwrap();
-    let project = root.path().join("project");
-    std::fs::create_dir(&project).unwrap();
-    let context_root = root.path().join("context");
-    let mut host = host(&project);
-    let _events = host
+/// A started Windows host with `agent` granted Read and Write and
+/// connected as reader `connection`.
+fn writing_host(
+    project: &std::path::Path,
+    connection: u64,
+) -> (WorkspaceHost, Identity, mpsc::Receiver<Event>) {
+    let context_root = project.parent().unwrap().join("context");
+    let mut host = host(project);
+    let events = host
         .start_context_windows(
             HostMode::Standalone,
             Some(StorageLocation::explicit(context_root.clone()).unwrap()),
@@ -357,104 +374,95 @@ async fn native_proposal_approval_rejects_nonphysical_and_stale_attempts() {
         identity.fingerprint(),
         (
             identity.clone(),
-            [Scope::TerminalRead, Scope::TerminalPropose].into(),
+            [Permission::Read, Permission::Write].into(),
         ),
     );
     host.context_enable().unwrap();
     host.note_plugin_frontend(true);
-    authenticate(&mut host, &identity, 7);
-    let terminal = host.app.terminals.insert_test_session(20, 3);
+    authenticate(&mut host, &identity, connection);
+    (host, identity, events)
+}
 
-    let proposal = host
-        .context_propose(7, terminal, "literal", None, None)
-        .unwrap()["proposal"]
+#[tokio::test]
+async fn an_enter_is_dropped_by_typing_detachment_and_revocation() {
+    let root = TestRuntimeRoot::new("context-host-enter-guards").unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let (mut host, _identity, _events) = writing_host(&project, 7);
+    let terminal = host.app.terminals.insert_test_session(20, 3);
+    let current = |host: &WorkspaceHost| {
+        format!(
+            "r:{}",
+            host.app.terminals.get(terminal).unwrap().read_revision()
+        )
+    };
+
+    let revision = current(&host);
+    let typed = host.context_request_enter(7, terminal, &revision).unwrap()["enter"]
         .as_str()
         .unwrap()
         .to_owned();
-    host.sync_context();
-    review_all(&mut host);
-    key(&mut host, KeyCode::Tab);
-    host.app
-        .handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
-        .unwrap();
-    host.app
-        .handle_input(InputEvent::Text("\r\n".into()))
-        .unwrap();
-    host.app
-        .handle_input(InputEvent::Key(KeyStroke::ctrl('m')))
-        .unwrap();
-    assert_eq!(host.context.proposals[&proposal].status, "pending");
-    assert!(host.app.context_ui.decision.is_none());
-
+    assert!(
+        host.app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
     host.app
         .terminals
         .get_mut(terminal)
         .unwrap()
         .send_text("changed");
-    key(&mut host, KeyCode::Enter);
     host.sync_context();
-    assert_eq!(host.context.proposals[&proposal].status, "stale");
+    assert_eq!(host.context_enter_state(&typed), Some("stale"));
+    assert!(
+        !host
+            .app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
 
-    let stale_attachment = host
-        .context_propose(7, terminal, "second", None, None)
-        .unwrap()["proposal"]
+    let revision = current(&host);
+    let detached = host.context_request_enter(7, terminal, &revision).unwrap()["enter"]
         .as_str()
         .unwrap()
         .to_owned();
-    host.sync_context();
-    review_all(&mut host);
-    key(&mut host, KeyCode::Tab);
     host.note_plugin_frontend(false);
-    host.note_plugin_frontend(true);
-    key(&mut host, KeyCode::Enter);
     host.sync_context();
+    assert_eq!(host.context_enter_state(&detached), Some("cancelled"));
+    let revision = current(&host);
     assert_eq!(
-        host.context.proposals[&stale_attachment].status,
-        "cancelled"
-    );
-
-    host.note_plugin_frontend(false);
-    assert_eq!(
-        host.context_propose(7, terminal, "detached", None, None)
+        host.context_request_enter(7, terminal, &revision)
             .unwrap_err()
             .code,
         Code::NoFrontend
+    );
+
+    host.note_plugin_frontend(true);
+    let revision = current(&host);
+    host.context_request_enter(7, terminal, &revision).unwrap();
+    host.context_revoke("agent");
+    assert!(host.context.enters.is_empty());
+    assert!(
+        !host
+            .app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
     );
     host.shutdown_context().await.unwrap();
 }
 
 #[tokio::test]
-async fn conpty_approval_inserts_exactly_once_and_a_separate_enter_submits() {
-    let root = TestRuntimeRoot::new("context-host-conpty-approval").unwrap();
+async fn conpty_text_waits_for_a_guarded_enter_which_submits_it_once() {
+    let root = TestRuntimeRoot::new("context-host-conpty-enter").unwrap();
     let project = root.path().join("project");
     std::fs::create_dir(&project).unwrap();
-    let context_root = root.path().join("context");
-    let mut host = host(&project);
-    let _events = host
-        .start_context_windows(
-            HostMode::Standalone,
-            Some(StorageLocation::explicit(context_root.clone()).unwrap()),
-            random_token().unwrap(),
-        )
-        .unwrap();
-    host.context_open_storage(context_root).unwrap();
-    let identity = host
-        .context
-        .storage
-        .as_ref()
-        .unwrap()
-        .identity("agent")
-        .unwrap();
-    host.context.grants.insert(
-        identity.fingerprint(),
-        (
-            identity.clone(),
-            [Scope::TerminalRead, Scope::TerminalPropose].into(),
-        ),
-    );
-    host.context_enable().unwrap();
-    host.note_plugin_frontend(true);
-    authenticate(&mut host, &identity, 9);
+    let (mut host, _identity, _events) = writing_host(&project, 9);
 
     let terminal = host
         .app
@@ -469,7 +477,7 @@ async fn conpty_approval_inserts_exactly_once_and_a_separate_enter_submits() {
                     "--nocapture".into(),
                 ],
                 directory: project,
-                label: "context approval fixture".into(),
+                label: "context enter fixture".into(),
             },
             80,
             20,
@@ -495,47 +503,52 @@ async fn conpty_approval_inserts_exactly_once_and_a_separate_enter_submits() {
     .await
     .unwrap();
 
-    let proposal = host
-        .context_propose(9, terminal, "echo exact", None, None)
-        .unwrap()["proposal"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    host.sync_context();
-    review_all(&mut host);
-    key(&mut host, KeyCode::Tab);
-    key(&mut host, KeyCode::Enter);
-    host.sync_context();
-    let delivery = host.context.proposals[&proposal]
-        .delivery
-        .as_ref()
-        .unwrap()
-        .clone();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while delivery.state() != DeliveryState::Delivered {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
-    let quiet_deadline = tokio::time::Instant::now() + Duration::from_millis(100);
-    while let Ok(Some(event)) = tokio::time::timeout_at(quiet_deadline, output.recv()).await {
+    let list = request(
+        &mut host,
+        9,
+        "list",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    let handle = list["result"]["terminals"][0]["terminal"].clone();
+    let written = request(
+        &mut host,
+        9,
+        "write",
+        "terminal.input.write",
+        json!({"terminal":handle,"text":"echo exact"}),
+    );
+    assert_eq!(written["result"]["state"], "queued", "{written}");
+    // Let the console echo settle, as an agent reading the screen would.
+    let mut quiet = tokio::time::Instant::now() + Duration::from_millis(300);
+    while let Ok(Some(event)) = tokio::time::timeout_at(quiet, output.recv()).await {
         if let TerminalOutput::Bytes { bytes: part, .. } = &event {
             bytes.extend(part);
         }
         host.app.terminals.apply(event);
+        quiet = tokio::time::Instant::now() + Duration::from_millis(300);
     }
     assert!(
         !String::from_utf8_lossy(&bytes).contains("SUBMITTED:"),
-        "approval Enter reached the child"
+        "text alone reached the child as a line"
     );
-    assert!(
-        host.app
-            .terminals
-            .get_mut(terminal)
-            .unwrap()
-            .send_key(KeyStroke::plain(KeyCode::Enter))
+    let revision = format!(
+        "r:{}",
+        host.app.terminals.get(terminal).unwrap().read_revision()
     );
+    let enter = request(
+        &mut host,
+        9,
+        "enter",
+        "terminal.input.enter",
+        json!({"terminal":handle,"expected_revision":revision}),
+    );
+    let enter = enter["result"]["enter"].as_str().unwrap().to_owned();
+    host.context_expire_enter_delays();
+    host.sync_context();
+    host.context_expire_enter_delays();
+    host.sync_context();
+    assert_eq!(host.context_enter_state(&enter), Some("sent"));
     tokio::time::timeout(Duration::from_secs(10), async {
         while !String::from_utf8_lossy(&bytes).contains("SUBMITTED:echo exact") {
             let event = output.recv().await.unwrap();
@@ -571,8 +584,6 @@ async fn conpty_approval_inserts_exactly_once_and_a_separate_enter_submits() {
     })
     .await
     .unwrap();
-    host.sync_context();
-    assert_eq!(host.context.proposals[&proposal].status, "delivered");
     assert!(host.app.terminals.close(terminal));
     cleanup();
     host.shutdown_context().await.unwrap();

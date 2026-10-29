@@ -82,6 +82,26 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-10-29 — MCP read and write permissions
+
+Measured on `x86_64-unknown-linux-gnu` with the uncommitted read and write
+permission change on top of `6493093`, Rust 1.97.1 and cargo-llvm-cov 0.9.1,
+using the canonical `cargo llvm-cov --locked --package runyte` command and
+local socket/process access for integration fixtures.
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 156,548 | 169,798 | 92.20% |
+| Functions | 14,167 | 15,371 | 92.17% |
+| Regions | 241,347 | 263,221 | 91.69% |
+
+Coverage includes grant negotiation and migration, terminal writes, the
+delayed revision-checked Enter against a real PTY, and removal of proposals,
+nudges and terminal bindings. The ordinary suite, default and native
+all-target Clippy with warnings denied, formatting, the native crate tests and
+the MCP acceptance suite passed. The 89% floor is unchanged. Windows and macOS
+were not run in this Linux environment.
+
 ## 2026-10-08 — native window follow-up
 
 Measured on `x86_64-unknown-linux-gnu` with the implementation through `2d85e47`,

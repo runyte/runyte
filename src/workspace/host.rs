@@ -254,6 +254,8 @@ mod context;
 #[cfg(any(unix, windows))]
 mod context_channel;
 #[cfg(any(unix, windows))]
+mod context_input;
+#[cfg(any(unix, windows))]
 mod context_reads;
 mod pipe;
 mod plugin_activity;
@@ -2732,14 +2734,17 @@ mod tests {
 
     #[test]
     fn key_hints_never_cover_an_open_review() {
-        use crate::app::context_access::{Kind, Surface};
+        use crate::app::context_access::{Detail, Grant, Surface};
         let mut host = host();
         let generation = host.app.plugins.attachment_generation;
         host.app.context_ui.surface = Some(Surface::new(
-            Kind::Proposal { id: "p".into() },
-            "Review terminal text".into(),
-            Vec::new(),
-            &"x".repeat(64 * 40),
+            Grant {
+                identity: "agent".into(),
+                permissions: Default::default(),
+                remember: false,
+            },
+            "MCP permissions".into(),
+            vec![Detail::note("x".repeat(64 * 40))],
             generation,
         ));
         let mut hints = KeyHintState::default();

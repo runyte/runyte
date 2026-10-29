@@ -26,11 +26,16 @@ current sources take precedence.
 
 Active work:
 
+- [MCP read and write permissions](active/PLAN_MCP_READ_WRITE_PERMISSIONS.md):
+  two per-workspace permissions, direct terminal writes with a revision-guarded
+  delayed Enter, and removal of nudges, terminal bindings and reviewed
+  proposals. Channel notifications remain an experiment on `exp`.
+
 - [Runyte MCP skill and durable agent channels](active/PLAN_AGENT_CHANNEL_SKILL_AND_STORAGE.md):
   a cooperative MCP skill and safe installer first, followed by user testing;
   SQLite storage across workspaces with retained public history and acknowledged
-  DM/group cleanup, now deferred. Fixed channel nudges, requested per message by
-  the sender, are the decided wake-up mechanism; hooks remain tentative.
+  DM/group cleanup, now deferred. Its channel nudges were replaced by terminal
+  writes under the read and write permissions plan; hooks remain tentative.
 
 - [Terminal and desktop editions](active/PLAN_EDITIONS_AND_EXTENSIONS.md):
   two editions built from one Cargo workspace, PDF and document-preview helpers

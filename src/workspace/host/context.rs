@@ -2,24 +2,20 @@
 
 use super::{WorkspaceHost, context_reads::ReadState};
 use crate::{
-    app::context_access::{Decision, Detail, Kind, Surface, label, visible},
-    notification::{NotificationDraft, NotificationSeverity},
+    app::context_access::{Decision, Detail, Grant, Surface, label, visible},
     plugin::application::{Error, ErrorCode as Code},
-    terminal::{
-        TerminalId,
-        proposal::{Delivery, InputSignature, Text},
-    },
+    terminal::{TerminalId, proposal::Delivery},
     workspace::context::{
         storage::{self, HostMode, Identity, Registration, Storage},
         transport::{Event, Lease, Reply, Server},
-        wire::{self, Request, Scope},
+        wire::{self, Permission, Request, Scope},
     },
 };
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tokio::sync::mpsc;
 
@@ -36,8 +32,9 @@ pub(super) struct State {
     pub(super) channel: crate::workspace::context::channel::Channel,
     /// The channel revision the open `[agent channel]` page last showed.
     pub(super) channel_page_revision: u64,
-    /// The channel nudge each terminal has outstanding, by terminal id.
-    pub(super) nudges: BTreeMap<u64, super::context_channel::Nudge>,
+    /// Enters agents asked for, waiting out their delay or kept briefly for
+    /// their outcome, by handle.
+    pub(super) enters: BTreeMap<String, super::context_input::Enter>,
     /// The process behind each connection, where the transport knows it.
     pub(super) peers: BTreeMap<u64, Option<u32>>,
     storage: Option<Arc<Storage>>,
@@ -59,14 +56,13 @@ pub(super) struct State {
     location: Option<storage::StorageLocation>,
     #[cfg(windows)]
     environment: Option<String>,
-    grants: BTreeMap<String, (Identity, BTreeSet<Scope>)>,
+    grants: BTreeMap<String, (Identity, BTreeSet<Permission>)>,
     remembered: BTreeSet<String>,
     /// Identities whose grant here came from `mcp.default_grants`.
     defaulted: BTreeSet<String>,
     /// Identities the person revoked here, which keeps their default off.
     denied: BTreeSet<String>,
-    readers: BTreeMap<u64, Reader>,
-    proposals: BTreeMap<String, Proposal>,
+    pub(super) readers: BTreeMap<u64, Reader>,
     recent: VecDeque<String>,
     mode: Option<HostMode>,
     pub frame: Option<crate::snapshot::EditorSnapshot>,
@@ -86,7 +82,7 @@ impl State {
 
 #[derive(Default)]
 struct InitialGrants {
-    grants: BTreeMap<String, (Identity, BTreeSet<Scope>)>,
+    grants: BTreeMap<String, (Identity, BTreeSet<Permission>)>,
     remembered: BTreeSet<String>,
     defaulted: BTreeSet<String>,
     denied: BTreeSet<String>,
@@ -94,18 +90,22 @@ struct InitialGrants {
     skipped: Vec<String>,
 }
 
-struct Reader {
+pub(super) struct Reader {
     fingerprint: String,
     durable: bool,
-    /// Negotiated `wire::NUDGE_FEATURE`, so its posts may ask for nudges.
-    nudge: bool,
-    identity: String,
+    pub(super) identity: String,
+    /// Every capability the identity's grant here allows.
     granted: BTreeSet<Scope>,
-    scopes: BTreeSet<Scope>,
+    /// The capabilities it negotiated, within `granted`.
+    pub(super) scopes: BTreeSet<Scope>,
     registered: bool,
     lease: Arc<Lease>,
-    reads: ReadState,
+    pub(super) reads: ReadState,
     requests: BTreeSet<String>,
+    /// Lines it typed that may not have been written yet, with the frontend
+    /// attachment they were typed under. They are cancelled with the reader,
+    /// or when that frontend goes.
+    pub(super) writes: Vec<(Delivery, u64)>,
 }
 
 impl State {
@@ -117,25 +117,11 @@ impl State {
     }
 }
 
-struct Proposal {
-    owner: u64,
-    terminal: TerminalId,
-    text: Text,
-    reason: Option<String>,
-    signature: InputSignature,
-    attachment: u64,
-    deadline: Instant,
-    status: &'static str,
-    delivery: Option<Delivery>,
-}
-
 impl Drop for State {
     fn drop(&mut self) {
         for reader in self.readers.values() {
             reader.lease.cancel();
-        }
-        for proposal in self.proposals.values() {
-            if let Some(delivery) = &proposal.delivery {
+            for (delivery, _) in &reader.writes {
                 delivery.cancel();
             }
         }
@@ -279,19 +265,24 @@ impl WorkspaceHost {
         let mut initial = InitialGrants::default();
         for identity in store.identities()? {
             match store.grant_record(&self.app.project_root, &identity)? {
-                Some(scopes) if scopes.is_empty() => {
+                Some(permissions) if permissions.is_empty() => {
                     initial.denied.insert(identity.name().to_owned());
                 }
-                Some(scopes) => {
+                Some(permissions) => {
                     initial.remembered.insert(identity.name().to_owned());
                     initial
                         .grants
-                        .insert(identity.fingerprint(), (identity, scopes));
+                        .insert(identity.fingerprint(), (identity, permissions));
                 }
                 None => {}
             }
         }
-        for (name, scopes) in self.app.config.mcp.default_scopes() {
+        for name in self.app.config.mcp.narrow_defaults() {
+            initial.skipped.push(format!(
+                "{name} (its default names only some of the reads earlier releases had; Read now covers buffers, terminals and the channel together, so write read to grant it)"
+            ));
+        }
+        for (name, permissions) in self.app.config.mcp.default_permissions() {
             if initial.remembered.contains(name) || initial.denied.contains(name) {
                 continue;
             }
@@ -309,7 +300,7 @@ impl WorkspaceHost {
                     initial.defaulted.insert(name.to_owned());
                     initial
                         .grants
-                        .insert(identity.fingerprint(), (identity, scopes));
+                        .insert(identity.fingerprint(), (identity, permissions));
                 }
                 Err(error) => initial.skipped.push(format!("{name} ({error})")),
             }
@@ -461,7 +452,6 @@ impl WorkspaceHost {
         {
             if self.context.events.is_none() {
                 self.app.context_ui.requested_identity = None;
-                self.app.context_ui.requested_binding = None;
                 self.app.context_ui.decision = None;
                 self.app.context_ui.surface = None;
                 return;
@@ -490,13 +480,6 @@ impl WorkspaceHost {
             self.app.open_agent_channel_page(&page);
             // Opened after this frame was drawn, so ask for another.
             self.app.plugins.presentation_dirty = true;
-        }
-        if let Some(binding) = self.app.context_ui.requested_binding.take()
-            && self.app.plugins.frontend_attached
-            && !self.app.has_input_overlay()
-            && let Err(error) = self.context_review_binding(&binding)
-        {
-            self.report_host_error(error.to_string());
         }
         if let Some(identity) = self.app.context_ui.requested_identity.take()
             && self.app.plugins.frontend_attached
@@ -542,9 +525,11 @@ impl WorkspaceHost {
                 .grants
                 .values()
                 .find(|(id, _)| id.name() == identity);
-            let scopes = granted
-                .map(|(_, scopes)| scopes.clone())
-                .unwrap_or_else(|| [Scope::TerminalRead, Scope::EditorContextRead].into());
+            // Nothing is preselected: an identity reads nothing until the
+            // person turns Read on.
+            let permissions = granted
+                .map(|(_, permissions)| permissions.clone())
+                .unwrap_or_default();
             let remember = self.context.remembered.contains(&identity);
             let readers = self
                 .context
@@ -575,16 +560,13 @@ impl WorkspaceHost {
                     format!("{readers} reader(s) for this identity"),
                 ),
                 Detail::note(
-                    "Use the same --identity in runyte mcp. Agent start order is flexible.",
+                    "Use the same --identity in runyte mcp. Agent start order is flexible. Changes apply at once to running agents.",
                 ),
                 Detail::note(
-                    "Reads include unsaved text. Terminal text needs approval unless 5 is on.",
+                    "Read covers every buffer and terminal here, unsaved text and terminal history included, and the agent channel.",
                 ),
                 Detail::note(
-                    "5 trusts a terminal's paste mode to mean its program reads pastes as text. Inside tmux, zellij or screen that mode is the multiplexer's, so do not use 5 there.",
-                ),
-                Detail::note(
-                    "7 lets another agent's post type one fixed line and Enter into this identity's terminals, 30 seconds after you last typed there. If the agent is showing an approval prompt then, that Enter may approve it.",
+                    "Write lets agents edit buffers and type into any terminal here, shells and other agents' prompts included, and press Enter there. Enter waits 5 seconds, shown in the pane title, and is dropped if anything appears or is typed meanwhile. Grant it for a job, then turn it off.",
                 ),
             ];
             if let Some(recent) = self.context.recent.back() {
@@ -592,14 +574,13 @@ impl WorkspaceHost {
             }
             self.app.plugins.presentation_dirty = true;
             self.app.context_ui.surface = Some(Surface::new(
-                Kind::Grant {
+                Grant {
                     identity,
-                    scopes,
+                    permissions,
                     remember,
                 },
                 "MCP permissions".into(),
                 explanation,
-                "",
                 self.app.plugins.attachment_generation,
             ));
         }
@@ -610,188 +591,50 @@ impl WorkspaceHost {
                 self.report_host_error(error.to_string());
             }
         }
-        let now = Instant::now();
-        self.context.proposals.retain(|_, proposal| {
-            now < proposal.deadline + Duration::from_secs(120)
-                || matches!(proposal.status, "queued" | "writing")
-        });
-        for proposal in self.context.proposals.values_mut() {
-            if now >= proposal.deadline
-                && proposal.delivery.as_ref().is_some_and(|delivery| {
-                    matches!(
-                        delivery.state(),
-                        crate::terminal::proposal::DeliveryState::Queued
-                            | crate::terminal::proposal::DeliveryState::Writing
-                    )
-                })
-            {
-                let delivery = proposal.delivery.take().unwrap();
-                proposal.status = if delivery.cancel() {
-                    "expired"
-                } else {
-                    "outcome_unknown"
-                };
-            }
-            if let Some(delivery) = &proposal.delivery {
-                if !self.app.plugins.frontend_attached
-                    || proposal.attachment != self.app.plugins.attachment_generation
-                    || self
-                        .app
-                        .terminals
-                        .get(proposal.terminal)
-                        .is_none_or(|t| !t.live())
-                {
-                    delivery.cancel();
-                }
-                use crate::terminal::proposal::DeliveryState as D;
-                proposal.status = match delivery.state() {
-                    D::Queued => "queued",
-                    D::Writing => "writing",
-                    D::Delivered => "delivered",
-                    D::Cancelled => "cancelled",
-                    D::OutcomeUnknown => "outcome_unknown",
-                };
-            }
-            if proposal.status == "pending"
-                && (now >= proposal.deadline
-                    || !self.app.plugins.frontend_attached
-                    || proposal.attachment != self.app.plugins.attachment_generation
-                    || self
-                        .app
-                        .terminals
-                        .get(proposal.terminal)
-                        .is_none_or(|t| !t.live()))
-            {
-                proposal.status = if now >= proposal.deadline {
-                    "expired"
-                } else {
-                    "cancelled"
-                };
-            }
-        }
-        self.context_channel_nudges();
-        if self
-            .app
-            .context_ui
-            .surface
-            .as_ref()
-            .and_then(Surface::proposal)
-            .is_some_and(|id| {
-                self.context
-                    .proposals
-                    .get(id)
-                    .is_none_or(|p| p.status != "pending")
-            })
-        {
-            self.app.context_ui.surface = None;
-            self.app.plugins.presentation_dirty = true;
-        }
-        if self.app.plugins.frontend_attached
-            && !self.app.has_input_overlay()
-            && self.app.mode != crate::command::Mode::Command
-            && let Some((id, p)) = self
-                .context
-                .proposals
-                .iter_mut()
-                .find(|(_, p)| p.status == "pending")
-            && let Some(terminal) = self.app.terminals.get(p.terminal)
-        {
-            // Capture at presentation, so a proposal waiting behind an
-            // existing prompt cannot approve unseen intervening input.
-            p.signature = terminal.proposal_input_signature();
-            let identity = self
-                .context
-                .readers
-                .get(&p.owner)
-                .map_or("disconnected", |r| r.identity.as_str());
-            let mut explanation = vec![
-                Detail::value("Agent", visible(identity)),
-                Detail::value(
-                    "Terminal",
-                    match terminal.number() {
-                        Some(number) => format!("{} (#{number})", label(&terminal.name())),
-                        None => label(&terminal.name()),
-                    },
-                ),
-                Detail::value("Workspace", label(&self.app.project_root.to_string_lossy())),
-            ];
-            if let Some(reason) = &p.reason {
-                explanation.push(Detail::value(
-                    "Reason",
-                    format!("{} (unverified)", label(reason)),
-                ));
-            }
-            explanation.push(Detail::note(
-                "Inserted at the input position without Enter; it may still act.",
-            ));
-            if let Ok(context) = terminal.read_output(
-                crate::terminal::read::Region::Tail,
-                crate::terminal::read::Limits {
-                    rows: 3,
-                    bytes: 512,
-                    cells: 2048,
-                },
-                None,
-            ) {
-                // Context for the reader, not part of what is approved, so a
-                // long row is cut rather than allowed to push the proposal
-                // onto a second page.
-                for (index, row) in context.rows.iter().enumerate() {
-                    explanation.push(Detail::excerpt(
-                        if index == 0 { "Output" } else { "" },
-                        &label(row.text.trim_end()),
-                    ));
-                }
-                explanation.push(Detail::note(
-                    "Recent output does not show whether the input line is empty.",
-                ));
-            }
-            self.app.plugins.presentation_dirty = true;
-            self.app.context_ui.surface = Some(Surface::new(
-                Kind::Proposal { id: id.clone() },
-                "Review terminal text".into(),
-                explanation,
-                p.text.as_str(),
-                p.attachment,
-            ));
-        }
+        self.context_advance_enters();
     }
 
     fn context_decision(&mut self, decision: Decision) -> anyhow::Result<()> {
         match decision {
-            Decision::ChannelBinding(binding) => self.context_apply_binding(binding)?,
             Decision::Grant {
                 identity,
-                scopes,
+                permissions,
                 remember,
             } => {
-                wire::validate_scopes(&scopes).map_err(|e| anyhow::anyhow!(e.message))?;
+                wire::validate_permissions(&permissions).map_err(|e| anyhow::anyhow!(e.message))?;
                 let store = self.context_writable_storage()?;
                 let identity = store.identity(&identity)?;
                 // Applying nothing is a revocation and is kept like one.
-                if remember || scopes.is_empty() {
-                    store.grant(&self.app.project_root, &identity, scopes.clone())?;
+                if remember || permissions.is_empty() {
+                    store.grant(&self.app.project_root, &identity, permissions.clone())?;
                 } else {
                     store.revoke(&self.app.project_root, &identity)?;
                 }
-                self.context_revoke(identity.name());
+                // Readers negotiated the old grant; they reconnect under the
+                // new one, so a narrower grant holds from now on.
+                self.context_disconnect_identity(identity.name());
                 // An applied grant replaces a default and clears a revocation.
                 self.context.defaulted.remove(identity.name());
-                if scopes.is_empty() {
+                if permissions.is_empty() {
                     self.context.denied.insert(identity.name().to_owned());
                 } else {
                     self.context.denied.remove(identity.name());
                 }
-                if remember && !scopes.is_empty() {
+                if remember && !permissions.is_empty() {
                     self.context.remembered.insert(identity.name().to_owned());
                 } else {
                     self.context.remembered.remove(identity.name());
                 }
-                if !scopes.is_empty() {
+                if permissions.is_empty() {
                     self.context
                         .grants
-                        .insert(identity.fingerprint(), (identity, scopes));
+                        .retain(|_, (granted, _)| granted.name() != identity.name());
+                    self.context_retire_if_ungranted();
+                    return Ok(());
                 }
+                self.context
+                    .grants
+                    .insert(identity.fingerprint(), (identity, permissions));
                 #[cfg(windows)]
                 {
                     // A fresh physical grant is the explicit retry boundary
@@ -819,48 +662,19 @@ impl WorkspaceHost {
                 store.grant(&self.app.project_root, &identity, BTreeSet::new())?;
                 self.context.denied.insert(name);
             }
-            Decision::Proposal { id, accepted } => {
-                let Some(proposal) = self.context.proposals.get_mut(&id) else {
-                    return Ok(());
-                };
-                if proposal.status != "pending" {
-                    return Ok(());
-                }
-                if !accepted {
-                    proposal.status = "rejected";
-                    return Ok(());
-                }
-                let reader_valid = self.context.readers.get(&proposal.owner).is_some_and(|r| {
-                    r.lease.active() && r.scopes.contains(&Scope::TerminalPropose)
-                });
-                let terminal = self.app.terminals.get_mut(proposal.terminal);
-                if !reader_valid
-                    || Instant::now() >= proposal.deadline
-                    || proposal.attachment != self.app.plugins.attachment_generation
-                    || !self.app.plugins.frontend_attached
-                    || terminal.as_ref().is_none_or(|t| {
-                        !t.live() || t.proposal_input_signature() != proposal.signature
-                    })
-                {
-                    proposal.status = "stale";
-                    return Ok(());
-                }
-                let text = Text::new(proposal.text.as_str())
-                    .map_err(|_| anyhow::anyhow!("Invalid proposal text"))?;
-                match terminal.unwrap().enqueue_proposal(&text) {
-                    Ok(delivery) => {
-                        proposal.delivery = Some(delivery);
-                        proposal.status = "queued";
-                    }
-                    Err(_) => proposal.status = "cancelled",
-                }
-            }
         }
         Ok(())
     }
 
     fn context_revoke(&mut self, name: &str) {
-        self.context.channel.clear_terminal_bindings(name);
+        self.context_disconnect_identity(name);
+        self.context
+            .grants
+            .retain(|_, (identity, _)| identity.name() != name);
+        self.context_retire_if_ungranted();
+    }
+
+    fn context_disconnect_identity(&mut self, name: &str) {
         let ids = self
             .context
             .readers
@@ -871,48 +685,44 @@ impl WorkspaceHost {
         for id in ids {
             self.context_disconnect(id);
         }
-        self.context
-            .grants
-            .retain(|_, (identity, _)| identity.name() != name);
-        if self.context.grants.is_empty() {
-            self.context.frame = None;
-            self.context.frame_sources.clear();
-            self.context.frame_review_sources.clear();
-            #[cfg(unix)]
+    }
+
+    /// Stops listening once no identity is granted anything here.
+    fn context_retire_if_ungranted(&mut self) {
+        if !self.context.grants.is_empty() {
+            return;
+        }
+        self.context.frame = None;
+        self.context.frame_sources.clear();
+        self.context.frame_review_sources.clear();
+        #[cfg(unix)]
+        {
+            self.context.server.take();
+            if let (Some(store), Some(registration)) =
+                (&self.context.storage, self.context.registration.take())
             {
-                self.context.server.take();
-                if let (Some(store), Some(registration)) =
-                    (&self.context.storage, self.context.registration.take())
-                {
-                    let _ = store.unregister(&registration.host_incarnation);
-                }
+                let _ = store.unregister(&registration.host_incarnation);
             }
-            #[cfg(windows)]
-            {
-                self.context.registration.take();
-                self.context.deferred_enable = false;
-                self.context_begin_retirement();
-            }
+        }
+        #[cfg(windows)]
+        {
+            self.context.registration.take();
+            self.context.deferred_enable = false;
+            self.context_begin_retirement();
         }
     }
 
     fn context_disconnect(&mut self, id: u64) {
         if let Some(reader) = self.context.readers.remove(&id) {
             reader.lease.cancel();
+            for (delivery, _) in &reader.writes {
+                delivery.cancel();
+            }
         }
         self.context.peers.remove(&id);
         self.context.channel.disconnect(id);
         self.context_channel_changed();
-        self.context.proposals.retain(|_, p| {
-            if p.owner == id {
-                if let Some(d) = &p.delivery {
-                    d.cancel();
-                }
-                false
-            } else {
-                true
-            }
-        });
+        self.context_cancel_enters(id);
         self.app.terminals.set_external_retained_bytes(
             self.context
                 .readers
@@ -986,16 +796,10 @@ impl WorkspaceHost {
             self.app.context_ui.requested_identity = None;
             self.app.context_ui.decision = None;
             self.app.context_ui.surface = None;
-            for reader in self.context.readers.values() {
-                reader.lease.cancel();
+            let readers = self.context.readers.keys().copied().collect::<Vec<_>>();
+            for id in readers {
+                self.context_disconnect(id);
             }
-            self.context.readers.clear();
-            for proposal in self.context.proposals.values() {
-                if let Some(delivery) = &proposal.delivery {
-                    delivery.cancel();
-                }
-            }
-            self.context.proposals.clear();
             self.context.grants.clear();
             self.context.frame = None;
             self.context.frame_sources.clear();
@@ -1085,7 +889,7 @@ impl WorkspaceHost {
                 Err(error) => return failure(error),
             };
             let fingerprint = crate::hash::sha256_hex(auth.credential.as_bytes());
-            let Some((identity, scopes)) = self.context.grants.get(&fingerprint) else {
+            let Some((identity, permissions)) = self.context.grants.get(&fingerprint) else {
                 return failure(Error::new(
                     Code::CapabilityDenied,
                     "Context access is not granted",
@@ -1109,22 +913,34 @@ impl WorkspaceHost {
                 Reader {
                     fingerprint,
                     durable: false,
-                    nudge: false,
                     identity: identity.name().to_owned(),
-                    granted: scopes.clone(),
+                    granted: wire::granted_scopes(permissions),
                     scopes: BTreeSet::new(),
                     registered: false,
                     lease: lease.clone(),
                     reads: ReadState::new(prefix),
                     requests: BTreeSet::new(),
+                    writes: Vec::new(),
                 },
             );
-            let mut features = vec![wire::FEATURE, wire::CHANNEL_FEATURE, wire::NUDGE_FEATURE];
+            let mut features = vec![
+                wire::FEATURE,
+                wire::CHANNEL_FEATURE,
+                wire::TERMINAL_WRITE_FEATURE,
+            ];
             if self.context.durable_root.is_some() {
                 features.push(wire::DURABLE_FEATURE);
             }
+            let capabilities = wire::CAPABILITIES
+                .iter()
+                .copied()
+                .chain([
+                    Scope::TerminalWrite.capability(),
+                    Scope::AgentChannel.capability(),
+                ])
+                .collect::<Vec<_>>();
             return Reply {
-                value: json!({"type":"hello","version":"runyte-1","host_version":crate::plugin::compatibility::HOST_VERSION,"features":features,"capabilities":wire::CAPABILITIES.iter().copied().chain([Scope::AgentChannel.capability()]).collect::<Vec<_>>(),"limits":wire::limits(),"workspace":self.context.registration}),
+                value: json!({"type":"hello","version":"runyte-1","host_version":crate::plugin::compatibility::HOST_VERSION,"features":features,"capabilities":capabilities,"limits":wire::limits(),"workspace":self.context.registration}),
                 lease: Some(lease),
                 close: false,
             };
@@ -1173,12 +989,12 @@ impl WorkspaceHost {
                 {
                     features.push(wire::CHANNEL_FEATURE);
                 }
-                reader.nudge = registration
+                if registration
                     .required_features
                     .union(&registration.optional_features)
-                    .any(|feature| feature == wire::NUDGE_FEATURE);
-                if reader.nudge {
-                    features.push(wire::NUDGE_FEATURE);
+                    .any(|feature| feature == wire::TERMINAL_WRITE_FEATURE)
+                {
+                    features.push(wire::TERMINAL_WRITE_FEATURE);
                 }
                 if registration
                     .required_features
@@ -1224,6 +1040,11 @@ impl WorkspaceHost {
         let envelope = match wire::parse_request(raw) {
             Ok(request) => request,
             Err(error) => {
+                // Out of the table, so cancel its queued text here; the lease
+                // stays live until this error reply is delivered.
+                for (delivery, _) in &reader.writes {
+                    delivery.cancel();
+                }
                 self.context_disconnect(id);
                 return failure(error);
             }
@@ -1251,14 +1072,14 @@ impl WorkspaceHost {
             Request::TerminalSnapshotClose { snapshot } => {
                 ("terminal.snapshot.close", snapshot.as_str())
             }
-            Request::TerminalInputPropose { terminal, .. } => {
-                ("terminal.input.propose", terminal.as_str())
+            Request::TerminalInputWrite { terminal, .. } => {
+                ("terminal.input.write", terminal.as_str())
             }
-            Request::TerminalInputStatus { proposal } => {
-                ("terminal.input.status", proposal.as_str())
+            Request::TerminalInputEnter { terminal, .. } => {
+                ("terminal.input.enter", terminal.as_str())
             }
-            Request::TerminalInputCancel { proposal } => {
-                ("terminal.input.cancel", proposal.as_str())
+            Request::TerminalInputEnterStatus { enter } => {
+                ("terminal.input.enter.status", enter.as_str())
             }
             Request::ChannelJoin { .. } => ("channel.join", "channel"),
             Request::ChannelPost { .. } => ("channel.post", "channel"),
@@ -1290,48 +1111,19 @@ impl WorkspaceHost {
             ))
         } else {
             match envelope.request {
-                Request::TerminalInputPropose {
+                Request::TerminalInputWrite { terminal, text } => reader
+                    .reads
+                    .terminal(&terminal)
+                    .and_then(|terminal| self.context_write_terminal(&mut reader, terminal, &text)),
+                Request::TerminalInputEnter {
                     terminal,
-                    text,
-                    reason,
-                } => {
-                    let terminal = reader.reads.terminal(&terminal);
-                    let direct = reader
-                        .granted
-                        .contains(&Scope::TerminalInsert)
-                        .then_some(reader.identity.as_str());
-                    terminal.and_then(|terminal| {
-                        self.context_propose(id, terminal, &text, reason, direct)
-                    })
+                    expected_revision,
+                } => reader.reads.terminal(&terminal).and_then(|terminal| {
+                    self.context_request_enter(id, terminal, &expected_revision)
+                }),
+                Request::TerminalInputEnterStatus { enter } => {
+                    self.context_enter_status(id, &enter)
                 }
-                Request::TerminalInputStatus { proposal } => self
-                    .context
-                    .proposals
-                    .get(&proposal)
-                    .filter(|p| p.owner == id)
-                    .map(|p| json!({"proposal":proposal,"state":p.status}))
-                    .ok_or_else(|| Error::new(Code::NotFound, "Unknown proposal")),
-                Request::TerminalInputCancel { proposal } => match self
-                    .context
-                    .proposals
-                    .get_mut(&proposal)
-                    .filter(|p| p.owner == id)
-                {
-                    Some(p) => {
-                        if let Some(d) = &p.delivery {
-                            d.cancel();
-                        }
-                        if p.status == "pending" {
-                            p.status = "cancelled";
-                        }
-                        Ok(json!({}))
-                    }
-                    None => Err(Error::new(Code::NotFound, "Unknown proposal")),
-                },
-                Request::ChannelPost { nudge: Some(_), .. } if !reader.nudge => Err(Error::new(
-                    Code::Unsupported,
-                    "Nudges were not negotiated on this connection",
-                )),
                 request @ (Request::ChannelJoin { .. }
                 | Request::ChannelPost { .. }
                 | Request::ChannelRead { .. }
@@ -1372,114 +1164,6 @@ impl WorkspaceHost {
         }
     }
 
-    /// Queue proposed text for review, or with `direct` (the identity of a
-    /// reader whose grant skips review) for insertion now when the terminal
-    /// reads pasted text. Either way the text is never followed by Enter, and
-    /// the person must be attached.
-    fn context_propose(
-        &mut self,
-        owner: u64,
-        terminal: TerminalId,
-        text: &str,
-        reason: Option<String>,
-        direct: Option<&str>,
-    ) -> Result<Value, Error> {
-        if !self.app.plugins.frontend_attached {
-            return Err(Error::new(
-                Code::NoFrontend,
-                "Attach to the target workspace to review terminal text",
-            ));
-        }
-        if self
-            .context
-            .proposals
-            .values()
-            .filter(|p| matches!(p.status, "pending" | "queued" | "writing"))
-            .count()
-            >= wire::MAX_HOST_PROPOSALS
-            || self
-                .context
-                .proposals
-                .values()
-                .filter(|p| {
-                    p.owner == owner && matches!(p.status, "pending" | "queued" | "writing")
-                })
-                .count()
-                >= wire::MAX_PROPOSALS
-        {
-            return Err(Error::new(Code::LimitExceeded, "Proposal limit reached"));
-        }
-        while self.context.proposals.len() >= 64 {
-            let oldest = self
-                .context
-                .proposals
-                .iter()
-                .filter(|(_, p)| !matches!(p.status, "pending" | "queued" | "writing"))
-                .min_by_key(|(_, p)| p.deadline)
-                .map(|(id, _)| id.clone());
-            if let Some(id) = oldest {
-                self.context.proposals.remove(&id);
-            } else {
-                break;
-            }
-        }
-        let session = self
-            .app
-            .terminals
-            .get_mut(terminal)
-            .filter(|t| t.live())
-            .ok_or_else(|| Error::new(Code::Closed, "Terminal is not live"))?;
-        let text = Text::new(text)
-            .map_err(|_| Error::new(Code::InvalidArgument, "Invalid terminal text"))?;
-        let id = storage::random_token()
-            .map_err(|_| Error::new(Code::Unavailable, "Cannot allocate proposal"))?;
-        let mut proposal = Proposal {
-            owner,
-            terminal,
-            reason,
-            signature: session.proposal_input_signature(),
-            attachment: self.app.plugins.attachment_generation,
-            deadline: Instant::now() + Duration::from_secs(wire::PROPOSAL_EXPIRY_SECONDS),
-            status: "pending",
-            delivery: None,
-            text,
-        };
-        // Skipping review is safe only where the text arrives as a paste: a
-        // shell or an agent's prompt asks for bracketed paste, while a pager,
-        // a single-key prompt or an editor in normal mode would read the same
-        // bytes as keystrokes. Those still go to the person. The mode is the
-        // terminal's, not necessarily the program's: a multiplexer enables it
-        // for itself and may strip the framing for whatever runs in its pane,
-        // which is why the grant note and the guide warn against it there.
-        let direct = direct.filter(|_| proposal.signature.modes.bracketed_paste);
-        if let Some(identity) = direct {
-            let delivery = session
-                .append_proposal(&proposal.text)
-                .map_err(|_| Error::new(Code::Unavailable, "Terminal cannot accept text"))?;
-            proposal.delivery = Some(delivery);
-            proposal.status = "queued";
-            let target = match session.number() {
-                Some(number) => format!("terminal #{number}"),
-                None => "a terminal".to_owned(),
-            };
-            // Nothing asks the person first, so say what arrived and from
-            // whom where it can still be traced afterwards.
-            self.app.push_notification(NotificationDraft::new(
-                NotificationSeverity::Info,
-                "MCP",
-                "Terminal text inserted",
-                format!(
-                    "{} inserted {} characters into {target} without review. Enter was not sent.",
-                    visible(identity),
-                    proposal.text.as_str().chars().count(),
-                ),
-            ));
-        }
-        let state = proposal.status;
-        self.context.proposals.insert(id.clone(), proposal);
-        Ok(json!({"proposal":id,"state":state}))
-    }
-
     pub fn context_delay(&self) -> Option<Duration> {
         #[cfg(windows)]
         {
@@ -1487,10 +1171,16 @@ impl WorkspaceHost {
                 return None;
             }
         }
-        let proposals = self.context_proposal_delay();
-        match (proposals, self.context_nudge_delay()) {
-            (Some(proposals), Some(nudges)) => Some(proposals.min(nudges)),
-            (proposals, nudges) => proposals.or(nudges),
+        // Retained snapshots expire after an idle interval.
+        let snapshots = self
+            .context
+            .readers
+            .values()
+            .any(|r| r.reads.retained_bytes() > 0)
+            .then_some(Duration::from_secs(30));
+        match (self.context_enter_delay(), snapshots) {
+            (Some(enters), Some(snapshots)) => Some(enters.min(snapshots)),
+            (enters, snapshots) => enters.or(snapshots),
         }
     }
 
@@ -1501,48 +1191,6 @@ impl WorkspaceHost {
             .readers
             .get(&connection)
             .is_some_and(|reader| reader.registered && reader.granted.contains(&scope))
-    }
-
-    /// Whether a proposal for `terminal` still waits for review or delivery.
-    pub(super) fn context_terminal_proposed(&self, terminal: TerminalId) -> bool {
-        self.context.proposals.values().any(|proposal| {
-            proposal.terminal == terminal
-                && matches!(proposal.status, "pending" | "queued" | "writing")
-        })
-    }
-
-    fn context_proposal_delay(&self) -> Option<Duration> {
-        if self
-            .context
-            .proposals
-            .values()
-            .any(|p| matches!(p.status, "queued" | "writing"))
-        {
-            Some(Duration::from_millis(100))
-        } else if let Some(deadline) = self
-            .context
-            .proposals
-            .values()
-            .map(|p| {
-                if p.status == "pending" {
-                    p.deadline
-                } else {
-                    p.deadline + Duration::from_secs(120)
-                }
-            })
-            .min()
-        {
-            Some(deadline.saturating_duration_since(Instant::now()))
-        } else if self
-            .context
-            .readers
-            .values()
-            .any(|r| r.reads.retained_bytes() > 0)
-        {
-            Some(Duration::from_secs(30))
-        } else {
-            None
-        }
     }
 }
 

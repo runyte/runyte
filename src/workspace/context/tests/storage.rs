@@ -91,29 +91,37 @@ fn remembered_grants_are_exact_per_workspace_and_identity_and_revocable() {
     let store = fixture.store();
     let first = store.identity("agent").unwrap();
     let other = store.identity("other").unwrap();
-    let scopes = BTreeSet::from([
-        Scope::TerminalRead,
-        Scope::EditorContextRead,
-        Scope::BufferEdit,
-    ]);
+    let permissions = BTreeSet::from([Permission::Read, Permission::Write]);
     store
-        .grant(&fixture.project(), &first, scopes.clone())
+        .grant(&fixture.project(), &first, permissions.clone())
         .unwrap();
     assert_eq!(
-        store.scopes(&fixture.project().join("."), &first).unwrap(),
-        scopes
+        store
+            .permissions(&fixture.project().join("."), &first)
+            .unwrap(),
+        permissions
     );
-    assert!(store.scopes(&fixture.project(), &other).unwrap().is_empty());
     assert!(
         store
-            .scopes(&fixture.0.join("other"), &first)
+            .permissions(&fixture.project(), &other)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        store
+            .permissions(&fixture.0.join("other"), &first)
             .unwrap()
             .is_empty()
     );
     store.revoke(&fixture.project(), &first).unwrap();
     store.revoke(&fixture.project(), &first).unwrap();
-    assert!(store.scopes(&fixture.project(), &first).unwrap().is_empty());
-    assert!(store.grant(&fixture.0, &first, scopes).is_err());
+    assert!(
+        store
+            .permissions(&fixture.project(), &first)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(store.grant(&fixture.0, &first, permissions).is_err());
 }
 
 #[test]
@@ -162,11 +170,12 @@ fn malformed_oversized_and_mismatched_records_fail_closed() {
             &Grant {
                 root: b"other".to_vec(),
                 identity: identity.fingerprint(),
-                scopes: BTreeSet::new(),
+                permissions: Some(BTreeSet::new()),
+                scopes: None,
             },
         )
         .unwrap();
-    assert!(store.scopes(&fixture.project(), &identity).is_err());
+    assert!(store.permissions(&fixture.project(), &identity).is_err());
     store.write("identity-wrong.json", &identity).unwrap();
     assert!(store.load_identity("wrong").is_err());
     std::fs::write(store.root().join("host-bad.json"), "{}").unwrap();
@@ -238,11 +247,11 @@ fn symlinks_hardlinks_and_fifos_never_supply_records() {
     let alias = fixture.0.join("project-alias");
     symlink(fixture.project(), &alias).unwrap();
     store
-        .grant(&alias, &identity, BTreeSet::from([Scope::TerminalRead]))
+        .grant(&alias, &identity, BTreeSet::from([Permission::Read]))
         .unwrap();
     assert_eq!(
-        store.scopes(&fixture.project(), &identity).unwrap(),
-        BTreeSet::from([Scope::TerminalRead])
+        store.permissions(&fixture.project(), &identity).unwrap(),
+        BTreeSet::from([Permission::Read])
     );
 }
 
@@ -271,42 +280,107 @@ fn concurrent_identity_creation_has_one_winner() {
 }
 
 #[test]
-fn invalid_write_scope_dependencies_are_rejected() {
+fn write_without_read_is_rejected_on_the_way_in_and_out() {
     let fixture = Fixture::new();
     let store = fixture.store();
     let identity = store.identity("agent").unwrap();
-    for scope in [
-        Scope::BufferEdit,
-        Scope::TerminalPropose,
-        Scope::TerminalInsert,
-    ] {
-        assert!(
-            store
-                .grant(&fixture.project(), &identity, BTreeSet::from([scope]))
-                .is_err()
-        );
-    }
-    let direct = BTreeSet::from([
-        Scope::TerminalRead,
-        Scope::TerminalPropose,
-        Scope::TerminalInsert,
-    ]);
-    store
-        .grant(&fixture.project(), &identity, direct.clone())
-        .unwrap();
-    assert_eq!(store.scopes(&fixture.project(), &identity).unwrap(), direct);
+    assert!(
+        store
+            .grant(
+                &fixture.project(),
+                &identity,
+                BTreeSet::from([Permission::Write])
+            )
+            .is_err()
+    );
     let root = path_bytes(&fixture.project());
     store
         .write(
             &grant_file(&root, &identity.fingerprint()),
-            &Grant {
-                root,
-                identity: identity.fingerprint(),
-                scopes: BTreeSet::from([Scope::BufferEdit]),
-            },
+            &serde_json::json!({"root":root,"identity":identity.fingerprint(),"permissions":["write"]}),
         )
         .unwrap();
-    assert!(store.scopes(&fixture.project(), &identity).is_err());
+    assert!(store.permissions(&fixture.project(), &identity).is_err());
+    // A record must hold one form, not both, and nothing else.
+    for record in [
+        serde_json::json!({"root":root,"identity":identity.fingerprint(),"permissions":["read"],"scopes":["terminal_read"]}),
+        serde_json::json!({"root":root,"identity":identity.fingerprint()}),
+        serde_json::json!({"root":root,"identity":identity.fingerprint(),"permissions":["read"],"granted":true}),
+    ] {
+        store
+            .write(&grant_file(&root, &identity.fingerprint()), &record)
+            .unwrap();
+        assert!(
+            store.permissions(&fixture.project(), &identity).is_err(),
+            "{record}"
+        );
+    }
+}
+
+#[test]
+fn records_from_before_permissions_read_as_read_only_when_both_reads_were_granted() {
+    let fixture = Fixture::new();
+    let store = fixture.store();
+    let identity = store.identity("agent").unwrap();
+    let root = path_bytes(&fixture.project());
+    let legacy = |scopes: &[&str]| {
+        store
+            .write(
+                &grant_file(&root, &identity.fingerprint()),
+                &serde_json::json!({"root":root,"identity":identity.fingerprint(),"scopes":scopes}),
+            )
+            .unwrap();
+        store.grant_record(&fixture.project(), &identity).unwrap()
+    };
+    for scopes in [
+        &["terminal_read", "editor_context_read"][..],
+        &[
+            "terminal_read",
+            "editor_context_read",
+            "buffer_edit",
+            "terminal_propose",
+            "terminal_insert",
+            "agent_channel",
+            "channel_nudge",
+        ][..],
+    ] {
+        assert_eq!(
+            legacy(scopes),
+            Some(BTreeSet::from([Permission::Read])),
+            "{scopes:?}"
+        );
+    }
+    for narrow in [
+        &["terminal_read"][..],
+        &["agent_channel"][..],
+        &["editor_context_read", "buffer_edit", "channel_nudge"][..],
+    ] {
+        assert_eq!(
+            legacy(narrow),
+            Some(BTreeSet::new()),
+            "Read is wider, and a default stays off: {narrow:?}"
+        );
+    }
+    assert_eq!(legacy(&[]), Some(BTreeSet::new()), "still a revocation");
+    // Applying a grant rewrites the record in the current form.
+    store
+        .grant(
+            &fixture.project(),
+            &identity,
+            BTreeSet::from([Permission::Read, Permission::Write]),
+        )
+        .unwrap();
+    let written = std::fs::read_to_string(
+        store
+            .root()
+            .join(grant_file(&root, &identity.fingerprint())),
+    )
+    .unwrap();
+    assert!(
+        written.contains("\"permissions\":[\"read\",\"write\"]"),
+        "{written}"
+    );
+    assert!(!written.contains("scopes"), "{written}");
 }
 
 #[test]
@@ -327,7 +401,7 @@ fn an_empty_grant_record_is_a_revocation_rather_than_no_record() {
     );
     assert!(
         store
-            .scopes(&fixture.project(), &identity)
+            .permissions(&fixture.project(), &identity)
             .unwrap()
             .is_empty()
     );

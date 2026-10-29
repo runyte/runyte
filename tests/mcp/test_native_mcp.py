@@ -35,7 +35,7 @@ class NativeMCPTests(unittest.TestCase):
                 self.fail('native MCP did not find fixture resources: ' + str(found))
             time.sleep(.02)
 
-    def test_find_terminal_by_fuzzy_contents_propose_and_edit_unsaved_buffer(self):
+    def test_find_terminal_by_fuzzy_contents_write_enter_and_edit_unsaved_buffer(self):
         editor = self.editor(0)
         editor.terminal('shell-one', 'CLAUDE_LIVE_MARKER')
         editor.command('vsplit')
@@ -44,7 +44,7 @@ class NativeMCPTests(unittest.TestCase):
         client = self.client('codex')
         catalog = client.rpc('tools/list', {})['result']['tools']
         startup_ms = (time.monotonic() - started) * 1000
-        self.assertEqual(len(catalog), 14)
+        self.assertEqual(len(catalog), 13)
         timings = []
         for _ in range(5):
             started = time.monotonic()
@@ -55,9 +55,21 @@ class NativeMCPTests(unittest.TestCase):
             self.assertEqual(terminal['name'], 'shell-one')
             self.assertEqual(terminal['matched_on'], 'content')
             self.assertIn('CLAUDE_LIVE_MARKER', terminal['excerpt'])
-        proposed = self.call(client, 'propose_terminal_text', terminal=terminal['terminal'], text='hello Claude')
-        self.assertEqual(proposed['data']['state'], 'pending')
-        self.call(client, 'cancel_terminal_proposal', proposal=proposed['data']['proposal'])
+        self.assertEqual(terminal['available_actions'], ['read_terminal', 'write_terminal', 'press_enter'])
+        written = self.call(client, 'write_terminal', terminal=terminal['terminal'], text='hello Claude')
+        self.assertEqual(written['data']['state'], 'queued')
+        # The terminal echoes the line; Enter needs a read taken after that.
+        deadline = time.monotonic() + 10
+        while True:
+            read = self.call(client, 'read_terminal', terminal=terminal['terminal'])
+            if 'hello Claude' in '\n'.join(row['text'] for row in read['data']['rows']):
+                break
+            if time.monotonic() >= deadline:
+                self.fail('written line did not appear: ' + str(read))
+            time.sleep(.05)
+        entered = self.call(client, 'press_enter', terminal=terminal['terminal'],
+                            expected_revision=read['data']['revision'])
+        self.assertEqual(entered['data']['state'], 'sent', entered)
         found = self.find(client, workspace=str(self.projects[0]), query='note', kind='buffer')
         buffer = next(row for row in found['results'] if row['name'].endswith('note.txt'))
         self.call(client, 'append_buffer', buffer=buffer['buffer'], text='NATIVE_MCP_APPEND\n')
@@ -75,7 +87,7 @@ class NativeMCPTests(unittest.TestCase):
         editor.revoke_context_access('codex')
         denied = client.tool('read_buffer', buffer=old)
         self.assertTrue(denied['isError'])
-        os.write(editor.fd, b'34')
+        os.write(editor.fd, b'2')
         for _ in range(4):
             os.write(editor.fd, b'j')
             time.sleep(.06)
@@ -106,11 +118,13 @@ class NativeMCPTests(unittest.TestCase):
         for grant in (self.root / 'ctx').glob('grant-*.json'):
             grant.unlink()
         client = self.client('codex')
-        self.assertEqual(len(client.rpc('tools/list', {})['result']['tools']), 14)
+        self.assertEqual(len(client.rpc('tools/list', {})['result']['tools']), 13)
         editor = self.editor(0)
         self.assertEqual(self.call(client, 'find_resources')['results'], [])
         editor.command('mcp codex')
         editor.wait_output('Not granted')
+        # Nothing is preselected: turn Read on.
+        os.write(editor.fd, b'1')
         for _ in range(4):
             os.write(editor.fd, b'j')
             time.sleep(.06)
@@ -119,5 +133,7 @@ class NativeMCPTests(unittest.TestCase):
         os.write(editor.fd, b'\r')
         found = self.find(client, kind='buffer', query='note')
         self.assertEqual(found['identity'], 'codex')
-        self.assertEqual(found['workspaces'][0]['scopes'], ['terminal_read', 'editor_context_read'])
+        self.assertEqual(found['workspaces'][0]['permissions'], ['read'])
+        self.assertEqual(found['workspaces'][0]['scopes'],
+                         ['terminal_read', 'editor_context_read', 'agent_channel'])
         self.assertTrue(client.tool('append_buffer', buffer=found['results'][0]['buffer'], text='denied')['isError'])

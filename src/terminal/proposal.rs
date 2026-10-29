@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Literal text admissible in a native terminal proposal. Validation
-//! grants no permission to send it: physical, one-shot approval and a captured
-//! live target are still required, unless the person's grant skips review for
-//! a terminal reading pasted text. Delivery records describe PTY writes, never
-//! acceptance or execution by the child application.
+//! Literal text an agent may type into a terminal. Validation grants no
+//! permission to send it: the host checks the reader's Write grant and the
+//! live target. Delivery records describe PTY writes, never acceptance or
+//! execution by the child application.
 
 use std::sync::{
     Arc,
     atomic::{AtomicU8, Ordering},
 };
 
-/// Input context captured when the person begins reviewing a proposal.
+/// The terminal's input context: a change of mode cancels text queued for
+/// the old one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InputSignature {
     pub generation: u64,
@@ -40,10 +40,6 @@ impl Delivery {
     #[cfg(test)]
     pub(crate) fn queued_for_test() -> Self {
         Self::queued()
-    }
-    #[cfg(test)]
-    pub(crate) fn claim_for_test(&self) -> bool {
-        self.claim()
     }
 
     pub fn state(&self) -> DeliveryState {

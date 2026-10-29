@@ -15,8 +15,8 @@
       "enum": [
         "buffer_edit",
         "editor_context_read",
-        "terminal_propose",
-        "terminal_read"
+        "terminal_read",
+        "terminal_write"
       ]
     },
     "scopes": {
@@ -922,7 +922,7 @@
               }
             },
             "method": {
-              "const": "terminal.input.propose"
+              "const": "terminal.input.write"
             },
             "params": {
               "type": "object",
@@ -937,20 +937,6 @@
                   "not": {
                     "pattern": "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]"
                   }
-                },
-                "reason": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "maxLength": 256,
-                      "not": {
-                        "pattern": "[\\u0000-\\u001f\\u007f-\\u009f\\u2028\\u2029]"
-                      }
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
                 }
               },
               "required": [
@@ -982,17 +968,21 @@
               }
             },
             "method": {
-              "const": "terminal.input.status"
+              "const": "terminal.input.enter"
             },
             "params": {
               "type": "object",
               "properties": {
-                "proposal": {
+                "terminal": {
+                  "$ref": "#/$defs/identifier"
+                },
+                "expected_revision": {
                   "$ref": "#/$defs/identifier"
                 }
               },
               "required": [
-                "proposal"
+                "terminal",
+                "expected_revision"
               ],
               "additionalProperties": false
             }
@@ -1019,17 +1009,17 @@
               }
             },
             "method": {
-              "const": "terminal.input.cancel"
+              "const": "terminal.input.enter.status"
             },
             "params": {
               "type": "object",
               "properties": {
-                "proposal": {
+                "enter": {
                   "$ref": "#/$defs/identifier"
                 }
               },
               "required": [
-                "proposal"
+                "enter"
               ],
               "additionalProperties": false
             }

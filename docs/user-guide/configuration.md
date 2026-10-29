@@ -382,7 +382,7 @@ definitions, which are file-only.
 | `git.refresh_interval_seconds` | `60` | 0–3600 | Bounds automatic Git refresh. `0` turns it off. See [Automatic Git refresh](configuration.md#automatic-git-refresh). |
 | `notifications.history_limit` | `50` | 1–1000 | Newest notifications kept in memory for the workspace. |
 | `lsp.enable` | `true` | boolean | Allow configured language servers to start. Restart required. |
-| `mcp.default_grants` | none | identity: list of permissions | What an MCP identity may do in every workspace that has no grant or revocation of its own. Permissions are `terminal_read`, `editor_context_read`, `buffer_edit`, `terminal_propose` and `agent_channel`. Read when a workspace starts. See [Default grants](agent-access-to-workspace-context.md#default-grants). |
+| `mcp.default_grants` | none | identity: list of permissions | Identities that may read in every workspace that has no grant or revocation of its own. The only permission is `read`; `write` is granted per workspace with `:mcp`. Earlier capability names are accepted; a list with both `terminal_read` and `editor_context_read` means `read`, and any other grants nothing and is reported at start. Read when a workspace starts. See [Default grants](agent-access-to-workspace-context.md#default-grants). |
 | `lsp.<language>` | `rust` only | `command`, `args`, `initialization_options`, `roots` | A language server definition. See [Language servers](language-support.md#language-servers). |
 | `theme` | `ocean-dark` | theme name | The active theme. See [Themes](themes.md#themes). |
 

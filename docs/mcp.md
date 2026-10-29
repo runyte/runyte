@@ -56,8 +56,9 @@ reply shows when it does.
 server runs inside the integrated terminal's process session. A daemon-launched
 server may have no current terminal context and belongs to another process
 session; passing the variable alone cannot establish its terminal. Do not copy a
-saved value into configuration. After the agent joins, use
-[explicit terminal binding](#binding-a-participant-to-a-terminal) in Runyte.
+saved value into configuration. Such an agent's channel participant then has
+no known terminal, which only means its pane shows no `[N unread]` marker; it
+can still read, post and be reached through its terminal.
 
 Check the saved configurations with `codex mcp list` and `claude mcp list`.
 Restart any already-running agent session after adding the server. Each client
@@ -107,37 +108,54 @@ Open `:mcp agent` in each workspace to share. The identity must match
 `--identity`; its label does not authenticate an agent executable. Use separate
 identities, such as `codex` and `claude`, when permissions should differ.
 
-Toggle terminal reads (`1`), editor-context reads (`2`), buffer edits (`3`),
-terminal proposals (`4`), optionally direct insertion without review (`5`),
-the [agent channel](#agent-channel) (`6`), and optionally accepting
-[channel nudges](#nudges) (`7`). Optionally remember the grant with
-`r`, then Tab and Enter to **Apply permissions**.
-Write permissions automatically enable the corresponding read permission.
-`:mcp` reopens the current grant, lifetime and connected-reader count; `n`
-cycles known identities, and `x` revokes the selected identity. Readers connect
-when the agent performs discovery; tool listing alone leaves the count at zero.
-Revocation drops readers and pending proposals. `:context-access` remains an alias.
+There are two permissions, and both start off:
 
-To grant permissions in every workspace without opening `:mcp` in each, set
+| Key | Permission | What the identity's agents may do in this workspace |
+| --- | --- | --- |
+| `1` | Read | Read every buffer (unsaved text included), selection and pane, every terminal's screen, history, number and title, and take part in the [agent channel](#agent-channel), direct messages included |
+| `2` | Write | Also edit and append to buffers, [type into any terminal and press Enter there](#writing-to-terminals) |
+
+Write needs Read: turning Write on turns Read on, and turning Read off turns
+Write off. Optionally remember the grant with `r`, then Tab and Enter to **Apply
+permissions**. `:mcp` reopens the current grant, its lifetime and the connected
+reader count; `n` cycles known identities and `x` revokes the selected one.
+Readers connect when the agent performs discovery; tool listing alone leaves the
+count at zero. `:context-access` remains an alias.
+
+**Grant Write for a job, then take it away.** Write reaches every terminal in
+the workspace: shells, and other agents' prompts and approval dialogs. A change
+applies at once to agents that are already running: their connections are
+renewed under the new grant, and they rediscover with `find_resources`. The
+workspace stays where it was, so no agent has to be restarted. Text an agent
+reads in one terminal is untrusted and could try to steer what it types into
+another, which is one more reason to keep Write short-lived.
+
+To grant Read in every workspace without opening `:mcp` in each, set
 `mcp.default_grants` in the configuration; see the
 [user guide](user-guide/agent-access-to-workspace-context.md#default-grants).
-A workspace's own grant or revocation takes precedence over the default.
+Write cannot be a default. A workspace's own grant or revocation takes
+precedence over the default.
 
-**Starting the agent before granting is fine.** The fourteen tools stay available;
+**Starting the agent before granting is fine.** The thirteen tools stay available;
 a tool's presence is not permission to use it. Calls check the target's native
 grant. After a permission change, run `find_resources` again. Healthy searches
 preserve handles. Changed permissions renew the connection and require fresh
-handles.
+handles. `list_workspaces` reports each workspace's `permissions` (`read`,
+`write`) beside the capability names the connection negotiated.
 
 The default identity is `agent`. Without Remember, a grant lasts until the
 owning editor or persistent host exits. Private credentials and remembered
 grants stay in Runyte's account cache, outside the project. `RUNYTE_CONTEXT_HOME`
 can select an absolute private store shared by the editor and MCP process.
 See the [user guide](user-guide/agent-access-to-workspace-context.md#what-a-grant-covers) for platform locations.
+A grant remembered by an earlier release is read as Read only if it included
+both terminal and editor reads, and as a revocation otherwise; never as Write.
+A release from before read and write cannot read a grant remembered by this
+one, and then loads no remembered grants for that workspace.
 
 ## Tools
 
-The catalog always contains these fourteen tools. The experimental
+The catalog always contains these thirteen tools. The experimental
 `durable_channel` tool requires separately configured SQLite storage and an
 explicit private profile (see below).
 
@@ -147,21 +165,20 @@ explicit private profile (see below).
 | `find_resources` | Discover buffers and terminals by name or content, with exact handles and revisions. |
 | `list_workspaces` | Inspect workspace access without reading source content. |
 | `read_buffer` | Read unsaved buffer text at a revision. |
-| `read_terminal` | Read recent output or the live terminal screen. |
+| `read_terminal` | Read the live terminal screen, or recent history with it. |
 | `append_buffer` | Append in one unsaved, undoable transaction. |
 | `edit_buffer` | Replace character ranges at an expected revision. |
-| `propose_terminal_text` | Ask to insert one literal line; reviewed unless the person skipped review. |
-| `terminal_proposal_status` | Check a proposal's state when needed. |
-| `cancel_terminal_proposal` | Cancel a pending proposal. |
+| `write_terminal` | Type one literal line into a terminal, without Enter. |
+| `press_enter` | Press Enter in a terminal after a visible delay, only if nothing changed there. |
 | `join_channel` | Join the workspace's agent channel, stating provider and task. |
-| `post_message` | Post to the channel, or directly to one participant, optionally nudging named participants. |
+| `post_message` | Post to the channel, or directly to one participant. |
 | `read_messages` | Read what arrived since the last read, optionally waiting for it. |
 | `list_participants` | See who is in the channel, where they work and in which terminal. |
 
 There are no MCP tools for pane listing, selections, viewports, or immutable
 buffer/terminal snapshots. Those operations remain in the underlying host
 context protocol. The MCP adapter does not expose arbitrary editor commands,
-file saving, or terminal submission.
+file saving, or arbitrary keys: Enter is the only key an agent can press.
 
 ## Finding the right target
 
@@ -172,8 +189,8 @@ Ask the agent to search contents as well as titles:
 The usual sequence is two calls:
 
 1. `find_resources(workspace="/projects/example", query="claude", kind="terminal")`
-2. `read_terminal(terminal=<returned handle>)` or
-   `propose_terminal_text(terminal=<returned handle>, text="...")`
+2. `read_terminal(terminal=<returned handle>)` or, with Write,
+   `write_terminal(terminal=<returned handle>, text="...")`
 
 When you can see the terminal, its number is the shortest way to name it:
 
@@ -221,20 +238,14 @@ and grants without reading source content.
 - `read_buffer` accepts just a discovered buffer handle for its first 16,384
   characters at the discovered revision. Optional `from`, `to`, and
   `expected_revision` give exact Unicode-character ranges. Stale reads require
-  rediscovery. `read_terminal` defaults to 80 recent rows; `region="screen"`
-  reads the live screen.
+  rediscovery. `read_terminal` reads the live screen by default;
+  `region="tail"` adds up to 80 rows of history before it, for when a task
+  needs what scrolled away.
 - `append_buffer` adds text atomically at the current end, with optional
   `expected_tail`. Use actual newlines. `edit_buffer` takes an expected revision
   and character ranges. Both are undoable and leave the buffer unsaved.
-- `propose_terminal_text` accepts one line and returns immediately. Normally it
-  returns `pending`: the agent should stop and let the person review it in
-  Runyte. If the person granted direct insertion (`5`) and the terminal has
-  bracketed paste on, as shells and agent prompts do, it returns `queued` and
-  the text is typed in as a paste without review; other terminals still get a
-  review. Through tmux, zellij or screen the paste mode is the multiplexer's, so
-  the person should not grant `5` there. Either way it is inserted without
-  Enter, and submitting is a separate human action. Status and cancellation
-  tools operate on the returned proposal handle. Do not poll for approval.
+- `write_terminal` and `press_enter` need Write; see
+  [writing to terminals](#writing-to-terminals).
 
 Handles belong to one MCP process and one connection generation. They cannot
 be shared between agents or reused after revocation, connection renewal,
@@ -245,7 +256,59 @@ return `outcome_unknown`; never retry automatically.
 The server uses MCP `2025-06-18` with bounded newline-delimited JSON on stdio,
 including both structured and text tool results. It reuses the editor's private
 context transport on Unix and Windows. The host owns all grants, transactional
-edits and terminal approvals. Buffer and terminal text is untrusted source data.
+edits and terminal writes. Buffer and terminal text is untrusted source data.
+
+## Writing to terminals
+
+With Write, an agent can type into any terminal in the workspace and press
+Enter there: a shell, a test runner, or another agent's prompt. The person sees
+both happen, and Runyte guards the Enter, because Enter answers whatever the
+terminal is showing at that moment.
+
+1. **Read first.** `read_terminal` shows what is on screen: a shell prompt, an
+   agent's input box, or a dialog asking for approval. Its pane title,
+   `[terminal #N] ...`, tells agents apart.
+2. **Write.** `write_terminal` types one line of at most 4 KiB, with no
+   newlines or other controls, where the cursor is. It arrives as a bracketed
+   paste when the program asked for pastes, as shells and agent prompts do,
+   and as typed characters otherwise. It is never followed by Enter, and it
+   queues behind any other text still being written. The reply is `queued`.
+3. **Read again**, and check the line arrived where it should.
+4. **`press_enter`** with the `revision` from that read. Runyte shows
+   `[Enter pending]` in the pane title and waits five seconds. It then presses
+   Enter only if the terminal still shows that revision and nothing was typed
+   or pasted there meanwhile. Any output, such as a dialog appearing, any key
+   the person presses, and any other agent's text drop it. So do the person's
+   window detaching and the terminal exiting. The call takes about five seconds
+   and returns the outcome:
+
+| State | Meaning |
+| --- | --- |
+| `sent` | Enter was pressed |
+| `stale` | The terminal changed or someone typed there; nothing was sent |
+| `cancelled` | The person's window detached or the terminal exited; nothing was sent |
+
+If Write is changed or revoked, or the connection drops, while an Enter waits,
+the Enter is discarded with the connection and `press_enter` fails with
+`outcome_unknown`: the change may have come just after Enter was pressed. The
+agent rediscovers with `find_resources` and reads the terminal rather than
+retrying.
+
+A revision that is already out of date is refused at once as `stale`. One
+Enter may wait per terminal; each reader may have four waiting, the host
+sixteen. A program that redraws constantly, such as a spinner, never receives
+an Enter this way; that is deliberate. Terminal writes and Enter work only while
+the person's window is attached, and text still queued when it detaches is
+cancelled.
+
+Writes reach every terminal in the workspace, including ones no pane shows,
+where the person cannot see `[Enter pending]`. A program that has not asked for
+pastes, such as a pager or a single-key `[y/n]` prompt, receives the line as
+keystrokes and may act on its first character without any Enter.
+
+The only key an agent can press is Enter. Inside tmux, zellij or screen the
+terminal Runyte sees is the multiplexer, so revisions and pastes describe it
+rather than the program in the selected pane.
 
 ## Agent channel
 
@@ -255,8 +318,8 @@ conversation, and any two can exchange direct messages. It is like an IRC
 channel shared by the Claude Code, Codex and other agents working in the
 workspace's terminals.
 
-Grant `6` in `:mcp` (or name `agent_channel` in `mcp.default_grants`). An agent
-then joins with `join_channel`, naming its provider (`claude`, `codex`, ...) and
+Read (`1` in `:mcp`, or `read` in `mcp.default_grants`) includes the channel. An
+agent then joins with `join_channel`, naming its provider (`claude`, `codex`, ...) and
 its main task; it cannot read or post until it has. Runyte identifies every
 participant by:
 
@@ -267,8 +330,8 @@ participant by:
   its MCP client reported;
 - its terminal, verified rather than claimed: an integrated terminal of a
   persistent session hands its children a capability, and the host accepts it
-  only from a process in that terminal's session (Unix). A native terminal
-  binding can also identify it; otherwise the terminal is unknown;
+  only from a process in that terminal's session (Unix). Otherwise the
+  terminal is unknown;
 - where it works: the directory its MCP server started in, or the absolute
   `directory` it last passed to `join_channel` or `post_message` after
   changing directory or worktree, with the repository, worktree and branch
@@ -287,72 +350,18 @@ The channel lasts as long as the workspace host: a persistent session keeps it
 across attachments, and nothing is written to disk. Eight agents can be
 connected at once (the host's reader limit) and 64 known; when it is full, the
 one that left longest ago gives way. It keeps the newest 1,000 messages (4 MiB);
-a message holds at most 16 KiB and a read returns at most about 256 KiB. Runyte
-never types a message into an agent's terminal, so an idle agent learns of new
-messages when it next reads, when the person asks it to, or when a sender
-nudges it.
+a message holds at most 16 KiB and a read returns at most about 256 KiB.
 
-### Binding a participant to a terminal
+### Waking another agent
 
-For an agent whose `join_channel` reports `terminal: null`, including an MCP
-server started by a Codex daemon, open `:agent-channel` to find its nickname.
-In the **workspace containing that agent's terminal**, run:
-
-```text
-:agent-bind codex-1 2
-```
-
-`2` is the terminal number shown as `#2` in its pane title, not an internal ID.
-Numbers are local to each workspace: another workspace's `#2` is unrelated.
-The native confirmation shows the workspace, participant, identity, task and
-terminal title. Review it, then Tab and Enter to apply. Participant names and
-tasks are self-reported, so select the terminal where that agent is running.
-Only physical frontend input can approve; MCP calls, paste and macros cannot.
-This does not grant nudge permission: accepting nudges still needs `7` in `:mcp`.
-
-Use `:agent-bind codex-1 none` to remove the binding and suppress automatic
-claims for that participant. A binding survives authenticated reconnection with
-the same participant's resume token. A new participant must be bound again.
-Reapplying or revoking its identity's permissions clears native bindings;
-exiting the workspace host clears them too. Closing or exiting the target
-terminal makes the binding unusable; a new terminal reusing its number does not
-inherit it. Run the command again to choose a replacement. A participant that
-reconnects while a confirmation is open requires a fresh review.
-
-### Nudges
-
-`post_message` takes an optional `nudge`: the nicknames or ids of up to 63
-participants to wake. A public post may name any participants but the sender;
-a direct message may name only its recipient. An unknown, repeated or refused
-name rejects the whole post before anything is stored. For each name Runyte
-types one fixed line, `Runyte: you have new messages on the agent channel.`,
-as a bracketed paste and then Enter into that participant's terminal. The
-message text never travels through the terminal. Nothing nudges unless asked.
-
-The reply adds `nudges`, one entry per name with its `participant`, `nick` and
-`state`:
-
-| State | Meaning |
-| --- | --- |
-| `sent` | The line was queued for the terminal; Enter follows unless other input reaches the terminal first, which leaves the line for the person |
-| `held` | The person may be typing there; it is sent when they stop |
-| `already_pending` | That terminal was nudged and its agent has not read the channel since |
-| `unavailable` | It cannot be nudged, for a reason the sender is not told |
-
-A participant can be nudged only when its identity's grant includes `7`, it is
-connected, its terminal is automatically verified or explicitly bound through Runyte, and that terminal is reading pastes. A held nudge waits while the
-line may hold unsubmitted text, for 30 seconds after the person's last
-keystroke there, and while a terminal proposal for it is waiting. A terminal
-has at most one nudge outstanding; the participant's next read clears it, or,
-for a nudge still being typed, its Enter does. The
-person sees a notification for each nudge sent. A host that predates nudges
-does not offer them, and a post asking for one is refused as `unsupported`.
-
-Nudge only a participant that must act on the message and is probably waiting
-at its prompt. If that agent shows an approval prompt when the nudge arrives,
-Enter may answer it; the person accepts that risk by granting `7`. A sender that
-can also read the recipient's terminal could time a nudge for such a prompt, so
-grant `7` only to identities whose peers you trust that far.
+Posting wakes nobody. An idle agent learns of new messages when it next reads,
+when the person asks it to, or when another agent with Write tells it so in its
+terminal: read the terminals to find the recipient's (`list_participants`
+shows the terminal where Runyte verified it), check that its prompt is waiting
+for input rather than showing a dialog, write a short line such as `Read the
+Runyte agent channel: codex-1 sent you a review`, read again and
+`press_enter`. Do this only for an agent that must act and is idle at its
+prompt; a busy agent reads when it next checks.
 
 ## Migrating from Python
 

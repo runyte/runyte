@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     app::{App, HostPorts},
     clipboard::SystemClipboard,
-    terminal::{TerminalOutput, proposal::DeliveryState},
+    terminal::TerminalOutput,
     test_support::TestRuntimeRoot,
     workspace::context::discovery,
 };
@@ -45,15 +45,7 @@ fn host(
         .unwrap();
     host.context.grants.insert(
         identity.fingerprint(),
-        (
-            identity.clone(),
-            [
-                Scope::TerminalRead,
-                Scope::EditorContextRead,
-                Scope::TerminalPropose,
-            ]
-            .into(),
-        ),
+        (identity.clone(), [Permission::Read].into()),
     );
     host.context_enable().unwrap();
     (host, identity, events)
@@ -109,7 +101,7 @@ async fn authenticate(
     )
     .await;
     assert_eq!(hello["type"], "hello");
-    let registered = exchange(host, events, &mut socket, json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"transport-fixture","commands":[],"required_capabilities":["terminal_read","editor_context_read","terminal_propose"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[]})).await;
+    let registered = exchange(host, events, &mut socket, json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"transport-fixture","commands":[],"required_capabilities":["terminal_read","editor_context_read"],"optional_capabilities":["terminal_propose"],"required_features":[wire::FEATURE],"optional_features":[]})).await;
     assert_eq!(registered["type"], "registered");
     socket
 }
@@ -228,19 +220,19 @@ async fn two_live_hosts_are_discovered_and_reader_handles_do_not_cross_workspace
     )
     .await;
     assert!(crossed.get("error").is_some());
-    // Detached hosts remain readable, but cannot create approval surfaces.
-    let proposal = exchange(
+    // Read reaches every terminal, but writes to none.
+    let written = exchange(
         &mut first,
         &mut first_events,
         &mut first_client,
         request(
-            "proposal",
-            "terminal.input.propose",
+            "write",
+            "terminal.input.write",
             json!({"terminal":first_list["result"]["terminals"][0]["terminal"],"text":"literal"}),
         ),
     )
     .await;
-    assert_eq!(proposal["error"]["code"], "no_frontend");
+    assert_eq!(written["error"]["code"], "capability_denied");
 }
 
 #[tokio::test]
@@ -270,15 +262,7 @@ async fn regrant_changes_incarnation_and_old_events_cannot_disconnect_new_reader
     assert!(!old_registration.endpoint.exists());
     host.context.grants.insert(
         identity.fingerprint(),
-        (
-            identity.clone(),
-            [
-                Scope::TerminalRead,
-                Scope::EditorContextRead,
-                Scope::TerminalPropose,
-            ]
-            .into(),
-        ),
+        (identity.clone(), [Permission::Read].into()),
     );
     host.context_enable().unwrap();
     assert_ne!(
@@ -317,46 +301,44 @@ async fn regrant_changes_incarnation_and_old_events_cannot_disconnect_new_reader
 }
 
 #[tokio::test]
-async fn expired_queued_and_writing_proposals_stop_delivery_polling() {
-    let root = TestRuntimeRoot::new("ctx-expire").unwrap();
+async fn a_waiting_enter_times_the_loop_and_a_finished_one_stops_it() {
+    let root = TestRuntimeRoot::new("ctx-enter").unwrap();
     let (mut host, identity, mut events) = host(root.path(), "project", HostMode::Standalone);
     host.note_plugin_frontend(true);
+    host.context.grants.insert(
+        identity.fingerprint(),
+        (
+            identity.clone(),
+            [Permission::Read, Permission::Write].into(),
+        ),
+    );
     let _client = authenticate(&mut host, &mut events, &identity).await;
     let owner = *host.context.readers.keys().next().unwrap();
     let terminal = host.app.terminals.insert_test_session(20, 3);
-    for writing in [false, true] {
-        let id = host
-            .context_propose(owner, terminal, "literal", None, None)
-            .unwrap()["proposal"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        let delivery = Delivery::queued_for_test();
-        if writing {
-            assert!(delivery.claim_for_test());
-        }
-        let proposal = host.context.proposals.get_mut(&id).unwrap();
-        proposal.delivery = Some(delivery.clone());
-        proposal.status = if writing { "writing" } else { "queued" };
-        proposal.deadline = Instant::now() - Duration::from_secs(1);
-        host.sync_context();
-        assert_eq!(
-            host.context.proposals[&id].status,
-            if writing {
-                "outcome_unknown"
-            } else {
-                "expired"
-            }
-        );
-        assert!(host.context.proposals[&id].delivery.is_none());
-        assert_eq!(
-            delivery.state(),
-            if writing {
-                DeliveryState::Writing
-            } else {
-                DeliveryState::Cancelled
-            }
-        );
-        assert!(host.context_delay().unwrap() > Duration::from_secs(1));
-    }
+    assert_eq!(host.context_delay(), None, "idle hosts set no timer");
+    let revision = host.app.terminals.get(terminal).unwrap().read_revision();
+    let enter = host
+        .context_request_enter(owner, terminal, &format!("r:{revision}"))
+        .unwrap()["enter"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let delay = host.context_delay().unwrap();
+    assert!(
+        delay <= Duration::from_millis(wire::ENTER_DELAY_MILLIS)
+            && delay > Duration::from_millis(wire::ENTER_DELAY_MILLIS / 2),
+        "{delay:?}"
+    );
+    host.sync_context();
+    assert_eq!(host.context_enter_state(&enter), Some("waiting"));
+    // Due, it waits one settling pass so output already queued is seen.
+    host.context_expire_enter_delays();
+    host.sync_context();
+    assert_eq!(host.context_enter_state(&enter), Some("waiting"));
+    assert!(host.context_delay().unwrap() <= Duration::from_millis(100));
+    host.context_expire_enter_delays();
+    host.sync_context();
+    // The fixture has no child to write to, so Enter cannot be pressed.
+    assert_eq!(host.context_enter_state(&enter), Some("stale"));
+    assert_eq!(host.context_delay(), None);
 }

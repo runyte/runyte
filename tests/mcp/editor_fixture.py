@@ -33,7 +33,7 @@ if UNIX_PTY:
     from startup import Terminal
 
 BINARY = os.environ.get('RUNYTE_CONTEXT_TEST_BINARY')
-SCOPES = ['terminal_read', 'editor_context_read', 'buffer_edit', 'terminal_propose']
+PERMISSIONS = ['read', 'write']
 CONTROL = re.compile(rb'\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|P[^\x1b]*\x1b\\)')
 
 
@@ -65,7 +65,7 @@ def seed_identity(root, name, projects):
     for project in projects:
         path = os.fsencode(project.resolve())
         key = hashlib.sha256(path + b'\0' + identity.encode()).hexdigest()
-        private_json(root / ('grant-' + key + '.json'), {'root': list(path), 'identity': identity, 'scopes': SCOPES})
+        private_json(root / ('grant-' + key + '.json'), {'root': list(path), 'identity': identity, 'permissions': PERMISSIONS})
 
 
 def terminal_command(marker, stop):

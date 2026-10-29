@@ -36,16 +36,18 @@ CI verifies that this named test ran. The Python scenario fails if its fixture
 environment is absent and the Rust driver rejects skipped acceptance results.
 It needs only the Python standard library on Windows.
 
-Host operations outside the fourteen-tool MCP catalog remain covered by
+Host operations outside the thirteen-tool MCP catalog remain covered by
 [src/workspace/host/tests/context_reads.rs](../../src/workspace/host/tests/context_reads.rs):
 pane listing, selection/viewport ownership and invalidation, immutable buffer
 and terminal snapshots, Unicode offsets, and retention budgets. Native
 transport, authentication, revocation and transactional-edit coverage remains
 in `src/workspace/host/tests/context_transport*.rs` and
 `src/workspace/context/tests/`. Those tests do not depend on an MCP adapter.
-`real_pty_overlay_enter_only_inserts_and_separate_native_enter_submits` in
-`src/workspace/host/tests/context_access.rs` and the native-input tests retain
-terminal proposal approval and insertion-without-Enter coverage. Run the canonical `cargo test` suite for these
+`a_written_line_waits_for_a_guarded_enter_which_submits_it_after_the_delay` and
+`an_enter_is_dropped_by_output_typing_detachment_and_lost_write_access` in
+`src/workspace/host/tests/context_access.rs` cover terminal writes and the
+delayed, revision-checked Enter against a real PTY; the acceptance suite drives
+both through `runyte mcp`. Run the canonical `cargo test` suite for these
 boundaries; `tests/mcp_cli.rs` and `src/mcp/tests*` cover the Rust adapter itself.
 
 ## Isolated SQLite trial

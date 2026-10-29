@@ -29,8 +29,38 @@ async fn catalog_is_stable_before_pairing_and_discovery_needs_no_storage() {
         .await
         .unwrap();
     let tools = catalog["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 14);
-    assert!(tools.iter().any(|t| t["name"] == "append_buffer"));
+    let names = tools
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        [
+            "find_resources",
+            "list_workspaces",
+            "read_buffer",
+            "read_terminal",
+            "append_buffer",
+            "edit_buffer",
+            "write_terminal",
+            "press_enter",
+            "join_channel",
+            "post_message",
+            "read_messages",
+            "list_participants",
+            "durable_channel",
+        ]
+    );
+    let read_terminal = &tools[3]["inputSchema"]["properties"]["region"];
+    assert_eq!(
+        read_terminal["default"], "screen",
+        "history only when asked"
+    );
+    for name in ["write_terminal", "press_enter"] {
+        let tool = tools.iter().find(|t| t["name"] == name).unwrap();
+        assert_eq!(tool["annotations"]["readOnlyHint"], false, "{name}");
+        assert_eq!(tool["annotations"]["destructiveHint"], true, "{name}");
+    }
     assert!(
         tools
             .iter()

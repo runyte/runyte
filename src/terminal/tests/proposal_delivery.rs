@@ -120,7 +120,7 @@ fn native_input_intents_and_mode_changes_cancel_queued_proposals() {
 }
 
 #[test]
-fn refused_proposal_preserves_review_scroll_and_attention() {
+fn refused_agent_text_preserves_review_scroll_and_attention() {
     let mut session = session(12, 3);
     session.feed(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n");
     session.begin_review();
@@ -130,7 +130,7 @@ fn refused_proposal_preserves_review_scroll_and_attention() {
     let revision = session.revision();
     assert!(
         session
-            .enqueue_proposal(&Text::new("literal").unwrap())
+            .queue_agent_text(&Text::new("literal").unwrap())
             .is_err()
     );
     assert!(session.review.is_some());
@@ -140,13 +140,13 @@ fn refused_proposal_preserves_review_scroll_and_attention() {
     session.exit = Some(Some(0));
     assert!(
         session
-            .enqueue_proposal(&Text::new("literal").unwrap())
+            .queue_agent_text(&Text::new("literal").unwrap())
             .is_err()
     );
 }
 
 #[test]
-fn an_insertion_without_review_queues_behind_others_but_an_approval_supersedes() {
+fn agent_text_queues_behind_other_text_and_typing_supersedes_it() {
     let mut session = session(12, 3);
     let earlier = Delivery::queued();
     session.proposal_deliveries.push(earlier.clone());
@@ -157,7 +157,7 @@ fn an_insertion_without_review_queues_behind_others_but_an_approval_supersedes()
     // No writer in this fixture, so both refuse after their effect on the queue.
     assert!(
         session
-            .append_proposal(&Text::new("literal").unwrap())
+            .queue_agent_text(&Text::new("literal").unwrap())
             .is_err()
     );
     assert_eq!(earlier.state(), DeliveryState::Queued);
@@ -167,11 +167,11 @@ fn an_insertion_without_review_queues_behind_others_but_an_approval_supersedes()
         "finished records are pruned, unfinished ones kept"
     );
     assert_ne!(session.proposal_input_signature(), signature);
-    assert!(
-        session
-            .enqueue_proposal(&Text::new("literal").unwrap())
-            .is_err()
-    );
+    // The person typing supersedes text that has not started writing.
+    session.send_key(crate::input::KeyStroke::new(
+        crate::input::KeyCode::Char('x'),
+        crate::input::Modifiers::NONE,
+    ));
     assert_eq!(earlier.state(), DeliveryState::Cancelled);
 }
 
@@ -206,7 +206,7 @@ fn real_pty_inserts_without_submitting_and_preserves_native_view() {
     let revision = session.revision();
     let attention = session.unread_activity;
     let delivery = session
-        .enqueue_proposal(&Text::new("echo 界").unwrap())
+        .queue_agent_text(&Text::new("echo 界").unwrap())
         .unwrap();
     wait_until(|| delivery.state() == DeliveryState::Delivered);
     assert_eq!(&*output.lock().unwrap(), b"READY");

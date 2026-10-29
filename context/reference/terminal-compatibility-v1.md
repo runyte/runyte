@@ -222,8 +222,9 @@ of the budgets and return them in source order. At most one returned row is a
 clipped prefix. Plain trailing spaces are omitted, blank rows and combining
 marks remain, and a wide glyph or base-plus-combining sequence is not split.
 
-The dedicated read revision changes conservatively on output chunks, resize,
-exit and shared history eviction. Native review/scroll changes do not change
+The dedicated read revision changes conservatively on output chunks, input
+(typing, pastes, agent text and agent Enter), resize, exit and shared history
+eviction. Native review/scroll changes do not change
 it. Lost-history counts refer to retired rows missing from the active grid,
 not eviction of a frozen review. Alternate screens return only their current
 screen; a full emulator reset begins a new history-loss baseline. Owned results
@@ -232,29 +233,31 @@ remain unchanged after subsequent output or terminal destruction.
 `terminal::proposal::Text` admits at most 4 KiB of nonempty, single-line literal
 text. It rejects C0/C1 controls, DEL, CR/LF and Unicode line/paragraph separators,
 including escape sequences and injected paste terminators. It does not grant
-permission to send text. The context host captures a proposal and requires a
-fresh native approval before the dedicated PTY queue accepts it, unless the
-person's grant skips review (`terminal_insert`) and the terminal has bracketed
-paste enabled, so the text arrives framed as a paste. The overlay spells
-whitespace, backslashes and Unicode visibly, and requires acknowledged frontend
-display of every line. Arbitrary child programs may react to printable input
-without Enter; the overlay states this limitation, which is why a terminal
-without bracketed paste is always reviewed. The gate reads the emulator's mode,
-which inside a multiplexer belongs to the multiplexer rather than to the
-program in its pane; tmux enables the mode for itself and forwards pasted text
-as keystrokes to a pane that did not, so the gate does not hold there.
+permission to send text: the context host types it only for a reader holding
+Write, into a live terminal with an attached frontend, framed as a bracketed
+paste when the program enabled bracketed paste and as typed characters
+otherwise. Arbitrary child programs may react to printable input without Enter.
+The mode is the emulator's, which inside a multiplexer belongs to the
+multiplexer rather than to the program in its pane.
+
+Enter is a separate request and the only key a reader can send. The host
+captures the reader's terminal read revision and the session's input
+generation, shows `[Enter pending]` for five seconds, and writes one carriage
+return only if both are unchanged; output, native input, pastes and other
+readers' text all move one of them. A program that redraws continuously
+therefore never receives an agent Enter.
 
 The internal boundary is covered by `terminal::read::tests` in
 `src/terminal/tests/read.rs` and `terminal::proposal::tests` in
 `src/terminal/tests/proposal.rs`. Cancellable delivery, full-write acknowledgments
-and real-PTY manual submission are covered in
+and the real-PTY delayed Enter are covered in
 `src/terminal/tests/proposal_delivery.rs` and
 `src/workspace/host/tests/context_access.rs`. The separately authenticated
-[context profile](../../docs/plugins/context.md) exposes bounded reads and
-proposals; it never exposes a terminal submit, raw-input or approval operation.
-Queued delivery is cancelled on native input, mode changes, terminal exit,
-revocation or expiry. Started partial writes have an uncertain outcome and are
-never replayed. Context snapshots share the existing terminal retention budget.
+[context profile](../../docs/plugins/context.md) exposes bounded reads, line
+writes and the guarded Enter; it never exposes raw input or other keys.
+Queued text is cancelled on native input, mode changes, terminal exit and
+revocation. Started partial writes have an uncertain outcome and are never
+replayed. Context snapshots share the existing terminal retention budget.
 
 The window prefix is `Ctrl-w` by default and may be moved by `keys.window`.
 Terminal Insert reserves the effective prefix for Runyte's complete window

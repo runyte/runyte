@@ -86,9 +86,9 @@ pub struct Snapshot {
 }
 
 impl TerminalSession {
-    /// Conservative live-output identity: output chunks (including controls),
-    /// resize, exit and workspace history eviction advance it. UI review and
-    /// scrolling do not. Scope this value to the owning terminal and host.
+    /// Conservative live identity: output chunks (including controls), input
+    /// (typing, pastes, agent text and agent Enter), resize, exit and workspace
+    /// history eviction advance it. UI review and scrolling do not. Scope this value to the owning terminal and host.
     pub fn read_revision(&self) -> u64 {
         self.read_revision
     }

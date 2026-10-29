@@ -41,10 +41,16 @@ fn fixture() -> (
     host.note_plugin_frontend(true);
     (root, host, identity, events)
 }
-fn grant(host: &mut WorkspaceHost, identity: &Identity, scopes: BTreeSet<Scope>) {
+fn grant(host: &mut WorkspaceHost, identity: &Identity, permissions: BTreeSet<Permission>) {
     host.context
         .grants
-        .insert(identity.fingerprint(), (identity.clone(), scopes));
+        .insert(identity.fingerprint(), (identity.clone(), permissions));
+}
+fn read() -> BTreeSet<Permission> {
+    [Permission::Read].into()
+}
+fn write() -> BTreeSet<Permission> {
+    [Permission::Read, Permission::Write].into()
 }
 fn frame(host: &mut WorkspaceHost, connection: u64, value: Value) -> Reply {
     host.context_frame(
@@ -121,8 +127,8 @@ async fn disabled_access_has_no_listener_or_timer_and_requires_exact_grants() {
         )
         .close
     );
-    grant(&mut host, &identity, [Scope::TerminalRead].into());
-    let response = authenticate(&mut host, &identity, 2, &["editor_context_read"]);
+    grant(&mut host, &identity, read());
+    let response = authenticate(&mut host, &identity, 2, &["buffer_edit"]);
     assert!(response.close);
     assert!(host.context.readers.is_empty());
     assert_eq!(
@@ -142,10 +148,11 @@ async fn disabled_access_has_no_listener_or_timer_and_requires_exact_grants() {
         "buffer.save",
         "terminal.send",
         "terminal.input.approve",
+        "terminal.input.propose",
     ] {
         let response = request(&mut host, 3, "bad", method, json!({}));
         assert_eq!(response["type"], "registration_error");
-        if method != "terminal.input.approve" {
+        if !method.starts_with("terminal.input") {
             authenticate(&mut host, &identity, 3, &["terminal_read"]);
         }
     }
@@ -154,100 +161,81 @@ async fn disabled_access_has_no_listener_or_timer_and_requires_exact_grants() {
 #[tokio::test]
 async fn disconnect_and_revocation_invalidate_reply_leases_and_all_owner_resources() {
     let (_root, mut host, identity, _events) = fixture();
-    grant(
-        &mut host,
-        &identity,
-        [Scope::TerminalRead, Scope::TerminalPropose].into(),
-    );
+    grant(&mut host, &identity, write());
     let lease = authenticate(
         &mut host,
         &identity,
         1,
-        &["terminal_read", "terminal_propose"],
+        &["terminal_read", "terminal_write"],
     )
     .lease
     .unwrap();
     let terminal = host.app.terminals.insert_test_session(20, 3);
-    let proposal = host
-        .context_propose(1, terminal, "literal", None, None)
+    let revision = host.app.terminals.get(terminal).unwrap().read_revision();
+    host.context_request_enter(1, terminal, &format!("r:{revision}"))
         .unwrap();
-    assert_eq!(host.context.proposals.len(), 1);
+    assert_eq!(host.context.enters.len(), 1);
+    assert!(
+        host.app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
     host.context_revoke("agent");
     assert!(!lease.active());
-    assert!(host.context.proposals.is_empty());
+    assert!(host.context.enters.is_empty());
+    assert!(
+        !host
+            .app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
     assert!(host.context.readers.is_empty());
     assert!(host.context.registration.is_none());
-    assert!(!proposal["proposal"].as_str().unwrap().is_empty());
 }
 
 #[tokio::test]
-async fn default_reject_expiry_attachment_and_input_races_are_inert() {
+async fn write_is_negotiated_through_its_feature_and_needs_the_write_permission() {
     let (_root, mut host, identity, _events) = fixture();
-    grant(
+    grant(&mut host, &identity, read());
+    let hello = frame(
         &mut host,
-        &identity,
-        [Scope::TerminalRead, Scope::TerminalPropose].into(),
-    );
-    authenticate(
-        &mut host,
-        &identity,
         1,
-        &["terminal_read", "terminal_propose"],
+        json!({"type":"authenticate","credential":identity.credential()}),
+    );
+    assert!(
+        hello.value["features"]
+            .as_array()
+            .unwrap()
+            .contains(&json!(wire::TERMINAL_WRITE_FEATURE))
+    );
+    assert!(
+        hello.value["capabilities"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("terminal_write"))
+    );
+    // Read alone: an older adapter's proposal request and a write request
+    // are both accepted at registration and neither is granted.
+    let registered = frame(
+        &mut host,
+        1,
+        json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"fixture","commands":[],"required_capabilities":[],"optional_capabilities":["terminal_read","terminal_propose","terminal_write","buffer_edit"],"required_features":[wire::FEATURE],"optional_features":[wire::TERMINAL_WRITE_FEATURE,"runyte.context.channel.nudge.v1"]}),
+    );
+    assert_eq!(
+        registered.value["type"], "registered",
+        "{}",
+        registered.value
+    );
+    assert_eq!(registered.value["capabilities"], json!(["terminal_read"]));
+    assert_eq!(
+        registered.value["features"],
+        json!([wire::FEATURE, wire::TERMINAL_WRITE_FEATURE])
     );
     let terminal = host.app.terminals.insert_test_session(20, 3);
-    for expected in ["rejected", "expired", "cancelled", "stale"] {
-        host.note_plugin_frontend(true);
-        let result = host
-            .context_propose(1, terminal, "echo approved", None, None)
-            .unwrap();
-        let id = result["proposal"].as_str().unwrap().to_owned();
-        host.sync_context();
-        match expected {
-            "rejected" => key(&mut host, KeyCode::Enter),
-            "expired" => host.context.proposals.get_mut(&id).unwrap().deadline = Instant::now(),
-            "cancelled" => host.note_plugin_frontend(false),
-            _ => {
-                review_all(&mut host);
-                host.app.terminals.get_mut(terminal).unwrap().send_text("");
-                key(&mut host, KeyCode::Tab);
-                key(&mut host, KeyCode::Enter);
-            }
-        }
-        host.sync_context();
-        assert_eq!(host.context.proposals[&id].status, expected);
-        assert!(host.context.proposals[&id].delivery.is_none());
-        host.context.proposals.clear();
-    }
-    assert_eq!(
-        host.context_propose(1, terminal, "bad\n", None, None)
-            .unwrap_err()
-            .code,
-        Code::InvalidArgument
-    );
-    host.note_plugin_frontend(false);
-    assert_eq!(
-        host.context_propose(1, terminal, "ok", None, None)
-            .unwrap_err()
-            .code,
-        Code::NoFrontend
-    );
-}
-
-#[tokio::test]
-async fn proposal_limits_dedup_and_cleanup_are_bounded() {
-    let (_root, mut host, identity, _events) = fixture();
-    grant(
-        &mut host,
-        &identity,
-        [Scope::TerminalRead, Scope::TerminalPropose].into(),
-    );
-    authenticate(
-        &mut host,
-        &identity,
-        1,
-        &["terminal_read", "terminal_propose"],
-    );
-    host.app.terminals.insert_test_session(20, 3);
     let list = request(
         &mut host,
         1,
@@ -256,121 +244,585 @@ async fn proposal_limits_dedup_and_cleanup_are_bounded() {
         json!({"offset":0,"limit":10}),
     );
     let handle = list["result"]["terminals"][0]["terminal"].clone();
-    let first = request(
-        &mut host,
-        1,
-        "proposal",
-        "terminal.input.propose",
-        json!({"terminal":handle,"text":"literal"}),
-    );
-    assert_eq!(first["result"]["state"], "pending");
-    assert_eq!(
-        request(
-            &mut host,
-            1,
-            "proposal",
-            "terminal.input.propose",
-            json!({"terminal":handle,"text":"literal"})
-        )["error"]["code"],
-        "conflict"
-    );
-    for id in ["p2", "p3", "p4"] {
-        assert_eq!(
-            request(
-                &mut host,
-                1,
-                id,
-                "terminal.input.propose",
-                json!({"terminal":handle,"text":"literal"})
-            )["result"]["state"],
-            "pending"
-        );
+    for (method, params) in [
+        (
+            "terminal.input.write",
+            json!({"terminal":handle,"text":"ls"}),
+        ),
+        (
+            "terminal.input.enter",
+            json!({"terminal":handle,"expected_revision":"r:0"}),
+        ),
+    ] {
+        let denied = request(&mut host, 1, method, method, params);
+        assert_eq!(denied["error"]["code"], "capability_denied", "{denied}");
     }
+    assert!(host.context.enters.is_empty());
     assert_eq!(
-        request(
-            &mut host,
-            1,
-            "p5",
-            "terminal.input.propose",
-            json!({"terminal":handle,"text":"literal"})
-        )["error"]["code"],
-        "limit_exceeded"
+        host.app.terminals.get(terminal).unwrap().input_generation(),
+        0,
+        "nothing reached the terminal"
     );
-    for proposal in host.context.proposals.values_mut() {
-        proposal.deadline = Instant::now() - Duration::from_secs(121);
-        proposal.status = "expired";
-    }
-    host.sync_context();
-    assert!(host.context.proposals.is_empty());
-    assert!(host.context_delay().is_none());
 }
 
 #[tokio::test]
-async fn approval_requires_every_page_to_be_painted_and_consumes_enter() {
+async fn writes_and_enters_need_an_attached_person_and_a_live_terminal() {
     let (_root, mut host, identity, _events) = fixture();
-    grant(
-        &mut host,
-        &identity,
-        [Scope::TerminalRead, Scope::TerminalPropose].into(),
-    );
+    grant(&mut host, &identity, write());
     authenticate(
         &mut host,
         &identity,
         1,
-        &["terminal_read", "terminal_propose"],
+        &["terminal_read", "terminal_write"],
     );
     let terminal = host.app.terminals.insert_test_session(20, 3);
-    let id = host
-        .context_propose(
-            1,
-            terminal,
-            &"a".repeat(1024),
-            Some("untrusted reason".into()),
-            None,
-        )
-        .unwrap()["proposal"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    host.sync_context();
-    let generation = host.app.terminals.get(terminal).unwrap().input_generation();
-    key(&mut host, KeyCode::Tab);
-    key(&mut host, KeyCode::Enter);
-    assert!(host.app.context_overlay_active());
-    assert!(host.app.context_ui.decision.is_none());
-    // Skipping pages without a frame must not make them reviewed.
-    for _ in 0..20 {
-        key(&mut host, KeyCode::Char('j'));
-    }
-    host.app.note_context_frame(80, 22, 1);
-    host.app.note_context_presented(1);
-    key(&mut host, KeyCode::Enter);
-    assert!(host.app.context_ui.decision.is_none());
-    for _ in 0..20 {
-        key(&mut host, KeyCode::Char('k'));
-    }
-    review_all(&mut host);
-    key(&mut host, KeyCode::Enter);
-    assert!(!host.app.context_overlay_active());
-    assert!(matches!(
-        host.app.context_ui.decision,
-        Some(Decision::Proposal { accepted: true, .. })
-    ));
-    assert_eq!(
-        host.app.terminals.get(terminal).unwrap().input_generation(),
-        generation
+    let list = request(
+        &mut host,
+        1,
+        "list",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
     );
-    host.sync_context();
-    assert_eq!(host.context.proposals[&id].status, "cancelled"); // inert fixture has no PTY
-    assert!(crate::app::context_access::visible("a \u{202e}\u{200b}").contains("\\u{202e}"));
+    let handle = list["result"]["terminals"][0]["terminal"].clone();
+    let revision = list["result"]["terminals"][0]["revision"].clone();
+    host.note_plugin_frontend(false);
+    for (id, method, params) in [
+        (
+            "w",
+            "terminal.input.write",
+            json!({"terminal":handle,"text":"ls"}),
+        ),
+        (
+            "e",
+            "terminal.input.enter",
+            json!({"terminal":handle,"expected_revision":revision}),
+        ),
+    ] {
+        let refused = request(&mut host, 1, id, method, params);
+        assert_eq!(refused["error"]["code"], "no_frontend", "{refused}");
+    }
+    host.note_plugin_frontend(true);
+    // Text is checked before anything reaches the terminal, and a reader
+    // that sends a control is closed.
+    let refused = request(
+        &mut host,
+        1,
+        "bad",
+        "terminal.input.write",
+        json!({"terminal":handle,"text":"ls\n"}),
+    );
+    assert_eq!(refused["type"], "registration_error", "{refused}");
+    assert!(host.context.readers.is_empty());
+    authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_write"],
+    );
+    let list = request(
+        &mut host,
+        1,
+        "relist",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    let handle = list["result"]["terminals"][0]["terminal"].clone();
+    // The fixture has no child, so a line cannot be queued at all.
+    let refused = request(
+        &mut host,
+        1,
+        "nochild",
+        "terminal.input.write",
+        json!({"terminal":handle,"text":"ls"}),
+    );
+    assert_eq!(refused["error"]["code"], "unavailable", "{refused}");
+    host.app.terminals.close(terminal);
+    let refused = request(
+        &mut host,
+        1,
+        "closed",
+        "terminal.input.enter",
+        json!({"terminal":handle,"expected_revision":revision}),
+    );
+    assert!(refused.get("error").is_some(), "{refused}");
+    assert!(host.context.enters.is_empty());
 }
 
 #[tokio::test]
-async fn native_grant_overlay_controls_listener_and_remembered_scope() {
+async fn an_enter_is_dropped_by_output_typing_detachment_and_lost_write_access() {
+    use crate::terminal::TerminalOutput;
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, write());
+    authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_write"],
+    );
+    let terminal = host.app.terminals.insert_test_session(20, 3);
+    let list = request(
+        &mut host,
+        1,
+        "list",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    let handle = list["result"]["terminals"][0]["terminal"].clone();
+    let current = |host: &WorkspaceHost| {
+        format!(
+            "r:{}",
+            host.app.terminals.get(terminal).unwrap().read_revision()
+        )
+    };
+    let enter = |host: &mut WorkspaceHost, id: &str| -> String {
+        let revision = current(host);
+        let reply = request(
+            host,
+            1,
+            id,
+            "terminal.input.enter",
+            json!({"terminal":handle,"expected_revision":revision}),
+        );
+        assert_eq!(reply["result"]["state"], "waiting", "{reply}");
+        assert_eq!(reply["result"]["delay_ms"], wire::ENTER_DELAY_MILLIS);
+        reply["result"]["enter"].as_str().unwrap().to_owned()
+    };
+    let status = |host: &mut WorkspaceHost, id: &str, enter: &str| {
+        request(
+            host,
+            1,
+            id,
+            "terminal.input.enter.status",
+            json!({"enter":enter}),
+        )["result"]["state"]
+            .clone()
+    };
+
+    // A revision the terminal no longer shows is refused at once.
+    let stale = request(
+        &mut host,
+        1,
+        "old",
+        "terminal.input.enter",
+        json!({"terminal":handle,"expected_revision":"r:99999"}),
+    );
+    assert_eq!(stale["error"]["code"], "stale");
+
+    // Output that arrives during the delay, such as a dialog, drops it.
+    let first = enter(&mut host, "e1");
+    assert!(
+        host.app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
+    let revision = current(&host);
+    let busy = request(
+        &mut host,
+        1,
+        "e1b",
+        "terminal.input.enter",
+        json!({"terminal":handle,"expected_revision":revision}),
+    );
+    assert_eq!(busy["error"]["code"], "conflict", "one per terminal");
+    host.sync_context();
+    assert_eq!(status(&mut host, "s1", &first), "waiting");
+    host.app.terminals.apply(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"Allow this command? [y/n]".to_vec(),
+    });
+    host.sync_context();
+    assert_eq!(status(&mut host, "s1b", &first), "stale");
+    assert!(
+        !host
+            .app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
+
+    // So does the person typing there.
+    let second = enter(&mut host, "e2");
+    host.app
+        .terminals
+        .get_mut(terminal)
+        .unwrap()
+        .send_key(KeyStroke::plain(KeyCode::Char('n')));
+    host.sync_context();
+    assert_eq!(status(&mut host, "s2", &second), "stale");
+
+    // Detaching the person's window cancels it.
+    let third = enter(&mut host, "e3");
+    host.note_plugin_frontend(false);
+    host.sync_context();
+    assert_eq!(status(&mut host, "s3", &third), "cancelled");
+    host.note_plugin_frontend(true);
+
+    // Nothing changed, and the delay is over: Enter is pressed if it can
+    // be. This fixture has no child, so the write itself fails.
+    let fourth = enter(&mut host, "e4");
+    host.sync_context();
+    assert_eq!(status(&mut host, "s4", &fourth), "waiting");
+    host.context_expire_enter_delays();
+    host.sync_context();
+    assert_eq!(status(&mut host, "s4b", &fourth), "waiting", "settling");
+    host.context_expire_enter_delays();
+    host.sync_context();
+    assert_eq!(status(&mut host, "s4c", &fourth), "stale");
+
+    // Output that arrives during the settling pass still drops it.
+    let settling = enter(&mut host, "e4d");
+    host.context_expire_enter_delays();
+    host.sync_context();
+    host.app.terminals.apply(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"Proceed? [y/n]".to_vec(),
+    });
+    host.context_expire_enter_delays();
+    host.sync_context();
+    assert_eq!(status(&mut host, "s4d", &settling), "stale");
+
+    // Another reader cannot ask about it.
+    authenticate(
+        &mut host,
+        &identity,
+        2,
+        &["terminal_read", "terminal_write"],
+    );
+    let foreign = request(
+        &mut host,
+        2,
+        "foreign",
+        "terminal.input.enter.status",
+        json!({"enter":fourth}),
+    );
+    assert_eq!(foreign["error"]["code"], "not_found");
+
+    // Narrowing the grant to Read disconnects the reader and its Enters.
+    enter(&mut host, "e5");
+    assert_eq!(host.context.enters.len(), 6, "five finished, one waiting");
+    host.app.context_ui.decision = Some(Decision::Grant {
+        identity: "agent".into(),
+        permissions: read(),
+        remember: false,
+    });
+    host.sync_context();
+    assert!(host.context.readers.is_empty());
+    assert!(host.context.enters.is_empty());
+    assert!(
+        !host
+            .app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
+}
+
+#[tokio::test]
+async fn queued_text_ends_with_its_reader_and_with_the_frontend_it_was_typed_for() {
+    use crate::terminal::proposal::{Delivery, DeliveryState};
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, write());
+    authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_write"],
+    );
+    let queued = |host: &mut WorkspaceHost, reader: u64| {
+        let delivery = Delivery::queued_for_test();
+        let attachment = host.app.plugins.attachment_generation;
+        host.context
+            .readers
+            .get_mut(&reader)
+            .unwrap()
+            .writes
+            .push((delivery.clone(), attachment));
+        delivery
+    };
+
+    // A reader closed for a malformed request takes its text with it.
+    let first = queued(&mut host, 1);
+    let refused = request(
+        &mut host,
+        1,
+        "bad",
+        "terminal.input.write",
+        json!({"terminal":"t:1","text":"ls\n"}),
+    );
+    assert_eq!(refused["type"], "registration_error");
+    assert_eq!(first.state(), DeliveryState::Cancelled);
+
+    // Text typed for a frontend that has since detached never arrives.
+    authenticate(
+        &mut host,
+        &identity,
+        2,
+        &["terminal_read", "terminal_write"],
+    );
+    let second = queued(&mut host, 2);
+    host.sync_context();
+    assert_eq!(second.state(), DeliveryState::Queued, "still attached");
+    host.note_plugin_frontend(false);
+    host.sync_context();
+    assert_eq!(second.state(), DeliveryState::Cancelled);
+}
+
+#[tokio::test]
+async fn an_enter_is_dropped_by_another_agents_text_and_cancelled_by_exit() {
+    use crate::terminal::{TerminalOutput, proposal::Text};
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, write());
+    authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_write"],
+    );
+    let terminal = host.app.terminals.insert_test_session(20, 3);
+    let request_enter = |host: &mut WorkspaceHost| {
+        let revision = host.app.terminals.get(terminal).unwrap().read_revision();
+        host.context_request_enter(1, terminal, &format!("r:{revision}"))
+            .unwrap()["enter"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let enter = request_enter(&mut host);
+    // Another agent's line changes the input even before it is written.
+    let _ = host
+        .app
+        .terminals
+        .get_mut(terminal)
+        .unwrap()
+        .queue_agent_text(&Text::new("other").unwrap());
+    host.sync_context();
+    assert_eq!(host.context_enter_state(&enter), Some("stale"));
+
+    let enter = request_enter(&mut host);
+    host.app.terminals.apply(TerminalOutput::Exited {
+        id: terminal,
+        code: Some(0),
+    });
+    host.sync_context();
+    assert_eq!(host.context_enter_state(&enter), Some("cancelled"));
+    assert!(
+        !host
+            .app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
+}
+
+#[tokio::test]
+async fn enters_are_bounded_per_host() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, write());
+    let readers = (1..=(wire::MAX_HOST_ENTERS / wire::MAX_ENTERS) as u64 + 1).collect::<Vec<_>>();
+    for reader in &readers {
+        authenticate(
+            &mut host,
+            &identity,
+            *reader,
+            &["terminal_read", "terminal_write"],
+        );
+    }
+    let mut accepted = 0;
+    for reader in &readers {
+        for _ in 0..wire::MAX_ENTERS {
+            let terminal = host.app.terminals.insert_test_session(20, 3);
+            let revision = host.app.terminals.get(terminal).unwrap().read_revision();
+            match host.context_request_enter(*reader, terminal, &format!("r:{revision}")) {
+                Ok(_) => accepted += 1,
+                Err(error) => assert_eq!(error.code, Code::LimitExceeded),
+            }
+        }
+    }
+    assert_eq!(accepted, wire::MAX_HOST_ENTERS);
+}
+
+#[tokio::test]
+async fn enters_are_bounded_per_reader() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, write());
+    authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_write"],
+    );
+    let terminals = (0..=wire::MAX_ENTERS)
+        .map(|_| host.app.terminals.insert_test_session(20, 3))
+        .collect::<Vec<_>>();
+    for (index, terminal) in terminals.iter().enumerate() {
+        let revision = host.app.terminals.get(*terminal).unwrap().read_revision();
+        let result = host.context_request_enter(1, *terminal, &format!("r:{revision}"));
+        if index < wire::MAX_ENTERS {
+            assert!(result.is_ok());
+        } else {
+            assert_eq!(result.unwrap_err().code, Code::LimitExceeded);
+        }
+    }
+}
+
+#[tokio::test]
+async fn changing_a_grant_reconnects_its_readers_without_moving_the_endpoint() {
+    let (_root, mut host, identity, _events) = fixture();
+    host.app.context_ui.decision = Some(Decision::Grant {
+        identity: "agent".into(),
+        permissions: write(),
+        remember: false,
+    });
+    host.sync_context();
+    let incarnation = host
+        .context
+        .registration
+        .as_ref()
+        .unwrap()
+        .host_incarnation
+        .clone();
+    let registered = authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_write"],
+    );
+    assert_eq!(registered.value["type"], "registered");
+    let lease = registered.lease.unwrap();
+    // Write for a job, then back to Read: agents keep the same workspace.
+    host.app.context_ui.decision = Some(Decision::Grant {
+        identity: "agent".into(),
+        permissions: read(),
+        remember: false,
+    });
+    host.sync_context();
+    assert!(!lease.active(), "the old negotiation is gone");
+    assert_eq!(
+        host.context.registration.as_ref().unwrap().host_incarnation,
+        incarnation
+    );
+    assert!(host.context_enabled());
+    assert!(
+        authenticate(
+            &mut host,
+            &identity,
+            2,
+            &["terminal_read", "terminal_write"]
+        )
+        .close,
+        "write is no longer granted"
+    );
+    assert_eq!(
+        authenticate(&mut host, &identity, 3, &["terminal_read"]).value["type"],
+        "registered"
+    );
+    // Applying nothing revokes, and then nobody is listened for.
+    host.app.context_ui.decision = Some(Decision::Grant {
+        identity: "agent".into(),
+        permissions: BTreeSet::new(),
+        remember: false,
+    });
+    host.sync_context();
+    assert!(!host.context_enabled());
+    assert!(host.context.registration.is_none());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_written_line_waits_for_a_guarded_enter_which_submits_it_after_the_delay() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, write());
+    authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_write", "agent_channel"],
+    );
+    let mut prompts = Prompts::new(&mut host);
+    let terminal = prompts.open(&mut host, 1, "codex", true).await;
+    let list = request(
+        &mut host,
+        1,
+        "list",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    let row = &list["result"]["terminals"][0];
+    assert_eq!(row["number"], 1);
+    assert!(row["title"].as_str().unwrap().starts_with("[terminal #1]"));
+    let handle = row["terminal"].clone();
+    let written = request(
+        &mut host,
+        1,
+        "write",
+        "terminal.input.write",
+        json!({"terminal":handle,"text":"review the parser"}),
+    );
+    assert_eq!(written["result"]["state"], "queued", "{written}");
+    prompts.idle(&mut host, Duration::from_millis(100)).await;
+    assert!(
+        !prompts.text(terminal).contains("SUBMITTED"),
+        "text alone is never submitted"
+    );
+    let read = request(
+        &mut host,
+        1,
+        "read",
+        "terminal.read",
+        json!({"terminal":handle,"region":"screen","max_rows":10,"max_bytes":4096,"max_cells":4096}),
+    );
+    let enter = request(
+        &mut host,
+        1,
+        "enter",
+        "terminal.input.enter",
+        json!({"terminal":handle,"expected_revision":read["result"]["revision"]}),
+    );
+    let enter = enter["result"]["enter"].as_str().unwrap().to_owned();
+    assert!(
+        host.app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
+    prompts.idle(&mut host, Duration::from_millis(100)).await;
+    assert!(
+        !prompts.text(terminal).contains("SUBMITTED"),
+        "still waiting"
+    );
+    host.context_expire_enter_delays();
+    prompts
+        .wait(
+            &mut host,
+            terminal,
+            "SUBMITTED:\x1b[200~review the parser\x1b[201~;",
+        )
+        .await;
+    assert_eq!(host.context_enter_state(&enter), Some("sent"));
+    assert!(
+        !host
+            .app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
+    host.app.terminals.close(terminal);
+}
+
+#[tokio::test]
+async fn native_grant_overlay_controls_listener_and_remembered_permissions() {
     let (_root, mut host, identity, _events) = fixture();
     host.app.context_ui.requested_identity = Some("agent".into());
     host.sync_context();
     review_all(&mut host);
+    key(&mut host, KeyCode::Char('1'));
     key(&mut host, KeyCode::Char('r'));
     key(&mut host, KeyCode::Tab);
     key(&mut host, KeyCode::Enter);
@@ -383,16 +835,15 @@ async fn native_grant_overlay_controls_listener_and_remembered_scope() {
             .storage
             .as_ref()
             .unwrap()
-            .scopes(&host.app.project_root, &identity)
+            .permissions(&host.app.project_root, &identity)
             .unwrap(),
-        [Scope::TerminalRead, Scope::EditorContextRead].into()
+        read()
     );
     host.app.context_ui.requested_identity = Some("agent".into());
     host.sync_context();
-    assert!(matches!(
-        host.app.context_ui.surface.as_ref().unwrap().kind,
-        Kind::Grant { remember: true, .. }
-    ));
+    let surface = host.app.context_ui.surface.as_ref().unwrap();
+    assert!(surface.grant.remember);
+    assert_eq!(surface.grant.permissions, read());
     assert_eq!(
         host.app.context_ui.surface.as_ref().unwrap().title,
         "MCP permissions"
@@ -416,7 +867,7 @@ async fn native_grant_overlay_controls_listener_and_remembered_scope() {
             .storage
             .as_ref()
             .unwrap()
-            .scopes(&host.app.project_root, &identity)
+            .permissions(&host.app.project_root, &identity)
             .unwrap()
             .is_empty()
     );
@@ -440,10 +891,10 @@ async fn ungranted_workspace_lists_paired_identities_without_enabling_access() {
     host.app.context_ui.requested_identity = Some(String::new());
     host.sync_context();
     assert_eq!(host.app.context_ui.identities, ["codex"]);
-    assert!(matches!(
-        &host.app.context_ui.surface.as_ref().unwrap().kind,
-        Kind::Grant { identity, remember: false, .. } if identity == "codex"
-    ));
+    let surface = host.app.context_ui.surface.as_ref().unwrap();
+    assert_eq!(surface.grant.identity, "codex");
+    assert!(!surface.grant.remember);
+    assert!(surface.grant.permissions.is_empty(), "nothing preselected");
     key(&mut host, KeyCode::Escape);
 
     // Pairing after startup is visible the next time the overlay opens.
@@ -453,18 +904,19 @@ async fn ungranted_workspace_lists_paired_identities_without_enabling_access() {
     assert_eq!(host.app.context_ui.identities, ["agent", "codex"]);
     key(&mut host, KeyCode::Char('n'));
     host.sync_context();
-    assert!(matches!(
-        &host.app.context_ui.surface.as_ref().unwrap().kind,
-        Kind::Grant { identity, .. } if identity == "codex"
-    ));
+    assert_eq!(
+        host.app.context_ui.surface.as_ref().unwrap().grant.identity,
+        "codex"
+    );
     assert!(host.context.storage.is_none());
     assert!(host.context.grants.is_empty());
     assert!(!host.context_enabled());
     assert!(host.context_delay().is_none());
-    assert!(store.scopes(&project, &codex).unwrap().is_empty());
+    assert!(store.permissions(&project, &codex).unwrap().is_empty());
 
     // Applying the first grant still opens a writable store and enables access.
     review_all(&mut host);
+    key(&mut host, KeyCode::Char('1'));
     key(&mut host, KeyCode::Tab);
     key(&mut host, KeyCode::Enter);
     host.sync_context();
@@ -490,325 +942,6 @@ fn opening_permissions_does_not_create_missing_private_storage() {
     assert!(!host.context_enabled());
 }
 
-#[tokio::test]
-async fn real_pty_overlay_enter_only_inserts_and_separate_native_enter_submits() {
-    use crate::terminal::{TerminalOutput, TerminalRequest, proposal::DeliveryState};
-    let (_root, mut host, identity, _events) = fixture();
-    grant(
-        &mut host,
-        &identity,
-        [Scope::TerminalRead, Scope::TerminalPropose].into(),
-    );
-    authenticate(
-        &mut host,
-        &identity,
-        1,
-        &["terminal_read", "terminal_propose"],
-    );
-    let terminal = host.app.terminals.open(TerminalRequest {
-        program: "/bin/sh".into(),
-        arguments: vec!["-c".into(), "stty -echo; printf READY; IFS= read -r line; printf 'SUBMITTED:%s' \"$line\"; IFS= read -r hold".into()],
-        directory: host.app.project_root.clone(), label: "approval fixture".into(),
-    }, 40, 10).unwrap();
-    let mut output = host.take_terminal_events().unwrap();
-    let mut bytes = Vec::new();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !bytes.windows(5).any(|part| part == b"READY") {
-            let event = output.recv().await.unwrap();
-            if let TerminalOutput::Bytes { bytes: part, .. } = &event {
-                bytes.extend(part);
-            }
-            host.app.terminals.apply(event);
-        }
-    })
-    .await
-    .unwrap();
-    let id = host
-        .context_propose(1, terminal, "echo literal", None, None)
-        .unwrap()["proposal"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    host.sync_context();
-    assert!(host.context.proposals[&id].delivery.is_none());
-    review_all(&mut host);
-    key(&mut host, KeyCode::Tab);
-    key(&mut host, KeyCode::Enter);
-    host.sync_context();
-    let delivery = host.context.proposals[&id]
-        .delivery
-        .as_ref()
-        .unwrap()
-        .clone();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while delivery.state() != DeliveryState::Delivered {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .unwrap();
-    // The child is blocked in read, despite the Enter consumed by the overlay.
-    assert!(
-        tokio::time::timeout(Duration::from_millis(50), output.recv())
-            .await
-            .is_err()
-    );
-    assert!(
-        host.app
-            .terminals
-            .get_mut(terminal)
-            .unwrap()
-            .send_key(KeyStroke::plain(KeyCode::Enter))
-    );
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !String::from_utf8_lossy(&bytes).contains("SUBMITTED:echo literal") {
-            let event = output.recv().await.unwrap();
-            if let TerminalOutput::Bytes { bytes: part, .. } = &event {
-                bytes.extend(part);
-            }
-            host.app.terminals.apply(event);
-        }
-    })
-    .await
-    .unwrap();
-    host.sync_context();
-    assert_eq!(host.context.proposals[&id].status, "delivered");
-}
-
-#[tokio::test]
-async fn prepared_but_unpainted_lines_cannot_be_counted_or_approved() {
-    let (_root, mut host, identity, _events) = fixture();
-    grant(
-        &mut host,
-        &identity,
-        [Scope::TerminalRead, Scope::TerminalPropose].into(),
-    );
-    authenticate(
-        &mut host,
-        &identity,
-        1,
-        &["terminal_read", "terminal_propose"],
-    );
-    let terminal = host.app.terminals.insert_test_session(20, 3);
-    host.context_propose(1, terminal, &"x".repeat(1024), None, None)
-        .unwrap();
-    host.sync_context();
-    fn surface(host: &WorkspaceHost) -> &crate::app::context_access::Surface {
-        host.app.context_ui.surface.as_ref().unwrap()
-    }
-    host.app.note_context_frame(80, 22, 10);
-    key(&mut host, KeyCode::PageDown);
-    assert!(surface(&host).top > 0);
-    // Frame 10 was prepared for the first line, which is no longer in view.
-    host.app.note_context_presented(10);
-    assert!(surface(&host).seen.iter().all(|seen| !seen));
-    host.app.note_context_frame(80, 22, 11); // dropped/backpressured frame
-    host.app.note_context_presented(10); // frontend still displays line one
-    key(&mut host, KeyCode::End);
-    key(&mut host, KeyCode::Tab);
-    key(&mut host, KeyCode::Enter);
-    assert!(surface(&host).seen.iter().all(|seen| !seen));
-    assert_eq!(surface(&host).presented_top, None);
-    assert!(host.app.context_ui.decision.is_none());
-}
-
-#[tokio::test]
-async fn direct_insertion_grant_skips_review_but_never_sends_enter() {
-    use crate::terminal::{TerminalOutput, TerminalRequest, proposal::DeliveryState};
-    let (_root, mut host, identity, _events) = fixture();
-    grant(
-        &mut host,
-        &identity,
-        [
-            Scope::TerminalRead,
-            Scope::TerminalPropose,
-            Scope::TerminalInsert,
-        ]
-        .into(),
-    );
-    // The reader negotiates nothing new: direct insertion is the grant's.
-    let registered = authenticate(
-        &mut host,
-        &identity,
-        1,
-        &["terminal_read", "terminal_propose"],
-    );
-    assert_eq!(
-        registered.value["capabilities"],
-        json!(["terminal_read", "terminal_propose"])
-    );
-    let terminal = host.app.terminals.open(TerminalRequest {
-        program: "/bin/sh".into(),
-        // A line editor asks for bracketed paste; this one stands in for it.
-        arguments: vec!["-c".into(), "stty -echo; printf '\\033[?2004h'; printf READY; IFS= read -r line; printf 'SUBMITTED:%s' \"$line\"; IFS= read -r hold".into()],
-        directory: host.app.project_root.clone(), label: "direct fixture".into(),
-    }, 40, 10).unwrap();
-    let mut output = host.take_terminal_events().unwrap();
-    let mut bytes = Vec::new();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !bytes.windows(5).any(|part| part == b"READY") {
-            let event = output.recv().await.unwrap();
-            if let TerminalOutput::Bytes { bytes: part, .. } = &event {
-                bytes.extend(part);
-            }
-            host.app.terminals.apply(event);
-        }
-    })
-    .await
-    .unwrap();
-    let list = request(
-        &mut host,
-        1,
-        "list",
-        "terminal.list",
-        json!({"offset":0,"limit":10}),
-    );
-    let handle = list["result"]["terminals"][0]["terminal"].clone();
-    let proposed = request(
-        &mut host,
-        1,
-        "propose",
-        "terminal.input.propose",
-        json!({"terminal":handle,"text":"echo direct"}),
-    );
-    assert_eq!(proposed["result"]["state"], "queued");
-    let id = proposed["result"]["proposal"].as_str().unwrap().to_owned();
-    host.sync_context();
-    assert!(host.app.context_ui.surface.is_none(), "no review overlay");
-    let notice = host.app.notifications().entries().last().unwrap();
-    assert_eq!(notice.title, "Terminal text inserted");
-    assert!(
-        notice
-            .body
-            .contains("inserted 11 characters into terminal #1 without review"),
-        "{}",
-        notice.body
-    );
-    let delivery = host.context.proposals[&id]
-        .delivery
-        .as_ref()
-        .unwrap()
-        .clone();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while delivery.state() != DeliveryState::Delivered {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .unwrap();
-    // Still blocked in read: the text arrived without Enter.
-    assert!(
-        tokio::time::timeout(Duration::from_millis(50), output.recv())
-            .await
-            .is_err()
-    );
-    assert!(
-        host.app
-            .terminals
-            .get_mut(terminal)
-            .unwrap()
-            .send_key(KeyStroke::plain(KeyCode::Enter))
-    );
-    tokio::time::timeout(Duration::from_secs(5), async {
-        // The text arrives framed as a paste, which is what makes it inert
-        // until the person submits it.
-        while !String::from_utf8_lossy(&bytes).contains("SUBMITTED:\x1b[200~echo direct\x1b[201~") {
-            let event = output.recv().await.unwrap();
-            if let TerminalOutput::Bytes { bytes: part, .. } = &event {
-                bytes.extend(part);
-            }
-            host.app.terminals.apply(event);
-        }
-    })
-    .await
-    .unwrap();
-}
-
-#[tokio::test]
-async fn direct_insertion_falls_back_to_review_and_ends_with_its_grant() {
-    let (_root, mut host, identity, _events) = fixture();
-    grant(
-        &mut host,
-        &identity,
-        [
-            Scope::TerminalRead,
-            Scope::TerminalPropose,
-            Scope::TerminalInsert,
-        ]
-        .into(),
-    );
-    authenticate(
-        &mut host,
-        &identity,
-        1,
-        &["terminal_read", "terminal_propose"],
-    );
-    // A program that has not asked for bracketed paste would read the text
-    // as keystrokes, so the person reviews it even under this grant.
-    let terminal = host.app.terminals.insert_test_session(20, 3);
-    assert!(
-        !host
-            .app
-            .terminals
-            .get(terminal)
-            .unwrap()
-            .proposal_input_signature()
-            .modes
-            .bracketed_paste
-    );
-    let list = request(
-        &mut host,
-        1,
-        "list",
-        "terminal.list",
-        json!({"offset":0,"limit":10}),
-    );
-    let handle = list["result"]["terminals"][0]["terminal"].clone();
-    let notices = host.app.notifications().entries().len();
-    let proposed = request(
-        &mut host,
-        1,
-        "propose",
-        "terminal.input.propose",
-        json!({"terminal":handle,"text":"y"}),
-    );
-    assert_eq!(proposed["result"]["state"], "pending");
-    assert_eq!(host.app.notifications().entries().len(), notices);
-    host.sync_context();
-    assert!(host.app.context_ui.surface.is_some(), "the review opens");
-    key(&mut host, KeyCode::Escape);
-    host.sync_context();
-
-    // Applying the grant again without `5` ends the connection that held it,
-    // so the authority cannot outlive the person's choice.
-    host.app.context_ui.decision = Some(crate::app::context_access::Decision::Grant {
-        identity: "agent".into(),
-        scopes: [Scope::TerminalRead, Scope::TerminalPropose].into(),
-        remember: false,
-    });
-    host.sync_context();
-    let stale = request(
-        &mut host,
-        1,
-        "again",
-        "terminal.list",
-        json!({"offset":0,"limit":10}),
-    );
-    assert!(stale.get("result").is_none(), "{stale}");
-    let registered = authenticate(
-        &mut host,
-        &identity,
-        2,
-        &["terminal_read", "terminal_propose"],
-    );
-    assert_eq!(registered.value["type"], "registered");
-    assert!(
-        !host.context.readers[&2]
-            .granted
-            .contains(&Scope::TerminalInsert)
-    );
-}
-
 #[cfg(unix)]
 #[tokio::test]
 async fn configured_defaults_apply_where_nothing_was_decided_and_a_revocation_sticks() {
@@ -820,29 +953,22 @@ async fn configured_defaults_apply_where_nothing_was_decided_and_a_revocation_st
         let mut app =
             App::new_in_isolated_project(&project, HostPorts::isolated(Box::new(Clipboard)))
                 .unwrap();
-        app.config.mcp.default_grants = [(
-            "agent".to_owned(),
-            vec!["terminal_read".to_owned(), "editor_context_read".to_owned()],
-        )]
-        .into();
+        app.config.mcp.default_grants = [("agent".to_owned(), vec!["read".to_owned()])].into();
         let mut host = WorkspaceHost::new(app);
         let events = host.start_context_with_root(HostMode::Standalone, Some(storage.clone()));
         (host, events)
     };
-    let scopes_of = |host: &WorkspaceHost| {
+    let permissions_of = |host: &WorkspaceHost| {
         host.context
             .grants
             .values()
             .find(|(identity, _)| identity.name() == "agent")
-            .map(|(_, scopes)| scopes.clone())
+            .map(|(_, permissions)| permissions.clone())
     };
 
     // No storage yet: the default creates it and the identity, and listens.
     let (mut host, _events) = start();
-    assert_eq!(
-        scopes_of(&host),
-        Some([Scope::TerminalRead, Scope::EditorContextRead].into())
-    );
+    assert_eq!(permissions_of(&host), Some(read()));
     assert!(host.context.defaulted.contains("agent"));
     assert!(host.context_enabled());
 
@@ -852,19 +978,19 @@ async fn configured_defaults_apply_where_nothing_was_decided_and_a_revocation_st
     host.sync_context();
     drop(host);
     let (mut host, _events) = start();
-    assert_eq!(scopes_of(&host), None);
+    assert_eq!(permissions_of(&host), None);
     assert!(host.context.denied.contains("agent"));
 
     // A remembered grant of the person's own wins over the default.
     host.app.context_ui.decision = Some(crate::app::context_access::Decision::Grant {
         identity: "agent".into(),
-        scopes: [Scope::TerminalRead].into(),
+        permissions: write(),
         remember: true,
     });
     host.sync_context();
     drop(host);
     let (mut host, _events) = start();
-    assert_eq!(scopes_of(&host), Some([Scope::TerminalRead].into()));
+    assert_eq!(permissions_of(&host), Some(write()));
     assert!(host.context.remembered.contains("agent"));
     assert!(!host.context.defaulted.contains("agent"));
 
@@ -872,7 +998,7 @@ async fn configured_defaults_apply_where_nothing_was_decided_and_a_revocation_st
     // default is what the next start sees.
     host.app.context_ui.decision = Some(crate::app::context_access::Decision::Grant {
         identity: "agent".into(),
-        scopes: [Scope::TerminalRead].into(),
+        permissions: write(),
         remember: false,
     });
     host.sync_context();
@@ -954,9 +1080,7 @@ async fn a_default_that_cannot_be_applied_leaves_remembered_grants_in_place() {
     {
         let store = Storage::new(storage.clone()).unwrap();
         let agent = store.identity("agent").unwrap();
-        store
-            .grant(&project, &agent, [Scope::TerminalRead].into())
-            .unwrap();
+        store.grant(&project, &agent, read()).unwrap();
         // Fill the store's identity capacity, so a new default cannot be made.
         for index in 1..32 {
             store.identity(&format!("other{index}")).unwrap();
@@ -986,7 +1110,7 @@ async fn agents_share_the_channel_and_a_verified_terminal_counts_what_is_unread(
     use crate::terminal::TerminalRequest;
     use crate::workspace::parent::{ParentContext, ParentLaunch};
     let (_root, mut host, identity, _events) = fixture();
-    grant(&mut host, &identity, [Scope::AgentChannel].into());
+    grant(&mut host, &identity, read());
     authenticate(&mut host, &identity, 1, &["agent_channel"]);
     authenticate(&mut host, &identity, 2, &["agent_channel"]);
     let launch = ParentLaunch::new(&host.app.project_root.join("endpoint.json")).unwrap();
@@ -1158,7 +1282,7 @@ async fn agents_share_the_channel_and_a_verified_terminal_counts_what_is_unread(
 #[tokio::test]
 async fn durable_dispatch_requires_negotiation_scope_store_and_live_lease() {
     let (root, mut host, identity, _events) = fixture();
-    grant(&mut host, &identity, [Scope::AgentChannel].into());
+    grant(&mut host, &identity, read());
     let hello = frame(
         &mut host,
         1,
@@ -1253,253 +1377,6 @@ async fn durable_dispatch_requires_negotiation_scope_store_and_live_lease() {
             .get("error")
             .is_some()
     );
-}
-
-/// Reads terminal output until it holds `needle`, moving the host on as the
-/// event loop would so held and pasting nudges advance.
-#[cfg(unix)]
-async fn pump_until(
-    host: &mut WorkspaceHost,
-    output: &mut crate::terminal::TerminalEvents,
-    bytes: &mut Vec<u8>,
-    needle: &str,
-) {
-    use crate::terminal::TerminalOutput;
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while !String::from_utf8_lossy(bytes).contains(needle) {
-            host.sync_context();
-            if let Ok(Some(event)) =
-                tokio::time::timeout(Duration::from_millis(20), output.recv()).await
-            {
-                if let TerminalOutput::Bytes { bytes: part, .. } = &event {
-                    bytes.extend(part);
-                }
-                host.app.terminals.apply(event);
-            }
-        }
-    })
-    .await
-    .unwrap_or_else(|_| panic!("no {needle:?} in {:?}", String::from_utf8_lossy(bytes)));
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn a_requested_nudge_types_one_fixed_line_and_enter_once_the_person_stops_typing() {
-    use crate::terminal::TerminalRequest;
-    use crate::workspace::parent::{ParentContext, ParentLaunch};
-    let (_root, mut host, identity, _events) = fixture();
-    let plain = host
-        .context
-        .storage
-        .as_ref()
-        .unwrap()
-        .identity("plain")
-        .unwrap();
-    grant(
-        &mut host,
-        &identity,
-        [Scope::AgentChannel, Scope::ChannelNudge].into(),
-    );
-    grant(&mut host, &plain, [Scope::AgentChannel].into());
-    let register = |host: &mut WorkspaceHost, identity: &Identity, id: u64, nudge: bool| {
-        frame(
-            host,
-            id,
-            json!({"type":"authenticate","credential":identity.credential()}),
-        );
-        let features = if nudge {
-            json!([wire::CHANNEL_FEATURE, wire::NUDGE_FEATURE])
-        } else {
-            json!([wire::CHANNEL_FEATURE])
-        };
-        let registered = frame(
-            host,
-            id,
-            json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"fixture","commands":[],"required_capabilities":["agent_channel"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":features}),
-        );
-        assert_eq!(registered.value["type"], "registered");
-    };
-    // The recipient negotiates nothing for nudges: accepting them is its grant.
-    register(&mut host, &identity, 1, false);
-    register(&mut host, &identity, 2, true);
-    register(&mut host, &plain, 3, false);
-
-    let launch = ParentLaunch::new(&host.app.project_root.join("endpoint.json")).unwrap();
-    host.app.terminals.set_parent_launch(launch.clone());
-    let terminal = host.app.terminals.open(TerminalRequest {
-        program: "/bin/sh".into(),
-        // A line editor that reads pastes and reports every submitted line.
-        arguments: vec!["-c".into(), "stty -echo; printf '\\033[?2004h'; printf READY; while IFS= read -r line; do printf 'SUBMITTED:%s;' \"$line\"; done".into()],
-        directory: host.app.project_root.clone(), label: "nudge fixture".into(),
-    }, 80, 10).unwrap();
-    let mut output = host.take_terminal_events().unwrap();
-    let mut bytes = Vec::new();
-    pump_until(&mut host, &mut output, &mut bytes, "READY").await;
-    let parent: ParentContext = serde_json::from_str(&launch.context(terminal)).unwrap();
-    let process = host.app.terminals.get(terminal).unwrap().process_id();
-    let location = json!({"directory":"/work","repository":null,"worktree":null,"branch":"main"});
-    for (connection, provider) in [(1, "claude"), (2, "codex"), (3, "gemini")] {
-        host.context.peers.insert(connection, process);
-        let joined = request(
-            &mut host,
-            connection,
-            "join",
-            "channel.join",
-            json!({"provider":provider,"task":"work","location":location,
-                "terminal":{"terminal":terminal.get(),"capability":parent.capability}}),
-        );
-        assert_eq!(joined["result"]["participant"]["terminal"]["number"], 1);
-    }
-    let mut serial = 0;
-    let mut post = |host: &mut WorkspaceHost, connection: u64, params: Value| {
-        serial += 1;
-        let mut params = params;
-        params["location"] = location.clone();
-        request(
-            host,
-            connection,
-            &format!("post-{serial}"),
-            "channel.post",
-            params,
-        )
-    };
-    let states = |reply: &Value| {
-        reply["result"]["nudges"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|n| n["state"].as_str().unwrap().to_owned())
-            .collect::<Vec<_>>()
-    };
-    let submitted = format!(
-        "SUBMITTED:\x1b[200~{}\x1b[201~;",
-        super::super::context_channel::NUDGE_TEXT
-    );
-
-    // Nothing nudges unless the sender asks.
-    let quiet = post(&mut host, 2, json!({"text":"fyi"}));
-    assert!(quiet["result"].get("nudges").is_none());
-    assert!(host.context.nudges.is_empty());
-
-    // Nobody is typing: the line is pasted and Enter follows.
-    let sent = post(
-        &mut host,
-        2,
-        json!({"text":"review ready","nudge":["claude-1"]}),
-    );
-    assert_eq!(states(&sent), ["sent"]);
-    assert_eq!(sent["result"]["nudges"][0]["nick"], "claude-1");
-    pump_until(&mut host, &mut output, &mut bytes, &submitted).await;
-    let notice = host.app.notifications().entries().last().unwrap();
-    assert_eq!(notice.title, "Channel nudge sent");
-    assert!(
-        notice
-            .body
-            .contains("codex-1 nudged claude-1 in terminal #1"),
-        "{}",
-        notice.body
-    );
-
-    // Until the nudged agent reads, its terminal is not nudged again, for
-    // anyone in it.
-    let again = post(&mut host, 2, json!({"text":"ping","nudge":["claude-1"]}));
-    assert_eq!(states(&again), ["already_pending"]);
-    let read = request(
-        &mut host,
-        1,
-        "read",
-        "channel.read",
-        json!({"since":0,"limit":200}),
-    );
-    assert!(read["result"]["messages"].is_array());
-    assert!(host.context.nudges.is_empty(), "a read clears it");
-
-    // An identity whose grant does not accept nudges, and a sender that did
-    // not negotiate them, are refused without the reason reaching the sender.
-    let ungranted = post(&mut host, 2, json!({"text":"you too","nudge":["gemini-1"]}));
-    assert_eq!(states(&ungranted), ["unavailable"]);
-    let unnegotiated = post(&mut host, 1, json!({"text":"hi","nudge":["codex-1"]}));
-    assert_eq!(unnegotiated["error"]["code"], "unsupported");
-    // A refused name stores no message.
-    let head = host.context.channel.head();
-    let refused = post(
-        &mut host,
-        2,
-        json!({"text":"x","to":"claude-1","nudge":["gemini-1"]}),
-    );
-    assert_eq!(refused["error"]["code"], "invalid_argument");
-    assert_eq!(host.context.channel.head(), head);
-
-    // The person is typing: the nudge holds while the line has a draft and
-    // for the quiet interval after their last key.
-    {
-        let session = host.app.terminals.get_mut(terminal).unwrap();
-        assert!(session.send_key(KeyStroke::plain(KeyCode::Char('x'))));
-        assert!(session.has_draft());
-    }
-    let held = post(
-        &mut host,
-        2,
-        json!({"text":"when you can","to":"claude-1","nudge":["claude-1"]}),
-    );
-    assert_eq!(states(&held), ["held"]);
-    host.app
-        .terminals
-        .get_mut(terminal)
-        .unwrap()
-        .backdate_typing(super::super::context_channel::NUDGE_QUIET * 2);
-    host.sync_context();
-    assert_eq!(
-        host.context_nudge_delay(),
-        None,
-        "a draft, not a timer, holds it now"
-    );
-    let session = host.app.terminals.get_mut(terminal).unwrap();
-    assert!(session.send_key(KeyStroke::plain(KeyCode::Enter)));
-    assert!(!session.has_draft());
-    pump_until(&mut host, &mut output, &mut bytes, "SUBMITTED:x;").await;
-    for _ in 0..20 {
-        host.sync_context();
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert_eq!(
-        String::from_utf8_lossy(&bytes).matches(&submitted).count(),
-        1,
-        "still within the quiet interval"
-    );
-    host.app
-        .terminals
-        .get_mut(terminal)
-        .unwrap()
-        .backdate_typing(super::super::context_channel::NUDGE_QUIET * 2);
-    assert_eq!(
-        host.context_nudge_delay(),
-        Some(Duration::ZERO),
-        "a nudge whose interval ended before a pass ran is due, not untimed"
-    );
-    pump_until(
-        &mut host,
-        &mut output,
-        &mut bytes,
-        &format!("{submitted}SUBMITTED:x;{submitted}"),
-    )
-    .await;
-
-    // A connection that has gone takes its nudge with it.
-    request(
-        &mut host,
-        1,
-        "read2",
-        "channel.read",
-        json!({"since":0,"limit":200}),
-    );
-    host.context_disconnect(1);
-    let gone = post(
-        &mut host,
-        2,
-        json!({"text":"still there?","nudge":["claude-1"]}),
-    );
-    assert_eq!(states(&gone), ["unavailable"]);
 }
 
 /// Agents at line-editor prompts in their own verified terminals, with each
@@ -1609,428 +1486,4 @@ impl Prompts {
             self.step(host).await;
         }
     }
-}
-
-#[cfg(unix)]
-fn nudge_post(host: &mut WorkspaceHost, from: u64, id: &str, params: Value) -> Value {
-    let mut params = params;
-    params["location"] = json!({"directory":"/work"});
-    let reply = request(host, from, id, "channel.post", params);
-    assert!(reply.get("error").is_none(), "{reply}");
-    reply["result"]["nudges"][0]["state"].clone()
-}
-
-#[cfg(unix)]
-#[tokio::test]
-async fn nudges_wait_for_proposals_survive_their_senders_posts_and_never_send_a_stray_enter() {
-    let (_root, mut host, identity, _events) = fixture();
-    grant(
-        &mut host,
-        &identity,
-        [
-            Scope::TerminalRead,
-            Scope::TerminalPropose,
-            Scope::AgentChannel,
-            Scope::ChannelNudge,
-        ]
-        .into(),
-    );
-    for connection in 1..=3 {
-        frame(
-            &mut host,
-            connection,
-            json!({"type":"authenticate","credential":identity.credential()}),
-        );
-        let registered = frame(
-            &mut host,
-            connection,
-            json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"fixture","commands":[],"required_capabilities":["agent_channel"],"optional_capabilities":["terminal_read","terminal_propose"],"required_features":[wire::FEATURE],"optional_features":[wire::CHANNEL_FEATURE,wire::NUDGE_FEATURE]}),
-        );
-        assert_eq!(registered.value["type"], "registered");
-    }
-    let mut prompts = Prompts::new(&mut host);
-    let claude = prompts.open(&mut host, 1, "claude", true).await;
-    let codex = prompts.open(&mut host, 2, "codex", true).await;
-    let pager = prompts.open(&mut host, 3, "gemini", false).await;
-    let line = format!(
-        "SUBMITTED:\x1b[200~{}\x1b[201~;",
-        super::super::context_channel::NUDGE_TEXT
-    );
-
-    // A terminal that is not reading pastes would take the line as keys.
-    assert_eq!(
-        nudge_post(&mut host, 1, "p1", json!({"text":"x","nudge":["gemini-1"]})),
-        "unavailable"
-    );
-    assert_eq!(host.context_nudge_phase(pager), None);
-
-    // A proposal waiting for the person holds the nudge, and so does the
-    // person's draft; a second request while held is already pending.
-    let list = request(
-        &mut host,
-        1,
-        "list",
-        "terminal.list",
-        json!({"offset":0,"limit":10}),
-    );
-    let handle = list["result"]["terminals"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|t| t["title"].as_str().is_some_and(|t| t.contains("claude")))
-        .unwrap()["terminal"]
-        .clone();
-    let proposed = request(
-        &mut host,
-        1,
-        "propose",
-        "terminal.input.propose",
-        json!({"terminal":handle,"text":"echo hi"}),
-    );
-    assert_eq!(proposed["result"]["state"], "pending");
-    let unread = host
-        .context
-        .channel
-        .unread(&host.context.channel.joined(1).unwrap().id.clone());
-    assert_eq!(
-        nudge_post(
-            &mut host,
-            2,
-            "p2",
-            json!({"text":"for you","nudge":["claude-1"]})
-        ),
-        "held"
-    );
-    assert_eq!(
-        nudge_post(
-            &mut host,
-            3,
-            "p3",
-            json!({"text":"me too","nudge":["claude-1"]})
-        ),
-        "already_pending"
-    );
-    prompts.idle(&mut host, Duration::from_millis(400)).await;
-    assert_eq!(host.context_nudge_phase(claude), Some("held"));
-    assert!(!prompts.text(claude).contains(&line));
-    assert_eq!(
-        host.context
-            .channel
-            .unread(&host.context.channel.joined(1).unwrap().id.clone()),
-        unread + 2,
-        "a nudge moves no read state"
-    );
-
-    // The nudged agent posting with a nudge of its own keeps the one it is
-    // waiting for.
-    assert_eq!(
-        nudge_post(
-            &mut host,
-            1,
-            "p4",
-            json!({"text":"back at you","to":"codex-1","nudge":["codex-1"]})
-        ),
-        "sent"
-    );
-    assert_eq!(host.context_nudge_phase(claude), Some("held"));
-    prompts.wait(&mut host, codex, &line).await;
-
-    // Reading discards a held nudge.
-    request(
-        &mut host,
-        1,
-        "read",
-        "channel.read",
-        json!({"since":0,"limit":200}),
-    );
-    assert_eq!(host.context_nudge_phase(claude), None);
-
-    // Input between the line and its Enter keeps the Enter back: the line is
-    // then the person's to submit, and stays outstanding until a read.
-    request(
-        &mut host,
-        2,
-        "read",
-        "channel.read",
-        json!({"since":0,"limit":200}),
-    );
-    assert_eq!(
-        nudge_post(
-            &mut host,
-            1,
-            "p5",
-            json!({"text":"again","nudge":["codex-1"]})
-        ),
-        "sent"
-    );
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while host.context_nudge_phase(codex) != Some("written") {
-            prompts.step(&mut host).await;
-        }
-    })
-    .await
-    .unwrap();
-    let session = host.app.terminals.get_mut(codex).unwrap();
-    assert!(session.send_key(KeyStroke::char('y')));
-    session.backdate_typing(super::super::context_channel::NUDGE_QUIET * 2);
-    prompts.idle(&mut host, Duration::from_millis(600)).await;
-    assert_eq!(prompts.text(codex).matches(&line).count(), 1, "no Enter");
-    assert_eq!(host.context_nudge_phase(codex), Some("sent"));
-    assert!(host.app.terminals.get(codex).unwrap().has_draft());
-    assert_eq!(
-        nudge_post(
-            &mut host,
-            1,
-            "p6",
-            json!({"text":"ping","nudge":["codex-1"]})
-        ),
-        "already_pending"
-    );
-
-    // A nudge held past its quiet interval by a draft sets no timer: the
-    // keystroke that ends the draft wakes the loop by itself.
-    assert_eq!(
-        nudge_post(
-            &mut host,
-            2,
-            "p7",
-            json!({"text":"held","nudge":["claude-1"]})
-        ),
-        "held"
-    );
-    let session = host.app.terminals.get_mut(claude).unwrap();
-    assert!(session.send_key(KeyStroke::char('z')));
-    session.backdate_typing(super::super::context_channel::NUDGE_QUIET * 2);
-    host.sync_context();
-    assert_eq!(host.context_nudge_phase(claude), Some("held"));
-    assert_eq!(host.context_nudge_delay(), None, "no timer for a draft");
-    request(
-        &mut host,
-        1,
-        "read-again",
-        "channel.read",
-        json!({"since":0,"limit":200}),
-    );
-
-    // Disconnecting, as revoking the grant does, ends a held nudge with the
-    // reader it belonged to.
-    assert_eq!(
-        nudge_post(
-            &mut host,
-            2,
-            "p8",
-            json!({"text":"held","nudge":["claude-1"]})
-        ),
-        "held"
-    );
-    host.context_disconnect(1);
-    host.sync_context();
-    assert_eq!(host.context_nudge_phase(claude), None);
-    assert_eq!(host.context_nudge_delay(), None, "nothing left to time");
-}
-
-fn binding_join(host: &mut WorkspaceHost, connection: u64, resume: Option<&str>) -> Value {
-    let request_id = format!(
-        "binding-join-{connection}-{}",
-        host.context.channel.revision()
-    );
-    let mut params = json!({"provider":"codex", "task":"review", "location":{"directory":"/work"}});
-    if let Some(resume) = resume {
-        params["resume"] = json!(resume);
-    }
-    let reply = request(host, connection, &request_id, "channel.join", params);
-    assert!(reply.get("error").is_none(), "{reply}");
-    reply
-}
-
-fn binding_review(
-    host: &mut WorkspaceHost,
-    argument: &str,
-) -> crate::app::context_access::ChannelBinding {
-    host.context_review_binding(argument).unwrap();
-    let Kind::ChannelBinding(binding) = &host.app.context_ui.surface.as_ref().unwrap().kind else {
-        panic!("binding review");
-    };
-    binding.clone()
-}
-
-fn binding_terminal(host: &mut WorkspaceHost) -> TerminalId {
-    host.app
-        .terminals
-        .open(
-            crate::terminal::TerminalRequest {
-                program: "/bin/cat".into(),
-                arguments: vec![],
-                directory: host.app.project_root.clone(),
-                label: "agent".into(),
-            },
-            80,
-            24,
-        )
-        .unwrap()
-}
-
-#[tokio::test]
-async fn native_binding_resolves_workspace_local_numbers_and_survives_authenticated_rejoin() {
-    let (_root, mut host, identity, _events) = fixture();
-    let (_other_root, mut other, other_identity, _other_events) = fixture();
-    for (host, identity) in [(&mut host, &identity), (&mut other, &other_identity)] {
-        grant(
-            host,
-            identity,
-            [Scope::AgentChannel, Scope::ChannelNudge].into(),
-        );
-        authenticate(host, identity, 1, &["agent_channel"]);
-    }
-    let gone = binding_terminal(&mut host);
-    host.app.terminals.close(gone);
-    let terminal = binding_terminal(&mut host);
-    let other_terminal = binding_terminal(&mut other);
-    assert_eq!(host.app.terminals.get(terminal).unwrap().number(), Some(1));
-    assert_eq!(
-        other.app.terminals.get(other_terminal).unwrap().number(),
-        Some(1)
-    );
-    assert_ne!(terminal.get(), 1, "stable ID differs from visible number");
-    let joined = binding_join(&mut host, 1, None);
-    let other_joined = binding_join(&mut other, 1, None);
-    let id = joined["result"]["participant"]["participant"]
-        .as_str()
-        .unwrap();
-    let resume = joined["result"]["resume"].as_str().unwrap();
-    assert!(joined["result"]["participant"]["terminal"].is_null());
-    let binding = binding_review(&mut host, "codex-1 1");
-    assert_eq!(binding.terminal, Some(terminal.get()));
-    let lines = &host.app.context_ui.surface.as_ref().unwrap().lines;
-    assert!(lines.iter().any(|line| line.value.contains("#1")));
-    review_all(&mut host);
-    key(&mut host, KeyCode::Tab);
-    key(&mut host, KeyCode::Enter);
-    host.sync_context();
-    assert_eq!(
-        host.context.channel.participant(id).unwrap().terminal,
-        Some(terminal.get())
-    );
-    let other_id = other_joined["result"]["participant"]["participant"]
-        .as_str()
-        .unwrap();
-    assert_eq!(
-        other
-            .context
-            .channel
-            .participant(other_id)
-            .unwrap()
-            .terminal,
-        None
-    );
-    host.context_disconnect(1);
-    authenticate(&mut host, &identity, 2, &["agent_channel"]);
-    let rejoined = binding_join(&mut host, 2, Some(resume));
-    assert_eq!(rejoined["result"]["participant"]["terminal"]["number"], 1);
-    assert!(
-        host.context_apply_binding(binding).is_err(),
-        "old connection review is stale"
-    );
-    let unbind = binding_review(&mut host, "codex-1 none");
-    host.context_apply_binding(unbind).unwrap();
-    assert!(binding_join(&mut host, 2, None)["result"]["participant"]["terminal"].is_null());
-    let binding = binding_review(&mut host, "codex-1 1");
-    host.context_apply_binding(binding).unwrap();
-    host.context_revoke(identity.name());
-    assert!(!host.context.channel.participant(id).unwrap().terminal_bound);
-    assert!(
-        host.context
-            .channel
-            .participant(id)
-            .unwrap()
-            .terminal
-            .is_none()
-    );
-}
-
-#[tokio::test]
-async fn native_binding_rejects_stale_terminals_and_invalid_targets() {
-    let (_root, mut host, identity, _events) = fixture();
-    grant(&mut host, &identity, [Scope::AgentChannel].into());
-    authenticate(&mut host, &identity, 1, &["agent_channel"]);
-    binding_join(&mut host, 1, None);
-    let terminal = binding_terminal(&mut host);
-    for argument in [
-        "",
-        "codex-1",
-        "codex-1 1 extra",
-        "unknown 1",
-        "codex-1 999",
-        "codex-1 name",
-    ] {
-        assert!(host.context_review_binding(argument).is_err(), "{argument}");
-    }
-    let binding = binding_review(&mut host, "codex-1 1");
-    host.app.terminals.close(terminal);
-    let replacement = binding_terminal(&mut host);
-    assert_eq!(
-        host.app.terminals.get(replacement).unwrap().number(),
-        Some(1)
-    );
-    assert!(host.context_apply_binding(binding).is_err());
-    let binding = binding_review(&mut host, "codex-1 1");
-    host.context_apply_binding(binding).unwrap();
-    host.app.terminals.close(replacement);
-    binding_terminal(&mut host);
-    let who = request(&mut host, 1, "who", "channel.who", json!({}));
-    assert!(who["result"]["participants"][0]["terminal"].is_null());
-    host.context_disconnect(1);
-    assert!(host.context_review_binding("codex-1 1").is_err());
-}
-
-#[tokio::test]
-async fn native_binding_enables_daemon_nudges_and_cancellation_preserves_an_unsubmitted_draft() {
-    let (_root, mut host, identity, _events) = fixture();
-    grant(
-        &mut host,
-        &identity,
-        [Scope::AgentChannel, Scope::ChannelNudge].into(),
-    );
-    for connection in 1..=2 {
-        frame(
-            &mut host,
-            connection,
-            json!({"type":"authenticate","credential":identity.credential()}),
-        );
-        frame(
-            &mut host,
-            connection,
-            json!({"type":"register","version":"runyte-1","runyte":">=0.3.0, <0.5.0","name":"fixture","commands":[],"required_capabilities":["agent_channel"],"optional_capabilities":[],"required_features":[wire::FEATURE],"optional_features":[wire::CHANNEL_FEATURE,wire::NUDGE_FEATURE]}),
-        );
-    }
-    let mut prompts = Prompts::new(&mut host);
-    let terminal = prompts.open(&mut host, 1, "codex", true).await;
-    // Rejoin from a daemon with no parent claim: automatic association is lost.
-    host.context.peers.insert(1, Some(std::process::id()));
-    binding_join(&mut host, 1, None);
-    binding_join(&mut host, 2, None);
-    let post = json!({"text":"review ready", "nudge":["codex-1"]});
-    assert_eq!(
-        nudge_post(&mut host, 2, "before", post.clone()),
-        "unavailable"
-    );
-    let binding = binding_review(&mut host, "codex-1 1");
-    host.context_apply_binding(binding).unwrap();
-    assert_eq!(nudge_post(&mut host, 2, "after", post.clone()), "sent");
-    tokio::time::timeout(Duration::from_secs(5), async {
-        while host.context_nudge_phase(terminal) != Some("written") {
-            prompts.step(&mut host).await;
-        }
-    })
-    .await
-    .unwrap();
-    // Cancel after the fixed line reached the PTY, before its delayed Enter.
-    let binding = binding_review(&mut host, "codex-1 1");
-    host.context_apply_binding(binding).unwrap();
-    assert!(host.app.terminals.get(terminal).unwrap().has_draft());
-    assert_eq!(host.context_nudge_phase(terminal), None);
-    assert_eq!(nudge_post(&mut host, 2, "again", post), "held");
-    prompts.idle(&mut host, Duration::from_millis(350)).await;
-    assert!(!prompts.text(terminal).contains("SUBMITTED:"));
-    assert_eq!(host.context_nudge_phase(terminal), Some("held"));
 }

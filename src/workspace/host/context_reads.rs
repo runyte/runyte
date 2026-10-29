@@ -620,11 +620,11 @@ impl WorkspaceHost {
                     cells: max_cells,
                 },
             ),
-            Request::TerminalInputPropose { .. }
-            | Request::TerminalInputStatus { .. }
-            | Request::TerminalInputCancel { .. } => Err(Error::new(
+            Request::TerminalInputWrite { .. }
+            | Request::TerminalInputEnter { .. }
+            | Request::TerminalInputEnterStatus { .. } => Err(Error::new(
                 Code::Unsupported,
-                "Terminal proposals require the native review coordinator",
+                "Terminal input is served by the workspace host",
             )),
             Request::ChannelDurable(_)
             | Request::ChannelJoin { .. }
@@ -653,7 +653,7 @@ fn snapshot_byte(text: &str, checkpoints: &[usize], chars: usize, offset: usize)
         .expect("bounded scalar offset")
         .0
 }
-fn check_revision(expected: &str, actual: u64) -> Result<(), Error> {
+pub(super) fn check_revision(expected: &str, actual: u64) -> Result<(), Error> {
     if expected != revision(actual) {
         return Err(Error::new(Code::Stale, "Resource revision changed"));
     }

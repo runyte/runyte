@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Native ownership of workspace grants and one-shot terminal text review.
+//! Native ownership of workspace grants.
 
 // Presentation values remain shared while the native context owner is Unix-only.
 #![cfg_attr(not(unix), allow(dead_code))]
@@ -8,11 +8,10 @@
 use super::App;
 use crate::{
     command::{EditorCommand as Command, Mode},
-    input::{InputEvent, KeyCode, Modifiers, PointerEventKind},
+    input::{InputEvent, KeyCode, Modifiers},
     keymap::{Binding, BindingTarget, KeySequence, Lookup},
-    layout::Rect,
     snapshot::*,
-    workspace::context::wire::Scope,
+    workspace::context::wire::Permission,
 };
 use std::collections::{BTreeSet, VecDeque};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -21,7 +20,6 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 pub(crate) struct ContextUi {
     pub identities: Vec<String>,
     pub requested_identity: Option<String>,
-    pub requested_binding: Option<String>,
     /// `:agent-channel` waits for the workspace host to render the page.
     pub channel_page_requested: bool,
     pub surface: Option<Surface>,
@@ -37,23 +35,6 @@ pub(crate) struct ContextUi {
 impl ContextUi {
     fn view_height(&self) -> u16 {
         self.overlay_height.unwrap_or(self.height)
-    }
-
-    fn review_area(&self) -> Rect {
-        crate::context_review_layout::area(Rect {
-            x: 0,
-            y: self.height.saturating_sub(self.view_height()),
-            width: self.width,
-            height: self.view_height(),
-        })
-    }
-
-    fn surface_height(&self, surface: &Surface) -> u16 {
-        if surface.proposal().is_some() {
-            self.review_area().height
-        } else {
-            self.view_height()
-        }
     }
 }
 
@@ -73,41 +54,24 @@ pub(crate) struct PreparedFrame {
 #[path = "tests/context_access.rs"]
 mod tests;
 
-#[derive(Clone)]
-pub(crate) struct ChannelBinding {
-    pub participant: String,
-    pub connection: u64,
-    pub terminal: Option<u64>,
-}
-
 pub(crate) enum Decision {
-    ChannelBinding(ChannelBinding),
     Grant {
         identity: String,
-        scopes: BTreeSet<Scope>,
+        permissions: BTreeSet<Permission>,
         remember: bool,
     },
     Revoke(String),
-    Proposal {
-        id: String,
-        accepted: bool,
-    },
 }
 
-pub(crate) enum Kind {
-    ChannelBinding(ChannelBinding),
-    Grant {
-        identity: String,
-        scopes: BTreeSet<Scope>,
-        remember: bool,
-    },
-    Proposal {
-        id: String,
-    },
+/// The grant being chosen, before it is applied.
+pub(crate) struct Grant {
+    pub identity: String,
+    pub permissions: BTreeSet<Permission>,
+    pub remember: bool,
 }
 
 pub(crate) struct Surface {
-    pub kind: Kind,
+    pub grant: Grant,
     pub title: String,
     pub lines: Vec<ReviewLine>,
     /// First line in view.
@@ -124,16 +88,13 @@ pub(crate) struct Surface {
     pub prepared: VecDeque<PreparedFrame>,
     /// Pending registry motion prefix, normally `g` for `gg` / `ge`.
     pub pending_keys: KeySequence,
-    details: Vec<Detail>,
-    wrap_width: usize,
 }
 
-/// How a reviewed line is drawn: proposed text stands out, labels and notes
-/// recede, and everything else reads as an ordinary value.
+/// How a reviewed line is drawn: labels and notes recede, and everything else
+/// reads as an ordinary value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Tone {
     Value,
-    Literal,
     Note,
 }
 
@@ -154,7 +115,7 @@ impl Detail {
     }
     /// A value cut to one row, ending in an ellipsis when anything was cut.
     pub fn excerpt(label: &'static str, value: &str) -> Self {
-        let mut rows = wrap(value, Tone::Literal, VALUE_WIDTH - 1).into_iter();
+        let mut rows = wrap(value, false, VALUE_WIDTH - 1).into_iter();
         let mut value = rows.next().unwrap_or_default();
         if rows.next().is_some() {
             value.push('…');
@@ -180,43 +141,18 @@ pub(crate) struct ReviewLine {
 }
 
 /// The grant toggles in key order: `1` is the first.
-const SCOPES: [Scope; 7] = [
-    Scope::TerminalRead,
-    Scope::EditorContextRead,
-    Scope::BufferEdit,
-    Scope::TerminalPropose,
-    Scope::TerminalInsert,
-    Scope::AgentChannel,
-    Scope::ChannelNudge,
-];
+const PERMISSIONS: [Permission; 2] = [Permission::Read, Permission::Write];
 
-/// The scope another one needs. Turning a scope on turns on what it needs,
-/// and turning one off turns off what needs it, so a grant is always valid.
-fn prerequisite(scope: Scope) -> Option<Scope> {
-    match scope {
-        Scope::BufferEdit => Some(Scope::EditorContextRead),
-        Scope::TerminalPropose => Some(Scope::TerminalRead),
-        Scope::TerminalInsert => Some(Scope::TerminalPropose),
-        Scope::ChannelNudge => Some(Scope::AgentChannel),
-        Scope::TerminalRead | Scope::EditorContextRead | Scope::AgentChannel => None,
-    }
-}
-
-fn toggle(scopes: &mut BTreeSet<Scope>, scope: Scope) {
-    if scopes.remove(&scope) {
-        while let Some(orphan) = scopes
-            .iter()
-            .copied()
-            .find(|s| prerequisite(*s).is_some_and(|needed| !scopes.contains(&needed)))
-        {
-            scopes.remove(&orphan);
+/// Turning Write on turns Read on, and turning Read off turns Write off, so
+/// a grant is always valid.
+fn toggle(permissions: &mut BTreeSet<Permission>, permission: Permission) {
+    if permissions.remove(&permission) {
+        if permission == Permission::Read {
+            permissions.remove(&Permission::Write);
         }
     } else {
-        let mut next = Some(scope);
-        while let Some(scope) = next {
-            scopes.insert(scope);
-            next = prerequisite(scope);
-        }
+        permissions.insert(permission);
+        permissions.insert(Permission::Read);
     }
 }
 
@@ -226,9 +162,9 @@ const LABEL_WIDTH: usize = 11;
 /// fits the overlay inside the smallest editor area that may approve.
 const VALUE_WIDTH: usize = 64;
 
-/// Literal visible spelling of proposed text, where every character must be
-/// unambiguous: spaces are dots, backslashes double and anything outside
-/// printable ASCII is escaped.
+/// Literal visible spelling of text an agent supplied, where every character
+/// must be unambiguous: spaces are dots, backslashes double and anything
+/// outside printable ASCII is escaped.
 pub(crate) fn visible(text: &str) -> String {
     let mut result = String::new();
     for character in text.chars() {
@@ -245,8 +181,7 @@ pub(crate) fn visible(text: &str) -> String {
     result
 }
 
-/// Readable spelling of a label that describes the proposal rather than
-/// being part of it, such as a terminal title or a path. Printable Unicode
+/// Readable spelling of a label such as a terminal title or a path. Printable Unicode
 /// and plain spaces stay as they are; anything that draws nothing or could
 /// pass for a space is escaped, so nothing in a label can hide.
 pub(crate) fn label(text: &str) -> String {
@@ -268,12 +203,11 @@ pub(crate) fn label(text: &str) -> String {
 }
 
 /// Split a value into rows no wider than `width` cells. Prose breaks between
-/// words; proposed text breaks anywhere, since every character in it is
-/// already visible and none may be dropped at a break.
-fn wrap(value: &str, tone: Tone, width: usize) -> Vec<String> {
+/// words; `anywhere` breaks a value that has no word boundaries to keep.
+fn wrap(value: &str, anywhere: bool, width: usize) -> Vec<String> {
     let mut rows = vec![String::new()];
     let mut used = 0;
-    let words: Vec<&str> = if tone == Tone::Literal {
+    let words: Vec<&str> = if anywhere {
         vec![value]
     } else {
         value.split(' ').collect()
@@ -303,29 +237,11 @@ fn wrap(value: &str, tone: Tone, width: usize) -> Vec<String> {
 }
 
 impl Surface {
-    pub fn new(
-        kind: Kind,
-        title: String,
-        explanation: Vec<Detail>,
-        text: &str,
-        attachment: u64,
-    ) -> Self {
-        let mut details = Vec::new();
-        if !text.is_empty() {
-            details.push(Detail {
-                label: "Text",
-                value: visible(text),
-                tone: Tone::Literal,
-            });
-            details.push(Detail::note(
-                "Spaces show as ·; backslashes and non-ASCII are escaped.",
-            ));
-        }
-        details.extend(explanation);
+    pub fn new(grant: Grant, title: String, details: Vec<Detail>, attachment: u64) -> Self {
         let lines: Vec<ReviewLine> = details
             .iter()
             .flat_map(|detail| {
-                wrap(&detail.value, detail.tone, VALUE_WIDTH)
+                wrap(&detail.value, false, VALUE_WIDTH)
                     .into_iter()
                     .enumerate()
                     .map(move |(index, value)| ReviewLine {
@@ -335,8 +251,8 @@ impl Surface {
                     })
             })
             .collect();
-        let mut surface = Self {
-            kind,
+        Self {
+            grant,
             title,
             seen: vec![false; lines.len()],
             lines,
@@ -346,52 +262,13 @@ impl Surface {
             presented_top: None,
             prepared: VecDeque::new(),
             pending_keys: KeySequence::default(),
-            details,
-            wrap_width: VALUE_WIDTH,
-        };
-        surface.reflow(76);
-        surface
-    }
-    fn reflow(&mut self, width: usize) {
-        if self.proposal().is_none() || self.wrap_width == width {
-            return;
         }
-        self.wrap_width = width;
-        self.lines = self
-            .details
-            .iter()
-            .flat_map(|detail| {
-                let value = if detail.label.is_empty() || detail.label == "Text" {
-                    detail.value.clone()
-                } else {
-                    format!("{}: {}", detail.label, detail.value)
-                };
-                wrap(&value, detail.tone, width)
-                    .into_iter()
-                    .map(move |value| ReviewLine {
-                        label: "",
-                        value,
-                        tone: detail.tone,
-                    })
-            })
-            .collect();
-        // Rewrapping changes which characters each row contains. Only newly
-        // presented frames may acknowledge those rows.
-        self.seen = vec![false; self.lines.len()];
-        self.top = 0;
-        self.presented_top = None;
-        self.prepared.clear();
     }
-    /// Body rows after the border, position, choices and two-row message.
-    /// Proposals also pin a two-row destination summary; grants list scopes.
-    /// `height` is the actual dialog height, not the surrounding editor.
+    /// Body rows after the border, position, choices, two-row message and
+    /// the permission toggles. `height` is the actual dialog height, not the
+    /// surrounding editor.
     pub(crate) fn view_rows(&self, height: u16) -> usize {
-        let chrome = match self.kind {
-            Kind::Grant { .. } => 16,
-            Kind::Proposal { .. } => 10,
-            Kind::ChannelBinding(_) => 8,
-        };
-        usize::from(height).saturating_sub(chrome).max(1)
+        usize::from(height).saturating_sub(11).max(1)
     }
     fn last_top(&self, rows: usize) -> usize {
         self.lines.len().saturating_sub(rows)
@@ -406,12 +283,6 @@ impl Surface {
     }
     pub(crate) fn fully_reviewed(&self) -> bool {
         self.seen.iter().all(|seen| *seen)
-    }
-    pub fn proposal(&self) -> Option<&str> {
-        match &self.kind {
-            Kind::Proposal { id } => Some(id),
-            _ => None,
-        }
     }
 }
 
@@ -433,9 +304,7 @@ impl App {
         self.context_ui.width = width;
         self.context_ui.height = height;
         self.context_ui.overlay_height = Some(overlay_height);
-        let review_area = self.context_ui.review_area();
         if let Some(surface) = self.context_ui.surface.as_mut() {
-            surface.reflow(usize::from(review_area.width.saturating_sub(4)).max(1));
             let area = (width, height, overlay_height);
             // A frame laid out for an area the window no longer has may be
             // painted clipped, so once the area changes only frames laid out
@@ -448,11 +317,7 @@ impl App {
                 surface.prepared.clear();
                 surface.presented_top = None;
             }
-            let rows = surface.view_rows(if surface.proposal().is_some() {
-                review_area.height
-            } else {
-                overlay_height
-            });
+            let rows = surface.view_rows(overlay_height);
             surface.scroll_to(surface.top, rows);
             let shown = rows.min(surface.lines.len() - surface.top);
             surface.prepared.push_back(PreparedFrame {
@@ -534,14 +399,6 @@ impl App {
         }
     }
 
-    pub(super) fn request_channel_binding(&mut self, binding: String) {
-        if self.recording_macro.is_some() || self.macro_replay.is_some() {
-            self.status("Terminal binding requires native input outside a macro");
-            return;
-        }
-        self.context_ui.requested_binding = Some(binding);
-    }
-
     pub(super) fn request_context_access(&mut self, identity: Option<String>) {
         if self.recording_macro.is_some() || self.macro_replay.is_some() {
             self.status("Context access requires native input outside a macro");
@@ -563,27 +420,7 @@ impl App {
         {
             return;
         }
-        let rows = surface.view_rows(self.context_ui.surface_height(&surface));
-        if let InputEvent::Pointer(pointer) = input {
-            let area = self.context_ui.review_area();
-            let in_body = pointer.column > area.x
-                && pointer.column < area.x.saturating_add(area.width).saturating_sub(1)
-                && pointer.row >= area.y.saturating_add(3)
-                && usize::from(pointer.row.saturating_sub(area.y + 3)) < rows;
-            if surface.proposal().is_some() && in_body {
-                match pointer.kind {
-                    PointerEventKind::ScrollUp => {
-                        surface.scroll_to(surface.top.saturating_sub(3), rows)
-                    }
-                    PointerEventKind::ScrollDown => {
-                        surface.scroll_to(surface.top.saturating_add(3), rows)
-                    }
-                    _ => {}
-                }
-            }
-            self.context_ui.surface = Some(surface);
-            return;
-        }
+        let rows = surface.view_rows(self.context_ui.view_height());
         let InputEvent::Key(key) = input else {
             self.context_ui.surface = Some(surface);
             return;
@@ -649,38 +486,25 @@ impl App {
             return;
         }
         match key.code {
-            KeyCode::Escape => {
-                if let Kind::Proposal { id } = surface.kind {
-                    self.context_ui.decision = Some(Decision::Proposal {
-                        id,
-                        accepted: false,
-                    });
-                }
-                return;
-            }
+            KeyCode::Escape => return,
             KeyCode::Tab => surface.accept_selected = !surface.accept_selected,
             KeyCode::Up => surface.accept_selected = false,
             KeyCode::Down => surface.accept_selected = true,
             KeyCode::Home => surface.scroll_to(0, rows),
             KeyCode::End => surface.scroll_to(usize::MAX, rows),
             KeyCode::Char('x') => {
-                if let Kind::Grant { identity, .. } = surface.kind {
-                    self.context_ui.decision = Some(Decision::Revoke(identity));
-                    return;
-                }
+                self.context_ui.decision = Some(Decision::Revoke(surface.grant.identity));
+                return;
             }
             KeyCode::Char('r') => {
-                if let Kind::Grant { remember, .. } = &mut surface.kind {
-                    *remember = !*remember;
-                }
+                surface.grant.remember = !surface.grant.remember;
             }
             KeyCode::Char('n') => {
-                if let Kind::Grant { identity, .. } = &surface.kind
-                    && let Some(index) = self
-                        .context_ui
-                        .identities
-                        .iter()
-                        .position(|id| id == identity)
+                if let Some(index) = self
+                    .context_ui
+                    .identities
+                    .iter()
+                    .position(|id| *id == surface.grant.identity)
                 {
                     self.context_ui.requested_identity = Some(
                         self.context_ui.identities[(index + 1) % self.context_ui.identities.len()]
@@ -689,10 +513,11 @@ impl App {
                     return;
                 }
             }
-            KeyCode::Char(character @ '1'..='7') => {
-                if let Kind::Grant { scopes, .. } = &mut surface.kind {
-                    toggle(scopes, SCOPES[character as usize - '1' as usize]);
-                }
+            KeyCode::Char(character @ '1'..='2') => {
+                toggle(
+                    &mut surface.grant.permissions,
+                    PERMISSIONS[character as usize - '1' as usize],
+                );
             }
             KeyCode::Enter if approval => {
                 let accepted = surface.accept_selected
@@ -703,22 +528,18 @@ impl App {
                     self.context_ui.surface = Some(surface);
                     return;
                 }
-                self.context_ui.decision = match surface.kind {
-                    Kind::Grant {
+                if accepted {
+                    let Grant {
                         identity,
-                        scopes,
+                        permissions,
                         remember,
-                    } if accepted => Some(Decision::Grant {
+                    } = surface.grant;
+                    self.context_ui.decision = Some(Decision::Grant {
                         identity,
-                        scopes,
+                        permissions,
                         remember,
-                    }),
-                    Kind::Proposal { id } => Some(Decision::Proposal { id, accepted }),
-                    Kind::ChannelBinding(binding) if accepted => {
-                        Some(Decision::ChannelBinding(binding))
-                    }
-                    _ => None,
-                };
+                    });
+                }
                 return;
             }
             _ => {}
@@ -729,80 +550,55 @@ impl App {
     pub(crate) fn context_overlay(&self) -> Option<OverlaySnapshot> {
         let surface = self.context_ui.surface.as_ref()?;
         let mut rows = Vec::new();
-        if let Kind::Grant {
-            scopes, remember, ..
-        } = &surface.kind
-        {
-            for (index, scope) in SCOPES.iter().enumerate() {
-                rows.push(review_row(
-                    format!(
-                        "{} [{}] {}",
-                        index + 1,
-                        if scopes.contains(scope) { "x" } else { " " },
-                        match scope {
-                            Scope::TerminalRead => "Read terminal output",
-                            Scope::EditorContextRead => "Read buffers and selections",
-                            Scope::BufferEdit => "Edit and append to buffers",
-                            Scope::TerminalPropose => "Propose terminal text for review",
-                            Scope::TerminalInsert =>
-                                "Skip review: insert proposals directly (no Enter)",
-                            Scope::AgentChannel => "Join the agent channel: read and post messages",
-                            Scope::ChannelNudge => "Accept channel nudges: a fixed line and Enter",
-                        }
-                    ),
-                    Vec::new(),
-                    vec![0],
-                ));
-            }
+        let Grant {
+            permissions,
+            remember,
+            ..
+        } = &surface.grant;
+        for (index, permission) in PERMISSIONS.iter().enumerate() {
             rows.push(review_row(
                 format!(
-                    "r [{}] Remember for this workspace; x Revoke; n Next identity",
-                    if *remember { "x" } else { " " }
+                    "{} [{}] {}",
+                    index + 1,
+                    if permissions.contains(permission) {
+                        "x"
+                    } else {
+                        " "
+                    },
+                    match permission {
+                        Permission::Read =>
+                            "Read: buffers, terminals and history, the agent channel",
+                        Permission::Write => "Write: edit buffers, type in terminals, press Enter",
+                    }
                 ),
                 Vec::new(),
-                vec![0, 35, 45],
-            ));
-            rows.push(review_row(String::new(), Vec::new(), Vec::new()));
-        }
-        if surface.proposal().is_some() {
-            let target = surface
-                .details
-                .iter()
-                .find(|detail| detail.label == "Terminal")
-                .map(|detail| detail.value.as_str())
-                .unwrap_or("Terminal");
-            rows.push(review_row(format!("To: {target}"), Vec::new(), Vec::new()));
-            rows.push(review_row(
-                "Inserts text without pressing Enter.".into(),
-                Vec::new(),
-                Vec::new(),
+                vec![0],
             ));
         }
-        let view_rows = surface.view_rows(self.context_ui.surface_height(surface));
+        rows.push(review_row(
+            format!(
+                "r [{}] Remember for this workspace; x Revoke; n Next identity",
+                if *remember { "x" } else { " " }
+            ),
+            Vec::new(),
+            vec![0, 35, 45],
+        ));
+        rows.push(review_row(String::new(), Vec::new(), Vec::new()));
+        let view_rows = surface.view_rows(self.context_ui.view_height());
         let top = surface.top.min(surface.last_top(view_rows));
         for line in surface.lines.iter().skip(top).take(view_rows) {
-            let label = if surface.proposal().is_some() {
-                String::new()
-            } else {
-                format!("{:<LABEL_WIDTH$}", line.label)
-            };
+            let label = format!("{:<LABEL_WIDTH$}", line.label);
             let label_end = label.chars().count();
             let end = label_end + line.value.chars().count();
-            let (muted, emphasis) = match line.tone {
-                Tone::Value => ((0..label_end).collect(), Vec::new()),
-                Tone::Literal => ((0..label_end).collect(), (label_end..end).collect()),
-                Tone::Note => ((0..end).collect(), Vec::new()),
+            let muted = match line.tone {
+                Tone::Value => (0..label_end).collect(),
+                Tone::Note => (0..end).collect(),
             };
             rows.push(review_row(
                 format!("{label}{}", line.value),
                 muted,
-                emphasis,
+                Vec::new(),
             ));
-        }
-        if surface.proposal().is_some() {
-            for _ in surface.lines.len().saturating_sub(top).min(view_rows)..view_rows {
-                rows.push(review_row(String::new(), Vec::new(), Vec::new()));
-            }
         }
         let total = surface.lines.len();
         let scrollable = total > view_rows;
@@ -816,17 +612,13 @@ impl App {
             let end = text.chars().count();
             rows.push(review_row(text, (0..end).collect(), Vec::new()));
         }
-        if !scrollable && surface.proposal().is_some() {
-            rows.push(review_row(String::new(), Vec::new(), Vec::new()));
-        }
         rows.push(review_row(String::new(), Vec::new(), Vec::new()));
-        let action = match surface.kind {
-            Kind::Grant { .. } => "Apply permissions",
-            Kind::Proposal { .. } => "Insert text (no Enter)",
-            Kind::ChannelBinding(_) => "Apply terminal binding",
-        };
         rows.push(review_row("Reject".into(), Vec::new(), Vec::new()));
-        rows.push(review_row(action.into(), Vec::new(), Vec::new()));
+        rows.push(review_row(
+            "Apply permissions".into(),
+            Vec::new(),
+            Vec::new(),
+        ));
         let selected = rows.len() - if surface.accept_selected { 1 } else { 2 };
         // Say why Enter would not apply the selected action, instead of
         // leaving it to look like an unresponsive key.
@@ -852,11 +644,7 @@ impl App {
             kind: OverlayKind::Confirmation,
             purpose: OverlayPurpose::Confirmation,
             input: OverlayInput::None,
-            layout: if surface.proposal().is_some() {
-                OverlayLayout::ContextReview
-            } else {
-                OverlayLayout::Standard
-            },
+            layout: OverlayLayout::Standard,
             legend: Vec::new(),
             actions,
             title: surface.title.clone(),

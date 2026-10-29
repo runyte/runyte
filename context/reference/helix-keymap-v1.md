@@ -711,14 +711,10 @@ file. Paths are literal and relative to the workspace root unless absolute.
 
 ### Agent context permission command
 
-`:agent-bind <participant> <terminal-number|none>` is a Runyte-specific,
-command-only action for a native terminal-binding review; it adds no default
-binding and uses the existing physical confirmation controls.
-
 `:mcp [identity]` is Runyte-specific and opens native workspace
 permissions for MCP access. `:agent-channel` is Runyte-specific too and opens
 the read-only `[agent channel]` page; it has no default binding either. `:context-access` remains an alias. It adds no
-default editor key binding. Grant and terminal-text confirmation keys are owned by their overlay,
+default editor key binding. Grant confirmation keys are owned by their overlay,
 as described in the UI vocabulary; they do not change the Helix-derived
 selection-first editing keys.
 
@@ -837,13 +833,13 @@ use a later origin rather than finding the global left edge. Unchanged viewport
 checks are cached. Ordinary motions retain the current horizontal scroll while
 the caret fits; vertical scrolling is unchanged.
 
-### Terminal proposal review
+### MCP permission review
 
-The native terminal proposal review keeps Up/Down and Tab/Shift-Tab for the
-Reject/Insert choices regardless of content length. Its scrolling dispatch
-reads the active Normal-mode registry's page, half-page and file-start/end
-commands (`Ctrl-b/f`, `Ctrl-u/d`, `gg`/`ge` by default), without executing other
-editor commands or configured action chains. Home/End remain review aliases;
-mouse wheel input over the review body scrolls three rows. Enter applies the
+The native MCP permission review keeps Up/Down and Tab/Shift-Tab for the
+Reject/Apply permissions choices regardless of content length. Its scrolling
+dispatch reads the active Normal-mode registry's page, half-page and
+file-start/end commands (`Ctrl-b/f`, `Ctrl-u/d`, `gg`/`ge` by default), without
+executing other editor commands or configured action chains. Home/End remain
+review aliases; pointer input neither scrolls nor approves. Enter applies the
 selected choice only through the existing native presentation checks; Escape
-rejects. The footer resolves its motion spellings through the same registry.
+closes without applying. The footer resolves its motion spellings through the same registry.

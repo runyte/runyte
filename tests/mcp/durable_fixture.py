@@ -47,13 +47,13 @@ class DurableFixture:
         self.log = open(self.root / 'host.log', 'wb')
         self.add_identity('trial')
 
-    def add_identity(self, name, scopes=('agent_channel',)):
+    def add_identity(self, name, permissions=('read',)):
         secret = secrets.token_hex(32)
         identity = hashlib.sha256(secret.encode()).hexdigest()
         private_json(self.root / 'ctx' / ('identity-' + name + '.json'), {'name': name, 'credential': secret})
         path = os.fsencode(self.project.resolve())
         key = hashlib.sha256(path + b'\0' + identity.encode()).hexdigest()
-        private_json(self.root / 'ctx' / ('grant-' + key + '.json'), {'root': list(path), 'identity': identity, 'scopes': list(scopes)})
+        private_json(self.root / 'ctx' / ('grant-' + key + '.json'), {'root': list(path), 'identity': identity, 'permissions': list(permissions)})
 
     def profile(self, name):
         path = self.profiles / (name + '.json')

@@ -209,7 +209,8 @@ use crate::workspace::{
 // Version 79 carries the live document-preview theme colour setting.
 // Version 80 carries pane-drop previews and explicit pointer-capture cancellation.
 // Version 81 adds the bounded terminal proposal review layout.
-pub const VERSION: u32 = 81;
+// Version 82 removes that layout with terminal proposals.
+pub const VERSION: u32 = 82;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1568,7 +1569,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 81);
+        assert_eq!(VERSION, 82);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

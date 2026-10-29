@@ -70,11 +70,16 @@ fn grants_round_trip_through_native_private_storage() {
     let (root, storage) = fixture("context-native-records");
     let project = root.join("project").canonicalize().unwrap();
     let identity = storage.identity("agent").unwrap();
-    let scopes = BTreeSet::from([Scope::TerminalRead, Scope::EditorContextRead]);
-    storage.grant(&project, &identity, scopes.clone()).unwrap();
-    assert_eq!(storage.scopes(&project, &identity).unwrap(), scopes);
+    let permissions = BTreeSet::from([Permission::Read, Permission::Write]);
+    storage
+        .grant(&project, &identity, permissions.clone())
+        .unwrap();
+    assert_eq!(
+        storage.permissions(&project, &identity).unwrap(),
+        permissions
+    );
     storage.revoke(&project, &identity).unwrap();
-    assert!(storage.scopes(&project, &identity).unwrap().is_empty());
+    assert!(storage.permissions(&project, &identity).unwrap().is_empty());
 }
 
 #[test]

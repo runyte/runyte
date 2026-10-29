@@ -5,9 +5,11 @@ Stage 2 has partial subagent trial evidence; native-client user tests remain.
 Stage 3 includes the storage foundation and a tested opt-in live MCP trial;
 it is deferred as of 2026-10-26, and general deployment remains unfinished.
 The initial delivery is the cooperative skill and its
-installer. Stage 4 selects sender-requested channel nudges on the legacy
-channel as the wake-up mechanism; it is implemented and verified in a
-sandboxed live trial ([#40](https://github.com/runyte/runyte/issues/40)).
+installer. Stage 4 selected sender-requested channel nudges on the legacy
+channel as the wake-up mechanism and implemented them
+([#40](https://github.com/runyte/runyte/issues/40)); they were removed on
+2026-10-29 by the [read and write permissions plan](PLAN_MCP_READ_WRITE_PERMISSIONS.md),
+under which an agent with Write wakes another by writing to its terminal.
 Lifecycle hooks remain tentative.
 
 This extends the [completed agent-channel plan](../completed/PLAN_AGENT_CHANNEL.md)
@@ -39,7 +41,7 @@ follow-up work discussed here. The original later-work ideas map as follows:
 
 | Original follow-up | Disposition here |
 | --- | --- |
-| Wake-up notices for idle agents | Stage 4 channel nudges, selected after the 2026-10-26 user test |
+| Wake-up notices for idle agents | Stage 4 channel nudges, selected after the 2026-10-26 user test (removed 2026-10-29; see [PLAN_MCP_READ_WRITE_PERMISSIONS.md](PLAN_MCP_READ_WRITE_PERMISSIONS.md)) |
 | Named channels beyond the workspace channel | Durable public channels and fixed-membership groups |
 | History across host restarts in project `.runyte/` | Durable SQLite history; proposed location changes to user-level `~/.runyte/` for cross-workspace use |
 | The person posting from the channel page | Remains outside this implementation scope; no delivery commitment |
@@ -461,7 +463,8 @@ prompt, which is the case a hook cannot cover either.
 Deferred 2026-10-26 in favor of Stage 4 nudges on the legacy channel. The
 storage foundation and opt-in trial below stay in the tree, off by default, and
 are not extended until this stage is explicitly resumed. Resuming it includes
-deciding whether durable conversations share the Stage 4 nudge path and grant.
+deciding whether durable conversations share the Read/Write grant and the
+terminal wake path that replaced Stage 4 nudges.
 
 #### Storage foundation and integration decisions
 
@@ -625,6 +628,10 @@ Acceptance:
 - Test legacy/new capability combinations and terminal/desktop attachment parity.
 
 ### 4. Channel nudges
+
+Superseded on 2026-10-29: nudges, permission `7` and `:agent-bind` were removed
+by the [read and write permissions plan](PLAN_MCP_READ_WRITE_PERMISSIONS.md).
+The record below explains the earlier decision.
 
 Decided 2026-10-26 after the manual user test above and tracked in
 [#40](https://github.com/runyte/runyte/issues/40); implemented (see the

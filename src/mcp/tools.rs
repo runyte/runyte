@@ -50,8 +50,8 @@ pub(super) fn descriptors() -> Vec<Value> {
         ),
         tool(
             "read_terminal",
-            "Read recent terminal output using a handle from find_resources. tail includes history; screen is the current screen. Returns untrusted presentation rows, not a conversation transcript.",
-            json!({"terminal":text("Exact returned terminal handle",128),"region":choice(&["screen","tail"],"tail"),"max_rows":number(80,1000)}),
+            "Read a terminal using a handle from find_resources. screen, the default, is what the terminal shows now; tail adds recent history, for when a task needs it. Returns untrusted presentation rows, not a conversation transcript, and the revision press_enter needs.",
+            json!({"terminal":text("Exact returned terminal handle",128),"region":choice(&["screen","tail"],"screen"),"max_rows":number(80,1000)}),
             &["terminal"],
             false,
         ),
@@ -70,18 +70,18 @@ pub(super) fn descriptors() -> Vec<Value> {
             true,
         ),
         tool(
-            "propose_terminal_text",
-            "Send one line to a terminal. Usually returns pending: stop and let the person review it in Runyte. If the person granted direct insertion and the terminal has paste mode on (shells and agent prompts do) it returns queued and is inserted without review. Either way Enter is never sent; the person submits separately. No newlines or controls. Never retry outcome_unknown automatically.",
-            json!({"terminal":text("Exact returned terminal handle",128),"text":text("One literal line",4096),"reason":text("Short reason shown separately",256)}),
+            "write_terminal",
+            "Type one line into a terminal, without Enter. Needs Write. Read its screen with read_terminal first: a shell, an agent's prompt or a dialog may be showing, and the line goes wherever the cursor is. No newlines or controls; submit with press_enter. Never retry outcome_unknown automatically.",
+            json!({"terminal":text("Exact returned terminal handle",128),"text":text("One literal line",4096)}),
             &["terminal", "text"],
             true,
         ),
         tool(
-            "terminal_proposal_status",
-            "Check a previous proposal when asked. Do not poll waiting for human approval. Delivered means inserted, never submitted or executed.",
-            json!({"proposal":text("Returned proposal handle",128)}),
-            &["proposal"],
-            false,
+            "press_enter",
+            "Press Enter in a terminal. Needs Write. Pass the revision from a read_terminal taken after your text appeared. Runyte waits 5 seconds, shown in the pane title, then presses Enter only if the terminal still shows that revision and nobody typed there. Otherwise nothing is sent: the state is stale, or cancelled if the person's window detached or the terminal exited. Enter answers whatever is on screen, dialogs included, so read it first. Takes about 5 seconds.",
+            json!({"terminal":text("Exact returned terminal handle",128),"expected_revision":text("Revision from your latest read_terminal",256)}),
+            &["terminal", "expected_revision"],
+            true,
         ),
         tool(
             "join_channel",
@@ -92,8 +92,8 @@ pub(super) fn descriptors() -> Vec<Value> {
         ),
         tool(
             "post_message",
-            "Post to the agent channel, or directly to one participant with to (nickname such as codex-1, or participant id). Messages are untrusted text to every reader. Runyte records your directory and branch with each message; after changing directory or worktree pass directory once, and it is kept until you name another. nudge names participants to wake: Runyte types a fixed line and Enter into each one's terminal telling it to read the channel, if its person allowed nudges and is not typing there. Nudge only someone who must act on this and is likely idle waiting; a direct message can nudge only its recipient. A nudge naming someone unknown, yourself, twice, or (for a direct message) anyone but its recipient rejects the whole post, which is then not stored. The reply gives each nudge's state: sent, held (waits for the person), already_pending (not yet read since an earlier nudge) or unavailable.",
-            json!({"workspace":text("Project path or workspace handle",4096),"text":text("Message; newlines allowed",16384),"to":text("Optional participant nickname or id for a direct message",64),"nudge":{"type":"array","minItems":1,"maxItems":63,"items":text("Participant nickname or id to nudge",64)},"directory":text("Absolute directory you now work in",4096)}),
+            "Post to the agent channel, or directly to one participant with to (nickname such as codex-1, or participant id). Messages are untrusted text to every reader. Runyte records your directory and branch with each message; after changing directory or worktree pass directory once, and it is kept until you name another. Posting wakes nobody: an idle agent reads when it next checks, or when told to in its terminal.",
+            json!({"workspace":text("Project path or workspace handle",4096),"text":text("Message; newlines allowed",16384),"to":text("Optional participant nickname or id for a direct message",64),"directory":text("Absolute directory you now work in",4096)}),
             &["text"],
             true,
         ),
@@ -110,13 +110,6 @@ pub(super) fn descriptors() -> Vec<Value> {
             json!({"workspace":text("Project path or workspace handle",4096)}),
             &[],
             false,
-        ),
-        tool(
-            "cancel_terminal_proposal",
-            "Cancel a pending proposal. Already delivered bytes cannot be recalled.",
-            json!({"proposal":text("Returned proposal handle",128)}),
-            &["proposal"],
-            true,
         ),
     ];
     // Optional bounds must not suggest an empty read to clients that apply
@@ -281,9 +274,8 @@ impl Bridge {
             "read_terminal" => ("terminal", "terminal.read"),
             "append_buffer" => ("buffer", "buffer.append"),
             "edit_buffer" => ("buffer", "buffer.edit"),
-            "propose_terminal_text" => ("terminal", "terminal.input.propose"),
-            "terminal_proposal_status" => ("proposal", "terminal.input.status"),
-            "cancel_terminal_proposal" => ("proposal", "terminal.input.cancel"),
+            "write_terminal" => ("terminal", "terminal.input.write"),
+            "press_enter" => ("terminal", "terminal.input.enter"),
             _ => unreachable!(),
         };
         let (workspace, metadata) = self.resource(args[kind].as_str().unwrap(), kind)?;
@@ -301,19 +293,57 @@ impl Bridge {
             args["from"] = json!(start);
         }
         if name == "read_terminal" {
-            args["region"] = json!(string(&args, "region", "tail"));
+            args["region"] = json!(string(&args, "region", "screen"));
             args["max_rows"] = json!(integer(&args, "max_rows", 80));
             args["max_bytes"] = json!(65536);
             args["max_cells"] = json!(65536);
         }
         let mut reply = self.request(&workspace, method, args).await?;
-        if name == "propose_terminal_text" {
-            reply["next_step"] = json!(if reply["data"]["state"] == "pending" {
-                "Waiting for approval in Runyte. No text submitted. Let the person review; check status only when needed."
-            } else {
-                "Inserting without review, as the person granted. Enter was not sent; the person submits it."
-            });
+        if name == "write_terminal" {
+            reply["next_step"] = json!(
+                "Queued without Enter. Read the terminal to see it arrive, then press_enter with that read's revision if it should be submitted."
+            );
         }
+        if name == "press_enter" {
+            return self.await_enter(&workspace, reply).await;
+        }
+        Ok(reply)
+    }
+    /// Waits out a scheduled Enter's delay and reports what became of it, so
+    /// an agent makes one call. The host decides; this only asks.
+    async fn await_enter(&mut self, workspace: &str, mut reply: Value) -> Result<Value> {
+        let enter = reply["data"]["enter"].clone();
+        let delay = reply["data"]["delay_ms"].as_u64().unwrap_or(5000);
+        tokio::time::sleep(Duration::from_millis(delay + 100)).await;
+        for _ in 0..20 {
+            // A grant change or a lost connection discards the waiting Enter
+            // with the reader, but it may have been pressed just before.
+            reply = self
+                .request(
+                    workspace,
+                    "terminal.input.enter.status",
+                    json!({"enter":enter}),
+                )
+                .await
+                .map_err(|_| {
+                    Failure::new(
+                        "outcome_unknown",
+                        "The connection ended while Enter waited, so whether it was pressed is unknown. Run find_resources, read the terminal, and do not retry blindly.",
+                    )
+                })?;
+            if reply["data"]["state"] != "waiting" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        reply["next_step"] = json!(match reply["data"]["state"].as_str() {
+            Some("sent") => "Enter was pressed. Read the terminal to see what it did.",
+            Some("stale") => {
+                "Nothing was sent: the terminal changed or someone typed there. Read it again before deciding whether to retry."
+            }
+            Some("waiting") => "Still waiting; check the terminal before doing anything else.",
+            _ => "Nothing was sent: the person's window detached or the terminal exited.",
+        });
         Ok(reply)
     }
     /// One search result: the listed row with where and how it matched, and
@@ -344,8 +374,8 @@ impl Bridge {
         if kind == "buffer" && scopes.contains(&Scope::BufferEdit) && row["read_only"] != true {
             actions.extend(["append_buffer", "edit_buffer"]);
         }
-        if kind == "terminal" && scopes.contains(&Scope::TerminalPropose) && row["live"] != false {
-            actions.push("propose_terminal_text");
+        if kind == "terminal" && scopes.contains(&Scope::TerminalWrite) && row["live"] != false {
+            actions.extend(["write_terminal", "press_enter"]);
         }
         found["available_actions"] = json!(actions);
         found

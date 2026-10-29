@@ -326,7 +326,6 @@ pub enum OverlayInput {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OverlayLayout {
     GitMergeReview,
-    ContextReview,
     Standard,
     Preview,
     /// A single typed setting value.
@@ -2238,6 +2237,11 @@ fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Optio
         0 => {}
         1 => name.push_str(" [1 unread]"),
         count => name.push_str(&format!(" [{count} unread]")),
+    }
+    // An agent asked for Enter here; typing anything before it is pressed
+    // drops it.
+    if session.agent_enter_pending() {
+        name.push_str(" [Enter pending]");
     }
     if !session.live() {
         name.push_str(match session.exit_code() {

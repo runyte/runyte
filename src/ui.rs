@@ -5289,9 +5289,6 @@ fn overlay_action_hints(overlay: &OverlaySnapshot) -> String {
 /// so size them from that content instead of using the generic list popup's
 /// percentage-based geometry.
 fn confirmation_overlay_area(area: Rect, overlay: &OverlaySnapshot) -> Rect {
-    if overlay.layout == OverlayLayout::ContextReview {
-        return crate::context_review_layout::area(area);
-    }
     const MIN_WIDTH: u16 = 28;
     const MAX_WIDTH: u16 = 88;
 
@@ -9572,118 +9569,70 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
 
-    #[test]
-    fn terminal_review_uses_proportional_geometry_and_keeps_choices_visible() {
-        use crate::app::context_access::{Detail, Kind, Surface};
-        let mut app = App::new(Config::default(), None).unwrap();
+    /// A grant review as the host opens it, with its longest notes.
+    fn grant_review(app: &mut App) {
+        use crate::app::context_access::{Detail, Grant, Surface, label};
+        let details = vec![
+            Detail::value("Identity", label("agent")),
+            Detail::value("Workspace", label("/home/user/code/runyte")),
+            Detail::value(
+                "Status",
+                "Not granted; apply the selected permissions below".into(),
+            ),
+            Detail::value("Connected", "0 reader(s) for this identity".into()),
+            Detail::note(
+                "Use the same --identity in runyte mcp. Agent start order is flexible. Changes apply at once to running agents.",
+            ),
+            Detail::note(
+                "Read covers every buffer and terminal here, unsaved text and terminal history included, and the agent channel.",
+            ),
+            Detail::note(
+                "Write lets agents edit buffers and type into any terminal here, shells and other agents' prompts included, and press Enter there. Enter waits 5 seconds, shown in the pane title, and is dropped if anything appears or is typed meanwhile. Grant it for a job, then turn it off.",
+            ),
+            Detail::excerpt("Last call", &"agent: terminal.read t:1 ".repeat(8)),
+        ];
         app.context_ui.surface = Some(Surface::new(
-            Kind::Proposal { id: "p".into() },
-            "Review terminal text".into(),
-            vec![Detail::value("Terminal", "Claude (#2)".into())],
-            &format!("{}END-MARKER", "long text ".repeat(800)),
+            Grant {
+                identity: "agent".into(),
+                permissions: [crate::workspace::context::wire::Permission::Read].into(),
+                remember: false,
+            },
+            "MCP permissions".into(),
+            details,
             app.plugins.attachment_generation,
         ));
-        app.note_context_frame(200, 80, 1);
+    }
+
+    #[test]
+    fn the_grant_review_shows_both_permissions_and_its_choices_in_the_smallest_editor() {
+        let mut app = App::new(Config::default(), None).unwrap();
+        grant_review(&mut app);
+        app.note_context_frame(80, 22, 1);
         app.note_context_presented(1);
         let overlay = app.context_overlay().unwrap();
-        let area = confirmation_overlay_area(
-            Rect {
-                x: 0,
-                y: 0,
-                width: 200,
-                height: 80,
-            },
-            &overlay,
-        );
-        assert_eq!((area.x, area.y, area.width, area.height), (20, 16, 160, 48));
-        let before = rendered(&mut app, 200, 82);
-        app.handle_input(crate::input::InputEvent::Key(
-            crate::input::KeyStroke::plain(crate::input::KeyCode::End),
-        ))
-        .unwrap();
-        app.note_context_frame(200, 80, 2);
-        app.note_context_presented(2);
-        let after = rendered(&mut app, 200, 82);
-        assert!(!before.contains("END-MARKER"));
-        assert!(after.contains("END-MARKER"));
-        for label in ["To: Claude (#2)", "Reject", "Insert text (no Enter)"] {
-            let row = |screen: &str| {
-                screen
-                    .find(label)
-                    .map(|offset| screen[..offset].chars().count() / 200)
-            };
-            assert!(row(&before).is_some(), "{label}");
-            assert_eq!(row(&before), row(&after), "{label} stays fixed");
-        }
-    }
-
-    #[test]
-    fn terminal_text_review_fits_whole_in_the_smallest_approving_editor() {
-        use crate::app::context_access::{Detail, Kind, Surface, label, visible};
-        let mut app = App::new(Config::default(), None).unwrap();
-        let mut explanation = vec![
-            Detail::value("Agent", visible("claude")),
-            Detail::value("Terminal", format!("{} (#1)", label("\u{25d1} shell"))),
-            Detail::value("Workspace", label("/home/user/code/runyte")),
-            Detail::value("Reason", format!("{} (unverified)", label("say hello"))),
-            Detail::note("Inserted at the input position without Enter; it may still act."),
-        ];
-        explanation.extend((0..3).map(|_| Detail::excerpt("", &"─".repeat(126))));
-        explanation.push(Detail::note(
-            "Recent output does not show whether the input line is empty.",
-        ));
-        app.context_ui.surface = Some(Surface::new(
-            Kind::Proposal { id: "p".into() },
-            "Review terminal text".into(),
-            explanation,
-            "Hello to myself",
-            app.plugins.attachment_generation,
-        ));
-        app.context_ui.width = 80;
-        app.context_ui.height = 22;
-        app.context_ui.surface.as_mut().unwrap().accept_selected = true;
-        let overlay = app.context_overlay().unwrap();
-        let area = confirmation_overlay_area(
-            Rect {
-                x: 0,
-                y: 0,
-                width: 80,
-                height: 22,
-            },
-            &overlay,
-        );
-        assert!(
-            usize::from(area.height) >= overlay.rows.len() + 2,
-            "every row and the border: {area:?}"
-        );
-
+        let labels = overlay
+            .rows
+            .iter()
+            .map(|row| row.label.as_str())
+            .collect::<Vec<_>>();
+        assert!(labels[0].starts_with("1 [x] Read"), "{labels:?}");
+        assert!(labels[1].starts_with("2 [ ] Write"), "{labels:?}");
+        assert!(labels.contains(&"Apply permissions"));
         let screen = rendered(&mut app, 80, 24);
-        for row in &overlay.rows {
-            assert!(
-                screen.contains(row.label.as_str()),
-                "{:?} in {screen:?}",
-                row.label
-            );
+        for label in ["1 [x] Read", "2 [ ] Write", "Reject", "Apply permissions"] {
+            assert!(screen.contains(label), "{label} in {screen:?}");
         }
     }
 
     #[test]
-    fn a_scrolling_review_with_its_refusal_fits_beside_the_session_strip() {
-        use crate::app::context_access::{Kind, Surface};
+    fn a_scrolling_grant_review_with_its_refusal_fits_beside_the_session_strip() {
         let mut app = App::new(Config::default(), None).unwrap();
-        app.context_ui.surface = Some(Surface::new(
-            Kind::Proposal { id: "p".into() },
-            "Review terminal text".into(),
-            Vec::new(),
-            &"x".repeat(64 * 40),
-            app.plugins.attachment_generation,
-        ));
+        grant_review(&mut app);
         // 80 x 22 editor area, one row of it taken by the session strip.
         app.note_context_frame_in(80, 22, 21, 1);
         app.note_context_presented(1);
         app.context_ui.surface.as_mut().unwrap().accept_selected = true;
         let overlay = app.context_overlay().unwrap();
-        assert!(overlay.message.is_some(), "the refusal is showing");
         let area = confirmation_overlay_area(
             Rect {
                 x: 0,
@@ -9694,8 +9643,8 @@ mod tests {
             &overlay,
         );
         assert!(
-            usize::from(area.height) >= overlay.rows.len() + 3,
-            "every row, the refusal and the border: {area:?}"
+            usize::from(area.height) >= overlay.rows.len() + 2,
+            "every row and the border: {area:?}"
         );
         let screen = rendered(&mut app, 80, 23);
         for row in &overlay.rows {

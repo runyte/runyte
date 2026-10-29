@@ -48,7 +48,7 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new(label: &str, scopes: BTreeSet<Scope>) -> Self {
+    fn new(label: &str, permissions: BTreeSet<Permission>) -> Self {
         let root = TestRuntimeRoot::new(label).unwrap();
         let project = root.path().join("project");
         std::fs::create_dir(&project).unwrap();
@@ -74,7 +74,7 @@ impl Fixture {
             .unwrap();
         host.context
             .grants
-            .insert(identity.fingerprint(), (identity.clone(), scopes));
+            .insert(identity.fingerprint(), (identity.clone(), permissions));
         host.context_enable().unwrap();
         Self {
             environment,
@@ -241,10 +241,7 @@ fn compiled_context_client() {
 async fn compiled_native_client_authenticates_reads_and_exits_before_shutdown() {
     use std::os::windows::process::CommandExt;
 
-    let mut fixture = Fixture::new(
-        "context-host-compiled-client",
-        [Scope::EditorContextRead].into(),
-    );
+    let mut fixture = Fixture::new("context-host-compiled-client", [Permission::Read].into());
     let registration = fixture.host.context.registration.clone().unwrap();
     let output = fixture._root.path().join("compiled-client-output");
     let stdout = std::fs::File::create(&output).unwrap();
@@ -283,10 +280,7 @@ async fn compiled_native_client_authenticates_reads_and_exits_before_shutdown() 
 
 #[tokio::test]
 async fn shutdown_joins_a_native_connection_with_a_queued_host_frame() {
-    let mut fixture = Fixture::new(
-        "context-host-queued-shutdown",
-        [Scope::EditorContextRead].into(),
-    );
+    let mut fixture = Fixture::new("context-host-queued-shutdown", [Permission::Read].into());
     let mut client = fixture.connect().await;
     let mut authentication = serde_json::to_vec(
         &json!({"type":"authenticate","credential":fixture.identity.credential()}),
@@ -308,10 +302,7 @@ async fn shutdown_joins_a_native_connection_with_a_queued_host_frame() {
 
 #[tokio::test]
 async fn real_native_clients_enforce_credentials_and_requested_read_scopes() {
-    let mut fixture = Fixture::new(
-        "context-host-native-auth",
-        [Scope::TerminalRead, Scope::EditorContextRead].into(),
-    );
+    let mut fixture = Fixture::new("context-host-native-auth", [Permission::Read].into());
     let storage = fixture.host.context.storage.as_ref().unwrap().clone();
     assert_eq!(
         storage.discover(&fixture.environment, false).unwrap().len(),
@@ -432,7 +423,7 @@ async fn real_native_clients_enforce_credentials_and_requested_read_scopes() {
 async fn native_buffer_reads_and_edits_are_unicode_exact_revision_checked_and_atomic() {
     let mut fixture = Fixture::new(
         "context-host-native-buffer-edit",
-        [Scope::EditorContextRead, Scope::BufferEdit].into(),
+        [Permission::Read, Permission::Write].into(),
     );
     fixture
         .host
@@ -559,7 +550,7 @@ async fn hosts_connections_and_reconnects_keep_native_handles_separate() {
         identity.fingerprint(),
         (
             identity.clone(),
-            [Scope::TerminalRead, Scope::TerminalPropose].into(),
+            [Permission::Read, Permission::Write].into(),
         ),
     );
     first.context_enable().unwrap();
@@ -573,7 +564,7 @@ async fn hosts_connections_and_reconnects_keep_native_handles_separate() {
         identity.fingerprint(),
         (
             identity.clone(),
-            [Scope::TerminalRead, Scope::TerminalPropose].into(),
+            [Permission::Read, Permission::Write].into(),
         ),
     );
     second.context_enable().unwrap();
@@ -606,7 +597,7 @@ async fn hosts_connections_and_reconnects_keep_native_handles_separate() {
                 &mut first_events,
                 client,
                 &identity,
-                &["terminal_read", "terminal_propose"],
+                &["terminal_read", "terminal_write"],
             )
             .await["type"],
             "registered"
@@ -618,7 +609,7 @@ async fn hosts_connections_and_reconnects_keep_native_handles_separate() {
             &mut second_events,
             &mut second_client,
             &identity,
-            &["terminal_read", "terminal_propose"],
+            &["terminal_read", "terminal_write"],
         )
         .await["type"],
         "registered"
@@ -640,8 +631,8 @@ async fn hosts_connections_and_reconnects_keep_native_handles_separate() {
         &mut first_events,
         &mut first_a,
         request(
-            "detached-proposal",
-            "terminal.input.propose",
+            "detached-write",
+            "terminal.input.write",
             json!({"terminal":first_handle.clone(),"text":"literal"}),
         ),
     )
@@ -679,7 +670,7 @@ async fn hosts_connections_and_reconnects_keep_native_handles_separate() {
             &mut first_events,
             &mut reconnected,
             &identity,
-            &["terminal_read", "terminal_propose"],
+            &["terminal_read", "terminal_write"],
         )
         .await["type"],
         "registered"
@@ -703,10 +694,7 @@ async fn hosts_connections_and_reconnects_keep_native_handles_separate() {
 
 #[tokio::test]
 async fn revoke_joins_before_regrant_and_stale_events_cannot_replace_authority() {
-    let mut fixture = Fixture::new(
-        "context-host-native-regrant",
-        [Scope::EditorContextRead].into(),
-    );
+    let mut fixture = Fixture::new("context-host-native-regrant", [Permission::Read].into());
     let storage = fixture.host.context.storage.as_ref().unwrap().clone();
     let first_registration = fixture.host.context.registration.clone().unwrap();
     let mut first = fixture.connect().await;
@@ -728,7 +716,7 @@ async fn revoke_joins_before_regrant_and_stale_events_cannot_replace_authority()
     assert!(fixture.host.context.retiring.is_some());
     fixture.host.context.grants.insert(
         fixture.identity.fingerprint(),
-        (fixture.identity.clone(), [Scope::EditorContextRead].into()),
+        (fixture.identity.clone(), [Permission::Read].into()),
     );
     fixture.host.context_enable().unwrap();
     assert!(!fixture.host.context_enabled());

@@ -11,7 +11,7 @@ import time
 import unittest
 
 from jsonschema import Draft202012Validator
-from context_client import ContextClient, ContextError, FEATURE, FRAME_BYTES, SCOPES, validate_request
+from context_client import ContextClient, ContextError, FEATURE, FRAME_BYTES, SCOPES, WRITE_FEATURE, validate_request
 
 DIRECTORY = Path(__file__).resolve().parent
 SCHEMA = json.loads((DIRECTORY / 'runyte-context-1.schema.json').read_text())
@@ -53,7 +53,7 @@ class Host:
                     self.send(connection, self.auth_error)
                     return
                 self.send(connection, {'type': 'hello', 'version': 'runyte-1', 'host_version': self.host_version,
-                                       'features': [FEATURE], 'capabilities': list(SCOPES), 'limits': {'line_bytes': FRAME_BYTES},
+                                       'features': [FEATURE, WRITE_FEATURE], 'capabilities': list(SCOPES), 'limits': {'line_bytes': FRAME_BYTES},
                                        'workspace': {'host_incarnation': 'a' * 64}})
                 raw = reader.readline()
                 if not raw:
@@ -112,6 +112,8 @@ class ContextClientTests(unittest.TestCase):
         with Host() as host, self.client(host) as client:
             for method, params in [('buffer.edit', {'buffer': 'b:1', 'expected_revision': 'r:1', 'changes': [{'from': 0, 'to': 0, 'text': 'line\n'}]}),
                                    ('terminal.input', {}), ('terminal.input.approve', {}),
+                                   ('terminal.input.propose', {'terminal': 't:1', 'text': 'ls'}),
+                                   ('terminal.input.write', {'terminal': 't:1', 'text': 'ls'}),
                                    ('terminal.list', {'offset': 0, 'limit': 10, 'submit': True})]:
                 with self.subTest(method=method), self.assertRaises(ContextError):
                     client.request(method, params)
@@ -132,10 +134,11 @@ class ContextClientTests(unittest.TestCase):
             self.assertEqual(client.request('terminal.list', {'offset': 0, 'limit': 1}), {})
 
     def test_uncertain_write_is_never_retried(self):
-        scopes = ('terminal_read', 'terminal_propose')
+        scopes = ('terminal_read', 'terminal_write')
         with Host(lambda *_: False, scopes=scopes) as host, self.client(host, required_scopes=scopes, optional_scopes=()) as client:
+            self.assertEqual(host.frames[1]['optional_features'], [WRITE_FEATURE])
             with self.assertRaises(ContextError) as error:
-                client.request('terminal.input.propose', {'terminal': 't:1', 'text': 'cargo test', 'reason': 'Run tests'})
+                client.request('terminal.input.write', {'terminal': 't:1', 'text': 'cargo test'})
             self.assertEqual(error.exception.code, 'outcome_unknown')
             self.assertEqual(len(host.frames), 3)
             self.assertIsNone(client._socket)
@@ -224,10 +227,10 @@ class ContextClientTests(unittest.TestCase):
         def reply(host, connection, request):
             host.send(connection, {'type': 'response', 'id': request['id'], 'result': True})
             return False
-        scopes = ('terminal_read', 'terminal_propose')
+        scopes = ('terminal_read', 'terminal_write')
         with Host(reply, scopes=scopes) as host, self.client(host, required_scopes=scopes, optional_scopes=()) as client:
             with self.assertRaises(ContextError) as error:
-                client.request('terminal.input.propose', {'terminal': 't:1', 'text': 'hello'})
+                client.request('terminal.input.enter', {'terminal': 't:1', 'expected_revision': 'r:3'})
             self.assertEqual(error.exception.code, 'outcome_unknown')
             self.assertEqual(len(host.frames), 3)
             self.assertIsNone(client._socket)
@@ -255,7 +258,7 @@ class ContextSchemaTests(unittest.TestCase):
 
     def test_schema_and_every_request_shape_have_matching_closed_validation(self):
         Draft202012Validator.check_schema(SCHEMA)
-        samples = {'buffer': 'b:1', 'pane': 'p:1', 'terminal': 't:1', 'snapshot': 's:1', 'proposal': 'i:1',
+        samples = {'buffer': 'b:1', 'pane': 'p:1', 'terminal': 't:1', 'snapshot': 's:1', 'enter': 'e:1',
                    'expected_revision': 'r:1', 'from': 0, 'to': 1, 'offset': 0, 'limit': 10,
                    'max_rows': 200, 'max_bytes': 65536, 'max_cells': 65536, 'region': 'tail', 'text': 'cargo test',
                    'changes': [{'from': 0, 'to': 1, 'text': 'multi\nline'}]}
@@ -274,7 +277,7 @@ class ContextSchemaTests(unittest.TestCase):
 
     def test_terminal_controls_and_structural_edit_errors_are_rejected(self):
         for text in ('\n', '\r', '\x1b[201~', '\x7f', '\x85', '\u2028', '\u2029', ''):
-            value = {'type': 'request', 'id': 'c:1', 'method': 'terminal.input.propose', 'params': {'terminal': 't:1', 'text': text}}
+            value = {'type': 'request', 'id': 'c:1', 'method': 'terminal.input.write', 'params': {'terminal': 't:1', 'text': text}}
             self.assertFalse(self.validator.is_valid(value))
             with self.assertRaises(ContextError):
                 validate_request(value['method'], value['params'])
@@ -285,7 +288,7 @@ class ContextSchemaTests(unittest.TestCase):
             validate_request('buffer.edit', {'buffer': 'b:1', 'expected_revision': 'r:1',
                                             'changes': [{'from': 1, 'to': 3, 'text': 'x'}, {'from': 2, 'to': 3, 'text': 'y'}]})
         with self.assertRaises(ContextError):
-            validate_request('terminal.input.propose', {'terminal': 't:1', 'text': '\ud800'})
+            validate_request('terminal.input.write', {'terminal': 't:1', 'text': '\ud800'})
 
     def test_ordinary_plugin_schema_does_not_admit_context_transport_messages(self):
         ordinary = json.loads((DIRECTORY / 'runyte-1.schema.json').read_text())

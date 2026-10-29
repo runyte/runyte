@@ -220,7 +220,6 @@ The working directory starts where Runyte was launched.
 | `:notifications` | `not` | Open retained notification history |
 | `:service-health` | `health` | Inspect syntax, LSP, providers, and helper health |
 | `:log-open` | | Open the diagnostic log owned by the process that holds this workspace |
-| `:agent-bind <participant> <terminal-number\|none>` | | Review a workspace-local agent terminal binding |
 | `:mcp [identity]` | | Review, grant, inspect, or revoke agent context access |
 
 #### Plugin commands

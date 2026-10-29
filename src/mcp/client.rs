@@ -26,8 +26,6 @@ const SUPPORTED_HOSTS: &str = ">=0.3.0, <0.5.0";
 pub(super) const HIDDEN_HELP: &str = "Running Runyte workspaces exist but were registered from a different environment: XDG_RUNTIME_DIR or XDG_CACHE_HOME here differs from the editor's. Configure the MCP client to pass both variables through to runyte mcp and restart it, or rerun with include_hidden=true.";
 struct Connection {
     durable: bool,
-    /// The host takes `nudge` on channel posts.
-    nudge: bool,
     socket: BufReader<Box<dyn Stream>>,
     scopes: BTreeSet<Scope>,
     generation: u64,
@@ -98,7 +96,6 @@ impl Connection {
         let socket = discovery::connect(record).await?;
         let mut connection = Self {
             durable: false,
-            nudge: false,
             socket: BufReader::new(Box::new(socket)),
             scopes: BTreeSet::new(),
             generation: 0,
@@ -142,22 +139,23 @@ impl Connection {
             ));
         }
         connection.limits(&hello)?;
-        // Ask for the agent channel only from a host that says it has one; an
-        // older host refuses capability names it does not know.
-        let channel = hello["features"]
-            .as_array()
-            .is_some_and(|v| v.contains(&json!(wire::CHANNEL_FEATURE)));
+        // Ask for the agent channel and terminal writes only from a host that
+        // says it has them; an older host refuses capability names it does
+        // not know.
+        let offers = |feature: &str| {
+            hello["features"]
+                .as_array()
+                .is_some_and(|v| v.contains(&json!(feature)))
+        };
         let mut features = vec![wire::FEATURE];
         let mut capabilities = wire::CAPABILITIES.to_vec();
-        if channel {
+        if offers(wire::CHANNEL_FEATURE) {
             features.push(wire::CHANNEL_FEATURE);
             capabilities.push(Scope::AgentChannel.capability());
-            connection.nudge = hello["features"]
-                .as_array()
-                .is_some_and(|v| v.contains(&json!(wire::NUDGE_FEATURE)));
-            if connection.nudge {
-                features.push(wire::NUDGE_FEATURE);
-            }
+        }
+        if offers(wire::TERMINAL_WRITE_FEATURE) {
+            features.push(wire::TERMINAL_WRITE_FEATURE);
+            capabilities.push(Scope::TerminalWrite.capability());
         }
         connection.durable = hello["features"]
             .as_array()
@@ -271,10 +269,6 @@ impl Bridge {
     pub(super) fn generation(&self, workspace: &str) -> Option<u64> {
         self.connections.get(workspace).map(|c| c.generation)
     }
-    pub(super) fn nudge_supported(&self, workspace: &str) -> bool {
-        self.connections.get(workspace).is_some_and(|c| c.nudge)
-    }
-
     pub(super) fn durable_supported(&self, workspace: &str) -> bool {
         self.connections.get(workspace).is_some_and(|c| c.durable)
     }
@@ -417,10 +411,10 @@ impl Bridge {
                     (BTreeSet::new(), Some(e.code))
                 }
             };
-            rows.push(json!({"workspace":key,"root":record.root,"label":label,"scopes":scopes,"unavailable_reason":error}));
+            rows.push(json!({"workspace":key,"root":record.root,"label":label,"permissions":wire::permissions_of(&scopes),"scopes":scopes,"unavailable_reason":error}));
         }
         let mut reply = json!({"identity":self.identity,"workspaces":rows,"next_workspace_offset":(offset+4<total).then_some(offset+4),
-            "truncated":inventory.truncated,"permission_help":format!("In the target Runyte workspace, use :mcp {}. Apply permissions, then rerun find_resources; no agent restart needed.",self.identity)});
+            "truncated":inventory.truncated,"permission_help":format!("In the target Runyte workspace, use :mcp {} and turn on Read (1) or Write (2). Apply, then rerun find_resources; no agent restart needed.",self.identity)});
         if inventory.hidden > 0 {
             reply["hidden_workspaces"] = json!(inventory.hidden);
             reply["discovery_help"] = json!(HIDDEN_HELP);
@@ -462,7 +456,7 @@ impl Bridge {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
             for (kind, child) in object {
-                if ["buffer", "terminal", "pane", "snapshot", "proposal"].contains(&kind.as_str())
+                if ["buffer", "terminal", "pane", "snapshot", "enter"].contains(&kind.as_str())
                     && child.is_string()
                 {
                     let native = child.as_str().unwrap();
@@ -527,7 +521,7 @@ impl Bridge {
         let connection = self.connections.get_mut(workspace).ok_or_else(|| {
             Failure::new("stale", "Run find_resources to discover this workspace")
         })?;
-        for kind in ["buffer", "terminal", "pane", "snapshot", "proposal"] {
+        for kind in ["buffer", "terminal", "pane", "snapshot", "enter"] {
             if let Some(handle) = params.get(kind).and_then(Value::as_str) {
                 let resource = self
                     .resources
@@ -552,9 +546,13 @@ impl Bridge {
             return Err(Failure::new(
                 "capability_denied",
                 format!(
-                    "Missing {}. In Runyte use :mcp {}, apply permissions, then find_resources again.",
+                    "Missing {}. In Runyte use :mcp {}, turn on {}, apply, then find_resources again.",
                     parsed.request.required_scope().capability(),
-                    self.identity
+                    self.identity,
+                    match parsed.request.required_scope() {
+                        Scope::BufferEdit | Scope::TerminalWrite => "Write (2)",
+                        _ => "Read (1)",
+                    }
                 ),
             ));
         }
@@ -588,8 +586,8 @@ impl Bridge {
                     if [
                         "buffer.edit",
                         "buffer.append",
-                        "terminal.input.propose",
-                        "terminal.input.cancel",
+                        "terminal.input.write",
+                        "terminal.input.enter",
                         "channel.post",
                         "channel.durable",
                     ]

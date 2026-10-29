@@ -120,7 +120,6 @@ unit_enum!(
     [
         GitMergeReview,
         Standard,
-        ContextReview,
         Preview,
         Setting,
         SettingChoice,

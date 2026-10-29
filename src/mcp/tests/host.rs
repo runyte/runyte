@@ -23,11 +23,12 @@ struct State {
     exhaust_inventory: Option<String>,
     extra_terminals: Vec<Value>,
     unnumbered: bool,
-    direct_insert: bool,
     /// The host advertises the agent channel.
     channel: bool,
-    /// It also advertises channel nudges.
-    nudge: bool,
+    /// The host advertises terminal writes.
+    writes: bool,
+    /// What a status request reports for a scheduled Enter.
+    enter_state: &'static str,
     joins: Vec<Value>,
     posts: Vec<Value>,
 }
@@ -71,6 +72,7 @@ impl Host {
             scopes: wire::CAPABILITIES.iter().map(|s| s.to_string()).collect(),
             buffer: "notes: Claude Code is working on syntax\n".into(),
             revision: 1,
+            enter_state: "sent",
             ..State::default()
         }));
         let shared = state.clone();
@@ -105,17 +107,18 @@ impl Host {
                         .await;
                         return;
                     }
-                    let (channel, nudge) = {
+                    let (channel, writes) = {
                         let s = shared.lock().unwrap();
-                        (s.channel, s.nudge)
+                        (s.channel, s.writes)
                     };
-                    let features = match (channel, nudge) {
-                        (true, true) => {
-                            json!([wire::FEATURE, wire::CHANNEL_FEATURE, wire::NUDGE_FEATURE])
-                        }
-                        (true, false) => json!([wire::FEATURE, wire::CHANNEL_FEATURE]),
-                        _ => json!([wire::FEATURE]),
-                    };
+                    let mut offered = vec![wire::FEATURE];
+                    if channel {
+                        offered.push(wire::CHANNEL_FEATURE);
+                    }
+                    if writes {
+                        offered.push(wire::TERMINAL_WRITE_FEATURE);
+                    }
+                    let features = json!(offered);
                     let hello = json!({"type":"hello","version":"runyte-1","host_version":"0.4.0","features":features,"workspace":record,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
                     if write_frame(socket.get_mut(), &hello, wire::MAX_FRAME_BYTES)
                         .await
@@ -134,7 +137,7 @@ impl Host {
                             .as_array()
                             .unwrap()
                             .iter()
-                            .filter(|_| channel)
+                            .filter(|feature| offered.iter().any(|offer| *feature == offer))
                             .cloned(),
                     );
                     let registered = json!({"type":"registered","runyte":">=0.3.0, <0.5.0","commands":[],"features":negotiated,"capabilities":scopes,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
@@ -219,16 +222,16 @@ impl Host {
                                         s.revision += 1;
                                         json!({"buffer":"native:b","revision":format!("r:{}",s.revision)})
                                     }
-                                    "terminal.input.propose" => {
-                                        let state =
-                                            if s.direct_insert { "queued" } else { "pending" };
-                                        json!({"proposal":"native:i","state":state})
+                                    "terminal.input.write" => {
+                                        json!({"state":"queued","chars":params["text"].as_str().unwrap().chars().count()})
                                     }
-                                    "terminal.input.status" => {
-                                        json!({"proposal":"native:i","state":"pending"})
+                                    "terminal.input.enter" => {
+                                        assert_eq!(params["terminal"], "native:t");
+                                        json!({"enter":"native:e","state":"waiting","delay_ms":10})
                                     }
-                                    "terminal.input.cancel" => {
-                                        json!({"proposal":"native:i","state":"cancelled"})
+                                    "terminal.input.enter.status" => {
+                                        assert_eq!(params["enter"], "native:e");
+                                        json!({"enter":"native:e","state":s.enter_state})
                                     }
                                     "channel.join" => {
                                         s.joins.push(params.clone());
@@ -368,28 +371,17 @@ async fn fuzzy_contents_find_plain_shell_and_append_in_two_tool_calls() {
             .unwrap()
             .contains("Claude")
     );
-    let proposal = bridge
-        .call(
-            "propose_terminal_text",
-            json!({"terminal":terminal,"text":"hello"}),
-        )
-        .await
-        .unwrap();
-    assert_eq!(proposal["data"]["state"], "pending");
-    let id = &proposal["data"]["proposal"];
     assert_eq!(
         bridge
-            .call("terminal_proposal_status", json!({"proposal":id}))
+            .call(
+                "write_terminal",
+                json!({"terminal":terminal,"text":"hello"}),
+            )
             .await
-            .unwrap()["data"]["state"],
-        "pending"
-    );
-    assert_eq!(
-        bridge
-            .call("cancel_terminal_proposal", json!({"proposal":id}))
-            .await
-            .unwrap()["data"]["state"],
-        "cancelled"
+            .unwrap_err()
+            .code,
+        "capability_denied",
+        "writing needs Write"
     );
     bridge.call("edit_buffer",json!({"buffer":buffer,"expected_revision":"r:2","changes":[{"from":0,"to":0,"text":"x"}]})).await.unwrap();
     assert_eq!(
@@ -515,12 +507,13 @@ async fn names_only_never_reads_contents_and_explicit_targets_reject_foreign_han
 async fn uncertain_mutations_are_never_replayed_and_controls_never_reach_host() {
     let host = Host::new();
     let mut bridge = host.bridge();
+    grant_writes(&host);
     let found = bridge.call("find_resources", json!({})).await.unwrap();
     let terminal = handle(&found, "terminal");
     assert_eq!(
         bridge
             .call(
-                "propose_terminal_text",
+                "write_terminal",
                 json!({"terminal":terminal,"text":"hello\n"})
             )
             .await
@@ -534,13 +527,13 @@ async fn uncertain_mutations_are_never_replayed_and_controls_never_reach_host() 
             .lock()
             .unwrap()
             .methods
-            .contains(&"terminal.input.propose".to_owned())
+            .contains(&"terminal.input.write".to_owned())
     );
-    host.state.lock().unwrap().fail = Some("terminal.input.propose".into());
+    host.state.lock().unwrap().fail = Some("terminal.input.write".into());
     assert_eq!(
         bridge
             .call(
-                "propose_terminal_text",
+                "write_terminal",
                 json!({"terminal":terminal,"text":"hello"})
             )
             .await
@@ -551,7 +544,7 @@ async fn uncertain_mutations_are_never_replayed_and_controls_never_reach_host() 
     assert_eq!(
         bridge
             .call(
-                "propose_terminal_text",
+                "write_terminal",
                 json!({"terminal":terminal,"text":"hello"})
             )
             .await
@@ -565,7 +558,7 @@ async fn uncertain_mutations_are_never_replayed_and_controls_never_reach_host() 
             .unwrap()
             .methods
             .iter()
-            .filter(|m| m.as_str() == "terminal.input.propose")
+            .filter(|m| m.as_str() == "terminal.input.write")
             .count(),
         1
     );
@@ -685,14 +678,14 @@ async fn terminal_number_finds_the_titled_terminal_on_any_page_without_reading_o
             .any(|row| row["kind"] == "buffer" && row["matched_on"] == "content")
     );
     let terminal = handle(&found, "terminal");
-    let proposal = bridge
-        .call(
-            "propose_terminal_text",
-            json!({"terminal":terminal,"text":"ls"}),
-        )
+    let read = bridge
+        .call("read_terminal", json!({"terminal":terminal}))
         .await
         .unwrap();
-    assert_eq!(proposal["data"]["state"], "pending");
+    assert!(
+        read["data"]["rows"].is_array(),
+        "the number's terminal reads"
+    );
 
     // A buffer or content search means the text, as in an issue reference.
     let found = bridge
@@ -760,38 +753,116 @@ async fn terminal_number_finds_the_titled_terminal_on_any_page_without_reading_o
 }
 
 #[tokio::test]
-async fn proposal_guidance_follows_whether_the_person_skipped_review() {
+async fn writing_and_enter_are_offered_only_with_write_and_enter_waits_for_its_outcome() {
     let host = Host::new();
+    host.state.lock().unwrap().scopes.remove("buffer_edit");
     let mut bridge = host.bridge();
     let found = bridge
         .call("find_resources", json!({"kind":"terminal"}))
         .await
         .unwrap();
-    let terminal = handle(&found, "terminal");
-    let reviewed = bridge
-        .call(
-            "propose_terminal_text",
-            json!({"terminal":terminal,"text":"ls"}),
-        )
+    assert_eq!(
+        found["results"][0]["available_actions"],
+        json!(["read_terminal"]),
+        "read only"
+    );
+    let listed = bridge.call("list_workspaces", json!({})).await.unwrap();
+    assert_eq!(listed["workspaces"][0]["permissions"], json!(["read"]));
+
+    grant_writes(&host);
+    let mut bridge = host.bridge();
+    let found = bridge
+        .call("find_resources", json!({"kind":"terminal"}))
         .await
         .unwrap();
+    assert_eq!(
+        found["results"][0]["available_actions"],
+        json!(["read_terminal", "write_terminal", "press_enter"])
+    );
+    let listed = bridge.call("list_workspaces", json!({})).await.unwrap();
+    assert_eq!(
+        listed["workspaces"][0]["permissions"],
+        json!(["read", "write"])
+    );
+    let terminal = handle(&found, "terminal");
+    let written = bridge
+        .call("write_terminal", json!({"terminal":terminal,"text":"ls"}))
+        .await
+        .unwrap();
+    assert_eq!(written["data"]["state"], "queued");
     assert!(
-        reviewed["next_step"]
+        written["next_step"]
             .as_str()
             .unwrap()
-            .starts_with("Waiting for approval")
+            .contains("press_enter")
     );
-    host.state.lock().unwrap().direct_insert = true;
-    let direct = bridge
+    let read = bridge
+        .call("read_terminal", json!({"terminal":terminal}))
+        .await
+        .unwrap();
+    let revision = read["data"]["revision"].clone();
+    let sent = bridge
         .call(
-            "propose_terminal_text",
-            json!({"terminal":terminal,"text":"ls"}),
+            "press_enter",
+            json!({"terminal":terminal,"expected_revision":revision}),
         )
         .await
         .unwrap();
-    assert_eq!(direct["data"]["state"], "queued");
-    let next = direct["next_step"].as_str().unwrap();
-    assert!(next.contains("without review") && next.contains("Enter was not sent"));
+    assert_eq!(sent["data"]["state"], "sent");
+    assert!(
+        sent["next_step"]
+            .as_str()
+            .unwrap()
+            .starts_with("Enter was pressed")
+    );
+    assert!(
+        sent["data"].get("enter").is_some(),
+        "a handle, not the native id"
+    );
+    assert_ne!(sent["data"]["enter"], "native:e");
+
+    host.state.lock().unwrap().enter_state = "stale";
+    let stale = bridge
+        .call(
+            "press_enter",
+            json!({"terminal":terminal,"expected_revision":revision}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale["data"]["state"], "stale");
+    assert!(
+        stale["next_step"]
+            .as_str()
+            .unwrap()
+            .starts_with("Nothing was sent")
+    );
+
+    // The connection ending while Enter waits leaves its outcome unknown.
+    host.state.lock().unwrap().fail = Some("terminal.input.enter.status".into());
+    let lost = bridge
+        .call(
+            "press_enter",
+            json!({"terminal":terminal,"expected_revision":revision}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(lost.code, "outcome_unknown");
+    let methods = host.state.lock().unwrap().methods.clone();
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|m| m.as_str() == "terminal.input.enter")
+            .count(),
+        3,
+        "never retried"
+    );
+}
+
+/// The fake host offers terminal writes, and the identity holds Write.
+fn grant_writes(host: &Host) {
+    let mut s = host.state.lock().unwrap();
+    s.writes = true;
+    s.scopes.insert("terminal_write".into());
 }
 
 #[tokio::test]
@@ -914,7 +985,7 @@ async fn a_channel_only_grant_keeps_its_connection_between_calls() {
 }
 
 #[tokio::test]
-async fn a_post_asks_for_nudges_only_from_a_host_that_offers_them() {
+async fn a_post_carries_no_nudge() {
     let host = Host::new();
     {
         let mut s = host.state.lock().unwrap();
@@ -926,47 +997,22 @@ async fn a_post_asks_for_nudges_only_from_a_host_that_offers_them() {
         .call("join_channel", json!({"provider":"claude","task":"review"}))
         .await
         .unwrap();
-    let refused = bridge
-        .call("post_message", json!({"text":"ready","nudge":["codex-1"]}))
-        .await
-        .unwrap_err();
-    assert_eq!(refused.code, "unsupported");
-    assert!(
-        host.state.lock().unwrap().posts.is_empty(),
-        "nothing was posted"
-    );
     assert_eq!(
         bridge
-            .call("post_message", json!({"text":"ready","nudge":[]}))
+            .call("post_message", json!({"text":"ready","nudge":["codex-1"]}))
             .await
             .unwrap_err()
             .code,
-        "invalid_argument"
+        "invalid_argument",
+        "the field is gone from the tool"
     );
-
-    host.state.lock().unwrap().nudge = true;
-    let mut bridge = host.bridge();
+    assert!(host.state.lock().unwrap().posts.is_empty());
     bridge
-        .call("join_channel", json!({"provider":"claude","task":"review"}))
-        .await
-        .unwrap();
-    bridge
-        .call(
-            "post_message",
-            json!({"text":"ready","to":"codex-1","nudge":["codex-1"]}),
-        )
-        .await
-        .unwrap();
-    bridge
-        .call("post_message", json!({"text":"quiet"}))
+        .call("post_message", json!({"text":"ready"}))
         .await
         .unwrap();
     let posts = host.state.lock().unwrap().posts.clone();
-    assert_eq!(posts[0]["nudge"], json!(["codex-1"]));
-    assert!(
-        posts[1].get("nudge").is_none(),
-        "nothing nudges unless asked"
-    );
+    assert!(posts[0].get("nudge").is_none());
 }
 
 #[tokio::test]

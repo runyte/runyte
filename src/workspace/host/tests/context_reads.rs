@@ -33,7 +33,7 @@ fn scopes() -> BTreeSet<Scope> {
         Scope::TerminalRead,
         Scope::EditorContextRead,
         Scope::BufferEdit,
-        Scope::TerminalPropose,
+        Scope::TerminalWrite,
     ]
     .into()
 }
@@ -222,8 +222,8 @@ fn scopes_and_connection_handles_are_checked_before_resource_access() {
         host.context_read_request(
             &mut state,
             &scopes(),
-            Request::TerminalInputStatus {
-                proposal: "p:1".into()
+            Request::TerminalInputEnterStatus {
+                enter: "e:1".into()
             }
         )
         .unwrap_err()
@@ -1161,7 +1161,7 @@ fn appends_are_bounded_granted_owned_and_refused_on_read_only_buffers() {
     for scopes in [
         BTreeSet::from([Scope::EditorContextRead]),
         BTreeSet::from([Scope::BufferEdit]),
-        BTreeSet::from([Scope::TerminalRead, Scope::TerminalPropose]),
+        BTreeSet::from([Scope::TerminalRead, Scope::TerminalWrite]),
     ] {
         assert_eq!(
             refused(&mut host, &mut state, &scopes, append(&handle, "x", None)),

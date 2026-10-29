@@ -300,18 +300,19 @@ and the order of the push. Do not infer any of those from the commit history.
   session host, bounded local protocol, attachment transport, and lifecycle.
 - `src/workspace/context/`: the separately authenticated, bounded external
   context profile, private grants, local transport and live endpoint discovery.
-  `src/workspace/host/context.rs` owns admission and proposal lifetime;
-  `context_reads.rs` owns connection-scoped reads and revision-checked edits.
-  `src/app/context_access.rs` owns native grants and terminal-text approval.
+  `src/workspace/host/context.rs` owns admission and the read/write grant;
+  `context_reads.rs` owns connection-scoped reads and revision-checked edits;
+  `context_input.rs` owns terminal writes and the delayed, revision-checked
+  agent Enter. `src/app/context_access.rs` owns the native grant dialog.
   `src/workspace/context/channel.rs` is the agent channel's bounded, in-memory
   conversation; `src/workspace/host/context_channel.rs` serves it, verifies
   participants' terminals and renders `[agent channel]`.
   `src/mcp.rs` and `src/mcp/` implement the built-in `runyte mcp` stdio adapter;
   the host remains the authorization boundary. This is the supported MCP
-  integration, with fourteen tools. Pane, selection, viewport and snapshot operations
+  integration, with thirteen tools. Pane, selection, viewport and snapshot operations
   remain part of the host context protocol, outside the MCP tool catalog.
   MCP acceptance tests and editor/PTY fixtures live in `tests/mcp/`. Terminal
-  insertion never submits Enter.
+  text never carries Enter; Enter is a separate, guarded request.
 - `src/main.rs`: thin terminal-edition entry point into the shared CLI.
 
 Key dispatch, help, and hints must continue to read from the same keymap

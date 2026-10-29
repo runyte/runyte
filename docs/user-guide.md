@@ -628,7 +628,10 @@ Choose a topic below; existing fragment links remain as migration links.
 [buffer-edits](user-guide/agent-access-to-workspace-context.md#buffer-edits)
 
 <a id="terminal-proposals"></a>
-[terminal-proposals](user-guide/agent-access-to-workspace-context.md#terminal-proposals)
+[terminal-proposals](user-guide/agent-access-to-workspace-context.md#terminal-writes)
+
+<a id="terminal-writes"></a>
+[terminal-writes](user-guide/agent-access-to-workspace-context.md#terminal-writes)
 
 <a id="diagnostics-and-logging"></a>
 [diagnostics-and-logging](user-guide/diagnostics-and-logging.md#diagnostics-and-logging)
