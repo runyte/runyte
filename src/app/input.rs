@@ -1931,7 +1931,7 @@ impl App {
             return self.handle_context_action_key(key);
         }
         if self.program_action_menu.is_some() {
-            return self.handle_program_action_key(legacy_key);
+            return self.handle_program_action_key(key);
         }
         if self.path_action_menu.is_some() {
             return self.handle_path_action_key(key);
@@ -5486,24 +5486,24 @@ impl App {
     }
 
     fn handle_program_action_key(&mut self, key: KeyStroke) -> Result<()> {
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, control) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) | (KeyCode::Tab, _) => {
+        use crate::keymap::ui::{Action, Owner};
+        match self.keymap.ui().lookup(Owner::ProgramActions, key) {
+            Some(Action::Cancel) => {
                 self.program_action_menu = None;
             }
-            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
+            Some(Action::Next) => {
                 let menu = self.program_action_menu.as_mut().unwrap();
                 if !menu.actions.is_empty() {
                     menu.selected = (menu.selected + 1) % menu.actions.len();
                 }
             }
-            (KeyCode::Up, _) | (KeyCode::Char('p'), true) | (KeyCode::BackTab, _) => {
+            Some(Action::Previous) => {
                 let menu = self.program_action_menu.as_mut().unwrap();
                 if !menu.actions.is_empty() {
                     menu.selected = (menu.selected + menu.actions.len() - 1) % menu.actions.len();
                 }
             }
-            (KeyCode::Enter, _) => {
+            Some(Action::Accept) => {
                 let chosen = self.program_action_menu.as_ref().and_then(|menu| {
                     menu.selected_action()
                         .map(|action| (menu.choice.clone(), action))

@@ -5060,8 +5060,16 @@ fn draw_program_actions(frame: &mut Frame<'_>, app: &TuiApp<'_>, parent: Rect) {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.accent))
                 .title(format!(
-                    " {} · Enter select · Tab/Esc back ",
-                    menu.choice.program
+                    " {} · {} select · {} back ",
+                    menu.choice.program,
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::ProgramActions,
+                        crate::keymap::ui::Action::Accept
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::ProgramActions,
+                        crate::keymap::ui::Action::Cancel
+                    )
                 )),
         )
         .style(

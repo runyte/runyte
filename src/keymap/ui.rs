@@ -17,14 +17,16 @@ pub enum Owner {
     ContextActions,
     Path,
     PathActions,
+    ProgramActions,
 }
 
 impl Owner {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
         Self::PathActions,
+        Self::ProgramActions,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -32,6 +34,7 @@ impl Owner {
             Self::ContextActions => "context-actions",
             Self::Path => "path",
             Self::PathActions => "path-actions",
+            Self::ProgramActions => "program-actions",
         }
     }
     fn actions(self) -> &'static [Action] {
@@ -45,7 +48,9 @@ impl Owner {
                 CancelOrContinue,
                 DismissAndContinue,
             ],
-            Self::ContextActions | Self::PathActions => &[Next, Previous, Accept, Cancel],
+            Self::ContextActions | Self::PathActions | Self::ProgramActions => {
+                &[Next, Previous, Accept, Cancel]
+            }
             Self::Path => &[OpenActions, Cancel],
         }
     }
@@ -58,7 +63,7 @@ impl Owner {
             // This menu historically matches its choice character regardless
             // of modifiers. Preserve that broader structural input policy.
             Self::PathActions => matches!(key.code, KeyCode::Char('r' | 's')),
-            Self::Completion | Self::Path => false,
+            Self::Completion | Self::Path | Self::ProgramActions => false,
         }
     }
 }
@@ -243,6 +248,15 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
             _ => None,
         };
     }
+    if owner == Owner::ProgramActions {
+        return match (key.code, control) {
+            (KeyCode::Escape | KeyCode::Tab, _) | (KeyCode::Char('c'), true) => Some(Cancel),
+            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => Some(Next),
+            (KeyCode::Up | KeyCode::BackTab, _) | (KeyCode::Char('p'), true) => Some(Previous),
+            (KeyCode::Enter, _) => Some(Accept),
+            _ => None,
+        };
+    }
     if owner == Owner::Path {
         return match (key.code, control) {
             (KeyCode::Tab, _) => Some(OpenActions),
@@ -268,6 +282,8 @@ fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
         (Owner::Completion, Cancel) => &["Ctrl-c"],
         (Owner::Completion, CancelOrContinue) => &["Esc"],
         (Owner::Completion, DismissAndContinue) => &["Enter"],
+        (Owner::ProgramActions, Next) => &["Down", "Ctrl-n"],
+        (Owner::ProgramActions, Previous) => &["Up", "Ctrl-p", "BackTab"],
         (_, Next) => &["Down", "j"],
         (_, Previous) => &["Up", "k", "BackTab"],
         (_, Accept) => &["Enter"],

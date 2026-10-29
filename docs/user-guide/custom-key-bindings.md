@@ -238,9 +238,11 @@ single strokes, with up to 32 aliases per action. Configured modifiers match
 exactly using the same character Shift normalization as editor bindings.
 Unchanged defaults retain their existing handling of additional modifiers.
 
-The `context-actions` and `path-actions` owners support `next`, `previous`,
-`accept`, and `cancel`. Their defaults are Down/j, Up/k/Shift-Tab, Enter, and
-Tab/Esc/Ctrl-c respectively. The `path` popup supports `open-actions` (Tab) and
+The `context-actions`, `path-actions`, and `program-actions` owners support `next`, `previous`,
+`accept`, and `cancel`. Context and path actions default to Down/j,
+Up/k/Shift-Tab, Enter, and Tab/Esc/Ctrl-c respectively. Program actions use
+Down/Ctrl-n and Up/Ctrl-p/Shift-Tab for navigation, Enter to accept, and
+Tab/Esc/Ctrl-c to cancel. The `path` popup supports `open-actions` (Tab) and
 `cancel` (Esc/Ctrl-c). These menu owners also inherit the effective leader as a
 cancel key. Reassigning or removing `cancel` removes that leader binding too.
 
@@ -252,6 +254,9 @@ keys:
       previous: [Ctrl-p]
     path:
       open-actions: [F9]
+    program-actions:
+      accept: [F8]
+      cancel: [F9]
     path-actions:
       cancel: [F7]
 ```

@@ -4223,3 +4223,84 @@ fn double_force_quit_discards_buffers_and_ends_only_its_own_terminals() {
         }
     }
 }
+
+#[test]
+fn configurable_program_menu_preserves_prompt_ownership_and_persists_selected_action() {
+    let directory = temporary("configured-program-actions");
+    fs::create_dir_all(&directory).unwrap();
+    let mut config = Config::default();
+    config
+        .merge_keys_source(
+            "ui: {program-actions: {next: [F6], previous: [F7], accept: [F8], cancel: [F9]}}",
+        )
+        .unwrap();
+    let mut app = App::new(config, None).unwrap();
+    app.programs = ProgramCache::load(Some(directory.join("cache")));
+    app.programs.remember("example-viewer").unwrap();
+    app.open_prompt_with_value(PromptKind::ExternalProgram, "example-viewer".into());
+    let menu = ProgramActionMenu {
+        choice: ProgramChoice {
+            program: "example-viewer".into(),
+            system: false,
+            remembered: true,
+            is_default: false,
+        },
+        actions: vec![ProgramAction::Delete, ProgramAction::SetDefault],
+        selected: 0,
+    };
+    app.program_action_menu = Some(menu.clone());
+    for key in ["Down", "Ctrl-n", "Enter", "Tab", "Esc", "Space", "Shift-F6"] {
+        app.handle_key(KeyStroke::parse(key).unwrap()).unwrap();
+        assert_eq!(
+            app.program_action_menu.as_ref().unwrap().selected,
+            0,
+            "{key}"
+        );
+        assert_eq!(app.command, "example-viewer", "{key}");
+        assert_eq!(app.programs.programs(), ["example-viewer"]);
+    }
+    app.handle_key(KeyStroke::parse("F6").unwrap()).unwrap();
+    assert_eq!(app.program_action_menu.as_ref().unwrap().selected, 1);
+    app.handle_key(KeyStroke::parse("F7").unwrap()).unwrap();
+    assert_eq!(app.program_action_menu.as_ref().unwrap().selected, 0);
+    app.handle_key(KeyStroke::parse("F9").unwrap()).unwrap();
+    assert!(app.program_action_menu.is_none());
+    assert_eq!(app.mode, Mode::Command);
+    assert_eq!(app.command, "example-viewer");
+    app.program_action_menu = Some(menu.clone());
+    let snapshot = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|s| s.kind == crate::snapshot::OverlayKind::ProgramActions)
+        .unwrap();
+    assert_eq!(
+        snapshot
+            .actions
+            .iter()
+            .map(|a| a.key_hint.as_str())
+            .collect::<Vec<_>>(),
+        ["F6/F7", "F8", "F9"]
+    );
+    app.handle_key(KeyStroke::parse("F6").unwrap()).unwrap();
+    app.handle_key(KeyStroke::parse("F8").unwrap()).unwrap();
+    assert!(app.program_action_menu.is_none());
+    assert!(app.command.is_empty());
+    assert_eq!(app.mode, Mode::Command);
+    assert_eq!(app.programs.default_program(), Some("example-viewer"));
+    let persisted = ProgramCache::load(Some(directory.join("cache")));
+    assert_eq!(persisted.default_program(), Some("example-viewer"));
+    // A persistence failure retains the owning menu and prompt for recovery.
+    let blocked = directory.join("blocked-cache");
+    fs::write(&blocked, "not a directory").unwrap();
+    app.programs = ProgramCache::load(Some(blocked));
+    app.command = "retained query".into();
+    app.command_cursor = app.command.chars().count();
+    let mut menu = menu;
+    menu.selected = 1;
+    app.program_action_menu = Some(menu);
+    app.handle_key(KeyStroke::parse("F8").unwrap()).unwrap();
+    assert!(app.status_error);
+    assert!(app.program_action_menu.is_some());
+    assert_eq!(app.command, "retained query");
+    fs::remove_dir_all(directory).unwrap();
+}

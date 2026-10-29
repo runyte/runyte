@@ -2750,7 +2750,7 @@ impl App {
                         .map(|path| path.to_string_lossy().into_owned()),
                 ));
                 if let Some(menu) = &self.program_action_menu {
-                    overlays.push(bounded(
+                    let mut snapshot = bounded(
                         OverlayKind::ProgramActions,
                         format!("{} actions", menu.choice.program),
                         "",
@@ -2760,7 +2760,14 @@ impl App {
                             .collect(),
                         Some(menu.selected),
                         None,
-                    ));
+                    );
+                    snapshot.actions = menu_action_hints(
+                        self.keymap.ui(),
+                        crate::keymap::ui::Owner::ProgramActions,
+                        "run",
+                        "back",
+                    );
+                    overlays.push(snapshot);
                 }
             } else if let PromptKind::IndentationValue(setting)
             | PromptKind::IndentationPattern(setting) = self.prompt_kind
@@ -3229,7 +3236,14 @@ fn menu_action_hints(
             "select",
         ),
         OverlayAction::new(
-            format!("mnemonic/{}", bindings.label(owner, Action::Accept)),
+            if matches!(
+                owner,
+                crate::keymap::ui::Owner::ContextActions | crate::keymap::ui::Owner::PathActions
+            ) {
+                format!("mnemonic/{}", bindings.label(owner, Action::Accept))
+            } else {
+                bindings.label(owner, Action::Accept)
+            },
             accept,
         ),
         OverlayAction::new(bindings.label(owner, Action::Cancel), cancel),

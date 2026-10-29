@@ -245,3 +245,62 @@ fn backward_tab_hint_keeps_its_distinct_key_identity() {
         Some(Action::Cancel)
     );
 }
+
+#[test]
+fn program_menu_defaults_preserve_wildcard_modifiers_and_replacements_remove_aliases() {
+    let bindings = Bindings::default();
+    for bits in 0..64 {
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        for (code, expected) in [
+            (KeyCode::Down, Some(Action::Next)),
+            (KeyCode::Up, Some(Action::Previous)),
+            (KeyCode::Enter, Some(Action::Accept)),
+            (KeyCode::Tab, Some(Action::Cancel)),
+            (KeyCode::Escape, Some(Action::Cancel)),
+            (KeyCode::BackTab, Some(Action::Previous)),
+            (
+                KeyCode::Char('n'),
+                modifiers
+                    .contains(Modifiers::CONTROL)
+                    .then_some(Action::Next),
+            ),
+            (
+                KeyCode::Char('p'),
+                modifiers
+                    .contains(Modifiers::CONTROL)
+                    .then_some(Action::Previous),
+            ),
+            (
+                KeyCode::Char('c'),
+                modifiers
+                    .contains(Modifiers::CONTROL)
+                    .then_some(Action::Cancel),
+            ),
+            (KeyCode::Char('j'), None),
+        ] {
+            assert_eq!(
+                bindings.lookup(Owner::ProgramActions, KeyStroke::new(code, modifiers)),
+                expected
+            );
+        }
+    }
+    let (bindings, errors) =
+        configured("program-actions: {next: [Up], previous: [Down], accept: [], cancel: []}");
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(
+        bindings.lookup(Owner::ProgramActions, KeyStroke::plain(KeyCode::Up)),
+        Some(Action::Next)
+    );
+    for key in [
+        KeyStroke::ctrl('n'),
+        KeyStroke::char(' '),
+        KeyStroke::plain(KeyCode::Enter),
+        KeyStroke::plain(KeyCode::BackTab),
+    ] {
+        assert_eq!(bindings.lookup(Owner::ProgramActions, key), None);
+    }
+    assert_eq!(
+        bindings.lookup(Owner::Path, KeyStroke::char(' ')),
+        Some(Action::Cancel)
+    );
+}

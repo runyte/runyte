@@ -192,3 +192,13 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   Regression coverage compares all default modifier combinations, actual child
   input forwarding, remapped mode changes, prefix cancellation/execution,
   standalone unavailable actions, plugin rebuilds and effective help rows.
+- Terminal checkpoint validation: full root suite (four test threads), root and
+  desktop Clippy, desktop tests, formatting and guide links passed.
+- Program action menus now use their own shared UI map, preserving wildcard
+  modifiers and nested prompt ownership. Effective hints are used in snapshots
+  and standalone rendering. Tests cover all default modifier masks, alias
+  replacement/removal, actual navigation/cancellation, persisted selection and
+  persistence failure retention using temporary cache storage. Astra approved;
+  all 19 program-related tests and root Clippy passed. Buffer action menus stay
+  in their existing list dispatch position pending shared stale-selection and
+  list-owner migration.
