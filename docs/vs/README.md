@@ -96,7 +96,7 @@ Present workflow recommendations as judgments based on the comparison.
   needs rather than declare a universal winner. Label untested combinations as
   composition options, not validated integrations.
 - Check Runyte claims against the [README](../../README.md), relevant
-  [user-guide](../user-guide.md) sections, and current source. Read the
+  [user-guide](../user-guide/README.md) sections, and current source. Read the
   [keymap register](../../context/reference/helix-keymap-v1.md) before discussing
   command compatibility; do not call Runyte Helix-compatible. Use the
   [UI vocabulary](../../context/reference/ui-vocabulary.md) for Runyte surfaces.

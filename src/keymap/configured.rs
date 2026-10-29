@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use serde_yaml::{Mapping, Value};
 
+use crate::command::Mode;
 use crate::input::{KeyCode, KeyStroke, Modifiers};
 
 use super::{Binding, BindingNamespace, BindingScope, Key, KeySequence, Keymap, validate};
@@ -32,6 +33,9 @@ struct Rebind {
 
 #[derive(Clone, Debug, Default)]
 struct Parsed {
+    /// `keys.defaults: false`: the built-in global bindings `bind` could
+    /// recreate are left out, so `bind` is the whole of them.
+    standalone: bool,
     leader: Option<(String, KeyStroke)>,
     window: Option<(String, KeyStroke)>,
     rebinds: Vec<Rebind>,
@@ -79,7 +83,32 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
             errors,
         };
     };
+    // Reported only if the defaults do stay out: a rejected `defaults: false`
+    // compiles again with these rebinds applied.
+    let ignored_rebinds = if parsed.standalone {
+        parsed
+            .rebinds
+            .drain(..)
+            .map(|rule| {
+                format!(
+                    "rebind {:?} ignored: keys.defaults is false, so there is no built-in binding to move",
+                    rule.source
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     admit_rebinds(&mut parsed, built_in, &mut errors);
+    // Without the defaults, the prefixes are resolved against what is left of
+    // the keymap, so a leader may take a key only a dropped default used.
+    let stripped;
+    let base = if parsed.standalone {
+        stripped = super::actions::without_defaults(built_in.clone());
+        &stripped
+    } else {
+        built_in
+    };
 
     let mut active = parsed
         .rebinds
@@ -91,7 +120,7 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
     let mut passes = 0;
     let resolution = loop {
         passes += 1;
-        let candidate = resolve(&parsed, &active, leader_active, window_active, built_in);
+        let candidate = resolve(&parsed, &active, leader_active, window_active, base);
         if let Some(sequence) = candidate
             .bindings
             .iter()
@@ -118,11 +147,47 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
                 errors,
             };
         }
-        let violations = validate::validate(
+        let mut violations = validate::validate(
             &candidate.bindings,
             &candidate.namespaces,
             built_in.all_context_actions(),
         );
+        // A namespace whose defaults are gone may still be continued by
+        // `bind`, which prunes it afterwards; until then it is not a conflict.
+        if parsed.standalone {
+            violations.retain(|violation| {
+                violation.kind != validate::ViolationKind::NamespaceUnreachable
+            });
+        }
+        // Nothing need be under the leader or window yet, so a key a special
+        // view uses on its own would conflict only once `bind` continued the
+        // prefix, and `apply` would then reject each entry, not the prefix.
+        if parsed.standalone && violations.is_empty() {
+            let executable = |prefix: KeyStroke, modes: &[Mode]| {
+                candidate.bindings.iter().find(|binding| {
+                    binding.sequence.as_slice() == [prefix]
+                        && modes.iter().any(|&mode| binding.is_active_in(mode))
+                })
+            };
+            let modal = [Mode::Normal, Mode::Select];
+            let all = [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace];
+            if window_active && let Some(binding) = executable(candidate.window, &all) {
+                window_active = false;
+                errors.push(format!(
+                    "window prefix rejected; the default Ctrl-w prefix was restored: {} is executable in {:?}",
+                    binding.sequence, binding.scope
+                ));
+                continue;
+            }
+            if leader_active && let Some(binding) = executable(candidate.leader, &modal) {
+                leader_active = false;
+                errors.push(format!(
+                    "leader prefix rejected; the default Space prefix was restored: {} is executable in {:?}",
+                    binding.sequence, binding.scope
+                ));
+                continue;
+            }
+        }
         if violations.is_empty() {
             break candidate;
         }
@@ -136,7 +201,7 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
             }
             if violation.kind == validate::ViolationKind::NamespaceUnreachable {
                 provenance.merge(&unreachable_namespace_provenance(
-                    &candidate, violation, built_in,
+                    &candidate, violation, base,
                 ));
             }
         }
@@ -183,12 +248,49 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
         }
     };
 
+    // Help and tutorials name default sequences whose bindings may be gone,
+    // so without the defaults their spellings still come from the whole
+    // built-in keymap, under the same prefixes.
+    let complete = parsed
+        .standalone
+        .then(|| resolve(&parsed, &active, leader_active, window_active, built_in));
+    let spelling = match &complete {
+        Some(complete) => complete.spelling.clone(),
+        None => resolution.spelling,
+    };
     let keymap = Keymap::with_namespaces(resolution.bindings, resolution.namespaces)
         .expect("the configured-keymap validator rejected every duplicate")
         .with_context_actions(built_in.all_context_actions().to_vec())
         .with_fast_pane_keys_enabled(built_in.fast_pane_keys())
-        .with_spelling_metadata(resolution.leader, resolution.window, resolution.spelling);
+        .with_spelling_metadata(resolution.leader, resolution.window, spelling);
     let keymap = super::actions::apply(section.get("bind"), keymap, &mut errors);
+    if parsed.standalone
+        && let Some(missing) = super::actions::missing_way_out(&keymap)
+    {
+        // A keymap that cannot be left would lock someone out of the editor
+        // they need to repair it, so the built-in bindings stay underneath.
+        let mut overlay = section.as_mapping().cloned().unwrap_or_default();
+        overlay.remove("defaults");
+        let mut compiled = compile(&Value::Mapping(overlay), built_in);
+        // What went wrong without the defaults often explains what is
+        // missing, as when the entry meant to reach the palette was rejected.
+        let mut reported = vec![format!(
+            "defaults: false rejected: bind has no {missing}; the built-in bindings were kept"
+        )];
+        reported.extend(
+            errors
+                .into_iter()
+                .filter(|error| !compiled.errors.contains(error)),
+        );
+        reported.append(&mut compiled.errors);
+        compiled.errors = reported;
+        return compiled;
+    }
+    errors.extend(ignored_rebinds);
+    let keymap = match complete {
+        Some(complete) => super::actions::name_scoped_prefixes(keymap, &complete.namespaces),
+        None => keymap,
+    };
     CompiledKeymap {
         keymap: Arc::new(keymap),
         errors,
@@ -205,7 +307,7 @@ fn parse_section(section: &Value, errors: &mut Vec<String>) -> Option<Parsed> {
             errors.push("keys section rejected: member names must be strings".to_owned());
             return None;
         };
-        if !matches!(key, "leader" | "window" | "rebind" | "bind") {
+        if !matches!(key, "leader" | "window" | "rebind" | "bind" | "defaults") {
             errors.push(format!("keys section rejected: unknown member {key:?}"));
             return None;
         }
@@ -272,6 +374,14 @@ fn parse_section(section: &Value, errors: &mut Vec<String>) -> Option<Parsed> {
     }
 
     let mut parsed = Parsed::default();
+    match mapping.get(Value::String("defaults".to_owned())) {
+        None | Some(Value::Bool(true)) => {}
+        Some(Value::Bool(false)) => parsed.standalone = true,
+        Some(_) => {
+            errors.push("keys section rejected: defaults must be true or false".to_owned());
+            return None;
+        }
+    }
     if let Some(source) = leader_source {
         match parse_named_prefix("leader", &source, false) {
             Ok(key) => parsed.leader = Some((source, key)),
@@ -599,10 +709,453 @@ fn summarize_violations(violations: &[validate::Violation]) -> String {
 mod tests {
     use crate::{
         command::{ColonCommand, Mode},
-        keymap::{BindingTarget, Lookup, default_keymap},
+        keymap::{BindingScope, BindingTarget, Lookup, default_keymap},
     };
 
     use super::*;
+
+    /// The smallest standalone keymap the editor accepts: a way to the
+    /// command palette and a way back to Normal mode.
+    const WAY_OUT: &str = "defaults: false\nbind:\n  normal:\n    ':': open-command-palette\n  select:\n    Esc: enter-normal-mode\n  insert:\n    Esc: enter-normal-mode\n  replace:\n    Esc: enter-normal-mode\n";
+
+    /// Whether `keys.defaults: false` took effect without complaint.
+    fn standalone(compiled: &CompiledKeymap) -> bool {
+        compiled.errors.is_empty() && exact(compiled, Mode::Normal, "w").is_none()
+    }
+
+    fn exact(compiled: &CompiledKeymap, mode: Mode, keys: &str) -> Option<BindingTarget> {
+        match compiled
+            .keymap
+            .lookup(mode, &KeySequence::parse(keys).unwrap())
+        {
+            Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
+                Some(binding.target)
+            }
+            Lookup::NoMatch | Lookup::Prefix(_) => None,
+        }
+    }
+
+    #[test]
+    fn without_defaults_only_the_configured_global_keys_remain() {
+        let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+        value["bind"]["normal"]["h"] = Value::String("move-down".into());
+        let compiled = compile(&value, default_keymap());
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+
+        assert_eq!(
+            exact(&compiled, Mode::Normal, "h"),
+            Some(BindingTarget::Editor(
+                crate::command::EditorCommand::MoveDown
+            ))
+        );
+        assert_eq!(exact(&compiled, Mode::Normal, "w"), None);
+        assert_eq!(exact(&compiled, Mode::Insert, "Ctrl-w"), None);
+        assert!(matches!(
+            compiled
+                .keymap
+                .lookup(Mode::Normal, &KeySequence::parse("Space").unwrap()),
+            Lookup::NoMatch
+        ));
+        // What `bind` could never supply is still there: the reserved
+        // context-action key and every scoped binding of a special buffer.
+        assert_eq!(
+            exact(&compiled, Mode::Normal, "Tab"),
+            Some(BindingTarget::Editor(
+                crate::command::EditorCommand::CodeAction
+            ))
+        );
+        for binding in default_keymap()
+            .bindings()
+            .iter()
+            .filter(|binding| binding.scope != BindingScope::Global)
+        {
+            assert!(
+                compiled.keymap.bindings().contains(binding),
+                "{:?} {} lost",
+                binding.scope,
+                binding.sequence
+            );
+        }
+    }
+
+    #[test]
+    fn without_defaults_a_keymap_that_cannot_be_left_keeps_the_defaults() {
+        let value: Value =
+            serde_yaml::from_str("defaults: false\nbind:\n  normal:\n    x: move-left\n").unwrap();
+        let compiled = compile(&value, default_keymap());
+
+        // `Ctrl-\\` still leaves the other modes, so only the palette is missing.
+        assert_eq!(
+            compiled.errors,
+            [
+                "defaults: false rejected: bind has no open-command-palette in normal; the built-in bindings were kept"
+            ]
+        );
+        assert_eq!(
+            exact(&compiled, Mode::Normal, "x"),
+            Some(BindingTarget::Editor(
+                crate::command::EditorCommand::MoveLeft
+            ))
+        );
+        assert!(exact(&compiled, Mode::Normal, "w").is_some());
+
+        // Taking the terminal escape away as well leaves Insert with no exit.
+        let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+        value["bind"]["insert"] =
+            serde_yaml::from_str("{ 'Ctrl-\\': null, Ctrl-4: null }").unwrap();
+        let compiled = compile(&value, default_keymap());
+        assert_eq!(
+            compiled.errors,
+            [
+                "defaults: false rejected: bind has no enter-normal-mode in insert; the built-in bindings were kept"
+            ]
+        );
+    }
+
+    #[test]
+    fn without_defaults_prefix_conflicts_are_reported_as_they_are() {
+        // A leader and window on one key is the window's fault, as with the
+        // defaults, rather than a reason to drop all of `bind`.
+        let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+        value["leader"] = Value::String("Ctrl-a".into());
+        value["window"] = Value::String("Ctrl-a".into());
+        value["bind"]["normal"]["Leader h"] = Value::String("move-down".into());
+        let compiled = compile(&value, default_keymap());
+        assert_eq!(compiled.errors.len(), 1, "{:?}", compiled.errors);
+        assert!(
+            compiled.errors[0].starts_with("window prefix rejected"),
+            "{:?}",
+            compiled.errors
+        );
+        assert_eq!(exact(&compiled, Mode::Normal, "w"), None);
+        assert_eq!(
+            exact(&compiled, Mode::Normal, "Ctrl-a h"),
+            Some(BindingTarget::Editor(
+                crate::command::EditorCommand::MoveDown
+            ))
+        );
+
+        // So is a leader a special view uses on its own, as Media uses `-`.
+        let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+        value["leader"] = Value::String("-".into());
+        value["bind"]["normal"]["Leader f"] = Value::String("move-down".into());
+        let compiled = compile(&value, default_keymap());
+        assert_eq!(compiled.errors.len(), 1, "{:?}", compiled.errors);
+        assert!(
+            compiled.errors[0].starts_with("leader prefix rejected"),
+            "{:?}",
+            compiled.errors
+        );
+        assert_eq!(
+            exact(&compiled, Mode::Normal, "Space f"),
+            Some(BindingTarget::Editor(
+                crate::command::EditorCommand::MoveDown
+            ))
+        );
+
+        // When the rejected entry was the way out, the rejection says why.
+        let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+        value["leader"] = Value::String("x".into());
+        value["bind"]["normal"] = serde_yaml::from_str("{ x: open-command-palette }").unwrap();
+        let compiled = compile(&value, default_keymap());
+        assert!(
+            compiled.errors[0].starts_with(
+                "defaults: false rejected: bind has no open-command-palette in normal"
+            ),
+            "{:?}",
+            compiled.errors
+        );
+        assert!(
+            compiled.errors[1..]
+                .iter()
+                .any(|error| error.starts_with("bind.normal \"x\" rejected:")),
+            "{:?}",
+            compiled.errors
+        );
+        assert!(exact(&compiled, Mode::Normal, "w").is_some());
+    }
+
+    #[test]
+    fn without_defaults_the_user_guide_example_is_accepted() {
+        // A Windows checkout may convert the guide to CRLF.
+        let guide = crate::manual::USER_GUIDE.replace("\r\n", "\n");
+        let section = &guide[guide.find("### Without the built-in keys").unwrap()..];
+        let start = section.find("```yaml\n").unwrap() + "```yaml\n".len();
+        let example = &section[start..start + section[start..].find("```").unwrap()];
+        let config: Value = serde_yaml::from_str(example).unwrap();
+        let compiled = compile(&config["keys"], default_keymap());
+        assert!(standalone(&compiled), "{:?}", compiled.errors);
+        for (keys, command) in [
+            ("Enter", crate::command::EditorCommand::InsertNewline),
+            (
+                "Backspace",
+                crate::command::EditorCommand::DeleteCharBackward,
+            ),
+        ] {
+            assert_eq!(
+                exact(&compiled, Mode::Insert, keys),
+                Some(BindingTarget::Editor(command))
+            );
+        }
+    }
+
+    #[test]
+    fn without_defaults_the_terminal_escape_stays() {
+        let compiled = compile(&serde_yaml::from_str(WAY_OUT).unwrap(), default_keymap());
+        assert!(standalone(&compiled), "{:?}", compiled.errors);
+        // Escape belongs to the program inside a terminal; `Ctrl-\\` in both
+        // its spellings is the only way out of its input.
+        for mode in [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace] {
+            for keys in ["Ctrl-\\", "Ctrl-4"] {
+                assert_eq!(
+                    exact(&compiled, mode, keys),
+                    Some(BindingTarget::Editor(
+                        crate::command::EditorCommand::EnterNormalMode
+                    )),
+                    "{mode:?} {keys}"
+                );
+            }
+        }
+        assert_eq!(
+            compiled.keymap.lookup_in(
+                Mode::Insert,
+                BindingScope::Terminal,
+                &KeySequence::parse("Ctrl-\\").unwrap()
+            ),
+            compiled
+                .keymap
+                .lookup(Mode::Insert, &KeySequence::parse("Ctrl-\\").unwrap())
+        );
+    }
+
+    #[test]
+    fn without_defaults_terminals_keep_their_insert_keys() {
+        let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+        value["window"] = Value::String("Ctrl-a".into());
+        let compiled = compile(&value, default_keymap());
+        assert!(standalone(&compiled), "{:?}", compiled.errors);
+        let keymap = &compiled.keymap;
+        // Nothing `bind` assigns reaches a terminal's input, so what the
+        // terminal answered to through the global Insert keys stays there.
+        assert!(keymap.terminal_clipboard_key(Key::ctrl('C')));
+        let terminal = |keys: &str| match keymap.lookup_in(
+            Mode::Insert,
+            BindingScope::Terminal,
+            &KeySequence::parse(keys).unwrap(),
+        ) {
+            Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
+                Some(binding.target)
+            }
+            Lookup::NoMatch | Lookup::Prefix(_) => None,
+        };
+        assert_eq!(
+            terminal("Ctrl-a h"),
+            Some(BindingTarget::Editor(
+                crate::command::EditorCommand::FocusWindowLeft
+            ))
+        );
+        assert_eq!(exact(&compiled, Mode::Insert, "Ctrl-a h"), None);
+        assert_eq!(exact(&compiled, Mode::Insert, "Backspace"), None);
+        // Keys a terminal sends to its program get no copy, so a window
+        // prefix may still take one only a dropped Insert default used.
+        assert_eq!(terminal("Ctrl-s"), None);
+        let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+        value["window"] = Value::String("Ctrl-s".into());
+        value["bind"]["insert"]["Window l"] = Value::String("focus-window-right".into());
+        let compiled = compile(&value, default_keymap());
+        assert!(standalone(&compiled), "{:?}", compiled.errors);
+        assert_eq!(
+            exact(&compiled, Mode::Insert, "Ctrl-s l"),
+            Some(BindingTarget::Editor(
+                crate::command::EditorCommand::FocusWindowRight
+            ))
+        );
+    }
+
+    #[test]
+    fn without_defaults_prefixes_take_keys_only_dropped_defaults_used() {
+        let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+        value["leader"] = Value::String("x".into());
+        value["window"] = Value::String("Ctrl-a".into());
+        value["bind"]["normal"]["Leader h"] = Value::String("move-down".into());
+        value["bind"]["insert"]["Window l"] = Value::String("focus-window-right".into());
+        let compiled = compile(&value, default_keymap());
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        assert!(standalone(&compiled), "{:?}", compiled.errors);
+
+        assert_eq!(
+            exact(&compiled, Mode::Normal, "x h"),
+            Some(BindingTarget::Editor(
+                crate::command::EditorCommand::MoveDown
+            ))
+        );
+        assert_eq!(exact(&compiled, Mode::Normal, "Space h"), None);
+        assert_eq!(
+            exact(&compiled, Mode::Insert, "Ctrl-a l"),
+            Some(BindingTarget::Editor(
+                crate::command::EditorCommand::FocusWindowRight
+            ))
+        );
+        // The prefixes `bind` continues keep their names for key hints; the
+        // ones nothing global continues any more are gone from the keyboard.
+        let named = |mode, keys| {
+            let sequence = KeySequence::parse(keys).unwrap();
+            compiled.keymap.namespaces().iter().any(|namespace| {
+                namespace.scope == BindingScope::Global
+                    && namespace.modes.contains(&mode)
+                    && namespace.sequence == sequence
+            })
+        };
+        assert!(named(Mode::Normal, "x"));
+        assert!(named(Mode::Insert, "Ctrl-a"));
+        assert!(!named(Mode::Normal, "x g"));
+        assert!(!named(Mode::Normal, "g"));
+
+        // A built-in namespace key is free too: its name goes with its keys.
+        for leader in ["g", "z"] {
+            let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+            value["leader"] = Value::String(leader.into());
+            value["bind"]["normal"]["Leader h"] = Value::String("move-down".into());
+            let compiled = compile(&value, default_keymap());
+            assert!(standalone(&compiled), "{leader}: {:?}", compiled.errors);
+            assert_eq!(
+                exact(&compiled, Mode::Normal, &format!("{leader} h")),
+                Some(BindingTarget::Editor(
+                    crate::command::EditorCommand::MoveDown
+                ))
+            );
+            let sequence = KeySequence::parse(leader).unwrap();
+            let names = compiled
+                .keymap
+                .namespaces()
+                .iter()
+                .filter(|namespace| {
+                    namespace.modes.contains(&Mode::Normal) && namespace.sequence == sequence
+                })
+                .map(|namespace| namespace.description)
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["Application commands"], "{leader}");
+        }
+    }
+
+    #[test]
+    fn without_defaults_help_still_spells_every_built_in_prefix() {
+        let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+        value["window"] = Value::String("Ctrl-a".into());
+        let compiled = compile(&value, default_keymap());
+        assert!(standalone(&compiled), "{:?}", compiled.errors);
+        // Every default prefix keeps its configured spelling, whether or not
+        // anything is left under it; a marker for one that is gone resolves
+        // to a placeholder rather than failing.
+        for namespace in default_keymap().namespaces() {
+            let mut expected = namespace.sequence.as_slice().to_vec();
+            if expected[0] == Key::ctrl('w') {
+                expected[0] = Key::ctrl('a');
+            }
+            assert_eq!(
+                compiled.keymap.spelling_for_default(&namespace.sequence),
+                Some(&KeySequence::new(expected)),
+                "{}",
+                namespace.sequence
+            );
+            let marker = format!("{{prefix:{}}}", namespace.sequence);
+            assert!(
+                crate::key_spelling::resolve(&marker, &compiled.keymap).is_ok(),
+                "{marker}"
+            );
+        }
+        // The manual and its tutorials expect every marker to resolve.
+        crate::manual::render_document_for(&compiled.keymap);
+
+        // A terminal's own `Ctrl-w` keys outlive the global pane moves, so
+        // its prefix is still named there, under the configured spelling.
+        let spelled = crate::key_spelling::resolve("{prefix:Ctrl-w}", &compiled.keymap)
+            .unwrap()
+            .text;
+        assert_eq!(spelled, "Ctrl-a");
+        assert!(compiled.keymap.namespaces().iter().any(|namespace| {
+            namespace.scope == BindingScope::Terminal
+                && namespace.is_active_in(Mode::Insert)
+                && namespace.sequence == KeySequence::parse("Ctrl-a").unwrap()
+        }));
+    }
+
+    #[test]
+    fn without_defaults_a_sequence_of_actions_is_a_way_out() {
+        let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+        value["bind"]["insert"] = serde_yaml::from_str(
+            "{ Esc: [move-left, enter-normal-mode], 'Ctrl-\\': null, Ctrl-4: null }",
+        )
+        .unwrap();
+        value["bind"]["normal"] =
+            serde_yaml::from_str("{ ':': [select-all, open-command-palette] }").unwrap();
+        let compiled = compile(&value, default_keymap());
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        assert!(standalone(&compiled), "{:?}", compiled.errors);
+    }
+
+    #[test]
+    fn without_defaults_fast_pane_keys_stay_while_configured_on() {
+        let value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+        let fast = compile(&value, &crate::keymap::keymap_for(true));
+        assert!(standalone(&fast), "{:?}", fast.errors);
+        for mode in [Mode::Normal, Mode::Insert] {
+            assert_eq!(
+                exact(&fast, mode, "Ctrl-h"),
+                Some(BindingTarget::Editor(
+                    crate::command::EditorCommand::FocusWindowLeft
+                )),
+                "{mode:?}"
+            );
+        }
+        // Off, the keys are ordinary defaults and go with the rest.
+        let plain = compile(&value, &crate::keymap::keymap_for(false));
+        assert_eq!(exact(&plain, Mode::Insert, "Ctrl-h"), None);
+    }
+
+    #[test]
+    fn without_defaults_unimplemented_bindings_go_too() {
+        let compiled = compile(&serde_yaml::from_str(WAY_OUT).unwrap(), default_keymap());
+        assert!(standalone(&compiled), "{:?}", compiled.errors);
+        let remaining = compiled
+            .keymap
+            .bindings()
+            .iter()
+            .filter(|binding| {
+                binding.scope == BindingScope::Global
+                    && binding.availability != crate::keymap::BindingAvailability::Implemented
+                    && binding.modes.iter().any(|mode| {
+                        matches!(
+                            mode,
+                            Mode::Normal | Mode::Select | Mode::Insert | Mode::Replace
+                        )
+                    })
+            })
+            .map(|binding| binding.sequence.to_string())
+            .collect::<Vec<_>>();
+        assert!(remaining.is_empty(), "{remaining:?}");
+    }
+
+    #[test]
+    fn without_defaults_rebind_is_ignored_and_defaults_must_be_a_boolean() {
+        let value: Value =
+            serde_yaml::from_str(&format!("{WAY_OUT}rebind:\n  Space g: Leader G\n")).unwrap();
+        let compiled = compile(&value, default_keymap());
+        assert_eq!(
+            compiled.errors,
+            [
+                "rebind \"Space g\" ignored: keys.defaults is false, so there is no built-in binding to move"
+            ]
+        );
+
+        let value: Value = serde_yaml::from_str("defaults: maybe\n").unwrap();
+        let compiled = compile(&value, default_keymap());
+        assert_eq!(
+            compiled.errors,
+            ["keys section rejected: defaults must be true or false"]
+        );
+        assert!(exact(&compiled, Mode::Normal, "w").is_some());
+    }
 
     #[test]
     fn terminal_copy_admission_follows_the_effective_registry() {

@@ -3906,7 +3906,7 @@ mod tests {
         let _ = prepared_snapshot(&mut app, 100, 40);
         assert_eq!(app.visible_pane_rebuilds.get(), 9);
         app.diagnostics.set(
-            "lua",
+            &crate::lsp::ServerId::new("lua", app.project_root.clone()),
             path,
             vec![crate::lsp::Diagnostic::new(Default::default())],
         );

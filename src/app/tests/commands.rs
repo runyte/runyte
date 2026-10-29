@@ -742,7 +742,7 @@ fn lsp_edit_of_an_offscreen_broken_language_merges_failure_with_outer_success() 
     let mut app = app_with_broken_rust_registry();
     app.lsp_workspace_allowed = true;
     app.apply_lsp_event(LspEvent::Ready {
-        language: "rust".into(),
+        server: server_id(&app, "rust"),
         generation: 1,
         name: "mock-rust-server".into(),
         encoding: Encoding::Utf8,
@@ -751,7 +751,7 @@ fn lsp_edit_of_an_offscreen_broken_language_merges_failure_with_outer_success() 
     });
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
-        language: "rust".into(),
+        server: server_id(&app, "rust"),
         generation: 1,
         encoding: Encoding::Utf8,
         id: serde_json::json!(7),
@@ -1970,7 +1970,7 @@ fn rename_and_rejected_or_stopped_lsp_work_are_unavailable() {
     ready(&mut stopped, Encoding::Utf8);
     drain(&mut stopped_queue);
     stopped.apply_lsp_event(LspEvent::Stopped {
-        language: "rust".to_owned(),
+        server: server_id(&stopped, "rust"),
         message: "rust server stopped".to_owned(),
     });
     assert!(matches!(

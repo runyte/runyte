@@ -1,7 +1,7 @@
 # Installing Runyte
 
 Choose an edition, install it, then set up your shell. For editor commands and
-configuration, see the [user guide](docs/user-guide.md).
+configuration, see the [user guide](docs/user-guide/README.md).
 
 - [Choose an edition](#choose-an-edition)
 - [Terminal edition](#terminal-edition): Linux/macOS install script, archives, Cargo and [Windows](#windows)
@@ -146,7 +146,7 @@ cargo build --release --locked
 .\target\release\runyte.exe --editor README.md
 ```
 
-See [Windows support](docs/user-guide.md#windows-support) for feature differences
+See [Windows support](docs/user-guide/install-and-run.md#windows-support) for feature differences
 and validation limits.
 
 ## Desktop edition
@@ -404,7 +404,7 @@ For Git specifically, you can also set:
 git config --global core.editor 'runyte --wait'
 ```
 
-See [external editor requests](docs/user-guide.md#external-editor-requests---wait)
+See [external editor requests](docs/user-guide/workspaces-and-persistent-sessions.md#external-editor-requests---wait)
 for completion, cancellation and ordinary-shell behavior.
 
 ### Quick edits and optional shell integration
@@ -426,7 +426,7 @@ of the persistent-session setup above. For system files on Unix, use
 
 Optional conveniences are `alias ru=runyte` in Bash/Zsh or `Set-Alias ru runyte`
 in PowerShell. To let `:quit-here` change the calling shell's directory, use the
-wrappers in the [shell directory guide](docs/user-guide.md#change-the-shell-directory-on-exit).
+wrappers in the [shell directory guide](docs/user-guide/workspaces-and-persistent-sessions.md#change-the-shell-directory-on-exit).
 On Windows, keep [runyte.ps1](contrib/runyte.ps1) at a stable location and
 dot-source it from `$PROFILE`. The wrapper is tested with Windows PowerShell
 5.1; PowerShell 7 has not been validated.
@@ -447,7 +447,7 @@ dot-source it from `$PROFILE`. The wrapper is tested with Windows PowerShell
   See its [licences and attribution](licenses/jetbrains-mono/README.md).
 
 Window controls, media navigation and document preview are covered in the
-[desktop user guide](docs/user-guide.md#desktop-edition).
+[desktop user guide](docs/user-guide/files-and-buffers.md#desktop-edition).
 
 ## Update or uninstall
 
@@ -469,4 +469,4 @@ launcher, remove `com.runyte.Runyte.desktop` from
 `${XDG_DATA_HOME:-~/.local/share}/applications` and its `com.runyte.Runyte` icons
 from that data directory's `icons/hicolor` tree. Remove shell profile entries
 you added if you no longer need them. Configuration is kept separately; its
-locations are in the [configuration guide](docs/user-guide.md#configuration).
+locations are in the [configuration guide](docs/user-guide/configuration.md#configuration).

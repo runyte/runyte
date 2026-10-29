@@ -214,6 +214,8 @@ impl App {
         // again simply sends it again. It goes out whatever the workspace
         // permission is, because a denied manager holds the definitions a
         // later approval would start servers from.
+        // A changed `roots` changes where documents' servers belong.
+        self.forget_lsp_roots();
         let lsp_refused = self
             .ports
             .send_lsp(LspCommand::Reconfigure(Box::new(self.config.lsp.clone())))

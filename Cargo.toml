@@ -26,6 +26,7 @@ readme = "README.md"
 include = [
     "/src/**",
     "/skills/runyte-mcp/SKILL.md",
+    "/build.rs",
     "!/src/app/tests/**",
     "/docs/**",
     "/contrib/**",

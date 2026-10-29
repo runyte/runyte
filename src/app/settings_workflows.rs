@@ -161,7 +161,9 @@ impl App {
                     ServiceState::Idle,
                     format!("no server configured for active {language} buffer"),
                 )
-            } else if self.lsp_servers.contains_key(&language)
+            } else if self
+                .lsp_server_of(buffer_id)
+                .is_some_and(|server| self.lsp_servers.contains_key(&server))
                 && self.lsp_documents.contains_key(&buffer_id)
             {
                 (

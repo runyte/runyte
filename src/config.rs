@@ -385,6 +385,11 @@ pub struct LanguageServerConfig {
     /// Passed verbatim as the `initializationOptions` of the handshake.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initialization_options: Option<serde_json::Value>,
+    /// File names that mark a project root for this language, such as
+    /// `Cargo.toml`. `None` uses the language's built-in markers and an empty
+    /// list roots every server at the workspace; see [`crate::lsp::root`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roots: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1165,6 +1170,7 @@ impl Default for LspConfig {
                 command: PathBuf::from("rust-analyzer"),
                 args: Vec::new(),
                 initialization_options: None,
+                roots: None,
             },
         );
         Self {
@@ -2362,6 +2368,23 @@ themes:
 
         let disabled: Config = serde_yaml::from_str("lsp:\n  enable: false\n").unwrap();
         assert!(!disabled.lsp.enable);
+    }
+
+    #[test]
+    fn a_language_server_names_its_root_markers_and_omits_them_by_default() {
+        let config: Config = serde_yaml::from_str(
+            "lsp:\n  python:\n    command: pyright-langserver\n    roots: [pyproject.toml]\n  json:\n    command: json-ls\n    roots: []\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.lsp.servers["python"].roots,
+            Some(vec!["pyproject.toml".to_owned()])
+        );
+        assert_eq!(config.lsp.servers["json"].roots, Some(Vec::new()));
+        assert_eq!(config.lsp.servers["rust"].roots, None);
+
+        let written = Config::default().to_yaml().unwrap();
+        assert!(!written.contains("roots"), "{written}");
     }
 
     #[test]

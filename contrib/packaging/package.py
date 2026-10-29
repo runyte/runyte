@@ -74,6 +74,7 @@ def bundle_linux(binary, destination):
     shutil.copytree(repository / "licenses", destination / "licenses")
     (destination / "docs").mkdir()
     shutil.copyfile(repository / "docs/user-guide.md", destination / "docs/user-guide.md")
+    shutil.copytree(repository / "docs/user-guide", destination / "docs/user-guide")
     integration = destination / "contrib/packaging"
     integration.mkdir(parents=True)
     for name in ("package.py", "README.md"):

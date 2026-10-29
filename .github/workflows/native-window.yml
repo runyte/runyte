@@ -4,16 +4,18 @@ name: Desktop edition
 
 on:
   push:
-    branches: [exp, dev, main]
+    branches: [main]
   pull_request:
     branches: [exp, dev, main]
   workflow_dispatch:
+  schedule:
+    - cron: "47 2 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: native-window-${{ github.ref }}
+  group: native-window-${{ github.event_name == 'schedule' && 'nightly-dev' || github.ref }}
   cancel-in-progress: true
 
 # Preserve failures from Cargo and acceptance commands piped through tee.
@@ -22,7 +24,25 @@ defaults:
     shell: bash
 
 jobs:
+  source:
+    name: Resolve desktop source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.sha }}
+          persist-credentials: false
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   native:
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}native (${{ matrix.os }})
+    # A failed source resolver must fail required checks, not skip them green.
+    if: ${{ !cancelled() }}
+    needs: source
     strategy:
       fail-fast: false
       matrix:
@@ -35,6 +55,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
       - name: Linux dependencies
         if: runner.os == 'Linux'

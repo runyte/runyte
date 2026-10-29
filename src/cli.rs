@@ -1649,6 +1649,7 @@ async fn run(
         && arguments.mode_explicit
         && arguments.project_root.is_none()
         && !attaching_elsewhere;
+    let mut adopted_workspace = false;
     let project_root = match arguments.project_root.take() {
         // Editor mode has no workspace. The launch directory stands in as
         // the root that relative paths are displayed against; nothing
@@ -1682,6 +1683,26 @@ async fn run(
         None => match project_root::discover(&launch_directory, &config.workspace.state)? {
             Some(project_root) => {
                 startup.mark(StartupPhase::ProjectResolvedAutomatically);
+                project_root
+            }
+            // An ide launch makes its own directory a workspace, as Helix
+            // works in its working directory. Every other mode still needs
+            // one that exists: a host or attachment must not create one.
+            None if arguments.mode == LaunchMode::Standalone => {
+                let targets = arguments
+                    .targets
+                    .iter()
+                    .map(|target| launch_directory.join(&target.path))
+                    .collect::<Vec<_>>();
+                let project_root = project_root::adopt(
+                    &launch_directory,
+                    &config.workspace.state,
+                    &reserved_user_roots,
+                    &user_home_directories(),
+                    &targets,
+                )?;
+                startup.mark(StartupPhase::ProjectResolvedAutomatically);
+                adopted_workspace = true;
                 project_root
             }
             None => anyhow::bail!(project_root::NO_WORKSPACE_HERE),
@@ -1923,6 +1944,18 @@ async fn run(
     app.note_running_as_root(running_as_root);
     let startup_config = app.config.clone();
     app.note_config_deprecations(&startup_config);
+    if adopted_workspace {
+        app.push_notification(NotificationDraft::new(
+            NotificationSeverity::Info,
+            "Workspace",
+            "Created a workspace",
+            format!(
+                "no repository or workspace was found above {}, so it became one; its state is in {}",
+                project_root.display(),
+                state_root.display()
+            ),
+        ));
+    }
     if let Some(failure) = logging_failure {
         app.push_notification(NotificationDraft::new(
             NotificationSeverity::Warning,
@@ -2516,6 +2549,18 @@ fn uses_automatic_persistent_mode(arguments: &LaunchArguments, configured: RunMo
         && arguments.init.is_none()
         && !arguments.editor
         && configured == RunMode::Mux
+}
+
+/// The home directory as the environment and as the account database name
+/// it. They differ under `sudo -E` and in some containers, and a workspace
+/// adopted at either would capture the launches below it.
+fn user_home_directories() -> Vec<PathBuf> {
+    let environment = crate::app::user_home_directory();
+    #[cfg(any(unix, windows))]
+    let account = crate::user_paths::system_home_directory();
+    #[cfg(not(any(unix, windows)))]
+    let account = None;
+    environment.into_iter().chain(account).collect()
 }
 
 /// Whether this launch runs in editor mode: standalone, with no workspace.
@@ -7730,10 +7775,13 @@ MODES:
                          shell uses the current project's session; an
                          authenticated integrated terminal uses its parent
 
-    A workspace is a Git repository or a directory holding .runyte, found from
-    the launch directory or above it. Without one, ide and mux refuse; create
-    one with runyte --init DIRECTORY. As root only editor mode runs; for system
-    files set SUDO_EDITOR=runed and use sudoedit.
+    A workspace is a Git, Jujutsu or Subversion working copy, or a directory
+    holding .runyte, found from the launch directory or above it. Without one,
+    ide makes the launch directory a workspace unless it is the home
+    directory, a shared or temporary directory, or the filesystem root, or a
+    target lies outside it; mux refuses. runyte --init DIRECTORY creates one.
+    As root only editor mode runs; for system files set SUDO_EDITOR=runed and
+    use sudoedit.
 
 AGENT CONTEXT:
         skills <install|update|status> <--claude|--codex|--all> <--user|--project>

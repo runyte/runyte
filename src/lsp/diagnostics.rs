@@ -13,6 +13,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use super::ServerId;
+
 /// Severity, ordered so that `max` picks the one worth showing in a gutter
 /// cell shared by several diagnostics.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -129,7 +131,7 @@ impl FileDiagnostics {
 #[derive(Clone, Debug, Default)]
 pub struct DiagnosticStore {
     by_path: BTreeMap<PathBuf, FileDiagnostics>,
-    by_language: BTreeMap<PathBuf, String>,
+    by_server: BTreeMap<PathBuf, ServerId>,
     revision: u64,
 }
 
@@ -142,31 +144,32 @@ impl DiagnosticStore {
         self.by_path.is_empty()
     }
 
-    pub fn set(&mut self, language: &str, path: PathBuf, diagnostics: Vec<Diagnostic>) {
+    pub fn set(&mut self, server: &ServerId, path: PathBuf, diagnostics: Vec<Diagnostic>) {
         self.revision = self.revision.wrapping_add(1);
         if diagnostics.is_empty() {
             self.by_path.remove(&path);
-            self.by_language.remove(&path);
+            self.by_server.remove(&path);
             return;
         }
-        self.by_language.insert(path.clone(), language.to_owned());
+        self.by_server.insert(path.clone(), server.clone());
         self.by_path.insert(path, FileDiagnostics::new(diagnostics));
     }
 
-    /// Drops everything a language's server published. Used when that server
-    /// stops, because diagnostics with no server behind them are stale claims
-    /// about the code that nothing will ever correct.
-    pub fn clear_language(&mut self, language: &str) {
+    /// Drops everything one server published. Used when that server stops,
+    /// because diagnostics with no server behind them are stale claims about
+    /// the code that nothing will ever correct. Another root's server of the
+    /// same language keeps its own.
+    pub fn clear_server(&mut self, server: &ServerId) {
         self.revision = self.revision.wrapping_add(1);
         let paths: Vec<PathBuf> = self
-            .by_language
+            .by_server
             .iter()
-            .filter(|(_, owner)| owner.as_str() == language)
+            .filter(|(_, owner)| *owner == server)
             .map(|(path, _)| path.clone())
             .collect();
         for path in paths {
             self.by_path.remove(&path);
-            self.by_language.remove(&path);
+            self.by_server.remove(&path);
         }
     }
 
@@ -174,7 +177,7 @@ impl DiagnosticStore {
     pub fn clear_path(&mut self, path: &Path) {
         self.revision = self.revision.wrapping_add(1);
         self.by_path.remove(path);
-        self.by_language.remove(path);
+        self.by_server.remove(path);
     }
 
     pub fn for_path(&self, path: &Path) -> &[Diagnostic] {
@@ -247,6 +250,10 @@ mod tests {
     use super::*;
     use lsp_types::{DiagnosticSeverity, Position, Range};
 
+    fn server(language: &str) -> ServerId {
+        ServerId::new(language, "/tmp")
+    }
+
     fn diagnostic(row: u32, severity: DiagnosticSeverity, message: &str) -> Diagnostic {
         Diagnostic::new(lsp_types::Diagnostic {
             range: Range::new(Position::new(row, 0), Position::new(row, 4)),
@@ -269,12 +276,12 @@ mod tests {
         let mut store = DiagnosticStore::default();
         let path = PathBuf::from("/tmp/a.rs");
         store.set(
-            "rust",
+            &server("rust"),
             path.clone(),
             vec![diagnostic(0, DiagnosticSeverity::ERROR, "boom")],
         );
         assert_eq!(store.for_path(&path).len(), 1);
-        store.set("rust", path.clone(), Vec::new());
+        store.set(&server("rust"), path.clone(), Vec::new());
         assert!(store.for_path(&path).is_empty());
         assert!(store.is_empty());
     }
@@ -284,7 +291,7 @@ mod tests {
         let mut store = DiagnosticStore::default();
         let path = PathBuf::from("/tmp/a.rs");
         store.set(
-            "rust",
+            &server("rust"),
             path.clone(),
             vec![
                 diagnostic(3, DiagnosticSeverity::HINT, "hint"),
@@ -305,7 +312,7 @@ mod tests {
         let path = PathBuf::from("/tmp/a.rs");
         let other = PathBuf::from("/tmp/b.json");
         store.set(
-            "rust",
+            &server("rust"),
             path.clone(),
             vec![
                 diagnostic(8, DiagnosticSeverity::WARNING, "later row"),
@@ -330,14 +337,14 @@ mod tests {
         assert_eq!(store.counts(), (2, 3));
 
         store.set(
-            "json",
+            &server("json"),
             other.clone(),
             vec![diagnostic(2, DiagnosticSeverity::HINT, "other path")],
         );
         // A later server publication owns this path and replaces its whole
         // index, including rows that only appeared in the previous batch.
         store.set(
-            "json",
+            &server("json"),
             path.clone(),
             vec![diagnostic(
                 2,
@@ -349,30 +356,56 @@ mod tests {
         assert!(messages(&store, &path, 8).is_empty());
         assert_eq!(store.severity_for_row(&path, 8), None);
         assert_eq!(store.counts(), (0, 0));
-        store.clear_language("rust");
+        store.clear_server(&server("rust"));
         assert_eq!(messages(&store, &path, 2), ["replacement"]);
         store.clear_path(&path);
         assert!(messages(&store, &path, 2).is_empty());
         assert_eq!(store.severity_for_row(&path, 2), None);
         assert_eq!(store.for_path(&other)[0].message, "other path");
-        store.clear_language("json");
+        store.clear_server(&server("json"));
         assert!(store.is_empty());
+    }
+
+    #[test]
+    fn stopping_one_root_keeps_another_root_of_the_same_language() {
+        let mut store = DiagnosticStore::default();
+        let tools = ServerId::new("rust", "/work/tools");
+        let game = ServerId::new("rust", "/work/game");
+        store.set(
+            &tools,
+            PathBuf::from("/work/tools/src/main.rs"),
+            vec![diagnostic(0, DiagnosticSeverity::ERROR, "tools")],
+        );
+        store.set(
+            &game,
+            PathBuf::from("/work/game/src/main.rs"),
+            vec![diagnostic(0, DiagnosticSeverity::ERROR, "game")],
+        );
+
+        store.clear_server(&tools);
+
+        assert!(
+            store
+                .for_path(Path::new("/work/tools/src/main.rs"))
+                .is_empty()
+        );
+        assert_eq!(store.for_path(Path::new("/work/game/src/main.rs")).len(), 1);
     }
 
     #[test]
     fn stopping_a_server_clears_only_its_own_files() {
         let mut store = DiagnosticStore::default();
         store.set(
-            "rust",
+            &server("rust"),
             PathBuf::from("/tmp/a.rs"),
             vec![diagnostic(0, DiagnosticSeverity::ERROR, "rust")],
         );
         store.set(
-            "json",
+            &server("json"),
             PathBuf::from("/tmp/b.json"),
             vec![diagnostic(0, DiagnosticSeverity::ERROR, "json")],
         );
-        store.clear_language("rust");
+        store.clear_server(&server("rust"));
         assert!(store.for_path(Path::new("/tmp/a.rs")).is_empty());
         assert_eq!(store.for_path(Path::new("/tmp/b.json")).len(), 1);
     }

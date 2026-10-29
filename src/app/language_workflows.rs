@@ -11,7 +11,7 @@ use super::{
     Mode, Modifiers, Offset, PATH_COMPLETION_ITEM_LIMIT_PER_ROOT, Path, PathActionMenu, PathBuf,
     PathClipboardTarget, PathPopup, PendingRequest, PickerItem, PromptKind, Range, Register,
     RequestKind, Response, Result, SPECIAL_BUFFER_RETENTION_LIMIT, SearchMode, Selection,
-    SelectionSemantics, ServerState, SignatureContext, SignatureState, TerminalAction,
+    SelectionSemantics, ServerId, ServerState, SignatureContext, SignatureState, TerminalAction,
     TerminalActionMenu, TerminalSession, Text, TextDocumentContentChangeEvent, TrackedRequest,
     Transaction, WORD_COMPLETION_ITEM_LIMIT, WorkspaceMatch, WorkspaceSearchEvent,
     WorkspaceSearchRequest, WorkspaceSearchService, WorkspaceSearchSnapshot, WorkspaceSearchTarget,
@@ -158,8 +158,13 @@ impl std::error::Error for DocumentEditFailure {}
 //
 // Every method here is non-blocking. Requests are queued with a token and
 // forgotten; responses arrive later as `LspEvent`s and are matched back
-// against `lsp_requests`. Nothing in this section can stall a frame, which is
-// the Phase 2 gate.
+// against `lsp_requests`. Nothing in this section waits on a server, which is
+// the Phase 2 gate. The only filesystem reads are those that find a
+// document's server root: a few marker lookups on the editor thread, done
+// once per directory and language and then remembered.
+
+/// How many directories' server roots are remembered before starting over.
+const LSP_ROOT_CACHE_LIMIT: usize = 1024;
 
 impl App {
     /// Connects the editor to a running language-server manager.
@@ -175,11 +180,47 @@ impl App {
     }
 
     /// The language name a buffer maps to, which is the same question asked by
-    /// syntax highlighting: one buffer, one language, one server.
+    /// syntax highlighting: one buffer, one language.
     pub(super) fn language_of(&self, buffer_id: usize) -> Option<String> {
         let buffer = self.buffers.get(buffer_id)?;
         let language = buffer_language(buffer, &self.registry)?;
         Some(self.registry.language_name(language).to_owned())
+    }
+
+    /// The server a buffer's document belongs to: its language's server at
+    /// the root of the project the file sits in, which one workspace may
+    /// hold several of.
+    pub(super) fn lsp_server_of(&self, buffer_id: usize) -> Option<ServerId> {
+        let language = self.language_of(buffer_id)?;
+        let path = self.buffers.get(buffer_id)?.path.as_deref()?;
+        Some(self.lsp_server_for(language, path))
+    }
+
+    fn lsp_server_for(&self, language: String, path: &Path) -> ServerId {
+        let key = (language, path.parent().unwrap_or(path).to_path_buf());
+        if let Some(root) = self.lsp_roots.borrow().get(&key) {
+            return ServerId::new(key.0, root.clone());
+        }
+        let root = crate::lsp::root::server_root(
+            &key.0,
+            self.config.lsp.servers.get(&key.0),
+            path,
+            &self.project_root,
+        );
+        let mut roots = self.lsp_roots.borrow_mut();
+        // Each entry is one directory a document was opened from; the bound
+        // only stops a long session from keeping every one of them.
+        if roots.len() >= LSP_ROOT_CACHE_LIMIT {
+            roots.clear();
+        }
+        roots.insert(key.clone(), root.clone());
+        ServerId::new(key.0, root)
+    }
+
+    /// Forgets every remembered server root, so the next document opened
+    /// finds its root again from the files now on disk.
+    pub(super) fn forget_lsp_roots(&mut self) {
+        self.lsp_roots.get_mut().clear();
     }
 
     /// Makes sure a buffer's server is starting, and opens the document once
@@ -195,32 +236,32 @@ impl App {
         {
             return false;
         }
-        let desired = self.language_of(buffer_id).zip(
+        let desired = self.lsp_server_of(buffer_id).zip(
             self.buffers
                 .get(buffer_id)
                 .and_then(|buffer| buffer.path.clone()),
         );
         let current_matches = self.lsp_documents.get(&buffer_id).is_some_and(|document| {
-            desired.as_ref().is_some_and(|(language, path)| {
-                document.language == *language && document.path == *path
-            })
+            desired
+                .as_ref()
+                .is_some_and(|(server, path)| document.server == *server && document.path == *path)
         });
         if self.lsp_documents.contains_key(&buffer_id) && !current_matches {
             self.retire_lsp_buffer(buffer_id);
         }
-        let Some((language, path)) = desired else {
+        let Some((server, path)) = desired else {
             return false;
         };
-        if !self.lsp_servers.contains_key(&language) {
-            self.lsp_send(LspCommand::Ensure { language });
+        if !self.lsp_servers.contains_key(&server) {
+            self.lsp_send(LspCommand::Ensure { server });
             return false;
         }
         if current_matches {
             if self.lsp_documents[&buffer_id].desynced {
                 let document = self.lsp_documents[&buffer_id].clone();
-                if self.lsp_servers[&document.language].sync.change != ChangeSync::None {
+                if self.lsp_servers[&document.server].sync.change != ChangeSync::None {
                     let accepted = self.lsp_send(LspCommand::Change {
-                        language: document.language,
+                        server: document.server,
                         path: document.path,
                         version: document.version,
                         changes: vec![TextDocumentContentChangeEvent {
@@ -239,10 +280,10 @@ impl App {
                 .get(&buffer_id)
                 .is_some_and(|document| !document.desynced);
         }
-        let sync = self.lsp_servers[&language].sync;
+        let sync = self.lsp_servers[&server].sync;
         let opened = !sync.open_close
             || self.lsp_send(LspCommand::Open {
-                language: language.clone(),
+                server: server.clone(),
                 path: path.clone(),
                 version: 1,
                 text: self.buffers[buffer_id].to_string(),
@@ -251,7 +292,7 @@ impl App {
             self.lsp_documents.insert(
                 buffer_id,
                 DocumentState {
-                    language,
+                    server,
                     path,
                     version: 1,
                     desynced: false,
@@ -268,7 +309,7 @@ impl App {
         if let Some(document) = self.lsp_documents.remove(&buffer_id) {
             self.diagnostics.clear_path(&document.path);
             self.lsp_send(LspCommand::Close {
-                language: document.language,
+                server: document.server,
                 path: document.path,
             });
         } else if let Some(path) = self
@@ -376,8 +417,8 @@ impl App {
         let Some(document) = self.lsp_documents.get(&buffer_id) else {
             return true;
         };
-        let language = document.language.clone();
-        let Some(server) = self.lsp_servers.get(&language) else {
+        let server_id = document.server.clone();
+        let Some(server) = self.lsp_servers.get(&server_id) else {
             return false;
         };
         let (encoding, change_sync) = (server.encoding, server.sync.change);
@@ -421,7 +462,7 @@ impl App {
             }]
         };
         let accepted = self.lsp_send(LspCommand::Change {
-            language,
+            server: server_id,
             path,
             version,
             changes,
@@ -440,10 +481,10 @@ impl App {
         let Some(document) = self.lsp_documents.get(&buffer_id) else {
             return;
         };
-        let language = document.language.clone();
+        let server = document.server.clone();
         let change_sync = self
             .lsp_servers
-            .get(&language)
+            .get(&server)
             .map_or(ChangeSync::None, |server| server.sync.change);
         let Some(version) = document.version.checked_add(1) else {
             self.lsp_documents.get_mut(&buffer_id).unwrap().desynced = true;
@@ -458,7 +499,7 @@ impl App {
         };
         let text = self.buffers[buffer_id].to_string();
         let accepted = self.lsp_send(LspCommand::Change {
-            language,
+            server,
             path,
             version,
             changes: vec![TextDocumentContentChangeEvent {
@@ -478,21 +519,17 @@ impl App {
         let Some(document) = self.lsp_documents.get(&buffer_id) else {
             return;
         };
-        let language = document.language.clone();
+        let server = document.server.clone();
         let Some(path) = self.buffers[buffer_id].path.clone() else {
             return;
         };
         let text = self.buffers[buffer_id].to_string();
-        self.lsp_send(LspCommand::Save {
-            language,
-            path,
-            text,
-        });
+        self.lsp_send(LspCommand::Save { server, path, text });
     }
 
-    fn encoding_for(&self, language: &str) -> Encoding {
+    fn encoding_for(&self, server: &ServerId) -> Encoding {
         self.lsp_servers
-            .get(language)
+            .get(server)
             .map_or(Encoding::default(), |server| server.encoding)
     }
 
@@ -569,14 +606,13 @@ impl App {
             self.action_failed(format!("{label} needs a saved file"));
             return false;
         };
+        let server = self.lsp_server_for(language.clone(), &path);
         let Some((supported, generation)) = self
             .lsp_servers
-            .get(&language)
-            .map(|server| (server.capabilities.supports(&kind), server.generation))
+            .get(&server)
+            .map(|state| (state.capabilities.supports(&kind), state.generation))
         else {
-            self.lsp_send(LspCommand::Ensure {
-                language: language.clone(),
-            });
+            self.lsp_send(LspCommand::Ensure { server });
             self.action_failed(format!("{language} language server is not ready yet"));
             return false;
         };
@@ -626,7 +662,7 @@ impl App {
         };
         let command = LspCommand::Request {
             token,
-            language: language.clone(),
+            server: server.clone(),
             path,
             kind: Box::new(kind),
         };
@@ -636,7 +672,7 @@ impl App {
                 token,
                 TrackedRequest::new(buffer_id, revision, pending)
                     .with_documents(documents)
-                    .with_server(language, generation),
+                    .with_server(server, generation),
             );
             true
         } else {
@@ -646,11 +682,11 @@ impl App {
 
     fn action_command_supported(
         &self,
-        language: &str,
+        server: &ServerId,
         generation: u64,
         command: &lsp_types::Command,
     ) -> bool {
-        self.lsp_servers.get(language).is_some_and(|server| {
+        self.lsp_servers.get(server).is_some_and(|server| {
             server.generation == generation
                 && server
                     .capabilities
@@ -661,14 +697,14 @@ impl App {
     fn send_action_command(
         &mut self,
         buffer: usize,
-        language: String,
+        server: ServerId,
         generation: u64,
         command: lsp_types::Command,
     ) {
-        if !self.action_command_supported(&language, generation, &command) {
+        if !self.action_command_supported(&server, generation, &command) {
             self.mark_unsupported(format!(
-                "the {language} language server did not advertise command {}",
-                command.command
+                "the {} language server did not advertise command {}",
+                server.language, command.command
             ));
             return;
         }
@@ -691,7 +727,7 @@ impl App {
         };
         if self.lsp_send(LspCommand::Request {
             token,
-            language: language.clone(),
+            server: server.clone(),
             path,
             kind: Box::new(RequestKind::ExecuteCommand(Box::new(command))),
         }) {
@@ -707,7 +743,7 @@ impl App {
                     },
                 )
                 .with_documents(self.lsp_document_guards())
-                .with_server(language, generation),
+                .with_server(server, generation),
             );
         }
     }
@@ -716,8 +752,8 @@ impl App {
     pub(super) fn lsp_cursor(&self) -> crate::lsp::LspPosition {
         let buffer_id = self.active().buffer;
         let encoding = self
-            .language_of(buffer_id)
-            .map_or(Encoding::default(), |language| self.encoding_for(&language));
+            .lsp_server_of(buffer_id)
+            .map_or(Encoding::default(), |server| self.encoding_for(&server));
         to_lsp_position(
             self.buffers[buffer_id].text(),
             self.active().head(),
@@ -1015,11 +1051,11 @@ impl App {
 
     pub(super) fn lsp_code_actions(&mut self) {
         let buffer_id = self.active().buffer;
-        let Some(language) = self.language_of(buffer_id) else {
+        let Some(server) = self.lsp_server_of(buffer_id) else {
             self.action_failed("code actions need a known language");
             return;
         };
-        let encoding = self.encoding_for(&language);
+        let encoding = self.encoding_for(&server);
         let text = self.buffers[buffer_id].text();
         let range = self.active().selection.primary();
         let (from, to) = operative_span(&self.buffers[buffer_id], &range);
@@ -1116,7 +1152,7 @@ impl App {
                 .lsp_documents
                 .values()
                 .find(|document| document.path == path)
-                .map(|document| self.encoding_for(&document.language))
+                .map(|document| self.encoding_for(&document.server))
                 .unwrap_or_default();
             items.push(PickerItem::new(
                 format!("{}:{}", display_path(&path), diagnostic.row() + 1),
@@ -1394,6 +1430,60 @@ impl App {
         ));
     }
 
+    /// Drops everything the editor holds from one server process that went
+    /// away: its handshake, its documents, its diagnostics and replies, and
+    /// any popup or action list it produced. Servers of the same language at
+    /// other roots keep theirs.
+    fn forget_lsp_server(&mut self, server: &ServerId) {
+        self.lsp_servers.remove(server);
+        self.pending_lsp_replies.retain(|command| {
+            !matches!(command, LspCommand::EditApplied { server: pending, .. } if pending == server)
+        });
+        // The buffers it served are read from its documents, not from where
+        // each buffer's root now lies: a restart or reload has just
+        // forgotten the remembered roots, so a buffer may already belong to
+        // another root while this server's popups are still showing.
+        let served = self
+            .lsp_documents
+            .iter()
+            .filter(|(_, document)| document.server == *server)
+            .map(|(buffer, _)| *buffer)
+            .collect::<HashSet<_>>();
+        self.lsp_documents
+            .retain(|_, document| document.server != *server);
+        self.diagnostics.clear_server(server);
+        let served_or_owned = |app: &Self, buffer: usize| {
+            served.contains(&buffer) || app.lsp_server_of(buffer).as_ref() == Some(server)
+        };
+        if self
+            .completion
+            .as_ref()
+            .is_some_and(|completion| served_or_owned(self, completion.buffer))
+        {
+            self.completion = None;
+        }
+        if served_or_owned(self, self.active().buffer) {
+            self.signature = None;
+            self.hover = None;
+        }
+        if self
+            .lsp_action_source
+            .as_ref()
+            .is_some_and(|source| source.server == *server)
+        {
+            let action_list_visible = self
+                .list_actions
+                .iter()
+                .any(|action| matches!(action, ListAction::CodeAction(_)));
+            self.lsp_action_source = None;
+            self.lsp_actions.clear();
+            if action_list_visible {
+                self.list = None;
+                self.list_actions.clear();
+            }
+        }
+    }
+
     /// Applies an editor event from the language-server manager.
     pub fn apply_lsp_event(&mut self, event: LspEvent) {
         if !self.lsp_workspace_allowed {
@@ -1401,7 +1491,7 @@ impl App {
         }
         match event {
             LspEvent::Ready {
-                language,
+                server,
                 generation,
                 name,
                 encoding,
@@ -1411,12 +1501,12 @@ impl App {
                 crate::log_info!(
                     "lsp",
                     "language server ready";
-                    "language" => language,
+                    "language" => server.language,
                     "server" => name,
                     "generation" => generation
                 );
                 self.lsp_servers.insert(
-                    language.clone(),
+                    server.clone(),
                     ServerState {
                         name: name.clone(),
                         generation,
@@ -1430,7 +1520,7 @@ impl App {
                 let buffers: Vec<usize> = (0..self.buffers.len())
                     .filter(|buffer_id| {
                         !self.closed_buffers.contains(buffer_id)
-                            && self.language_of(*buffer_id).as_deref() == Some(language.as_str())
+                            && self.lsp_server_of(*buffer_id).as_ref() == Some(&server)
                     })
                     .collect();
                 for buffer_id in buffers {
@@ -1442,7 +1532,7 @@ impl App {
                 // silent.
             }
             LspEvent::Diagnostics {
-                language,
+                server,
                 path,
                 version,
                 diagnostics,
@@ -1455,7 +1545,7 @@ impl App {
                     .flatten();
                 let live = identity.as_ref().and_then(|identity| {
                     self.lsp_documents.values().find(|document| {
-                        document.language == language
+                        document.server == server
                             && workspace_edit_path_identity(&document.path)
                                 .is_ok_and(|candidate| candidate == *identity)
                     })
@@ -1464,7 +1554,7 @@ impl App {
                     !document.desynced && version.is_none_or(|version| version == document.version)
                 }) {
                     self.diagnostics
-                        .set(&language, live.path.clone(), diagnostics);
+                        .set(&server, live.path.clone(), diagnostics);
                 }
             }
             LspEvent::Status { message, error } => {
@@ -1483,7 +1573,7 @@ impl App {
                 self.update_action_feedback(action, &message);
                 self.info_from("LSP", "Language server status", message);
             }
-            LspEvent::Stopped { language, message } => {
+            LspEvent::Stopped { server, message } => {
                 // The boundary that knows both which server went away and what
                 // editor state went with it. Nothing below reports it again.
                 //
@@ -1493,76 +1583,18 @@ impl App {
                 // person still gets it in full through the notification below,
                 // `:lsp-status`, and the language-server boundary that already
                 // retains stderr.
-                crate::log_warn!("lsp", "language server stopped"; "language" => language);
+                crate::log_warn!("lsp", "language server stopped"; "language" => server.language);
                 // Diagnostics with no server behind them are claims about the
                 // code that nothing will ever correct, so they go with it.
-                self.lsp_servers.remove(&language);
-                self.pending_lsp_replies.retain(|command| {
-                    !matches!(command, LspCommand::EditApplied { language: pending, .. } if pending == &language)
-                });
-                self.lsp_documents
-                    .retain(|_, document| document.language != language);
-                self.diagnostics.clear_language(&language);
-                if self.completion.as_ref().is_some_and(|completion| {
-                    self.language_of(completion.buffer).as_deref() == Some(language.as_str())
-                }) {
-                    self.completion = None;
-                }
-                if self.language_of(self.active().buffer).as_deref() == Some(language.as_str()) {
-                    self.signature = None;
-                    self.hover = None;
-                }
-                if self.lsp_action_source.as_ref().is_some_and(|source| {
-                    self.language_of(source.buffer).as_deref() == Some(language.as_str())
-                }) {
-                    let action_list_visible = self
-                        .list_actions
-                        .iter()
-                        .any(|action| matches!(action, ListAction::CodeAction(_)));
-                    self.lsp_action_source = None;
-                    self.lsp_actions.clear();
-                    if action_list_visible {
-                        self.list = None;
-                        self.list_actions.clear();
-                    }
-                }
+                self.forget_lsp_server(&server);
                 self.error_from("LSP", "Language server stopped", message);
             }
-            LspEvent::Restarted { language } => {
-                crate::log_info!("lsp", "language server restarted"; "language" => language);
-                self.lsp_servers.remove(&language);
-                self.pending_lsp_replies.retain(|command| {
-                    !matches!(command, LspCommand::EditApplied { language: pending, .. } if pending == &language)
-                });
-                self.lsp_documents
-                    .retain(|_, document| document.language != language);
-                self.diagnostics.clear_language(&language);
-                if self.completion.as_ref().is_some_and(|completion| {
-                    self.language_of(completion.buffer).as_deref() == Some(language.as_str())
-                }) {
-                    self.completion = None;
-                }
-                if self.language_of(self.active().buffer).as_deref() == Some(language.as_str()) {
-                    self.signature = None;
-                    self.hover = None;
-                }
-                if self.lsp_action_source.as_ref().is_some_and(|source| {
-                    self.language_of(source.buffer).as_deref() == Some(language.as_str())
-                }) {
-                    let action_list_visible = self
-                        .list_actions
-                        .iter()
-                        .any(|action| matches!(action, ListAction::CodeAction(_)));
-                    self.lsp_action_source = None;
-                    self.lsp_actions.clear();
-                    if action_list_visible {
-                        self.list = None;
-                        self.list_actions.clear();
-                    }
-                }
+            LspEvent::Restarted { server } => {
+                crate::log_info!("lsp", "language server restarted"; "language" => server.language);
+                self.forget_lsp_server(&server);
             }
             LspEvent::ApplyEdit {
-                language,
+                server,
                 generation,
                 encoding,
                 id,
@@ -1571,8 +1603,8 @@ impl App {
             } => {
                 if self
                     .lsp_servers
-                    .get(&language)
-                    .is_none_or(|server| server.generation != generation)
+                    .get(&server)
+                    .is_none_or(|state| state.generation != generation)
                 {
                     return;
                 }
@@ -1582,7 +1614,7 @@ impl App {
                     Ok(summary) => {
                         self.status(edit_summary("applied", summary, skipped));
                         self.lsp_reply(LspCommand::EditApplied {
-                            language,
+                            server,
                             generation,
                             id,
                             applied: true,
@@ -1591,7 +1623,7 @@ impl App {
                     Err(error) => {
                         self.report_document_edit_failure(error, "LSP", "Workspace edit failed");
                         self.lsp_reply(LspCommand::EditApplied {
-                            language,
+                            server,
                             generation,
                             id,
                             applied: false,
@@ -1764,7 +1796,7 @@ impl App {
                     command,
                 },
             ) => {
-                let Some((language, generation)) = server else {
+                let Some((server, generation)) = server else {
                     self.error_from(
                         "LSP",
                         "Language server response failed",
@@ -1773,7 +1805,7 @@ impl App {
                     return;
                 };
                 if command.as_ref().is_some_and(|command| {
-                    skipped > 0 || !self.action_command_supported(&language, generation, command)
+                    skipped > 0 || !self.action_command_supported(&server, generation, command)
                 }) {
                     self.action_failed(
                         "resolved code action command is unsupported or depends on file operations",
@@ -1786,13 +1818,13 @@ impl App {
                     fallback,
                     Some(&documents),
                     encoding,
-                    command.as_ref().map(|_| (language.as_str(), generation)),
+                    command.as_ref().map(|_| (&server, generation)),
                 ) {
                     Ok(summary) => {
                         self.status(edit_summary(label, summary, skipped));
                         if let Some(command) = command {
                             if summary.2 {
-                                self.send_action_command(buffer, language, generation, command);
+                                self.send_action_command(buffer, server, generation, command);
                             } else {
                                 self.action_failed(
                                     "code action command not sent because its edits did not reach every language server",
@@ -1993,10 +2025,12 @@ impl App {
         revision: u64,
         documents: HashMap<PathBuf, (usize, u64)>,
     ) {
-        if actions.is_empty() {
+        // A buffer that lost its language or path since asking has no server
+        // left to run an action against.
+        let Some(server) = self.lsp_server_of(buffer).filter(|_| !actions.is_empty()) else {
             self.status("no code actions here");
             return;
-        }
+        };
         let items = actions
             .iter()
             .enumerate()
@@ -2004,16 +2038,15 @@ impl App {
             .collect();
         self.list_actions = (0..actions.len()).map(ListAction::CodeAction).collect();
         self.lsp_actions = actions;
-        let language = self.language_of(buffer).unwrap_or_default();
         let generation = self
             .lsp_servers
-            .get(&language)
-            .map_or(0, |server| server.generation);
+            .get(&server)
+            .map_or(0, |state| state.generation);
         self.lsp_action_source = Some(super::ActionSource {
             buffer,
             revision,
             documents,
-            language,
+            server,
             generation,
         });
         self.list = Some(ListPicker::new("Code actions", items).with_primary_action("apply"));
@@ -2035,7 +2068,7 @@ impl App {
         let source_buffer = source.buffer;
         let source_revision = source.revision;
         let documents = source.documents;
-        let language = source.language;
+        let server = source.server;
         let generation = source.generation;
         if self
             .buffers
@@ -2055,10 +2088,7 @@ impl App {
             );
             return;
         }
-        let current_generation = self
-            .lsp_servers
-            .get(&language)
-            .map(|server| server.generation);
+        let current_generation = self.lsp_servers.get(&server).map(|state| state.generation);
         if current_generation != Some(generation) {
             self.action_warning(
                 "Code action refused",
@@ -2069,11 +2099,11 @@ impl App {
         if self
             .lsp_documents
             .get(&source_buffer)
-            .is_none_or(|document| document.language != language)
+            .is_none_or(|document| document.server != server)
         {
             self.action_warning(
                 "Code action refused",
-                "stale code action; the document changed language ownership",
+                "stale code action; the document changed language-server ownership",
             );
             return;
         }
@@ -2087,10 +2117,10 @@ impl App {
         let Some(entry) = self.lsp_actions.get(index).cloned() else {
             return;
         };
-        let encoding = self.encoding_for(&language);
+        let encoding = self.encoding_for(&server);
         match entry.action().clone() {
             crate::lsp::CodeActionOrCommand::Command(command) => {
-                self.send_action_command(source_buffer, language, generation, command);
+                self.send_action_command(source_buffer, server, generation, command);
             }
             crate::lsp::CodeActionOrCommand::CodeAction(action) if action.disabled.is_some() => {
                 self.action_failed(format!(
@@ -2101,7 +2131,7 @@ impl App {
             crate::lsp::CodeActionOrCommand::CodeAction(action) => {
                 let command = action.command.clone();
                 if command.as_ref().is_some_and(|command| {
-                    !self.action_command_supported(&language, generation, command)
+                    !self.action_command_supported(&server, generation, command)
                 }) {
                     self.action_failed("code action contains an unadvertised command");
                     return;
@@ -2119,7 +2149,7 @@ impl App {
                                 None,
                                 Some(&documents),
                                 encoding,
-                                command.as_ref().map(|_| (language.as_str(), generation)),
+                                command.as_ref().map(|_| (&server, generation)),
                             ) {
                                 Ok(summary) => {
                                     self.status(edit_summary("applied", summary, skipped));
@@ -2127,7 +2157,7 @@ impl App {
                                         if summary.2 {
                                             self.send_action_command(
                                                 source_buffer,
-                                                language,
+                                                server,
                                                 generation,
                                                 command,
                                             );
@@ -2150,7 +2180,7 @@ impl App {
                     }
                     None => match command {
                         Some(command) => {
-                            self.send_action_command(source_buffer, language, generation, command)
+                            self.send_action_command(source_buffer, server, generation, command)
                         }
                         None => self.lsp_request_from(
                             source_buffer,
@@ -2188,7 +2218,7 @@ impl App {
         fallback: Option<PathBuf>,
         guards: Option<&HashMap<PathBuf, (usize, u64)>>,
         encoding: Encoding,
-        command_server: Option<(&str, u64)>,
+        command_server: Option<(&ServerId, u64)>,
     ) -> std::result::Result<(usize, usize, bool), DocumentEditFailure> {
         struct PlannedEdit {
             target: PlannedTarget,
@@ -2369,12 +2399,12 @@ impl App {
                         before.as_ref(),
                         &edit.transaction,
                     );
-                    if let Some((language, generation)) = command_server {
+                    if let Some((server, generation)) = command_server {
                         synchronized &= delivered
                             && self.lsp_documents.get(&buffer_id).is_some_and(|document| {
-                                document.language == language && !document.desynced
+                                document.server == *server && !document.desynced
                             })
-                            && self.lsp_servers.get(language).is_some_and(|server| {
+                            && self.lsp_servers.get(server).is_some_and(|server| {
                                 server.generation == generation
                                     && server.sync.change != ChangeSync::None
                             });
@@ -2386,12 +2416,12 @@ impl App {
                     let buffer_id = self.buffers.len() - 1;
                     self.reparse_whole(buffer_id);
                     let opened = self.lsp_touch(buffer_id);
-                    if let Some((language, generation)) = command_server {
+                    if let Some((server, generation)) = command_server {
                         synchronized &= opened
                             && self.lsp_documents.get(&buffer_id).is_some_and(|document| {
-                                document.language == language && !document.desynced
+                                document.server == *server && !document.desynced
                             })
-                            && self.lsp_servers.get(language).is_some_and(|server| {
+                            && self.lsp_servers.get(server).is_some_and(|server| {
                                 server.generation == generation && server.sync.open_close
                             });
                     }
@@ -2530,8 +2560,8 @@ impl App {
             return;
         }
         let encoding = self
-            .language_of(buffer_id)
-            .map_or(Encoding::default(), |language| self.encoding_for(&language));
+            .lsp_server_of(buffer_id)
+            .map_or(Encoding::default(), |server| self.encoding_for(&server));
         let head = self.active().head();
         let mut changes = Vec::with_capacity(item.additional.len() + 1);
         for edit in &item.additional {
@@ -4137,8 +4167,8 @@ impl App {
             return Vec::new();
         };
         let encoding = self
-            .language_of(buffer_id)
-            .map_or(Encoding::default(), |language| self.encoding_for(&language));
+            .lsp_server_of(buffer_id)
+            .map_or(Encoding::default(), |server| self.encoding_for(&server));
         let text = buffer.text();
         self.diagnostics
             .for_row(path, row)
@@ -4165,8 +4195,8 @@ impl App {
     /// A short language-server summary for the status line, or `None` when no
     /// server is attached to the active buffer.
     pub fn lsp_summary(&self) -> Option<String> {
-        let language = self.language_of(self.active().buffer)?;
-        let server = self.lsp_servers.get(&language)?;
+        let server = self.lsp_server_of(self.active().buffer)?;
+        let server = self.lsp_servers.get(&server)?;
         let (errors, warnings) = self.diagnostics.counts();
         Some(match (errors, warnings) {
             (0, 0) => server.name.clone(),

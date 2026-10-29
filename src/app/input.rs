@@ -260,7 +260,11 @@ impl App {
             Some(_) if !self.ports.has_lsp() => CommandAvailability::Unavailable(
                 "language-server manager is not attached".to_owned(),
             ),
-            Some(language) if !self.lsp_servers.contains_key(&language) => {
+            Some(language)
+                if !self
+                    .lsp_server_of(buffer_id)
+                    .is_some_and(|server| self.lsp_servers.contains_key(&server)) =>
+            {
                 CommandAvailability::Unavailable(format!(
                     "the {language} language server is not ready"
                 ))
@@ -3953,8 +3957,8 @@ impl App {
     /// What the active buffer's server advertised, or `None` when it has no
     /// server or none has finished its handshake yet.
     fn active_server_capabilities(&self) -> Option<&Capabilities> {
-        let language = self.language_of(self.active().buffer)?;
-        Some(&self.lsp_servers.get(&language)?.capabilities)
+        let server = self.lsp_server_of(self.active().buffer)?;
+        Some(&self.lsp_servers.get(&server)?.capabilities)
     }
 
     /// Whether the active buffer has a server that finished its handshake.
@@ -6583,6 +6587,9 @@ impl App {
                 Ok(())
             }
             (Colon::LspRestart, InvocationParameters::OptionalText(language)) => {
+                // A restart also finds each document's root again, so a
+                // marker file added since takes effect.
+                self.forget_lsp_roots();
                 if !self.lsp_send(LspCommand::Restart(language)) {
                     self.status("language servers are not running");
                 }

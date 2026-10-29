@@ -8,13 +8,15 @@
 //! loop. No editor code awaits a language server, so a server that is slow,
 //! wedged, or dead cannot stall rendering or input.
 //!
-//! The manager owns one server process per language and is the only place that
-//! knows a request identifier from a response shape. Above this module the
+//! The manager owns one server process per language and project root (see
+//! [`root`]) and is the only place that knows a request identifier from a
+//! response shape. Above this module the
 //! editor sees paths, character offsets, and plain Rust values.
 
 pub mod diagnostics;
 #[cfg(windows)]
 mod executable_windows;
+pub mod root;
 pub mod transport;
 #[cfg(windows)]
 mod uri_windows;
@@ -45,6 +47,7 @@ use crate::{
 };
 
 pub use diagnostics::{Diagnostic, DiagnosticStore, Severity};
+pub use root::ServerId;
 use transport::{Connection, Incoming};
 
 /// The protocol types the editor itself needs, re-exported so `lsp_types`
@@ -780,32 +783,32 @@ pub enum LspCommand {
     /// negotiated there, and a `didOpen` sent before it is known could not be
     /// followed by a correct `didChange`.
     Ensure {
-        language: String,
+        server: ServerId,
     },
     Open {
-        language: String,
+        server: ServerId,
         path: PathBuf,
         version: i32,
         text: String,
     },
     Change {
-        language: String,
+        server: ServerId,
         path: PathBuf,
         version: i32,
         changes: Vec<TextDocumentContentChangeEvent>,
     },
     Save {
-        language: String,
+        server: ServerId,
         path: PathBuf,
         text: String,
     },
     Close {
-        language: String,
+        server: ServerId,
         path: PathBuf,
     },
     Request {
         token: u64,
-        language: String,
+        server: ServerId,
         path: PathBuf,
         kind: Box<RequestKind>,
     },
@@ -816,7 +819,7 @@ pub enum LspCommand {
     },
     /// The editor's answer to a server-initiated `workspace/applyEdit`.
     EditApplied {
-        language: String,
+        server: ServerId,
         generation: u64,
         id: Value,
         applied: bool,
@@ -829,7 +832,8 @@ pub enum LspCommand {
     /// unchanged keeps running with its handshake, open documents, and
     /// diagnostics intact, because nothing about it was reconfigured.
     Reconfigure(Box<LspConfig>),
-    /// Restarts one language's server, or every stopped server when `None`.
+    /// Restarts every server of one language, whatever its root, or every
+    /// stopped server when `None`.
     Restart(Option<String>),
     /// Asks for the state of every started or failed server. The manager
     /// answers with [`LspEvent::StatusReport`] carrying the same `action`,
@@ -849,7 +853,7 @@ pub enum LspEvent {
     /// do, which the editor consults before sending an optional request so a
     /// capability it never claimed is never asked for.
     Ready {
-        language: String,
+        server: ServerId,
         generation: u64,
         name: String,
         encoding: Encoding,
@@ -857,7 +861,7 @@ pub enum LspEvent {
         capabilities: Capabilities,
     },
     Diagnostics {
-        language: String,
+        server: ServerId,
         path: PathBuf,
         /// The document version the publication describes, when the server
         /// supplied one. The editor drops it if that open document advanced.
@@ -871,7 +875,7 @@ pub enum LspEvent {
     /// The server asked the editor to apply an edit. The editor must answer
     /// with [`LspCommand::EditApplied`] and the same `id`.
     ApplyEdit {
-        language: String,
+        server: ServerId,
         generation: u64,
         encoding: Encoding,
         id: Value,
@@ -892,12 +896,12 @@ pub enum LspEvent {
     /// An explicit restart retired a live process. This clears editor-side
     /// capability, document, and diagnostic state without reporting a crash.
     Restarted {
-        language: String,
+        server: ServerId,
     },
     /// A server exited, crashed, or failed to start. The editor drops its
     /// diagnostics and keeps working without it.
     Stopped {
-        language: String,
+        server: ServerId,
         message: String,
     },
 }
@@ -1112,9 +1116,9 @@ struct Pending {
     label: &'static str,
 }
 
-/// Everything the manager knows about one language's server.
+/// Everything the manager knows about one language server process.
 struct Server {
-    language: String,
+    id: ServerId,
     generation: u64,
     name: String,
     connection: Connection,
@@ -1231,11 +1235,11 @@ async fn run_manager(
     mut approval: tokio::sync::watch::Receiver<(bool, u64)>,
 ) {
     let (inbox_tx, mut inbox) = mpsc::channel::<(String, u64, Incoming)>(EVENT_CAPACITY);
-    let mut servers: HashMap<String, Server> = HashMap::new();
+    let mut servers: HashMap<ServerId, Server> = HashMap::new();
     let mut next_generation = 1u64;
-    // Languages whose server failed. Recorded so a failure is reported once
-    // and never retried in a loop; `:lsp-restart` clears it.
-    let mut failed: HashMap<String, String> = HashMap::new();
+    // Servers that failed, by language and root. Recorded so a failure is
+    // reported once and never retried in a loop; `:lsp-restart` clears it.
+    let mut failed: HashMap<ServerId, String> = HashMap::new();
     let mut early_cancels = HashSet::new();
     let mut max_request_token = None;
     let mut events = EventSender {
@@ -1333,9 +1337,9 @@ async fn run_manager(
         }
     }
 
-    let languages = servers.keys().cloned().collect::<Vec<_>>();
-    for language in languages {
-        graceful_stop_server(&language, &mut servers, &mut failed, &mut inbox, &events).await;
+    let running = servers.keys().cloned().collect::<Vec<_>>();
+    for server_id in running {
+        graceful_stop_server(&server_id, &mut servers, &mut failed, &mut inbox, &events).await;
     }
 }
 
@@ -1351,24 +1355,25 @@ async fn run_manager(
 async fn reconfigure(
     replacement: LspConfig,
     config: &mut LspConfig,
-    servers: &mut HashMap<String, Server>,
-    failed: &mut HashMap<String, String>,
+    servers: &mut HashMap<ServerId, Server>,
+    failed: &mut HashMap<ServerId, String>,
     inbox: &mut mpsc::Receiver<(String, u64, Incoming)>,
     events: &EventSender,
 ) {
-    let changed =
-        |language: &String| config.servers.get(language) != replacement.servers.get(language);
+    let changed = |server: &ServerId| {
+        config.servers.get(&server.language) != replacement.servers.get(&server.language)
+    };
     let mut restarting = servers
         .keys()
-        .filter(|l| changed(l))
+        .filter(|server| changed(server))
         .cloned()
         .collect::<Vec<_>>();
     restarting.sort_unstable();
-    failed.retain(|language, _| !changed(language));
+    failed.retain(|server, _| !changed(server));
     *config = replacement;
 
-    for language in &restarting {
-        if let Some(server) = servers.get_mut(language) {
+    for server_id in &restarting {
+        if let Some(server) = servers.get_mut(server_id) {
             let pending = std::mem::take(&mut server.pending);
             let name = server.name.clone();
             for (_, pending) in pending {
@@ -1383,11 +1388,11 @@ async fn reconfigure(
                     .await;
                 }
             }
-            graceful_stop_server(language, servers, failed, inbox, events).await;
+            graceful_stop_server(server_id, servers, failed, inbox, events).await;
             emit(
                 events,
                 LspEvent::Restarted {
-                    language: language.clone(),
+                    server: server_id.clone(),
                 },
             )
             .await;
@@ -1399,14 +1404,19 @@ async fn reconfigure(
     // recorded as failed all over again — after which its own iteration finds
     // nothing to stop and leaves it failed for good. A deliberate stop is not
     // a failure whichever order they land in.
-    for language in &restarting {
-        failed.remove(language);
+    for server_id in &restarting {
+        failed.remove(server_id);
     }
     if restarting.is_empty() {
         return;
     }
-    let (configured, removed): (Vec<&String>, Vec<&String>) = restarting
+    let mut languages = restarting
         .iter()
+        .map(|server| &server.language)
+        .collect::<Vec<_>>();
+    languages.dedup();
+    let (configured, removed): (Vec<&String>, Vec<&String>) = languages
+        .into_iter()
         .partition(|language| config.servers.contains_key(*language));
     let mut parts = Vec::new();
     if !configured.is_empty() {
@@ -1444,13 +1454,13 @@ fn names(languages: &[&String]) -> String {
 /// thread. A wedged server gets a short grace period, then is force-stopped;
 /// other servers' traffic is still drained while that response is pending.
 async fn graceful_stop_server(
-    language: &str,
-    servers: &mut HashMap<String, Server>,
-    failed: &mut HashMap<String, String>,
+    server_id: &ServerId,
+    servers: &mut HashMap<ServerId, Server>,
+    failed: &mut HashMap<ServerId, String>,
     inbox: &mut mpsc::Receiver<(String, u64, Incoming)>,
     events: &EventSender,
 ) {
-    let Some(server) = servers.get_mut(language) else {
+    let Some(server) = servers.get_mut(server_id) else {
         return;
     };
     let generation = server.generation;
@@ -1476,8 +1486,7 @@ async fn graceful_stop_server(
             else {
                 break;
             };
-            let is_shutdown_response = incoming_language == language
-                && incoming_generation == generation
+            let is_shutdown_response = incoming_generation == generation
                 && matches!(
                     &message,
                     Incoming::Message(message)
@@ -1489,14 +1498,11 @@ async fn graceful_stop_server(
             if is_shutdown_response {
                 break;
             }
-            if incoming_language == language
-                && incoming_generation == generation
-                && matches!(message, Incoming::Closed { .. })
-            {
-                servers.remove(language);
+            if incoming_generation == generation && matches!(message, Incoming::Closed { .. }) {
+                servers.remove(server_id);
                 return;
             }
-            if incoming_language == language && incoming_generation == generation {
+            if incoming_generation == generation {
                 // Once retirement begins, no new request or notification from
                 // this generation is allowed back into editor state.
                 continue;
@@ -1512,7 +1518,7 @@ async fn graceful_stop_server(
             .await;
         }
     }
-    if let Some(server) = servers.remove(language) {
+    if let Some(server) = servers.remove(server_id) {
         server.connection.send(json!({
             "jsonrpc": "2.0",
             "method": "exit",
@@ -1528,8 +1534,8 @@ async fn handle_command(
     config: &LspConfig,
     root: &Path,
     launch: &mut Launch,
-    servers: &mut HashMap<String, Server>,
-    failed: &mut HashMap<String, String>,
+    servers: &mut HashMap<ServerId, Server>,
+    failed: &mut HashMap<ServerId, String>,
     next_generation: &mut u64,
     inbox: &mpsc::Sender<(String, u64, Incoming)>,
     incoming: &mut mpsc::Receiver<(String, u64, Incoming)>,
@@ -1542,9 +1548,9 @@ async fn handle_command(
         // Intercepted by the manager loop, which owns the configuration this
         // function only borrows.
         LspCommand::Reconfigure(_) => {}
-        LspCommand::Ensure { language } => {
+        LspCommand::Ensure { server } => {
             ensure_server(
-                &language,
+                &server,
                 config,
                 root,
                 launch,
@@ -1557,13 +1563,21 @@ async fn handle_command(
             .await;
         }
         LspCommand::Restart(language) => {
-            let languages: Vec<String> = match language {
-                Some(language) => vec![language],
+            // A language names every root it runs at, and those that failed.
+            let mut restarting: Vec<ServerId> = match &language {
+                Some(language) => servers
+                    .keys()
+                    .chain(failed.keys())
+                    .filter(|server| &server.language == language)
+                    .cloned()
+                    .collect(),
                 None => failed.keys().cloned().collect(),
             };
-            for language in languages {
-                failed.remove(&language);
-                if let Some(server) = servers.get_mut(&language) {
+            restarting.sort_unstable();
+            restarting.dedup();
+            for server_id in &restarting {
+                failed.remove(server_id);
+                if let Some(server) = servers.get_mut(server_id) {
                     let pending = std::mem::take(&mut server.pending);
                     let name = server.name.clone();
                     for (_, pending) in pending {
@@ -1578,15 +1592,26 @@ async fn handle_command(
                             .await;
                         }
                     }
-                    graceful_stop_server(&language, servers, failed, incoming, events).await;
+                    graceful_stop_server(server_id, servers, failed, incoming, events).await;
                     emit(
                         events,
                         LspEvent::Restarted {
-                            language: language.clone(),
+                            server: server_id.clone(),
                         },
                     )
                     .await;
                 }
+            }
+            // One message per language, however many roots it ran at, and
+            // one for a named language that had nothing running yet.
+            let mut languages = restarting
+                .into_iter()
+                .map(|server| server.language)
+                .chain(language)
+                .collect::<Vec<_>>();
+            languages.sort_unstable();
+            languages.dedup();
+            for language in languages {
                 emit(
                     events,
                     LspEvent::Status {
@@ -1605,7 +1630,7 @@ async fn handle_command(
                 .map(|server| {
                     format!(
                         "{}: {} ({})",
-                        server.language,
+                        server.id.label(root),
                         server.name,
                         if server.ready { "ready" } else { "starting" }
                     )
@@ -1614,7 +1639,7 @@ async fn handle_command(
             lines.extend(
                 failed
                     .iter()
-                    .map(|(language, reason)| format!("{language}: stopped — {reason}")),
+                    .map(|(server, reason)| format!("{}: stopped — {reason}", server.label(root))),
             );
             if lines.is_empty() {
                 lines.push("no language servers running".to_owned());
@@ -1650,13 +1675,13 @@ async fn handle_command(
             }
         }
         LspCommand::Open {
-            language,
+            server: server_id,
             path,
             version,
             text,
         } => {
             let ready = ensure_server(
-                &language,
+                &server_id,
                 config,
                 root,
                 launch,
@@ -1668,7 +1693,7 @@ async fn handle_command(
             )
             .await;
             let refused = if ready
-                && let Some(server) = servers.get_mut(&language)
+                && let Some(server) = servers.get_mut(&server_id)
                 && (!server.ready || server.sync.open_close)
                 && let Some(uri) = path_to_uri(&path)
             {
@@ -1677,7 +1702,7 @@ async fn handle_command(
                     json!({
                         "textDocument": {
                             "uri": uri,
-                            "languageId": language,
+                            "languageId": server_id.language,
                             "version": version,
                             "text": text,
                         }
@@ -1688,16 +1713,16 @@ async fn handle_command(
                 None
             };
             if let Some(message) = refused {
-                stop_server(&language, message, servers, failed, events).await;
+                stop_server(&server_id, message, servers, failed, events).await;
             }
         }
         LspCommand::Change {
-            language,
+            server: server_id,
             path,
             version,
             changes,
         } => {
-            let refused = if let Some(server) = servers.get_mut(&language)
+            let refused = if let Some(server) = servers.get_mut(&server_id)
                 && (!server.ready || server.sync.change != ChangeSync::None)
                 && let Some(uri) = path_to_uri(&path)
             {
@@ -1713,15 +1738,15 @@ async fn handle_command(
                 None
             };
             if let Some(message) = refused {
-                stop_server(&language, message, servers, failed, events).await;
+                stop_server(&server_id, message, servers, failed, events).await;
             }
         }
         LspCommand::Save {
-            language,
+            server: server_id,
             path,
             text,
         } => {
-            let refused = if let Some(server) = servers.get_mut(&language)
+            let refused = if let Some(server) = servers.get_mut(&server_id)
                 && let Some(include_text) = if server.ready {
                     server.sync.save
                 } else {
@@ -1745,11 +1770,14 @@ async fn handle_command(
                 None
             };
             if let Some(message) = refused {
-                stop_server(&language, message, servers, failed, events).await;
+                stop_server(&server_id, message, servers, failed, events).await;
             }
         }
-        LspCommand::Close { language, path } => {
-            let refused = if let Some(server) = servers.get_mut(&language)
+        LspCommand::Close {
+            server: server_id,
+            path,
+        } => {
+            let refused = if let Some(server) = servers.get_mut(&server_id)
                 && (!server.ready || server.sync.open_close)
                 && let Some(uri) = path_to_uri(&path)
             {
@@ -1762,16 +1790,16 @@ async fn handle_command(
                 None
             };
             if let Some(message) = refused {
-                stop_server(&language, message, servers, failed, events).await;
+                stop_server(&server_id, message, servers, failed, events).await;
             }
         }
         LspCommand::EditApplied {
-            language,
+            server: server_id,
             generation,
             id,
             applied,
         } => {
-            let refused = if let Some(server) = servers.get_mut(&language)
+            let refused = if let Some(server) = servers.get_mut(&server_id)
                 && server.generation == generation
                 && let Ok(key) = serde_json::to_string(&id)
                 && server.incoming_requests.contains(&key)
@@ -1786,12 +1814,12 @@ async fn handle_command(
                 None
             };
             if let Some(message) = refused {
-                stop_server(&language, message, servers, failed, events).await;
+                stop_server(&server_id, message, servers, failed, events).await;
             }
         }
         LspCommand::Request {
             token,
-            language,
+            server: server_id,
             path,
             kind,
         } => {
@@ -1817,11 +1845,10 @@ async fn handle_command(
                 .await;
                 return;
             }
-            let Some(server) = servers.get_mut(&language) else {
-                let reason = failed
-                    .get(&language)
-                    .cloned()
-                    .unwrap_or_else(|| format!("no language server configured for {language}"));
+            let Some(server) = servers.get_mut(&server_id) else {
+                let reason = failed.get(&server_id).cloned().unwrap_or_else(|| {
+                    format!("no language server configured for {}", server_id.language)
+                });
                 emit(
                     events,
                     LspEvent::Response {
@@ -1858,7 +1885,7 @@ async fn handle_command(
                 return;
             };
             let label = kind.label();
-            let (method, params, shape) = request_payload(&kind, &uri, root);
+            let (method, params, shape) = request_payload(&kind, &uri, &server_id.root);
             if !server.request(method, params, token, shape, label) {
                 emit(
                     events,
@@ -1873,32 +1900,50 @@ async fn handle_command(
     }
 }
 
-/// Starts a language's server if it is configured, not running, and has not
-/// already failed.
+/// Starts a language's server at its root if it is configured, not running,
+/// and has not already failed there.
 #[allow(clippy::too_many_arguments)]
 async fn ensure_server(
-    language: &str,
+    server_id: &ServerId,
     config: &LspConfig,
-    root: &Path,
+    workspace: &Path,
     launch: &mut Launch,
-    servers: &mut HashMap<String, Server>,
-    failed: &mut HashMap<String, String>,
+    servers: &mut HashMap<ServerId, Server>,
+    failed: &mut HashMap<ServerId, String>,
     next_generation: &mut u64,
     inbox: &mpsc::Sender<(String, u64, Incoming)>,
     events: &EventSender,
 ) -> bool {
-    if servers.contains_key(language) {
+    if servers.contains_key(server_id) {
         return true;
     }
-    if failed.contains_key(language) {
+    if failed.contains_key(server_id) {
         return false;
     }
     if !config.enable {
         return false;
     }
-    let Some(settings) = config.servers.get(language) else {
+    let Some(settings) = config.servers.get(&server_id.language) else {
         return false;
     };
+    // Permission covers one workspace, so a root outside it is refused here
+    // too, whatever the editor computed.
+    if !server_id.is_within(workspace) {
+        let reason = format!(
+            "{} is outside the workspace; language servers start only inside it",
+            server_id.root.display()
+        );
+        failed.insert(server_id.clone(), reason.clone());
+        emit(
+            events,
+            LspEvent::Stopped {
+                server: server_id.clone(),
+                message: reason,
+            },
+        )
+        .await;
+        return false;
+    }
 
     let name = settings.command.file_name().map_or_else(
         || settings.command.display().to_string(),
@@ -1909,15 +1954,31 @@ async fn ensure_server(
         return false;
     };
     *next_generation = after_generation;
-    let connection = match launch(language, generation, settings, root, inbox.clone()) {
+    let connection = match launch(
+        &server_id.language,
+        generation,
+        settings,
+        &server_id.root,
+        inbox.clone(),
+    ) {
         Ok(connection) => connection,
         Err(error) => {
             let reason = format!("cannot start {name}: {error}");
-            failed.insert(language.to_owned(), reason.clone());
+            // A command that cannot be launched fails the same way at every
+            // root. Its first failure is reported; the same failure at a
+            // further root is only recorded, so a workspace of many crates
+            // does not repeat one notice per crate.
+            let reported = failed.iter().any(|(failed_id, failure)| {
+                failed_id.language == server_id.language && *failure == reason
+            });
+            failed.insert(server_id.clone(), reason.clone());
+            if reported {
+                return false;
+            }
             emit(
                 events,
                 LspEvent::Stopped {
-                    language: language.to_owned(),
+                    server: server_id.clone(),
                     message: reason,
                 },
             )
@@ -1927,7 +1988,7 @@ async fn ensure_server(
     };
 
     let mut server = Server {
-        language: language.to_owned(),
+        id: server_id.clone(),
         generation,
         name,
         connection,
@@ -1940,22 +2001,22 @@ async fn ensure_server(
         queued: Vec::new(),
         incoming_requests: HashSet::new(),
     };
-    let params = initialize_params(root, settings);
+    let params = initialize_params(&server_id.root, settings);
     if !server.request("initialize", params, 0, Shape::Initialize, "initialize") {
         let reason = format!("{} is not accepting initialization", server.name);
         server.connection.stop().await;
-        failed.insert(language.to_owned(), reason.clone());
+        failed.insert(server_id.clone(), reason.clone());
         emit(
             events,
             LspEvent::Stopped {
-                language: language.to_owned(),
+                server: server_id.clone(),
                 message: reason,
             },
         )
         .await;
         return false;
     }
-    servers.insert(language.to_owned(), server);
+    servers.insert(server_id.clone(), server);
     true
 }
 
@@ -2176,20 +2237,24 @@ async fn handle_incoming(
     language: &str,
     generation: u64,
     incoming: Incoming,
-    servers: &mut HashMap<String, Server>,
-    failed: &mut HashMap<String, String>,
+    servers: &mut HashMap<ServerId, Server>,
+    failed: &mut HashMap<ServerId, String>,
     events: &EventSender,
 ) {
-    if servers
-        .get(language)
-        .is_none_or(|server| server.generation != generation)
-    {
+    // Generations are never reused, so one names a process whatever its
+    // root; a message from a retired process matches no running server.
+    let Some(server_id) = servers
+        .iter()
+        .find(|(id, server)| id.language == language && server.generation == generation)
+        .map(|(id, _)| id.clone())
+    else {
         return;
-    }
+    };
+    let server_id = &server_id;
     match incoming {
         Incoming::Malformed(detail) => {
             let name = servers
-                .get(language)
+                .get(server_id)
                 .map_or(language, |server| server.name.as_str())
                 .to_owned();
             emit(
@@ -2202,7 +2267,7 @@ async fn handle_incoming(
             .await;
         }
         Incoming::Closed { reason } => {
-            let Some(server) = servers.get(language) else {
+            let Some(server) = servers.get(server_id) else {
                 return;
             };
             let tail = server.connection.stderr_tail();
@@ -2213,22 +2278,22 @@ async fn handle_incoming(
                 (false, false) => format!("{reason}: {tail}"),
             };
             let message = format!("{} stopped: {detail}", server.name);
-            stop_server(language, message, servers, failed, events).await;
+            stop_server(server_id, message, servers, failed, events).await;
         }
         Incoming::Message(message) => {
-            handle_message(language, *message, servers, failed, events).await;
+            handle_message(server_id, *message, servers, failed, events).await;
         }
     }
 }
 
 async fn stop_server(
-    language: &str,
+    server_id: &ServerId,
     message: String,
-    servers: &mut HashMap<String, Server>,
-    failed: &mut HashMap<String, String>,
+    servers: &mut HashMap<ServerId, Server>,
+    failed: &mut HashMap<ServerId, String>,
     events: &EventSender,
 ) {
-    let Some(server) = servers.remove(language) else {
+    let Some(server) = servers.remove(server_id) else {
         return;
     };
     // Every ordinary request the server will now never answer is failed
@@ -2247,11 +2312,11 @@ async fn stop_server(
         }
     }
     server.connection.stop().await;
-    failed.insert(language.to_owned(), message.clone());
+    failed.insert(server_id.clone(), message.clone());
     emit(
         events,
         LspEvent::Stopped {
-            language: language.to_owned(),
+            server: server_id.clone(),
             message,
         },
     )
@@ -2259,10 +2324,10 @@ async fn stop_server(
 }
 
 async fn handle_message(
-    language: &str,
+    server_id: &ServerId,
     message: Value,
-    servers: &mut HashMap<String, Server>,
-    failed: &mut HashMap<String, String>,
+    servers: &mut HashMap<ServerId, Server>,
+    failed: &mut HashMap<ServerId, String>,
     events: &EventSender,
 ) {
     let method = message.get("method");
@@ -2272,7 +2337,7 @@ async fn handle_message(
             || method.and_then(Value::as_str).is_none())
     {
         let refused = if let Some(id) = id
-            && let Some(server) = servers.get_mut(language)
+            && let Some(server) = servers.get_mut(server_id)
         {
             (!server.connection.send(json!({
                 "jsonrpc": "2.0",
@@ -2284,7 +2349,7 @@ async fn handle_message(
             None
         };
         if let Some(message) = refused {
-            stop_server(language, message, servers, failed, events).await;
+            stop_server(server_id, message, servers, failed, events).await;
         }
         return;
     }
@@ -2292,26 +2357,26 @@ async fn handle_message(
         // A request from the server.
         (true, Some(id)) => {
             if let Err(message) =
-                handle_server_request(language, &message, id, servers, events).await
+                handle_server_request(server_id, &message, id, servers, events).await
             {
-                stop_server(language, message, servers, failed, events).await;
+                stop_server(server_id, message, servers, failed, events).await;
             }
         }
         // A notification from the server.
-        (true, None) => handle_notification(language, &message, events).await,
+        (true, None) => handle_notification(server_id, &message, events).await,
         // A response to one of ours.
         (false, Some(id)) => {
-            handle_response(language, &message, &id, servers, failed, events).await
+            handle_response(server_id, &message, &id, servers, failed, events).await
         }
         (false, None) => {}
     }
 }
 
 async fn handle_server_request(
-    language: &str,
+    server_id: &ServerId,
     message: &Value,
     id: Value,
-    servers: &mut HashMap<String, Server>,
+    servers: &mut HashMap<ServerId, Server>,
     events: &EventSender,
 ) -> Result<(), String> {
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
@@ -2320,11 +2385,11 @@ async fn handle_server_request(
     let key = valid_id.then(|| serde_json::to_string(&id).ok()).flatten();
     let duplicate = key.as_ref().is_some_and(|key| {
         servers
-            .get(language)
+            .get(server_id)
             .is_some_and(|server| server.incoming_requests.contains(key))
     });
     if key.is_none() || duplicate {
-        if let Some(server) = servers.get_mut(language)
+        if let Some(server) = servers.get_mut(server_id)
             && !server.connection.send(json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -2344,8 +2409,8 @@ async fn handle_server_request(
     }
     match method {
         "workspace/applyEdit" => {
-            if servers.get(language).is_none_or(|server| !server.ready) {
-                if let Some(server) = servers.get_mut(language)
+            if servers.get(server_id).is_none_or(|server| !server.ready) {
+                if let Some(server) = servers.get_mut(server_id)
                     && !server.respond(id, json!({ "applied": false }))
                 {
                     return Err(format!("{} is not accepting protocol replies", server.name));
@@ -2364,11 +2429,11 @@ async fn handle_server_request(
                         .sum::<usize>()
                         >= GLOBAL_INCOMING_REQUEST_CAPACITY;
                     if globally_full
-                        || servers.get(language).is_some_and(|server| {
+                        || servers.get(server_id).is_some_and(|server| {
                             server.incoming_requests.len() >= INCOMING_REQUEST_CAPACITY
                         })
                     {
-                        if let Some(server) = servers.get_mut(language)
+                        if let Some(server) = servers.get_mut(server_id)
                             && !server.connection.send(json!({
                                 "jsonrpc": "2.0",
                                 "id": id,
@@ -2386,7 +2451,7 @@ async fn handle_server_request(
                         return Ok(());
                     }
                     let Ok((edits, skipped)) = flatten_workspace_edit(edit) else {
-                        if let Some(server) = servers.get_mut(language)
+                        if let Some(server) = servers.get_mut(server_id)
                             && !server.respond(id, json!({ "applied": false }))
                         {
                             return Err(format!(
@@ -2396,7 +2461,7 @@ async fn handle_server_request(
                         }
                         return Ok(());
                     };
-                    let generation = if let Some(server) = servers.get_mut(language) {
+                    let generation = if let Some(server) = servers.get_mut(server_id) {
                         server.incoming_requests.insert(key.unwrap());
                         server.generation
                     } else {
@@ -2405,10 +2470,10 @@ async fn handle_server_request(
                     emit(
                         events,
                         LspEvent::ApplyEdit {
-                            language: language.to_owned(),
+                            server: server_id.clone(),
                             generation,
                             encoding: servers
-                                .get(language)
+                                .get(server_id)
                                 .map_or(Encoding::default(), |server| server.encoding),
                             id,
                             edits,
@@ -2419,7 +2484,7 @@ async fn handle_server_request(
                     Ok(())
                 }
                 None => {
-                    if let Some(server) = servers.get_mut(language)
+                    if let Some(server) = servers.get_mut(server_id)
                         && !server.respond(id, json!({ "applied": false }))
                     {
                         return Err(format!("{} is not accepting protocol replies", server.name));
@@ -2431,7 +2496,7 @@ async fn handle_server_request(
         // Anything else is answered rather than ignored: a server that blocks
         // on an unanswered request would otherwise appear to hang.
         _ => {
-            if let Some(server) = servers.get_mut(language)
+            if let Some(server) = servers.get_mut(server_id)
                 && !server.connection.send(json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -2448,7 +2513,7 @@ async fn handle_server_request(
     }
 }
 
-async fn handle_notification(language: &str, message: &Value, events: &EventSender) {
+async fn handle_notification(server_id: &ServerId, message: &Value, events: &EventSender) {
     let method = message.get("method").and_then(Value::as_str).unwrap_or("");
     let params = message.get("params").cloned().unwrap_or(Value::Null);
     match method {
@@ -2464,7 +2529,7 @@ async fn handle_notification(language: &str, message: &Value, events: &EventSend
             emit(
                 events,
                 LspEvent::Diagnostics {
-                    language: language.to_owned(),
+                    server: server_id.clone(),
                     path,
                     version: published.version,
                     diagnostics: published
@@ -2489,7 +2554,7 @@ async fn handle_notification(language: &str, message: &Value, events: &EventSend
                 emit(
                     events,
                     LspEvent::Status {
-                        message: format!("{language}: {text}"),
+                        message: format!("{}: {text}", server_id.language),
                         error: severity == 1,
                     },
                 )
@@ -2501,15 +2566,15 @@ async fn handle_notification(language: &str, message: &Value, events: &EventSend
 }
 
 async fn handle_response(
-    language: &str,
+    server_id: &ServerId,
     message: &Value,
     id: &Value,
-    servers: &mut HashMap<String, Server>,
-    failed: &mut HashMap<String, String>,
+    servers: &mut HashMap<ServerId, Server>,
+    failed: &mut HashMap<ServerId, String>,
     events: &EventSender,
 ) {
     let Some(id) = id.as_i64() else { return };
-    let Some(server) = servers.get_mut(language) else {
+    let Some(server) = servers.get_mut(server_id) else {
         return;
     };
     let Some(pending) = server.pending.remove(&id) else {
@@ -2523,7 +2588,7 @@ async fn handle_response(
         let detail = "invalid JSON-RPC response";
         if pending.shape == Shape::Initialize {
             let message = format!("{} failed to initialize: {detail}", server.name);
-            stop_server(language, message, servers, failed, events).await;
+            stop_server(server_id, message, servers, failed, events).await;
         } else {
             emit(
                 events,
@@ -2544,7 +2609,7 @@ async fn handle_response(
             .unwrap_or("request failed");
         if pending.shape == Shape::Initialize {
             let message = format!("{} failed to initialize: {detail}", server.name);
-            stop_server(language, message, servers, failed, events).await;
+            stop_server(server_id, message, servers, failed, events).await;
             return;
         }
         emit(
@@ -2560,9 +2625,9 @@ async fn handle_response(
 
     let result = message.get("result").cloned().unwrap_or(Value::Null);
     if pending.shape == Shape::Initialize {
-        if let Err(detail) = finish_initialize(language, result, server, events).await {
+        if let Err(detail) = finish_initialize(server_id, result, server, events).await {
             let message = format!("{} failed to initialize: {detail}", server.name);
-            stop_server(language, message, servers, failed, events).await;
+            stop_server(server_id, message, servers, failed, events).await;
         }
         return;
     }
@@ -2595,7 +2660,7 @@ async fn handle_response(
 }
 
 async fn finish_initialize(
-    language: &str,
+    server_id: &ServerId,
     result: Value,
     server: &mut Server,
     events: &EventSender,
@@ -2630,7 +2695,7 @@ async fn finish_initialize(
     emit(
         events,
         LspEvent::Ready {
-            language: language.to_owned(),
+            server: server_id.clone(),
             generation: server.generation,
             name: server.name.clone(),
             encoding: server.encoding,
@@ -3516,7 +3581,7 @@ mod tests {
         assert!(handle.send(LspCommand::Status { action: None }));
         assert!(handle.send(LspCommand::Cancel { token: 7 }));
         assert!(handle.send(LspCommand::EditApplied {
-            language: "rust".to_owned(),
+            server: ServerId::new("rust", "/tmp"),
             generation: 1,
             id: json!(9),
             applied: true,

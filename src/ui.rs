@@ -10001,8 +10001,9 @@ mod tests {
         path: std::path::PathBuf,
         diagnostic: lsp_types::Diagnostic,
     ) {
+        let server = crate::lsp::ServerId::new("rust", app.project_root.clone());
         app.diagnostics
-            .set("rust", path, vec![crate::lsp::Diagnostic::new(diagnostic)]);
+            .set(&server, path, vec![crate::lsp::Diagnostic::new(diagnostic)]);
     }
 
     #[test]

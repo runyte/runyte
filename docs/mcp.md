@@ -120,8 +120,8 @@ Revocation drops readers and pending proposals. `:context-access` remains an ali
 
 To grant permissions in every workspace without opening `:mcp` in each, set
 `mcp.default_grants` in the configuration; see the
-[user guide](user-guide.md#default-grants). A workspace's own grant or
-revocation takes precedence over the default.
+[user guide](user-guide/agent-access-to-workspace-context.md#default-grants).
+A workspace's own grant or revocation takes precedence over the default.
 
 **Starting the agent before granting is fine.** The fourteen tools stay available;
 a tool's presence is not permission to use it. Calls check the target's native
@@ -133,7 +133,7 @@ The default identity is `agent`. Without Remember, a grant lasts until the
 owning editor or persistent host exits. Private credentials and remembered
 grants stay in Runyte's account cache, outside the project. `RUNYTE_CONTEXT_HOME`
 can select an absolute private store shared by the editor and MCP process.
-See the [user guide](user-guide.md#what-a-grant-covers) for platform locations.
+See the [user guide](user-guide/agent-access-to-workspace-context.md#what-a-grant-covers) for platform locations.
 
 ## Tools
 

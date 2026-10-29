@@ -3,9 +3,12 @@
 //! Project-root discovery and the explicit non-Git fallback.
 //!
 //! Runtime state belongs to one workspace, not to whichever nested directory
-//! happened to launch the editor. Discovery therefore prefers the nearest Git
-//! root. Only when there is no Git root does an existing configured state
-//! directory (normally `.runyte`) identify the root.
+//! happened to launch the editor. Discovery therefore prefers the nearest
+//! version-control root: Git, Jujutsu or Subversion. Only when there is none
+//! does an existing configured state directory (normally `.runyte`) identify
+//! the root. An ide launch that finds neither makes the launch directory a
+//! workspace, as Helix uses its working directory, unless that directory is
+//! one no launch should adopt without being asked; see [`adopt`].
 
 use std::{
     fs,
@@ -20,9 +23,10 @@ use anyhow::{Context, Result, bail};
 
 /// Finds the workspace directory that owns runtime state.
 ///
-/// Git has priority over an existing state directory even when the latter is
-/// nearer to `start`. This makes an accidentally-created nested state
-/// directory stop attracting later launches once it is inside a Git checkout.
+/// A version-control root has priority over an existing state directory even
+/// when the latter is nearer to `start`. This makes an accidentally-created
+/// nested state directory stop attracting later launches once it is inside a
+/// checkout.
 pub fn discover(start: &Path, configured_state_root: &Path) -> io::Result<Option<PathBuf>> {
     let start = start.canonicalize()?;
     let candidates = start.ancestors().collect::<Vec<_>>();
@@ -64,7 +68,7 @@ fn discover_candidates(
     configured_state_root: &Path,
 ) -> io::Result<Option<PathBuf>> {
     for candidate in candidates {
-        if is_git_root(candidate)? {
+        if is_version_control_root(candidate)? {
             return Ok(Some((*candidate).to_path_buf()));
         }
     }
@@ -82,9 +86,123 @@ fn discover_candidates(
 }
 
 /// What a launch that needs a workspace says when discovery finds none.
-/// Workspaces are created by `runyte --init`, never by answering a question
-/// at startup, so the refusal names that command.
+/// Workspaces are created by `runyte --init` or by an ide launch from the
+/// directory itself, never by answering a question at startup, so the
+/// refusal names that command.
 pub const NO_WORKSPACE_HERE: &str = "no workspace here; run runyte --init DIRECTORY to create one";
+
+/// Makes `directory`, the launch directory of an ide launch that discovery
+/// found no workspace for, a workspace of its own, and returns its canonical
+/// path. `targets` are the launch's files and directories, joined to the
+/// launch directory.
+///
+/// Some directories are refused rather than adopted, because a state
+/// directory in them would be discovered by every later launch from a
+/// directory below with no repository, quietly making all of it one
+/// workspace: the home directory, as the environment and the account database
+/// each name it in `homes`; the filesystem root; the temporary directory; and
+/// on Unix a directory other accounts can write to or that another account
+/// owns, where one person's state would capture another's launches. A launch
+/// naming a target outside the directory is refused too: it is about that
+/// file, not about the directory it happened to start in. `--init` still
+/// makes any of these a workspace on request. A state directory configured as
+/// an absolute path is refused as well: discovery cannot find it again, so
+/// every directory adopted with it would share it.
+pub fn adopt(
+    directory: &Path,
+    configured_state_root: &Path,
+    reserved_user_roots: &[PathBuf],
+    homes: &[PathBuf],
+    targets: &[PathBuf],
+) -> Result<PathBuf> {
+    let typed = lexical(directory);
+    let directory = directory
+        .canonicalize()
+        .with_context(|| format!("cannot resolve directory {}", directory.display()))?;
+    let is = |candidate: &Path| {
+        candidate
+            .canonicalize()
+            .is_ok_and(|candidate| candidate == directory)
+    };
+    let outside = targets
+        .iter()
+        .find(|target| !lexical(target).starts_with(&typed));
+    let refusal = if directory.parent().is_none() {
+        Some("the filesystem root is not made one automatically".to_owned())
+    } else if homes.iter().any(|home| is(home)) {
+        Some("the home directory is not made one automatically".to_owned())
+    } else if is(&std::env::temp_dir()) {
+        Some("the temporary directory is not made one automatically".to_owned())
+    } else if let Some(sharing) = shared_directory(&directory)? {
+        Some(format!("{sharing} is not made one automatically"))
+    } else if let Some(target) = outside {
+        Some(format!(
+            "{} is outside {}, so that directory is not made one automatically",
+            target.display(),
+            directory.display()
+        ))
+    } else if !is_usable_relative_marker(configured_state_root) {
+        Some("none is made automatically while workspace.state is an absolute path".to_owned())
+    } else {
+        None
+    };
+    if let Some(refusal) = refusal {
+        bail!(
+            "no workspace here, and {refusal}; run runyte --init DIRECTORY to create one, or runyte --editor to edit without one"
+        );
+    }
+    initialize(&directory, configured_state_root, reserved_user_roots).map_err(|error| {
+        error.context(format!(
+            "cannot make {} a workspace; run runyte --editor to edit without one",
+            directory.display()
+        ))
+    })
+}
+
+/// `path` with `.` dropped and each `..` taking away the name before it, as
+/// it was typed rather than where links lead: a target is inside the launch
+/// directory when it was named there, even through a link or before its
+/// directory exists.
+fn lexical(path: &Path) -> PathBuf {
+    let mut resolved = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                resolved.pop();
+            }
+            component => resolved.push(component),
+        }
+    }
+    resolved
+}
+
+/// Why other accounts share `directory`, when they do.
+#[cfg(unix)]
+fn shared_directory(directory: &Path) -> io::Result<Option<&'static str>> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = fs::metadata(directory).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!("cannot read {}: {error}", directory.display()),
+        )
+    })?;
+    // SAFETY: `geteuid` reads the process's effective user and cannot fail.
+    let owner = unsafe { libc::geteuid() };
+    Ok(if metadata.mode() & 0o002 != 0 {
+        Some("a directory other accounts can write to")
+    } else if metadata.uid() != owner {
+        Some("a directory another account owns")
+    } else {
+        None
+    })
+}
+
+#[cfg(not(unix))]
+fn shared_directory(_directory: &Path) -> io::Result<Option<&'static str>> {
+    Ok(None)
+}
 
 /// Resolves the configured runtime path against its owning project directory.
 pub fn resolve_state_root(project_root: &Path, configured_state_root: &Path) -> PathBuf {
@@ -252,6 +370,25 @@ fn comparable_path(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+fn is_version_control_root(candidate: &Path) -> io::Result<bool> {
+    Ok(is_git_root(candidate)?
+        || is_marked_directory(candidate, ".jj", "repo")?
+        || is_marked_directory(candidate, ".svn", "wc.db")?)
+}
+
+/// Whether `candidate` holds a `name` directory with an `entry` inside it.
+/// An empty `.jj` or `.svn` left behind is not a working copy, just as an
+/// empty `.git` is not a repository.
+fn is_marked_directory(candidate: &Path, name: &str, entry: &str) -> io::Result<bool> {
+    let marker = candidate.join(name);
+    match fs::metadata(&marker) {
+        Ok(metadata) if metadata.is_dir() => Ok(fs::symlink_metadata(marker.join(entry)).is_ok()),
+        Ok(_) => Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 fn is_git_root(candidate: &Path) -> io::Result<bool> {
     let marker = candidate.join(".git");
     let metadata = match fs::metadata(&marker) {
@@ -277,7 +414,7 @@ mod tests {
     #[cfg(windows)]
     use std::{io, path::PathBuf};
 
-    use super::{discover, discover_candidates, initialize, validate_state_root};
+    use super::{adopt, discover, discover_candidates, initialize, validate_state_root};
 
     #[test]
     fn git_root_wins_over_a_nearer_runtime_directory() {
@@ -308,6 +445,207 @@ mod tests {
         );
 
         fs::remove_dir_all(temporary).unwrap();
+    }
+
+    #[test]
+    fn jujutsu_and_subversion_working_copies_are_project_roots() {
+        for (marker, entry) in [(".jj", "repo"), (".svn", "wc.db")] {
+            let temporary = tempfile();
+            fs::create_dir(temporary.join(marker)).unwrap();
+            fs::write(temporary.join(marker).join(entry), "").unwrap();
+            let nested = temporary.join("one/two");
+            fs::create_dir_all(nested.join(".runyte")).unwrap();
+
+            assert_eq!(
+                discover(&nested, std::path::Path::new(".runyte")).unwrap(),
+                Some(temporary.clone()),
+                "{marker}"
+            );
+
+            fs::remove_dir_all(temporary).unwrap();
+        }
+    }
+
+    #[test]
+    fn an_empty_jujutsu_or_subversion_directory_is_not_a_project_root() {
+        for marker in [".jj", ".svn"] {
+            let temporary = tempfile();
+            fs::create_dir(temporary.join(marker)).unwrap();
+
+            assert_eq!(
+                discover_candidates(&[temporary.as_path()], std::path::Path::new(".runyte"))
+                    .unwrap(),
+                None,
+                "{marker}"
+            );
+
+            fs::remove_dir_all(temporary).unwrap();
+        }
+    }
+
+    #[test]
+    fn adoption_makes_the_directory_a_workspace_later_launches_find() {
+        let directory = tempfile();
+        let nested = directory.join("lib");
+        fs::create_dir(&nested).unwrap();
+        let home = tempfile();
+
+        let adopted = adopt(
+            &directory,
+            std::path::Path::new(".runyte"),
+            &[],
+            std::slice::from_ref(&home),
+            &[
+                directory.join("lib/new.rs"),
+                directory.join("lib"),
+                directory.join("notes/not-yet/today.md"),
+                directory.join("./lib/../lib/mod.rs"),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(adopted, directory.canonicalize().unwrap());
+        assert!(directory.join(".runyte").is_dir());
+        assert_eq!(
+            discover(&nested, std::path::Path::new(".runyte")).unwrap(),
+            Some(adopted)
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
+    fn adoption_refuses_the_home_directory_and_the_filesystem_root() {
+        let home = tempfile();
+        let other = tempfile();
+
+        let refused = adopt(
+            &home,
+            std::path::Path::new(".runyte"),
+            &[],
+            &[other.clone(), home.clone()],
+            &[],
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(refused.contains("the home directory"), "{refused}");
+        assert!(refused.contains("runyte --init DIRECTORY"), "{refused}");
+        assert!(!home.join(".runyte").exists());
+
+        let root = std::path::Path::new(if cfg!(windows) { "C:\\" } else { "/" });
+        let refused = adopt(root, std::path::Path::new(".runyte"), &[], &[], &[])
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("the filesystem root"), "{refused}");
+
+        fs::remove_dir_all(home).unwrap();
+        fs::remove_dir_all(other).unwrap();
+    }
+
+    #[test]
+    fn adoption_refuses_the_temporary_directory() {
+        let refused = adopt(
+            &std::env::temp_dir(),
+            std::path::Path::new(".runyte-never-created"),
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(refused.contains("the temporary directory"), "{refused}");
+        assert!(!std::env::temp_dir().join(".runyte-never-created").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn adoption_refuses_a_directory_other_accounts_can_write_to() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for mode in [0o1777, 0o777] {
+            let directory = tempfile();
+            fs::set_permissions(&directory, fs::Permissions::from_mode(mode)).unwrap();
+
+            let refused = adopt(&directory, std::path::Path::new(".runyte"), &[], &[], &[])
+                .unwrap_err()
+                .to_string();
+
+            assert!(
+                refused.contains("other accounts can write to"),
+                "{mode:o}: {refused}"
+            );
+            assert!(!directory.join(".runyte").exists());
+            fs::remove_dir_all(directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn adoption_refuses_a_launch_naming_a_file_outside_the_directory() {
+        let directory = tempfile();
+        let elsewhere = tempfile();
+        fs::write(elsewhere.join("hosts"), "").unwrap();
+
+        for target in [elsewhere.join("hosts"), directory.join("../escape.txt")] {
+            let refused = adopt(
+                &directory,
+                std::path::Path::new(".runyte"),
+                &[],
+                &[],
+                std::slice::from_ref(&target),
+            )
+            .unwrap_err()
+            .to_string();
+
+            assert!(refused.contains("is outside"), "{refused}");
+            assert!(!directory.join(".runyte").exists());
+        }
+
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(elsewhere).unwrap();
+    }
+
+    #[test]
+    fn adoption_refuses_an_absolute_state_directory() {
+        let directory = tempfile();
+        let state = tempfile().join("shared-state");
+
+        let refused = adopt(&directory, &state, &[], &[], &[])
+            .unwrap_err()
+            .to_string();
+
+        assert!(
+            refused.contains("workspace.state is an absolute path"),
+            "{refused}"
+        );
+        assert!(!state.exists());
+
+        fs::remove_dir_all(directory).unwrap();
+        fs::remove_dir_all(state.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn adoption_refuses_a_directory_whose_state_would_enter_per_user_storage() {
+        let reserved = tempfile();
+
+        let refused = adopt(
+            &reserved,
+            std::path::Path::new(".runyte"),
+            std::slice::from_ref(&reserved),
+            &[],
+            &[],
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{refused:#}").contains("overlaps per-user Runyte storage"),
+            "{refused:#}"
+        );
+        assert!(refused.to_string().contains("runyte --editor"), "{refused}");
+        assert!(!reserved.join(".runyte").exists());
+
+        fs::remove_dir_all(reserved).unwrap();
     }
 
     #[test]
@@ -581,6 +919,12 @@ mod tests {
                 .as_nanos()
         ));
         fs::create_dir(&path).unwrap();
+        // Explicit, so a permissive umask cannot make it look shared.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        }
         path.canonicalize().unwrap()
     }
 }

@@ -33,6 +33,9 @@ class NativePackageTests(unittest.TestCase):
             for name in ("licenses", "INSTALLATION.md", "docs/user-guide.md", "THIRD_PARTY_NOTICES.md",
                          "contrib/packaging/package.py", "contrib/packaging/icons/Runyte.icns"):
                 self.assertTrue((moved / name).exists(), name)
+            check_package.check_layout(moved, package.HERE.parents[1])
+            for chapter in (package.HERE.parents[1] / "docs/user-guide").glob("*.md"):
+                self.assertEqual((moved / "docs/user-guide" / chapter.name).read_bytes(), chapter.read_bytes())
             desktop = package.install_linux(moved / "runyte", root / "data", refresh=False)
             self.assertIn(package.desktop_argument(str(moved / "runyte")), desktop.read_text())
             with self.assertRaises(ValueError):

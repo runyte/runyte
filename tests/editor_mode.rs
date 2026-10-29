@@ -40,7 +40,14 @@ fn runyte(owner: &Path, directory: &Path, arguments: &[&str]) -> Output {
 }
 
 fn run(program: &Path, owner: &Path, directory: &Path, arguments: &[&str]) -> Output {
-    Command::new(program)
+    command(program, owner, directory, arguments)
+        .output()
+        .unwrap()
+}
+
+fn command(program: &Path, owner: &Path, directory: &Path, arguments: &[&str]) -> Command {
+    let mut command = Command::new(program);
+    command
         .args(arguments)
         .current_dir(directory)
         .env_remove(runyte::workspace::parent::ENVIRONMENT)
@@ -54,9 +61,8 @@ fn run(program: &Path, owner: &Path, directory: &Path, arguments: &[&str]) -> Ou
         .env("RUNYTE_TEST_SUPERVISOR_PID", std::process::id().to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .unwrap()
+        .stderr(Stdio::piped());
+    command
 }
 
 /// Two binary files in `directory`, the launch that fails after startup has
@@ -81,28 +87,106 @@ fn standalone_logs(state: &Path) -> Vec<String> {
 }
 
 #[test]
-fn a_launch_outside_any_workspace_refuses_and_points_to_init() {
-    let owner = TestRuntimeRoot::new("ide-outside-workspace").unwrap();
-    let directory = owner.join("etc");
-    fs::create_dir_all(&directory).unwrap();
-    let targets = binary_targets(&directory);
+fn an_ide_launch_outside_any_workspace_makes_its_directory_one() {
+    for (label, ide) in [("ide-outside-bare", false), ("ide-outside-flag", true)] {
+        let owner = TestRuntimeRoot::new(label).unwrap();
+        let directory = process_dir(&owner, "scripts");
+        let targets = binary_targets(&directory);
+        let arguments = if ide {
+            vec!["--ide", targets[0], targets[1]]
+        } else {
+            targets.to_vec()
+        };
 
-    for arguments in [
-        &[][..],
-        &targets[..],
-        &["--ide", targets[0]][..],
-        &["--mux"][..],
-    ] {
-        let output = runyte(&owner, &directory, arguments);
+        let output = runyte(&owner, &directory, &arguments);
+
+        // The launch got past the workspace decision to its targets, and the
+        // workspace it made logs there like any other.
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success(), "{arguments:?}");
-        assert!(
-            stderr.contains("no workspace here; run runyte --init DIRECTORY to create one"),
-            "{arguments:?}: {stderr}"
-        );
-        assert!(!stderr.contains("Project directory"), "{stderr}");
-        assert!(!directory.join(".runyte").exists(), "{arguments:?}");
+        assert!(stderr.contains("binary"), "{arguments:?}: {stderr}");
+        assert!(!stderr.contains("no workspace here"), "{stderr}");
+        assert_eq!(standalone_logs(&directory.join(".runyte")).len(), 1);
     }
+}
+
+#[test]
+fn a_mux_launch_outside_any_workspace_still_refuses_and_points_to_init() {
+    let owner = TestRuntimeRoot::new("mux-outside-workspace").unwrap();
+    let directory = owner.join("etc");
+    fs::create_dir_all(&directory).unwrap();
+
+    let output = runyte(&owner, &directory, &["--mux"]);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains("no workspace here; run runyte --init DIRECTORY to create one"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Project directory"), "{stderr}");
+    assert!(!directory.join(".runyte").exists());
+}
+
+#[test]
+fn a_bare_launch_with_mode_mux_outside_any_workspace_creates_none() {
+    let owner = TestRuntimeRoot::new("auto-mux-outside").unwrap();
+    let directory = owner.join("etc");
+    fs::create_dir_all(&directory).unwrap();
+    let config = process_dir(&owner, "settings").join("mux.yaml");
+    fs::write(&config, "mode: mux\nlsp:\n  enable: false\n").unwrap();
+
+    let output = runyte(&owner, &directory, &["--config", config.to_str().unwrap()]);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("no workspace here"), "{stderr}");
+    assert!(!directory.join(".runyte").exists());
+}
+
+#[test]
+fn an_ide_launch_naming_a_file_elsewhere_makes_no_workspace() {
+    let owner = TestRuntimeRoot::new("ide-elsewhere").unwrap();
+    let directory = process_dir(&owner, "downloads");
+    let elsewhere = owner.join("etc");
+    fs::create_dir_all(&elsewhere).unwrap();
+    let target = elsewhere.join("hosts");
+    fs::write(&target, "127.0.0.1 localhost\n").unwrap();
+
+    let output = runyte(&owner, &directory, &[target.to_str().unwrap()]);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(stderr.contains("is outside"), "{stderr}");
+    assert!(stderr.contains("runyte --editor"), "{stderr}");
+    assert!(!directory.join(".runyte").exists());
+}
+
+#[test]
+fn the_home_directory_is_not_made_a_workspace_by_an_ide_launch() {
+    let owner = TestRuntimeRoot::new("ide-in-home").unwrap();
+    let home = owner.join("home");
+    fs::create_dir_all(&home).unwrap();
+    let targets = binary_targets(&home);
+
+    let output = command(
+        Path::new(env!("CARGO_BIN_EXE_runyte")),
+        &owner,
+        &home,
+        &targets,
+    )
+    .env("HOME", &home)
+    .output()
+    .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(
+        stderr.contains("the home directory is not made one automatically"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("runyte --init DIRECTORY"), "{stderr}");
+    assert!(!home.join(".runyte").exists());
 }
 
 #[test]
@@ -214,7 +298,9 @@ fn a_configured_editor_mode_needs_no_workspace_and_a_mode_option_overrides_it() 
     let directory = owner.join("etc");
     fs::create_dir_all(&directory).unwrap();
     let targets = binary_targets(&directory);
-    let config = owner.join("editor.yaml");
+    // Beside the launch directory rather than above it: the directory the
+    // configuration lives in is per-user storage no workspace may enter.
+    let config = process_dir(&owner, "settings").join("editor.yaml");
     fs::write(&config, "mode: editor\nlsp:\n  enable: false\n").unwrap();
     let config = config.to_str().unwrap();
 
@@ -232,8 +318,11 @@ fn a_configured_editor_mode_needs_no_workspace_and_a_mode_option_overrides_it() 
         &directory,
         &["--config", config, "--ide", targets[0], targets[1]],
     );
+    // `--ide` overrides the configured mode, so the directory becomes the
+    // workspace that ide mode needs, and the launch reaches its targets.
     let stderr = String::from_utf8_lossy(&ide.stderr);
-    assert!(stderr.contains("no workspace here"), "{stderr}");
+    assert!(stderr.contains("binary"), "{stderr}");
+    assert!(directory.join(".runyte").is_dir());
 }
 
 #[test]

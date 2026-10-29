@@ -69,6 +69,14 @@ toward it before it was withdrawn.
 CI uses `cargo-llvm-cov` 0.9.0, publishes the full per-file summary in the job
 summary, retains an HTML report as a `rust-coverage-html-<runner>` artifact for
 each Linux/macOS runner for 14 days, and fails below 89% total line coverage.
+On pull requests, main pushes, manual full runs and nightly dev runs, the
+canonical instrumented suite is the test execution inside the existing required
+`Gates (ubuntu-latest)` and `Tests (macos-latest)` checks. There is no second
+uninstrumented run of the same suite in those jobs. Direct dev/exp pushes run
+ordinary Linux/macOS tests in the separately named Development checks workflow;
+those results do not substitute for the full PR checks. See
+[CI scheduling](ci-scheduling.md).
+
 Adding a platform job does not establish a new measured baseline until that job
 has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the

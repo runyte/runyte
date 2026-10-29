@@ -2820,6 +2820,23 @@ const FAST_PANE_MOVES: [(char, EditorCommand); 4] = [
     ('l', EditorCommand::FocusWindowRight),
 ];
 
+/// Whether a keystroke leaves Insert mode instead of reaching a terminal.
+///
+/// `Escape` cannot be it: `vim` and `htop` inside the pane need it, and every
+/// agent uses it too. `Ctrl-\\` begins the staged Normal/review transition;
+/// `Ctrl-w` begins the Insert-mode pane-navigation namespace instead.
+pub fn is_terminal_normal_key(key: Key) -> bool {
+    // Two spellings of Ctrl-\\. A terminal implementing the kitty keyboard
+    // protocol reports `Ctrl-\` as the character it is; a legacy one has only
+    // the control byte `0x1c`, which Crossterm decodes as `Ctrl-4` because
+    // that is what the historical table says. Runyte asks for the enhanced
+    // protocol but cannot require it — it is off on macOS entirely — so the
+    // escape hatch has to answer to both or it would be unreachable on the
+    // terminals that need it most.
+    key.modifiers.contains(Modifiers::CONTROL)
+        && matches!(key.code, KeyCode::Char('\\') | KeyCode::Char('4'))
+}
+
 /// Whether `key` is one of the single-key pane moves.
 ///
 /// Says nothing about whether the option is on: that is the caller's
@@ -3558,9 +3575,7 @@ mod tests {
     /// be named exactly somewhere in the table.
     #[test]
     fn user_guide_covers_every_direct_editing_binding() {
-        let guide =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/user-guide.md"))
-                .expect("read the user guide");
+        let guide = crate::manual::USER_GUIDE;
         let editing = guide
             .split_once("### Editing")
             .expect("user guide has an Editing section")
@@ -3597,14 +3612,14 @@ mod tests {
         let missing = missing_from(Mode::Normal, &editing);
         assert!(
             missing.is_empty(),
-            "docs/user-guide.md Editing table is missing direct modal bindings: {}",
+            "docs/user-guide/ Editing table is missing direct modal bindings: {}",
             missing.join(", ")
         );
 
         let missing = missing_from(Mode::Insert, insert);
         assert!(
             missing.is_empty(),
-            "docs/user-guide.md Insert and Replace modes section is missing direct bindings: {}",
+            "docs/user-guide/ Insert and Replace modes section is missing direct bindings: {}",
             missing.join(", ")
         );
 

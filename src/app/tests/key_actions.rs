@@ -114,3 +114,25 @@ fn action_bindings_replay_once_per_recorded_key_and_keep_prompts_owned() {
     assert_eq!(app.mode, Mode::Command);
     assert_eq!(cursor(&app).col, 5);
 }
+
+/// Without the built-in keys, `Esc` still belongs to the program inside a
+/// terminal, so `Ctrl-\\` has to stay the way out of its input.
+#[cfg(unix)]
+#[test]
+fn without_defaults_a_terminal_can_still_be_left() {
+    let root = super::language::temporary("standalone-terminal-escape");
+    std::fs::create_dir_all(&root).unwrap();
+    let mut app = configured(
+        "defaults: false\nbind:\n  normal:\n    ':': open-command-palette\n  select:\n    Esc: enter-normal-mode\n  insert:\n    Esc: enter-normal-mode\n  replace:\n    Esc: enter-normal-mode\n",
+    );
+    assert!(!app.status_error, "{}", app.status);
+    app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
+    assert!(app.active_terminal().is_some());
+    assert_eq!(app.mode, Mode::Insert);
+
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Insert, "Esc went to the program");
+    key(&mut app, KeyCode::Char('\\'), Modifiers::CONTROL);
+    assert_eq!(app.mode, Mode::Normal);
+    std::fs::remove_dir_all(root).unwrap();
+}

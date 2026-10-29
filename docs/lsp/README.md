@@ -43,8 +43,11 @@ have not yet received native Windows acceptance.
 
 The key immediately below `lsp` must be one of Runyte's built-in language
 names. `command` names the executable to launch, `args` is its argument list,
-and optional `initialization_options` is passed verbatim in the LSP handshake.
-Runyte starts one process per configured language and does not invoke a shell.
+optional `initialization_options` is passed verbatim in the LSP handshake, and
+optional `roots` replaces the language's built-in project-root markers.
+Runyte starts one process per configured language and project root, and does
+not invoke a shell; see
+[Server roots](../user-guide/language-support.md#server-roots).
 Unknown keys below `lsp` are rejected, apart from the reserved `enable` setting
 and legacy `servers` wrapper.
 

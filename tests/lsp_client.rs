@@ -21,7 +21,8 @@ use runyte::{
     config::{LanguageServerConfig, LspConfig},
     lsp::{
         ChangeSync, DocumentSync, Encoding, Launch, LspCommand, LspEvent, LspHandle,
-        PENDING_CAPACITY, RequestKind, Response, Severity, path_to_uri, spawn, spawn_with,
+        PENDING_CAPACITY, RequestKind, Response, ServerId, Severity, path_to_uri, spawn,
+        spawn_with,
         transport::{self, Incoming},
     },
 };
@@ -32,6 +33,13 @@ use tokio::{
 };
 
 const PIPE: usize = 64 * 1024;
+
+/// The root every mock server below is started at.
+const ROOT: &str = "/tmp/runyte-lsp";
+
+fn server(language: &str) -> ServerId {
+    ServerId::new(language, ROOT)
+}
 
 /// How a mock server answers one request method.
 type Reply = Box<dyn Fn(&Value) -> Value + Send + Sync>;
@@ -165,7 +173,7 @@ impl Harness {
     fn request(&self, kind: RequestKind) {
         assert!(self.handle.send(LspCommand::Request {
             token: 1,
-            language: "rust".to_owned(),
+            server: server("rust"),
             path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
             kind: Box::new(kind),
         }));
@@ -215,6 +223,7 @@ fn config() -> LspConfig {
             command: PathBuf::from("mock-analyzer"),
             args: Vec::new(),
             initialization_options: None,
+            roots: None,
         },
     );
     LspConfig {
@@ -269,6 +278,7 @@ fn config_with(servers: &[(&str, &str)]) -> LspConfig {
                         command: PathBuf::from(*command),
                         args: Vec::new(),
                         initialization_options: None,
+                        roots: None,
                     },
                 )
             })
@@ -411,7 +421,7 @@ async fn respond(writer: &mut WriteHalf<DuplexStream>, id: Value, result: Value)
 
 fn open(handle: &LspHandle) {
     assert!(handle.send(LspCommand::Open {
-        language: "rust".to_owned(),
+        server: server("rust"),
         path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
         version: 1,
         text: "fn main() {}\n".to_owned(),
@@ -448,12 +458,16 @@ async fn a_language_server_that_cannot_start_is_stopped_with_an_actionable_reaso
     handle.set_allowed(true);
 
     assert!(handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: ServerId::new("rust", root.clone())
     }));
     let stopped = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let event = events.recv().await.expect("the manager remains available");
-            if let LspEvent::Stopped { language, message } = event {
+            if let LspEvent::Stopped {
+                server: ServerId { language, .. },
+                message,
+            } = event
+            {
                 break (language, message);
             }
         }
@@ -496,7 +510,7 @@ async fn a_language_server_that_cannot_start_is_stopped_with_an_actionable_reaso
 async fn the_handshake_negotiates_an_encoding_and_gates_document_notifications() {
     let mut harness = harness(Script::default());
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
 
     assert_eq!(harness.ready().await, Encoding::Utf8);
@@ -536,7 +550,7 @@ async fn the_handshake_negotiates_an_encoding_and_gates_document_notifications()
 async fn a_malformed_initialize_result_stops_and_records_the_server() {
     let mut harness = harness(Script::default().initialize_result(json!({"not": "initialize"})));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     let stopped = harness
         .next_matching(|event| match event {
@@ -565,7 +579,7 @@ async fn an_unknown_position_encoding_stops_the_server() {
         "capabilities": {"positionEncoding": "utf-7"}
     })));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     let message = harness
         .next_matching(|event| match event {
@@ -585,7 +599,7 @@ async fn an_unknown_text_sync_kind_stops_the_server() {
         "capabilities": {"textDocumentSync": 99}
     })));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     let message = harness
         .next_matching(|event| match event {
@@ -608,7 +622,7 @@ async fn unsupported_document_notifications_are_not_sent() {
         }
     })));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     let sync = harness
         .next_matching(|event| match event {
@@ -619,18 +633,18 @@ async fn unsupported_document_notifications_are_not_sent() {
     assert_eq!(sync, DocumentSync::default());
     open(&harness.handle);
     assert!(harness.handle.send(LspCommand::Change {
-        language: "rust".to_owned(),
+        server: server("rust"),
         path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
         version: 2,
         changes: vec![],
     }));
     assert!(harness.handle.send(LspCommand::Save {
-        language: "rust".to_owned(),
+        server: server("rust"),
         path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
         text: "changed".to_owned(),
     }));
     assert!(harness.handle.send(LspCommand::Close {
-        language: "rust".to_owned(),
+        server: server("rust"),
         path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
     }));
     harness.settle().await;
@@ -657,7 +671,7 @@ async fn save_text_is_omitted_when_the_server_did_not_request_it() {
         }
     })));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     let sync = harness
         .next_matching(|event| match event {
@@ -668,7 +682,7 @@ async fn save_text_is_omitted_when_the_server_did_not_request_it() {
     assert_eq!(sync.change, ChangeSync::Full);
     assert_eq!(sync.save, Some(false));
     assert!(harness.handle.send(LspCommand::Save {
-        language: "rust".to_owned(),
+        server: server("rust"),
         path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
         text: "secret text".to_owned(),
     }));
@@ -682,11 +696,11 @@ async fn save_text_is_omitted_when_the_server_did_not_request_it() {
 async fn pre_handshake_document_updates_are_bounded_and_stop_a_wedged_server() {
     let mut harness = harness(Script::default().ignore_initialize());
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     for version in 1..=(transport::OUTGOING_CAPACITY as i32 + 1) {
         assert!(harness.handle.send(LspCommand::Open {
-            language: "rust".to_owned(),
+            server: server("rust"),
             path: PathBuf::from(format!("/tmp/runyte-lsp/{version}.rs")),
             version,
             text: String::new(),
@@ -708,7 +722,7 @@ async fn pre_handshake_document_updates_are_bounded_and_stop_a_wedged_server() {
 async fn a_request_while_the_server_is_starting_fails_without_reaching_the_wire() {
     let mut harness = harness(Script::default().ignore_initialize());
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness
         .wait_for_sent(|message| message.get("method") == Some(&json!("initialize")))
@@ -716,7 +730,7 @@ async fn a_request_while_the_server_is_starting_fails_without_reaching_the_wire(
 
     assert!(harness.handle.send(LspCommand::Request {
         token: 701,
-        language: "rust".to_owned(),
+        server: server("rust"),
         path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
         kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
     }));
@@ -742,13 +756,13 @@ async fn a_request_while_the_server_is_starting_fails_without_reaching_the_wire(
 async fn a_relative_document_path_is_refused_before_a_server_request_is_sent() {
     let mut harness = harness(Script::default());
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 
     assert!(harness.handle.send(LspCommand::Request {
         token: 702,
-        language: "rust".to_owned(),
+        server: server("rust"),
         path: PathBuf::from("relative.rs"),
         kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
     }));
@@ -774,12 +788,12 @@ async fn a_relative_document_path_is_refused_before_a_server_request_is_sent() {
 async fn cancelling_releases_protocol_correlation_and_notifies_the_server() {
     let mut harness = harness(Script::default().ignore("textDocument/hover"));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     assert!(harness.handle.send(LspCommand::Request {
         token: 77,
-        language: "rust".to_owned(),
+        server: server("rust"),
         path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
         kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
     }));
@@ -796,12 +810,12 @@ async fn cancelling_releases_protocol_correlation_and_notifies_the_server() {
 async fn cancellation_that_overtakes_its_request_drops_the_request() {
     let mut harness = harness(Script::default().ignore("textDocument/hover"));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     assert!(harness.handle.send(LspCommand::Request {
         token: 78,
-        language: "rust".to_owned(),
+        server: server("rust"),
         path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
         kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
     }));
@@ -816,14 +830,14 @@ async fn cancellation_that_overtakes_its_request_drops_the_request() {
 async fn unanswered_requests_are_bounded_per_server() {
     let mut harness = harness(Script::default().ignore("textDocument/hover"));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 
     for index in 0..=PENDING_CAPACITY {
         let command = LspCommand::Request {
             token: 10_000 + index as u64,
-            language: "rust".to_owned(),
+            server: server("rust"),
             path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
             kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
         };
@@ -849,14 +863,14 @@ async fn unanswered_requests_are_bounded_per_server() {
 async fn incremental_changes_are_sent_in_the_order_a_server_can_apply() {
     let mut harness = harness(Script::default());
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     open(&harness.handle);
 
     // Two edits in one transaction, described against the pre-edit document.
     assert!(harness.handle.send(LspCommand::Change {
-        language: "rust".to_owned(),
+        server: server("rust"),
         path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
         version: 2,
         changes: vec![
@@ -898,7 +912,7 @@ async fn navigation_results_keep_the_sending_servers_encoding() {
     let mut harness =
         harness(Script::default().result("textDocument/definition", json!([location(0)])));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     assert_eq!(harness.ready().await, Encoding::Utf8);
     harness.request(RequestKind::Definition(runyte::lsp::LspPosition::new(0, 0)));
@@ -991,7 +1005,7 @@ async fn every_advertised_request_round_trips_through_its_wire_shape() {
         .result("textDocument/formatting", json!([edit]));
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 
@@ -1148,7 +1162,7 @@ async fn diagnostics_are_published_and_cleared() {
         }));
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
 
     let diagnostics = harness
@@ -1190,7 +1204,7 @@ async fn only_actionable_show_messages_reach_the_editor_status() {
         }));
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     let mut statuses = Vec::new();
@@ -1211,7 +1225,7 @@ async fn only_actionable_show_messages_reach_the_editor_status() {
 async fn a_crash_fails_every_outstanding_request_and_reports_the_stop() {
     let mut harness = harness(Script::default().die_on("textDocument/definition"));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     harness.request(RequestKind::Definition(runyte::lsp::LspPosition::new(0, 0)));
@@ -1231,7 +1245,10 @@ async fn a_crash_fails_every_outstanding_request_and_reports_the_stop() {
 
     let stopped = harness
         .next_matching(|event| match event {
-            LspEvent::Stopped { language, .. } => Some(language.clone()),
+            LspEvent::Stopped {
+                server: ServerId { language, .. },
+                ..
+            } => Some(language.clone()),
             _ => None,
         })
         .await;
@@ -1244,7 +1261,7 @@ async fn a_request_to_a_missing_server_fails_instead_of_hanging() {
     let mut harness = harness(Script::default());
     assert!(harness.handle.send(LspCommand::Request {
         token: 7,
-        language: "python".to_owned(),
+        server: server("python"),
         path: PathBuf::from("/tmp/runyte-lsp/a.py"),
         kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
     }));
@@ -1268,7 +1285,7 @@ async fn a_malformed_frame_is_reported_and_the_session_survives() {
         .result("textDocument/definition", json!([location(4)]));
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 
@@ -1294,7 +1311,7 @@ async fn a_server_error_response_fails_only_that_request() {
     let script = Script::default().error("textDocument/hover", -32603, "backend failed");
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 
@@ -1315,14 +1332,14 @@ async fn concurrent_requests_keep_their_editor_tokens() {
     let script = Script::default().result("textDocument/definition", json!([location(1)]));
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 
     for token in [11, 12] {
         assert!(harness.handle.send(LspCommand::Request {
             token,
-            language: "rust".to_owned(),
+            server: server("rust"),
             path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
             kind: Box::new(RequestKind::Definition(runyte::lsp::LspPosition::new(0, 0))),
         }));
@@ -1347,7 +1364,7 @@ async fn concurrent_requests_keep_their_editor_tokens() {
 async fn restarting_clears_a_failure_so_the_next_edit_starts_a_server_again() {
     let mut harness = harness(Script::default().die_on("textDocument/definition"));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     harness.request(RequestKind::Definition(runyte::lsp::LspPosition::new(0, 0)));
@@ -1374,7 +1391,7 @@ async fn restarting_clears_a_failure_so_the_next_edit_starts_a_server_again() {
         })
         .await;
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     assert_eq!(harness.ready().await, Encoding::Utf8);
 }
@@ -1383,7 +1400,7 @@ async fn restarting_clears_a_failure_so_the_next_edit_starts_a_server_again() {
 async fn a_retired_connection_cannot_stop_its_replacement() {
     let mut harness = harness(Script::default());
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     assert!(
@@ -1398,7 +1415,7 @@ async fn a_retired_connection_cannot_stop_its_replacement() {
         })
         .await;
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     harness.settle().await;
@@ -1427,7 +1444,7 @@ async fn a_retiring_server_cannot_apply_an_edit_during_shutdown() {
     });
     let mut harness = harness(Script::default().push_on_shutdown(request));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     assert!(
@@ -1455,7 +1472,7 @@ async fn an_unknown_server_request_is_answered_rather_than_ignored() {
     }));
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     harness.settle().await;
@@ -1478,7 +1495,7 @@ async fn invalid_json_rpc_requests_are_rejected_before_dispatch() {
     });
     let mut harness = harness(Script::default().push(invalid));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     harness.settle().await;
@@ -1499,7 +1516,7 @@ async fn malformed_workspace_edits_receive_an_explicit_refusal() {
     });
     let mut harness = harness(Script::default().push(invalid));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     let refused = harness
@@ -1521,7 +1538,7 @@ async fn apply_edit_before_initialization_is_answered_without_editor_state() {
     });
     let mut harness = harness(Script::default().push_before_initialize(request));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     harness.settle().await;
@@ -1554,7 +1571,7 @@ async fn apply_edit_reaches_the_editor_and_is_acknowledged() {
     }));
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 
@@ -1574,7 +1591,7 @@ async fn apply_edit_reaches_the_editor_and_is_acknowledged() {
     assert_eq!(edits[0].path, PathBuf::from("/tmp/runyte-lsp/a.rs"));
 
     assert!(harness.handle.send(LspCommand::EditApplied {
-        language: "rust".to_owned(),
+        server: server("rust"),
         generation,
         id: json!(42),
         applied: true,
@@ -1599,7 +1616,7 @@ async fn a_duplicate_outstanding_server_request_id_is_rejected() {
     });
     let mut harness = harness(Script::default().push(request.clone()).push(request));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     let _ = harness
@@ -1617,7 +1634,7 @@ async fn a_duplicate_outstanding_server_request_id_is_rejected() {
 async fn shutdown_stops_the_manager() {
     let mut harness = harness(Script::default());
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     assert!(harness.handle.send(LspCommand::Shutdown));
@@ -1661,10 +1678,11 @@ async fn rust_analyzer_answers_a_real_goto_definition() {
     let root = std::env::current_dir().unwrap();
     let file = root.join("src/lsp/diagnostics.rs");
     let text = std::fs::read_to_string(&file).unwrap();
+    let server = ServerId::new("rust", root.clone());
     let (handle, mut events) = runyte::lsp::spawn(LspConfig::default(), root);
     handle.set_allowed(true);
     assert!(handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server.clone()
     }));
 
     let encoding = tokio::time::timeout(Duration::from_secs(120), async {
@@ -1681,7 +1699,7 @@ async fn rust_analyzer_answers_a_real_goto_definition() {
     .expect("rust-analyzer did not finish its handshake in two minutes");
 
     assert!(handle.send(LspCommand::Open {
-        language: "rust".to_owned(),
+        server: server.clone(),
         path: file.clone(),
         version: 1,
         text: text.clone(),
@@ -1714,7 +1732,7 @@ async fn rust_analyzer_answers_a_real_goto_definition() {
         token += 1;
         assert!(handle.send(LspCommand::Request {
             token,
-            language: "rust".to_owned(),
+            server: server.clone(),
             path: file.clone(),
             kind: Box::new(RequestKind::Definition(position)),
         }));
@@ -1799,7 +1817,7 @@ async fn completion_kinds_arrive_as_the_words_the_popup_shows() {
         );
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 
@@ -1878,7 +1896,7 @@ async fn symbol_kinds_arrive_as_the_words_the_picker_shows() {
         .result("textDocument/documentSymbol", json!(items));
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 
@@ -1939,7 +1957,7 @@ async fn flat_workspace_symbols_keep_their_container_and_drop_unopenable_uris() 
         );
     let mut harness = harness(script);
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 
@@ -1975,10 +1993,10 @@ async fn workspace_permission_blocks_every_launch_path_and_rechecks_after_revoca
         false,
     );
     handle.send(LspCommand::Ensure {
-        language: "rust".to_owned(),
+        server: server("rust"),
     });
     handle.send(LspCommand::Ensure {
-        language: "custom".to_owned(),
+        server: server("custom"),
     });
     open(&handle);
     handle.send(LspCommand::Restart(None));
@@ -1989,7 +2007,7 @@ async fn workspace_permission_blocks_every_launch_path_and_rechecks_after_revoca
     );
     handle.set_allowed(true);
     handle.send(LspCommand::Ensure {
-        language: "custom".to_owned(),
+        server: server("custom"),
     });
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(2), launches.recv())
@@ -2000,7 +2018,7 @@ async fn workspace_permission_blocks_every_launch_path_and_rechecks_after_revoca
     );
     handle.set_allowed(false);
     handle.send(LspCommand::Ensure {
-        language: "rust".to_owned(),
+        server: server("rust"),
     });
     handle.send(LspCommand::Restart(None));
     assert!(
@@ -2012,7 +2030,7 @@ async fn workspace_permission_blocks_every_launch_path_and_rechecks_after_revoca
     // server state, so stale manager state cannot override the new decision.
     handle.set_allowed(true);
     handle.send(LspCommand::Ensure {
-        language: "custom".to_owned(),
+        server: server("custom"),
     });
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(2), launches.recv())
@@ -2050,7 +2068,7 @@ async fn revocation_closes_a_running_server_even_when_immediately_reapproved() {
         true,
     );
     handle.send(LspCommand::Ensure {
-        language: "rust".to_owned(),
+        server: server("rust"),
     });
     let first = tokio::time::timeout(Duration::from_secs(2), starts.recv())
         .await
@@ -2066,7 +2084,7 @@ async fn revocation_closes_a_running_server_even_when_immediately_reapproved() {
         first
     );
     handle.send(LspCommand::Ensure {
-        language: "rust".to_owned(),
+        server: server("rust"),
     });
     let next = tokio::time::timeout(Duration::from_secs(2), starts.recv())
         .await
@@ -2103,7 +2121,7 @@ async fn revocation_discards_queued_ready_and_edits_before_reapproval_events() {
             }));
         let mut harness = harness(script);
         assert!(harness.handle.send(LspCommand::Ensure {
-            language: "rust".to_owned(),
+            server: server("rust"),
         }));
         // This wire reply follows the queued Ready and ApplyEdit. Leave both
         // in the host queue until after revocation and immediate reapproval.
@@ -2117,7 +2135,7 @@ async fn revocation_discards_queued_ready_and_edits_before_reapproval_events() {
             ));
         }
         assert!(harness.handle.send(LspCommand::Ensure {
-            language: "rust".to_owned(),
+            server: server("rust"),
         }));
         let LspEvent::Ready { generation, .. } = harness.next().await else {
             panic!("only the newly approved server may become ready");
@@ -2146,7 +2164,7 @@ async fn reconfiguring_an_unchanged_definition_leaves_its_server_running() {
     let (mut harness, launched) =
         recording_harness(Script::default(), config_with(&[("rust", "mock-analyzer")]));
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 
@@ -2167,6 +2185,201 @@ async fn reconfiguring_an_unchanged_definition_leaves_its_server_running() {
     assert!(!matches!(harness.response().await, Response::Failed(_)));
 }
 
+/// Every message each mock process was sent, by the root it was started at.
+type SentByRoot = Arc<Mutex<HashMap<PathBuf, Arc<Mutex<Vec<Value>>>>>>;
+
+/// Like [`harness`], but keeps each launched process's traffic apart, keyed
+/// by the root the manager started it at.
+fn per_root_harness() -> (Harness, SentByRoot) {
+    let by_root: SentByRoot = Arc::default();
+    let recorded = Arc::clone(&by_root);
+    let script = Arc::new(Script::default());
+    let launch: Launch = Box::new(move |language, generation, _settings, root, inbox| {
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        recorded
+            .lock()
+            .unwrap()
+            .insert(root.to_path_buf(), Arc::clone(&sent));
+        let (client_reader, server_writer) = tokio::io::duplex(PIPE);
+        let (server_reader, client_writer) = tokio::io::duplex(PIPE);
+        let connection = transport::connect(
+            language.to_owned(),
+            generation,
+            client_reader,
+            client_writer,
+            inbox as mpsc::Sender<(String, u64, Incoming)>,
+        );
+        tokio::spawn(mock_server(
+            Arc::clone(&script),
+            sent,
+            server_reader,
+            server_writer,
+        ));
+        Ok(connection)
+    });
+    let (handle, events) = spawn_with(config(), PathBuf::from(ROOT), launch);
+    (
+        Harness {
+            handle,
+            events,
+            sent: Arc::default(),
+        },
+        by_root,
+    )
+}
+
+fn methods_sent(by_root: &SentByRoot, root: &std::path::Path, method: &str) -> Vec<Value> {
+    by_root.lock().unwrap()[root]
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|message| message.get("method").and_then(Value::as_str) == Some(method))
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn one_language_runs_a_server_per_root_and_restarts_them_together() {
+    let (mut harness, by_root) = per_root_harness();
+    let tools = ServerId::new("rust", format!("{ROOT}/tools"));
+    let game = ServerId::new("rust", format!("{ROOT}/game"));
+    for server in [&tools, &game] {
+        assert!(harness.handle.send(LspCommand::Ensure {
+            server: server.clone()
+        }));
+    }
+    let mut ready = Vec::new();
+    for _ in 0..2 {
+        ready.push(
+            harness
+                .next_matching(|event| match event {
+                    LspEvent::Ready { server, .. } => Some(server.clone()),
+                    _ => None,
+                })
+                .await,
+        );
+    }
+    ready.sort();
+    assert_eq!(ready, vec![game.clone(), tools.clone()]);
+    assert_eq!(by_root.lock().unwrap().len(), 2, "one process per root");
+
+    // Each process was told its own root, not the workspace's.
+    for server in [&tools, &game] {
+        let initialize = methods_sent(&by_root, &server.root, "initialize");
+        assert_eq!(
+            initialize[0]["params"]["rootUri"].as_str(),
+            Some(path_to_uri(&server.root).unwrap().as_str())
+        );
+    }
+
+    // A document reaches only the server it names.
+    assert!(harness.handle.send(LspCommand::Open {
+        server: tools.clone(),
+        path: tools.root.join("src/main.rs"),
+        version: 1,
+        text: "fn main() {}\n".to_owned(),
+    }));
+    harness.settle().await;
+    assert_eq!(
+        methods_sent(&by_root, &tools.root, "textDocument/didOpen").len(),
+        1
+    );
+    assert!(methods_sent(&by_root, &game.root, "textDocument/didOpen").is_empty());
+
+    assert!(harness.handle.send(LspCommand::Status { action: None }));
+    let status = harness
+        .next_matching(|event| match event {
+            LspEvent::StatusReport { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .await;
+    assert!(status.contains("rust (tools)"), "{status}");
+    assert!(status.contains("rust (game)"), "{status}");
+
+    assert!(
+        harness
+            .handle
+            .send(LspCommand::Restart(Some("rust".to_owned())))
+    );
+    let mut restarted = Vec::new();
+    for _ in 0..2 {
+        restarted.push(
+            harness
+                .next_matching(|event| match event {
+                    LspEvent::Restarted { server } => Some(server.clone()),
+                    _ => None,
+                })
+                .await,
+        );
+    }
+    restarted.sort();
+    assert_eq!(restarted, vec![game.clone(), tools.clone()]);
+    let message = harness
+        .next_matching(|event| match event {
+            LspEvent::Status { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .await;
+    assert_eq!(
+        message,
+        "rust language server will restart on the next edit"
+    );
+    for server in [&tools, &game] {
+        assert_eq!(methods_sent(&by_root, &server.root, "shutdown").len(), 1);
+    }
+}
+
+#[tokio::test]
+async fn a_root_outside_the_workspace_is_refused_by_the_manager() {
+    let (mut harness, by_root) = per_root_harness();
+    let outside = ServerId::new("rust", format!("{ROOT}/../elsewhere"));
+
+    assert!(harness.handle.send(LspCommand::Ensure {
+        server: outside.clone()
+    }));
+    let message = harness
+        .next_matching(|event| match event {
+            LspEvent::Stopped { server, message } if *server == outside => Some(message.clone()),
+            _ => None,
+        })
+        .await;
+
+    assert!(message.contains("outside the workspace"), "{message}");
+    assert!(by_root.lock().unwrap().is_empty(), "nothing was launched");
+}
+
+#[tokio::test]
+async fn a_command_that_cannot_launch_is_reported_once_for_every_root() {
+    let mut configuration = config();
+    configuration.servers.get_mut("rust").unwrap().command =
+        PathBuf::from("runyte-test-missing-language-server");
+    let (handle, mut events) = spawn(configuration, PathBuf::from(ROOT));
+    handle.set_allowed(true);
+    for crate_name in ["tools", "game", "shared"] {
+        assert!(handle.send(LspCommand::Ensure {
+            server: ServerId::new("rust", format!("{ROOT}/{crate_name}"))
+        }));
+    }
+    assert!(handle.send(LspCommand::Status { action: None }));
+
+    let mut stopped = 0;
+    let status = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match events.recv().await.expect("the manager remains available") {
+                LspEvent::Stopped { .. } => stopped += 1,
+                LspEvent::StatusReport { message, .. } => break message,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("status should follow the launches");
+
+    assert_eq!(stopped, 1, "one notice for one missing command");
+    // Each root still records its failure for :lsp-status.
+    assert_eq!(status.matches("cannot start").count(), 3, "{status}");
+}
+
 #[tokio::test]
 async fn reconfiguring_restarts_only_the_language_whose_definition_changed() {
     let (mut harness, launched) = recording_harness(
@@ -2175,7 +2388,7 @@ async fn reconfiguring_restarts_only_the_language_whose_definition_changed() {
     );
     for language in ["rust", "markdown"] {
         assert!(harness.handle.send(LspCommand::Ensure {
-            language: language.to_owned()
+            server: server(language)
         }));
         harness.ready().await;
     }
@@ -2190,7 +2403,9 @@ async fn reconfiguring_restarts_only_the_language_whose_definition_changed() {
     );
     let restarted = harness
         .next_matching(|event| match event {
-            LspEvent::Restarted { language } => Some(language.clone()),
+            LspEvent::Restarted {
+                server: ServerId { language, .. },
+            } => Some(language.clone()),
             _ => None,
         })
         .await;
@@ -2206,7 +2421,7 @@ async fn reconfiguring_restarts_only_the_language_whose_definition_changed() {
         .await;
 
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "markdown".to_owned()
+        server: server("markdown")
     }));
     harness.ready().await;
     let launched = launched.lock().unwrap().clone();
@@ -2228,7 +2443,7 @@ async fn a_removed_definition_stops_its_server_and_reports_it_is_unconfigured() 
         config_with(&[("rust", "mock-analyzer"), ("markdown", "marksman")]),
     );
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "markdown".to_owned()
+        server: server("markdown")
     }));
     harness.ready().await;
     assert_eq!(launched.lock().unwrap().len(), 1);
@@ -2261,7 +2476,7 @@ async fn a_removed_definition_stops_its_server_and_reports_it_is_unconfigured() 
 
     // Asking for it again cannot start anything, because nothing describes it.
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "markdown".to_owned()
+        server: server("markdown")
     }));
     harness.settle().await;
     assert_eq!(
@@ -2286,14 +2501,14 @@ async fn a_server_that_exits_during_another_shutdown_still_takes_its_new_command
     );
     for language in ["rust", "markdown"] {
         assert!(harness.handle.send(LspCommand::Ensure {
-            language: language.to_owned()
+            server: server(language)
         }));
         harness.ready().await;
     }
     // Wedge rust into exiting as soon as it is next spoken to.
     assert!(harness.handle.send(LspCommand::Request {
         token: 7,
-        language: "rust".to_owned(),
+        server: server("rust"),
         path: PathBuf::from("/tmp/runyte-lsp/a.rs"),
         kind: Box::new(RequestKind::Hover(runyte::lsp::LspPosition::new(0, 0))),
     }));
@@ -2314,7 +2529,7 @@ async fn a_server_that_exits_during_another_shutdown_still_takes_its_new_command
         .await;
 
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     assert_eq!(
@@ -2331,7 +2546,7 @@ async fn reconfiguring_clears_a_recorded_failure_so_the_new_command_is_tried() {
         config_with(&[("rust", "broken-analyzer")]),
     );
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
     harness.request(RequestKind::Definition(runyte::lsp::LspPosition::new(0, 0)));
@@ -2352,7 +2567,7 @@ async fn reconfiguring_clears_a_recorded_failure_so_the_new_command_is_tried() {
     );
     harness.settle().await;
     assert!(harness.handle.send(LspCommand::Ensure {
-        language: "rust".to_owned()
+        server: server("rust")
     }));
     harness.ready().await;
 

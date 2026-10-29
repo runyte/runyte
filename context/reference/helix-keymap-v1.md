@@ -6,6 +6,8 @@ advertised aliases without changing the compatibility status recorded here.
 `keys.bind` additionally overrides or removes exact global bindings by mode,
 using semantic action names or bounded action sequences after remapping. These
 custom assignments do not change the default-key compatibility rows below.
+`keys.defaults: false` leaves out every default global binding `keys.bind`
+could assign, so those rows describe nothing until `bind` assigns them again.
 `:help key-actions` is generated from the configurable action inventory.
 
 Target: [Helix master keymap](https://docs.helix-editor.com/master/keymap.html),
@@ -596,7 +598,8 @@ Helix has no counterpart, so both are deliberate Runyte additions. They write
 the saved configuration and language servers to the per-user configuration file
 when no path is given, even when `--config` loaded another file. Custom themes
 and key bindings go into `themes.d` and `keybinds.d` beside it. Unchanged built-in
-bindings are commented examples; explicit assignments remain active. The
+bindings are commented examples, and there are none under `keys.defaults:
+false`; explicit assignments remain active. The
 65,536-assignment bound counts active `bind` entries across all files. Export
 validates the prospective files, including retained fragments, both keymap
 variants and directory counts before writing. The plain form refuses to replace an

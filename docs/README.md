@@ -1,6 +1,6 @@
 # Runyte documentation
 
-- [User guide and complete feature reference](user-guide.md)
+- [User guide and complete feature reference](user-guide/README.md)
 - [Dependency and license inventory](dependency-license-inventory.md)
 - [Source and asset provenance](source-provenance.md)
 

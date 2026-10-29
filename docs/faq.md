@@ -5,7 +5,7 @@
 Runyte runs natively on x86-64 Windows 11 24H2 or later in Windows Terminal.
 It supports editing, file management, clipboard integration, ConPTY terminals,
 persistent sessions, language servers, plugins and MCP access. Windows release
-builds are available starting with 0.3.2. See the [Windows guide](user-guide.md#windows-support)
+builds are available starting with 0.3.2. See the [Windows guide](user-guide/install-and-run.md#windows-support)
 for build requirements and the explicit feature limits.
 
 Integrated Git is available when a native Git executable is found on PATH;
@@ -21,7 +21,7 @@ If you know what you are doing, Runyte uses `%COMSPEC%` to choose the program
 for a bare `:terminal` (or `Space t n`) on Windows, falling back to `cmd.exe`.
 You can change `COMSPEC` in the environment that starts Runyte, but other
 programs may also use it and expect `cmd.exe`. See the
-[terminal guide](user-guide.md#terminals) for more about terminal commands.
+[terminal guide](user-guide/terminals.md#terminals) for more about terminal commands.
 
 ## Why don't Alt-based keybindings work on macOS?
 
@@ -48,4 +48,4 @@ They skip positions within the current buffer. A message such as
 `no earlier buffer` or `no later buffer` means the shortcut was received, but
 there is no destination in that direction.
 
-See the [user guide](user-guide.md#key-bindings) for more about keybindings.
+See the [user guide](user-guide/key-bindings.md#key-bindings) for more about keybindings.

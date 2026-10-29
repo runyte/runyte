@@ -196,12 +196,14 @@ async fn manager(project: &Path, server: &Path, descendants: &Descendants) {
                 command: server.into(),
                 args: Vec::new(),
                 initialization_options: Some(options()),
+                roots: None,
             },
         )]),
     };
+    let server = lsp::ServerId::new("rust", project.canonicalize().unwrap());
     let (handle, mut events) = lsp::spawn(config, project.canonicalize().unwrap());
     assert!(handle.send(LspCommand::Ensure {
-        language: "rust".into()
+        server: server.clone()
     }));
     tokio::time::sleep(Duration::from_millis(250)).await;
     assert!(
@@ -211,7 +213,7 @@ async fn manager(project: &Path, server: &Path, descendants: &Descendants) {
     assert!(events.try_recv().is_err());
     handle.set_allowed(true);
     assert!(handle.send(LspCommand::Ensure {
-        language: "rust".into()
+        server: server.clone()
     }));
     let generation = event(&mut events, |event| match event {
         LspEvent::Ready {
@@ -231,7 +233,7 @@ async fn manager(project: &Path, server: &Path, descendants: &Descendants) {
     let first = descendants.processes();
     assert!(!first.is_empty());
     assert!(handle.send(LspCommand::Open {
-        language: "rust".into(),
+        server: server.clone(),
         path: path.clone(),
         version: 1,
         text: "fn main( {\n".into(),
@@ -248,7 +250,7 @@ async fn manager(project: &Path, server: &Path, descendants: &Descendants) {
     })
     .await;
     assert!(handle.send(LspCommand::Change {
-        language: "rust".into(),
+        server: server.clone(),
         path: path.clone(),
         version: 2,
         changes: vec![lsp_types::TextDocumentContentChangeEvent {
@@ -271,7 +273,7 @@ async fn manager(project: &Path, server: &Path, descendants: &Descendants) {
     .await;
     assert!(handle.send(LspCommand::Request {
         token: 1,
-        language: "rust".into(),
+        server: server.clone(),
         path: path.clone(),
         kind: Box::new(RequestKind::Format {
             tab_size: 4,
@@ -303,7 +305,7 @@ async fn manager(project: &Path, server: &Path, descendants: &Descendants) {
     .await;
     ended(&first);
     assert!(handle.send(LspCommand::Ensure {
-        language: "rust".into()
+        server: server.clone()
     }));
     event(&mut events, |event| match event {
         LspEvent::Ready {

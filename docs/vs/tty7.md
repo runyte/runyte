@@ -6,14 +6,14 @@ Scope: tty7’s published documentation and the original Runyte comparison were 
 
 ## Summary
 
-tty7 is a graphical terminal workbench with its own GPU-rendered window. Runyte makes a modal editor the centre of its workspace. Its terminal edition runs inside an existing terminal; the desktop edition also offers a [GPUI window](../user-guide.md#desktop-edition). Both can host coding agents and retain terminal processes independently of the visible interface. [tty7 overview](https://github.com/l0ng-ai/tty7).
+tty7 is a graphical terminal workbench with its own GPU-rendered window. Runyte makes a modal editor the centre of its workspace. Its terminal edition runs inside an existing terminal; the desktop edition also offers a [GPUI window](../user-guide/files-and-buffers.md#desktop-edition). Both can host coding agents and retain terminal processes independently of the visible interface. [tty7 overview](https://github.com/l0ng-ai/tty7).
 
 This comparison spans different layers: tty7 can provide the terminal in which Runyte runs. Its command-input editing is distinct from Runyte’s project-file editor.
 
 ## Feature comparison
 
 Runyte capabilities follow the [project overview](../../README.md),
-[user guide](../user-guide.md), [plugin contract](../plugins.md), and
+[user guide](../user-guide/README.md), [plugin contract](../plugins.md), and
 [built-in MCP adapter](../mcp.md).
 The bridge requires native grants; terminal-text proposals need approval and do not submit Enter.
 

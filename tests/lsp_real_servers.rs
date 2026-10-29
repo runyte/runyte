@@ -20,7 +20,7 @@ use runyte::{
     config::{LanguageServerConfig, LspConfig},
     lsp::{
         Capabilities, Diagnostic, Encoding, LspCommand, LspEvent, LspPosition, LspRange,
-        RequestKind, Response, SignatureContext, TextDocumentContentChangeEvent,
+        RequestKind, Response, ServerId, SignatureContext, TextDocumentContentChangeEvent,
     },
     text::Text,
 };
@@ -177,6 +177,7 @@ async fn smoke(spec: ServerSpec) {
                 .map(|argument| (*argument).to_owned())
                 .collect(),
             initialization_options: None,
+            roots: None,
         },
     );
     let config = LspConfig {
@@ -184,14 +185,15 @@ async fn smoke(spec: ServerSpec) {
         servers,
     };
     let (handle, mut events) = runyte::lsp::spawn(config, project.root().to_owned());
+    let server = ServerId::new(spec.language, project.root());
     handle.set_allowed(true);
 
     assert!(handle.send(LspCommand::Ensure {
-        language: spec.language.to_owned(),
+        server: server.clone(),
     }));
     let (encoding, capabilities) = wait_until_ready(spec.language, &mut events).await;
     assert!(handle.send(LspCommand::Open {
-        language: spec.language.to_owned(),
+        server: server.clone(),
         path: path.clone(),
         version: 1,
         text: source.clone(),
@@ -201,6 +203,7 @@ async fn smoke(spec: ServerSpec) {
         &handle,
         &mut events,
         &spec,
+        &server,
         &path,
         1,
         || RequestKind::DocumentSymbols,
@@ -241,6 +244,7 @@ async fn smoke(spec: ServerSpec) {
         &handle,
         &mut events,
         &spec,
+        &server,
         &path,
         10_000,
         || RequestKind::Definition(position),
@@ -290,6 +294,7 @@ async fn smoke(spec: ServerSpec) {
         &handle,
         &mut events,
         &spec,
+        &server,
         &path,
         &source,
         encoding,
@@ -361,6 +366,7 @@ async fn smoke(spec: ServerSpec) {
         &handle,
         &mut events,
         &spec,
+        &server,
         &path,
         20_000,
         || RequestKind::SignatureHelp {
@@ -399,6 +405,7 @@ async fn smoke(spec: ServerSpec) {
         &handle,
         &mut events,
         &spec,
+        &server,
         &path,
         30_000,
         RequestKind::SignatureHelp {
@@ -450,10 +457,12 @@ fn labels(signatures: &[runyte::lsp::SignatureLine]) -> Vec<&str> {
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn exercise_extended(
     handle: &runyte::lsp::LspHandle,
     events: &mut runyte::lsp::LspEvents,
     spec: &ServerSpec,
+    server: &ServerId,
     path: &Path,
     original: &str,
     encoding: Encoding,
@@ -466,7 +475,7 @@ async fn exercise_extended(
     let end =
         runyte::lsp::to_lsp_position(&Text::from_str(&source), source.chars().count(), encoding);
     assert!(handle.send(LspCommand::Change {
-        language: spec.language.to_owned(),
+        server: server.clone(),
         path: path.to_owned(),
         version: 2,
         changes: vec![TextDocumentContentChangeEvent {
@@ -486,6 +495,7 @@ async fn exercise_extended(
         handle,
         events,
         spec,
+        server,
         path,
         40_000,
         || RequestKind::Definition(use_position),
@@ -519,6 +529,7 @@ async fn exercise_extended(
             handle,
             events,
             spec,
+            server,
             path,
             41_000,
             || RequestKind::Completion(position),
@@ -552,6 +563,7 @@ async fn exercise_extended(
             handle,
             events,
             spec,
+            server,
             path,
             42_000,
             || RequestKind::Hover(position),
@@ -574,6 +586,7 @@ async fn exercise_extended(
             handle,
             events,
             spec,
+            server,
             path,
             43_000,
             || RequestKind::References(use_position),
@@ -596,6 +609,7 @@ async fn exercise_extended(
             handle,
             events,
             spec,
+            server,
             path,
             44_000,
             || RequestKind::Rename {
@@ -634,6 +648,7 @@ async fn exercise_extended(
             handle,
             events,
             spec,
+            server,
             path,
             45_000,
             || RequestKind::Format {
@@ -662,7 +677,7 @@ async fn exercise_extended(
         let invalid_start = source.chars().count();
         let start = runyte::lsp::to_lsp_position(&document, invalid_start, encoding);
         assert!(handle.send(LspCommand::Change {
-            language: spec.language.to_owned(),
+            server: server.clone(),
             path: path.to_owned(),
             version: 3,
             changes: vec![TextDocumentContentChangeEvent {
@@ -673,7 +688,7 @@ async fn exercise_extended(
         }));
         source.push_str(diagnostic_probe.text);
         assert!(handle.send(LspCommand::Save {
-            language: spec.language.to_owned(),
+            server: server.clone(),
             path: path.to_owned(),
             text: source.clone(),
         }));
@@ -710,6 +725,7 @@ async fn exercise_extended(
                 handle,
                 events,
                 spec,
+                server,
                 path,
                 46_000,
                 || RequestKind::CodeActions {
@@ -746,7 +762,7 @@ async fn exercise_extended(
             runyte::lsp::to_lsp_position(&invalid_document, invalid_end, encoding),
         );
         assert!(handle.send(LspCommand::Change {
-            language: spec.language.to_owned(),
+            server: server.clone(),
             path: path.to_owned(),
             version: 4,
             changes: vec![TextDocumentContentChangeEvent {
@@ -758,7 +774,7 @@ async fn exercise_extended(
         source.truncate(source.len() - diagnostic_probe.text.len());
         source.push_str(diagnostic_probe.repair);
         assert!(handle.send(LspCommand::Save {
-            language: spec.language.to_owned(),
+            server: server.clone(),
             path: path.to_owned(),
             text: source.clone(),
         }));
@@ -769,7 +785,7 @@ async fn exercise_extended(
             encoding,
         );
         assert!(handle.send(LspCommand::Change {
-            language: spec.language.to_owned(),
+            server: server.clone(),
             path: path.to_owned(),
             version: 5,
             changes: vec![TextDocumentContentChangeEvent {
@@ -956,13 +972,14 @@ async fn request_once(
     handle: &runyte::lsp::LspHandle,
     events: &mut runyte::lsp::LspEvents,
     spec: &ServerSpec,
+    server: &ServerId,
     path: &Path,
     token: u64,
     kind: RequestKind,
 ) -> Response {
     assert!(handle.send(LspCommand::Request {
         token,
-        language: spec.language.to_owned(),
+        server: server.clone(),
         path: path.to_owned(),
         kind: Box::new(kind),
     }));
@@ -1001,7 +1018,10 @@ async fn wait_until_ready(
         loop {
             match events.recv().await {
                 Some(LspEvent::Ready {
-                    language: ready,
+                    server:
+                        ServerId {
+                            language: ready, ..
+                        },
                     encoding,
                     capabilities,
                     ..
@@ -1021,6 +1041,7 @@ async fn request_until<T>(
     handle: &runyte::lsp::LspHandle,
     events: &mut runyte::lsp::LspEvents,
     spec: &ServerSpec,
+    server: &ServerId,
     path: &Path,
     first_token: u64,
     request: impl Fn() -> RequestKind,
@@ -1036,7 +1057,7 @@ async fn request_until<T>(
         );
         assert!(handle.send(LspCommand::Request {
             token,
-            language: spec.language.to_owned(),
+            server: server.clone(),
             path: path.to_owned(),
             kind: Box::new(request()),
         }));

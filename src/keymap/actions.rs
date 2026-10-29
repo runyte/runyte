@@ -3,12 +3,14 @@
 //! Bounded semantic action bindings layered over the resolved keymap.
 
 use super::{
-    Binding, BindingAvailability, BindingScope, BindingTarget, Key, KeySequence, Keymap, validate,
+    Binding, BindingAvailability, BindingNamespace, BindingScope, BindingTarget, Key, KeySequence,
+    Keymap, validate,
 };
 use crate::command::{self, CommandId, CommandInvocation, EditorCommand, Mode};
 use crate::input::KeyCode;
 use serde_yaml::{Mapping, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::LazyLock;
 
 /// Bound the work and storage of configured assignments across all mode files.
 pub const MAX_BINDINGS: usize = 65_536;
@@ -36,6 +38,18 @@ impl Action {
 }
 
 pub fn editor_modes(command: EditorCommand) -> Vec<Mode> {
+    // Scanned once: configuration compiles ask this for every admitted rule
+    // and, without the defaults, for every built-in binding in every mode.
+    static MODES: LazyLock<HashMap<EditorCommand, Vec<Mode>>> = LazyLock::new(|| {
+        EditorCommand::ALL
+            .iter()
+            .map(|&command| (command, scan_editor_modes(command)))
+            .collect()
+    });
+    MODES.get(&command).cloned().unwrap_or_default()
+}
+
+fn scan_editor_modes(command: EditorCommand) -> Vec<Mode> {
     if command::INTERNAL_EDITOR_COMMANDS.contains(&command)
         || command::GRAMMAR_ONLY_EDITOR_COMMANDS.contains(&command)
         || command == EditorCommand::ShellPipe
@@ -44,7 +58,7 @@ pub fn editor_modes(command: EditorCommand) -> Vec<Mode> {
     }
     let map = super::default_keymap();
     let target = BindingTarget::Editor(command);
-    [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace]
+    BIND_MODES
         .into_iter()
         .filter(|mode| {
             map.bindings().iter().any(|binding| {
@@ -247,6 +261,296 @@ struct Rule {
     description: String,
 }
 
+/// Keeps each namespace only in the modes where some binding still continues
+/// it, so a prefix whose keys were all removed stops being advertised.
+fn prune_namespaces(
+    namespaces: Vec<BindingNamespace>,
+    bindings: &[Binding],
+) -> Vec<BindingNamespace> {
+    namespaces
+        .into_iter()
+        .flat_map(|namespace| {
+            namespace
+                .modes
+                .iter()
+                .filter(|&&mode| {
+                    bindings.iter().any(|binding| {
+                        binding.visible_in(mode, namespace.scope)
+                            && (binding.scope == BindingScope::Global
+                                || binding.scope == namespace.scope)
+                            && binding.sequence != namespace.sequence
+                            && binding.sequence.starts_with(&namespace.sequence)
+                    })
+                })
+                .map(|&mode| {
+                    let mut copy = namespace.clone();
+                    copy.modes = mode_slice(mode);
+                    copy
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// Removes stale alias advertisements, including ones whose destination is
+/// now a sequence starting with the old command, and returns the bindings as
+/// they were before.
+fn drop_stale_aliases(bindings: &mut [Binding]) -> Vec<Binding> {
+    let snapshot = bindings.to_vec();
+    for binding in bindings {
+        if let Some(alias) = &binding.alias {
+            let valid = binding
+                .alias_modes
+                .unwrap_or(binding.modes)
+                .iter()
+                .all(|mode| {
+                    snapshot.iter().any(|other| {
+                        other.sequence == *alias
+                            && other.visible_in(*mode, binding.scope)
+                            && other.target == binding.target
+                            && other.is_plain_action()
+                            && (other.scope == binding.scope || other.scope == BindingScope::Global)
+                    })
+                });
+            if !valid {
+                binding.alias = None;
+                binding.alias_modes = None;
+            }
+        }
+    }
+    snapshot
+}
+
+/// Insert and Replace keys a terminal already answers to with its own
+/// bindings. Anything else replaced in those modes keeps its built-in meaning
+/// inside terminals, through [`terminal_copies`], since a binding `bind`
+/// assigns is not visible there.
+fn terminal_keys(bindings: &[Binding]) -> HashSet<(Mode, KeySequence)> {
+    bindings
+        .iter()
+        .filter(|binding| binding.scope == BindingScope::Terminal)
+        .flat_map(|binding| {
+            binding
+                .modes
+                .iter()
+                .map(move |&mode| (mode, binding.sequence.clone()))
+        })
+        .collect()
+}
+
+/// Terminal-scoped copies of a global `binding` removed in `modes`, for the
+/// Insert and Replace ones a terminal has no binding of its own for.
+fn terminal_copies(
+    binding: &Binding,
+    modes: &[Mode],
+    terminal_keys: &HashSet<(Mode, KeySequence)>,
+) -> Vec<Binding> {
+    modes
+        .iter()
+        .filter(|&&mode| {
+            matches!(mode, Mode::Insert | Mode::Replace)
+                && !terminal_keys.contains(&(mode, binding.sequence.clone()))
+        })
+        .map(|&mode| {
+            let mut terminal = binding.clone();
+            terminal.scope = BindingScope::Terminal;
+            terminal.modes = mode_slice(mode);
+            terminal.alias = None;
+            terminal.alias_modes = None;
+            terminal
+        })
+        .collect()
+}
+
+/// Whether `keys.bind` can recreate `binding` in `mode`: an implemented
+/// built-in action, on a key the grammar does not keep for itself.
+fn is_expressible(binding: &Binding, mode: Mode) -> bool {
+    binding.availability == BindingAvailability::Implemented
+        && binding.sequence.len() <= 8
+        && !is_reserved(mode, &binding.sequence)
+        && match binding.target {
+            BindingTarget::Plugin(_) => false,
+            // What `parse_action` decides for an editor action's bare name,
+            // without searching the command inventory for it.
+            BindingTarget::Editor(command) => editor_modes(command).contains(&mode),
+            BindingTarget::Colon(_) => {
+                parse_action(&Value::String(binding.target.name().into()), mode).is_ok()
+            }
+        }
+}
+
+/// Whether `keys.defaults: false` leaves `binding` out in `mode`. That is
+/// every built-in global binding `bind` could put on the same key, and the
+/// unimplemented ones that only answer with a message, since a keyboard of
+/// someone's own should not advertise Runyte's plans. Kept are the keys
+/// nothing else could supply, and the two a person chose elsewhere or could
+/// not get back without: the terminal escape `Ctrl-\`, which `Esc` cannot be
+/// inside a terminal, and the fast pane keys `editor.fast_pane_keys` turned on.
+fn is_default(binding: &Binding, mode: Mode, fast_pane_keys: bool) -> bool {
+    let single = |test: fn(Key) -> bool| matches!(binding.sequence.as_slice(), [key] if test(*key));
+    let terminal_escape = binding.target == BindingTarget::Editor(EditorCommand::EnterNormalMode)
+        && single(super::is_terminal_normal_key);
+    binding.scope == BindingScope::Global
+        && binding.is_active_in(mode)
+        && !(fast_pane_keys && single(super::is_fast_pane_key))
+        && !terminal_escape
+        && if binding.availability == BindingAvailability::Implemented {
+            is_expressible(binding, mode)
+        } else {
+            !matches!(binding.target, BindingTarget::Plugin(_))
+                && !is_reserved(mode, &binding.sequence)
+        }
+}
+
+/// `keymap` without its defaults, for `keys.defaults: false`; see
+/// [`is_default`]. Inside terminals the removed Insert and Replace keys that
+/// reach the keymap there keep their meaning, as they do when `bind` replaces
+/// them with the defaults underneath, since nothing `bind` assigns is visible
+/// there. Of the namespaces only the leader and window prefixes are
+/// kept whole, since they are what `Leader` and `Window` mean in `bind`, which
+/// may continue them; [`apply`] prunes them if it does not. Any other built-in
+/// namespace described keys that are gone, and keeping one would also claim
+/// its key from a leader configured onto it.
+pub(super) fn without_defaults(mut keymap: Keymap) -> Keymap {
+    let fast_pane_keys = keymap.fast_pane_keys();
+    let terminal_keys = terminal_keys(&keymap.bindings);
+    keymap.bindings = keymap
+        .bindings
+        .into_iter()
+        .flat_map(|binding| {
+            let dropped = BIND_MODES
+                .into_iter()
+                .filter(|&mode| is_default(&binding, mode, fast_pane_keys))
+                .collect::<Vec<_>>();
+            if dropped.is_empty() {
+                return vec![binding];
+            }
+            let mut retained = binding
+                .modes
+                .iter()
+                .filter(|mode| !dropped.contains(mode))
+                .map(|&mode| {
+                    let mut copy = binding.clone();
+                    copy.modes = mode_slice(mode);
+                    copy
+                })
+                .collect::<Vec<_>>();
+            if reaches_terminal_input(&binding) {
+                retained.extend(terminal_copies(&binding, &dropped, &terminal_keys));
+            }
+            retained
+        })
+        .collect();
+    drop_stale_aliases(&mut keymap.bindings);
+    let prefixes = [
+        KeySequence::from(Key::char(' ')),
+        KeySequence::from(Key::ctrl('w')),
+    ];
+    keymap.namespaces = std::mem::take(&mut keymap.namespaces)
+        .into_iter()
+        .flat_map(|namespace| {
+            if prefixes.contains(&namespace.sequence) {
+                vec![namespace]
+            } else {
+                prune_namespaces(vec![namespace], &keymap.bindings)
+            }
+        })
+        .collect();
+    keymap.rebuild_lookup_index();
+    keymap
+}
+
+/// Without the defaults, a built-in namespace can lose every global binding
+/// under it while a special view's own keys still continue it, as the
+/// terminal's `Ctrl-w v` does once the global pane moves are gone. Such a
+/// namespace from `namespaces` is named again for those views alone, so help
+/// and key hints still describe the prefix their keys begin.
+pub(super) fn name_scoped_prefixes(mut keymap: Keymap, namespaces: &[BindingNamespace]) -> Keymap {
+    let mut named = keymap.namespaces.clone();
+    for namespace in namespaces {
+        for &mode in namespace.modes {
+            if named
+                .iter()
+                .any(|other| other.sequence == namespace.sequence && other.is_active_in(mode))
+            {
+                continue;
+            }
+            let mut scopes = Vec::new();
+            for binding in &keymap.bindings {
+                if binding.scope != BindingScope::Global
+                    && binding.is_active_in(mode)
+                    && binding.sequence != namespace.sequence
+                    && binding.sequence.starts_with(&namespace.sequence)
+                    && !scopes.contains(&binding.scope)
+                {
+                    scopes.push(binding.scope);
+                }
+            }
+            for scope in scopes {
+                let mut copy = namespace.clone();
+                copy.scope = scope;
+                copy.modes = mode_slice(mode);
+                named.push(copy);
+            }
+        }
+    }
+    if named.len() > keymap.namespaces.len()
+        && validate::validate(&keymap.bindings, &named, &keymap.context_actions).is_empty()
+    {
+        keymap.namespaces = named;
+        keymap.rebuild_lookup_index();
+    }
+    keymap
+}
+
+/// Whether a terminal in Insert mode hands `binding`'s first key to the
+/// keymap rather than to its program, as `App::handle_key_stroke` decides:
+/// the window prefix, the copy key and persistent-session navigation. The
+/// terminal escape and the fast pane keys are never removed at all. A copy of
+/// anything else could never run, yet would still claim its key from a
+/// window prefix configured onto it. Sequences are the default spellings.
+fn reaches_terminal_input(binding: &Binding) -> bool {
+    use EditorCommand as C;
+    binding.sequence.as_slice().first() == Some(&Key::ctrl('w'))
+        || matches!(
+            binding.target,
+            BindingTarget::Editor(
+                C::ClipboardYank
+                    | C::NextRunningSession
+                    | C::PreviousRunningSession
+                    | C::PreviousSession
+            )
+        )
+}
+
+/// What a keymap without the defaults lacks to be left again: the command
+/// palette in Normal mode, from which every command and the configuration can
+/// be reached, and a way back to Normal mode from the other three. A sequence
+/// of actions counts when one of them is the command.
+pub(super) fn missing_way_out(keymap: &Keymap) -> Option<String> {
+    let reaches = |mode, command| {
+        let target = BindingTarget::Editor(command);
+        keymap.bindings_for_mode(mode).any(|binding| {
+            binding.availability == BindingAvailability::Implemented
+                && (binding.target == target
+                    || binding
+                        .actions
+                        .iter()
+                        .any(|action| action.target() == target))
+        })
+    };
+    let mut missing = Vec::new();
+    if !reaches(Mode::Normal, EditorCommand::OpenCommandPalette) {
+        missing.push("open-command-palette in normal".to_owned());
+    }
+    for mode in [Mode::Select, Mode::Insert, Mode::Replace] {
+        if !reaches(mode, EditorCommand::EnterNormalMode) {
+            missing.push(format!("enter-normal-mode in {}", mode_name(mode)));
+        }
+    }
+    (!missing.is_empty()).then(|| missing.join(", "))
+}
+
 /// Whether `sequence` uses a key the grammar keeps for itself in `mode`.
 fn is_reserved(mode: Mode, sequence: &KeySequence) -> bool {
     sequence.as_slice().iter().enumerate().any(|(index, key)| {
@@ -379,20 +683,7 @@ pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<Stri
             }
         }
     }
-    // Insert and Replace keys a terminal already answers to in the built-in
-    // map; anything else replaced in those modes keeps its built-in meaning
-    // inside terminals.
-    let terminal_keys = base
-        .bindings
-        .iter()
-        .filter(|binding| binding.scope == BindingScope::Terminal)
-        .flat_map(|binding| {
-            binding
-                .modes
-                .iter()
-                .map(move |&mode| (mode, binding.sequence.clone()))
-        })
-        .collect::<HashSet<_>>();
+    let terminal_keys = terminal_keys(&base.bindings);
     let mut active = vec![true; rules.len()];
     loop {
         let mut candidate = base.clone();
@@ -428,18 +719,7 @@ pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<Stri
                         copy
                     })
                     .collect::<Vec<_>>();
-                for mode in modes {
-                    if matches!(mode, Mode::Insert | Mode::Replace)
-                        && !terminal_keys.contains(&(mode, binding.sequence.clone()))
-                    {
-                        let mut terminal = binding.clone();
-                        terminal.scope = BindingScope::Terminal;
-                        terminal.modes = mode_slice(mode);
-                        terminal.alias = None;
-                        terminal.alias_modes = None;
-                        retained.push(terminal);
-                    }
-                }
+                retained.extend(terminal_copies(&binding, &modes, &terminal_keys));
                 retained
             })
             .collect();
@@ -455,55 +735,8 @@ pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<Stri
                 candidate.bindings.push(binding);
             }
         }
-        // Remove stale alias advertisements, including ones whose destination
-        // is now a sequence starting with the old command.
-        let snapshot = candidate.bindings.clone();
-        for binding in &mut candidate.bindings {
-            if let Some(alias) = &binding.alias {
-                let valid = binding
-                    .alias_modes
-                    .unwrap_or(binding.modes)
-                    .iter()
-                    .all(|mode| {
-                        snapshot.iter().any(|other| {
-                            other.sequence == *alias
-                                && other.visible_in(*mode, binding.scope)
-                                && other.target == binding.target
-                                && other.is_plain_action()
-                                && (other.scope == binding.scope
-                                    || other.scope == BindingScope::Global)
-                        })
-                    });
-                if !valid {
-                    binding.alias = None;
-                    binding.alias_modes = None;
-                }
-            }
-        }
-        candidate.namespaces = candidate
-            .namespaces
-            .into_iter()
-            .flat_map(|namespace| {
-                namespace
-                    .modes
-                    .iter()
-                    .filter(|&&mode| {
-                        snapshot.iter().any(|binding| {
-                            binding.visible_in(mode, namespace.scope)
-                                && (binding.scope == namespace.scope
-                                    || binding.scope == BindingScope::Global)
-                                && binding.sequence != namespace.sequence
-                                && binding.sequence.starts_with(&namespace.sequence)
-                        })
-                    })
-                    .map(|&mode| {
-                        let mut copy = namespace.clone();
-                        copy.modes = mode_slice(mode);
-                        copy
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect();
+        let snapshot = drop_stale_aliases(&mut candidate.bindings);
+        candidate.namespaces = prune_namespaces(candidate.namespaces, &snapshot);
         let violations = validate::validate(
             &candidate.bindings,
             &candidate.namespaces,
@@ -559,11 +792,19 @@ pub(crate) fn default_bindings(section: Option<&Value>) -> BTreeMap<&'static str
         .and_then(Value::as_mapping)
         .cloned()
         .unwrap_or_default();
+    let mut bind = BTreeMap::new();
+    // `keys.defaults: false` leaves no built-in binding underneath to suggest.
+    // Export refuses a section with key errors, so it was not rejected here.
+    if section.get("defaults") == Some(&Value::Bool(false)) {
+        for mode in BIND_MODES {
+            bind.insert(mode_name(mode), Mapping::new());
+        }
+        return bind;
+    }
     let own_bind = section.remove("bind");
     let keymap =
         super::configured::compile(&Value::Mapping(section), &super::keymap_for(false)).keymap;
 
-    let mut bind = BTreeMap::new();
     for mode in BIND_MODES {
         let own = own_bind
             .as_ref()
@@ -577,19 +818,14 @@ pub(crate) fn default_bindings(section: Option<&Value>) -> BTreeMap<&'static str
         let mut entries = BTreeMap::new();
         for binding in keymap.bindings_for_mode(mode) {
             let sequence = &binding.sequence;
-            if !binding.actions.is_empty()
-                || binding.availability != BindingAvailability::Implemented
-                || matches!(binding.target, BindingTarget::Plugin(_))
-                || sequence.len() > 8
-                || claimed.contains(sequence)
-                || is_reserved(mode, sequence)
-                || matches!(sequence.as_slice(), [key] if super::is_fast_pane_key(*key))
+            if binding.actions.is_empty()
+                && !claimed.contains(sequence)
+                && !matches!(sequence.as_slice(), [key] if super::is_fast_pane_key(*key))
+                && is_expressible(binding, mode)
             {
-                continue;
-            }
-            let action = Value::String(binding.target.name().into());
-            if parse_action(&action, mode).is_ok() {
-                entries.entry(sequence.to_string()).or_insert(action);
+                entries
+                    .entry(sequence.to_string())
+                    .or_insert_with(|| Value::String(binding.target.name().into()));
             }
         }
         let written = entries
@@ -746,6 +982,9 @@ mod tests {
             Some(
                 "leader: Ctrl-x\nwindow: Ctrl-a\nrebind:\n  Space g: Leader G\nbind:\n  normal:\n    J: null\n    F6: [select-all, yank]\n    Leader q: { command: pipe, argument: sort }\n  insert:\n    Ctrl-s: save\n",
             ),
+            Some(
+                "defaults: false\nleader: Ctrl-x\nbind:\n  normal:\n    ':': open-command-palette\n    Leader h: move-down\n  select:\n    Esc: enter-normal-mode\n  insert:\n    Esc: enter-normal-mode\n  replace:\n    Esc: enter-normal-mode\n",
+            ),
         ];
         for source in sections {
             let section = source.map(|source| serde_yaml::from_str(source).unwrap());
@@ -761,12 +1000,23 @@ mod tests {
                 .map(|(_, text)| text.as_str())
                 .collect::<Vec<_>>()
                 .join("\n");
-            assert!(text.contains("#     w: move-word-forward\n"), "{text}");
+            // Without the defaults there is nothing built in to suggest: the
+            // written section is the configured one.
+            let standalone = source.is_some_and(|source| source.starts_with("defaults: false"));
+            assert_eq!(
+                text.contains("#     w: move-word-forward\n"),
+                !standalone,
+                "{text}"
+            );
+            assert_eq!(text.contains("# Built-in defaults"), !standalone, "{text}");
             let mut written = crate::config::Config::default();
             for (path, text) in &files {
                 if path.starts_with(crate::config::KEYBINDS_DIRECTORY) {
                     written.merge_keys_source(text).unwrap();
                 }
+            }
+            if standalone {
+                assert_eq!(written.keys, section, "{text}");
             }
             let empty = serde_yaml::Value::Mapping(Default::default());
             for fast in [false, true] {
@@ -793,9 +1043,7 @@ mod tests {
     /// colon commands the registry offers, no more and no fewer.
     #[test]
     fn user_guide_action_reference_matches_the_registry() {
-        let guide =
-            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/user-guide.md"))
-                .expect("read the user guide");
+        let guide = crate::manual::USER_GUIDE;
         let section = guide
             .split_once("### Bindable action reference")
             .expect("user guide has a bindable action reference")
@@ -809,7 +1057,7 @@ mod tests {
         let stale = documented.difference(&registered).collect::<Vec<_>>();
         assert!(
             missing.is_empty() && stale.is_empty(),
-            "docs/user-guide.md action reference is missing {missing:?} and lists unknown {stale:?}"
+            "docs/user-guide/ action reference is missing {missing:?} and lists unknown {stale:?}"
         );
     }
 }

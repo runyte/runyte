@@ -4,9 +4,12 @@ name: CI
 
 on:
   push:
-    branches: [main, dev, exp, feat/windows-support]
+    branches: [main, feat/windows-support]
   pull_request:
     branches: [main, dev, exp]
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
 
 # No job here needs to write to the repository. Declaring the floor once means
 # any future workflow that does need write access has to say so deliberately.
@@ -16,15 +19,31 @@ permissions:
 # A newer push to the same ref makes an in-flight run obsolete. Cancelling it
 # frees the runner instead of paying for a result nobody will read.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'schedule' && 'nightly-dev' || github.ref }}
   cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  source:
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Resolve CI source
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'dev' || github.sha }}
+          persist-credentials: false
+      - id: source
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   installer:
-    name: Installer (${{ matrix.os }})
+    needs: source
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Installer (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
       - name: Check shell syntax
         run: sh -n install.sh
@@ -41,7 +61,10 @@ jobs:
         run: python3 -m unittest discover -s tests/installer -v
 
   windows:
-    name: Native Windows
+    # A failed source resolver must fail required checks, not skip them green.
+    if: ${{ !cancelled() }}
+    needs: source
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Native Windows
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -52,6 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -148,12 +172,16 @@ jobs:
       # The Linux/macOS jobs continue enforcing the unchanged 89% floor.
 
   security:
-    name: Dependency advisories
+    # A failed source resolver must fail required checks, not skip them green.
+    if: ${{ !cancelled() }}
+    needs: source
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Dependency advisories
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
       - name: Install advisory checker
         uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
@@ -164,17 +192,44 @@ jobs:
         run: cargo audit --deny unsound
 
   gates:
-    name: Gates (ubuntu-latest)
+    # A failed source resolver must fail required checks, not skip them green.
+    if: ${{ !cancelled() }}
+    needs: source
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Gates (ubuntu-latest)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      RUST_BACKTRACE: 1
+      TMPDIR: /tmp
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           # Every tree-sitter grammar crate runs a build script. Leaving the
           # job token in .git/config would put it within reach of one.
           persist-credentials: false
 
+      # Nightlies test dev source with helpers from the workflow revision.
+      # Keep the source tree and its own packaging invariants unchanged.
+      - name: Check out CI helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Keep helper checkout out of candidate source snapshots
+        run: echo '/.ci-tools/' >> .git/info/exclude
+
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: coverage-ubuntu-latest
+
+      - name: Check CI policy and artifact handling
+        run: |
+          python3 -m venv "$RUNNER_TEMP/ci-policy"
+          "$RUNNER_TEMP/ci-policy/bin/pip" install PyYAML==6.0.2
+          "$RUNNER_TEMP/ci-policy/bin/python" -m unittest discover -s .ci-tools/.github/scripts -p 'test_*.py' -v
 
       - name: Check formatting
         run: cargo fmt --check
@@ -182,11 +237,14 @@ jobs:
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
 
-      - name: Test
-        run: cargo test --locked
+      - name: Test with coverage and enforce the baseline
+        uses: ./.ci-tools/.github/actions/core-coverage
+        with:
+          runner: ubuntu-latest
 
   plugin-conformance:
-    name: Plugin conformance (${{ matrix.os }})
+    needs: source
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Plugin conformance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -200,11 +258,27 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
+
+      # Nightlies test dev source with helpers from the workflow revision.
+      # Keep the source tree and its own packaging invariants unchanged.
+      - name: Check out CI helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Keep helper checkout out of candidate source snapshots
+        run: echo '/.ci-tools/' >> .git/info/exclude
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: plugin-conformance-${{ matrix.os }}
+
+      - name: Check user guide navigation and links
+        run: python3 contrib/check_user_guide.py
 
       - name: Test compatibility gate tools
         run: python3 -m unittest discover -s docs/plugins/compatibility -p 'test_*.py' -v
@@ -281,8 +355,25 @@ jobs:
           test -x "$RUNYTE_CONTEXT_TEST_BINARY"
           "$RUNNER_TEMP/plugin-schema/bin/python" tests/mcp/run.py
 
+      # Cargo's real-host integration test above builds this uninstrumented
+      # default-feature debug binary. Reuse it only within this workflow run
+      # and runner platform; no target directories or coverage objects travel.
+      - name: Prepare tested host artifact
+        env:
+          HOST_VERSION: ${{ steps.candidate.outputs.host_version }}
+        run: python3 .ci-tools/.github/scripts/plugin_host.py pack "$RUNNER_TEMP/plugin-host" "$CARGO_TARGET_DIR/debug/runyte" --version "$HOST_VERSION"
+      - name: Share tested host
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plugin-host-${{ matrix.os }}
+          path: ${{ runner.temp }}/plugin-host
+          if-no-files-found: error
+          retention-days: 1
+          overwrite: true
+
   ru-time:
-    name: ru-time moving head against this commit (${{ matrix.os }})
+    needs: [source, plugin-conformance]
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}ru-time moving head against this commit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     # Moving external development is advisory. Immutable supported plugins run
@@ -299,11 +390,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # Nightlies test dev source with helpers from the workflow revision.
+      # Keep the source tree and its own packaging invariants unchanged.
+      - name: Check out CI helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          key: ru-time-${{ matrix.os }}
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Keep helper checkout out of candidate source snapshots
+        run: echo '/.ci-tools/' >> .git/info/exclude
 
       - name: Prepare the exact host or 0.4 candidate
         id: candidate
@@ -315,9 +415,15 @@ jobs:
           path: ru-time
           persist-credentials: false
 
-      - name: Build Runyte
-        working-directory: ${{ steps.candidate.outputs.source }}
-        run: cargo build --locked
+      - name: Download this run's tested host
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: plugin-host-${{ matrix.os }}
+          path: ${{ runner.temp }}/plugin-host
+      - name: Verify and install the tested host
+        env:
+          HOST_VERSION: ${{ steps.candidate.outputs.host_version }}
+        run: python3 .ci-tools/.github/scripts/plugin_host.py restore "$RUNNER_TEMP/plugin-host" "$CARGO_TARGET_DIR/debug/runyte" --version "$HOST_VERSION"
 
       # RUNYTE_BIN enables ru-time's real-editor test, which is skipped otherwise.
       - name: Test ru-time
@@ -327,7 +433,8 @@ jobs:
         run: python3 -m unittest discover -s tests -v
 
   plugin-inventory:
-    name: Immutable plugin inventory
+    needs: source
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Immutable plugin inventory
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -335,6 +442,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
           # Retained SDK source revisions must resolve to the recorded bytes.
           fetch-depth: 0
@@ -343,8 +451,8 @@ jobs:
         run: python3 docs/plugins/compatibility/check_inventory.py --verify-upstream --github-output "$GITHUB_OUTPUT"
 
   frozen-plugin:
-    name: Frozen plugin ${{ matrix.plugin.id }} (${{ matrix.os }})
-    needs: plugin-inventory
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Frozen plugin ${{ matrix.plugin.id }} (${{ matrix.os }})
+    needs: [source, plugin-inventory, plugin-conformance]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     strategy:
@@ -359,10 +467,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      # Nightlies test dev source with helpers from the workflow revision.
+      # Keep the source tree and its own packaging invariants unchanged.
+      - name: Check out CI helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          key: frozen-${{ matrix.os }}-${{ matrix.plugin.revision }}
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Keep helper checkout out of candidate source snapshots
+        run: echo '/.ci-tools/' >> .git/info/exclude
+
       - name: Prepare the exact host or 0.4 candidate
         id: candidate
         run: python3 docs/plugins/compatibility/candidate.py --candidate-version 0.4.0 --destination "$RUNNER_TEMP/runyte-candidate" --github-output "$GITHUB_OUTPUT"
@@ -373,9 +492,15 @@ jobs:
           path: frozen-plugin
           persist-credentials: false
           fetch-depth: 0
-      - name: Build the host under test
-        working-directory: ${{ steps.candidate.outputs.source }}
-        run: cargo build --locked
+      - name: Download this run's tested host
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: plugin-host-${{ matrix.os }}
+          path: ${{ runner.temp }}/plugin-host
+      - name: Verify and install the tested host
+        env:
+          HOST_VERSION: ${{ steps.candidate.outputs.host_version }}
+        run: python3 .ci-tools/.github/scripts/plugin_host.py restore "$RUNNER_TEMP/plugin-host" "$CARGO_TARGET_DIR/debug/runyte" --version "$HOST_VERSION"
       - name: Install isolated schema validator
         run: |
           python3 -m venv "$RUNNER_TEMP/frozen-schema"
@@ -385,70 +510,11 @@ jobs:
         run: |
           "$RUNNER_TEMP/frozen-schema/bin/python" docs/plugins/compatibility/check_frozen.py --checkout "$GITHUB_WORKSPACE/frozen-plugin" --plugin '${{ matrix.plugin.id }}' --host-bin "$CARGO_TARGET_DIR/debug/runyte" --host-version '${{ steps.candidate.outputs.host_version }}'
 
-  coverage:
-    name: Coverage (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    env:
-      TMPDIR: ${{ matrix.os == 'macos-latest' && '/private/tmp' || '/tmp' }}
-      RUST_BACKTRACE: 1
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: coverage-${{ matrix.os }}
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@742a3317eac7bd62f91cd888b4eead5e784ba833 # v2.87.1
-        with:
-          tool: cargo-llvm-cov@0.9.0
-          fallback: none
-
-      # Run the ordinary test suite under instrumentation first so the same
-      # collected profile can produce both the compact summary and HTML report.
-      - name: Measure coverage
-        run: cargo llvm-cov --locked --package runyte --no-report
-
-      - name: Generate coverage reports
-        run: |
-          cargo llvm-cov report --html
-          cargo llvm-cov report | tee coverage-summary.txt
-          {
-            echo '### Rust coverage'
-            echo
-            echo '```text'
-            cat coverage-summary.txt
-            echo '```'
-            echo
-            echo 'The enforced line-coverage floor is **89%**.'
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload HTML coverage report
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rust-coverage-html-${{ matrix.os }}
-          path: |
-            target/llvm-cov/html
-            coverage-summary.txt
-          if-no-files-found: error
-          retention-days: 14
-
-      # The 89% floor leaves 2.21 percentage points of supported-platform
-      # headroom below the current 91.21% macOS baseline, which is the lower
-      # of the two measured targets, while turning a material coverage
-      # regression red much sooner than the 86% it replaces.
-      - name: Enforce line coverage baseline
-        run: cargo llvm-cov report --fail-under-lines 89
-
   macos:
-    name: Tests (macos-latest)
+    # A failed source resolver must fail required checks, not skip them green.
+    if: ${{ !cancelled() }}
+    needs: source
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Tests (macos-latest)
     runs-on: macos-latest
     timeout-minutes: 45
     env:
@@ -463,17 +529,35 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
 
+      # Nightlies test dev source with helpers from the workflow revision.
+      # Keep the source tree and its own packaging invariants unchanged.
+      - name: Check out CI helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-tools
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Keep helper checkout out of candidate source snapshots
+        run: echo '/.ci-tools/' >> .git/info/exclude
+
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: coverage-macos-latest
 
       # PTY handling and terminal emulation are where macOS and Linux diverge,
       # so the suite runs in full here rather than just building.
-      - name: Test
-        run: cargo test --locked
+      - name: Test with coverage and enforce the baseline
+        uses: ./.ci-tools/.github/actions/core-coverage
+        with:
+          runner: macos-latest
 
   lifecycle-stress:
-    name: Lifecycle stress (${{ matrix.os }})
+    needs: source
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Lifecycle stress (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -486,6 +570,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -516,7 +601,8 @@ jobs:
           retention-days: 14
 
   performance:
-    name: Performance (${{ matrix.os }})
+    needs: source
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Performance (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -528,6 +614,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -543,12 +630,16 @@ jobs:
         run: cargo test --release --locked --test syntax incremental_reparse_is_far_cheaper_than_a_full_parse -- --ignored --exact --test-threads=1
 
   floor:
-    name: Release build floor (ubuntu-22.04)
+    # A failed source resolver must fail required checks, not skip them green.
+    if: ${{ !cancelled() }}
+    needs: source
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}Release build floor (ubuntu-22.04)
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -560,12 +651,16 @@ jobs:
         run: cargo build --release --locked
 
   msrv:
-    name: MSRV (Rust 1.88)
+    # A failed source resolver must fail required checks, not skip them green.
+    if: ${{ !cancelled() }}
+    needs: source
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}MSRV (Rust 1.88)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
           persist-credentials: false
 
       # rustup ships on the runner image, so pinning a toolchain needs no

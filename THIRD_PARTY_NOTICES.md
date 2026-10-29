@@ -334,6 +334,18 @@ highlight query described above is instead covered by Apache-2.0. Release
 assembly must preserve the applicable upstream copyright and license text;
 this notice is a source inventory and does not replace those license files.
 
+## Language-server root markers
+
+The default project-root marker lists in `src/lsp/root.rs` are taken from the
+`roots` entries of Helix's `languages.toml`
+(<https://github.com/helix-editor/helix>), for the languages Runyte
+highlights, with Helix's glob patterns left out. Helix is licensed under the
+Mozilla Public License 2.0, whose complete text is the repository's root
+`LICENSE`. The workspace and server-root search in `src/project_root.rs` and
+`src/lsp/root.rs` follows the behavior of Helix's `find_workspace_in` and
+`find_lsp_workspace`; it is an independent implementation and contains no
+Helix source code.
+
 ## Project assets
 
 ### Runyte logo

@@ -121,17 +121,25 @@ impl Config {
             .collect::<Result<BTreeMap<_, _>>>()?;
         for mode in BIND_MODES {
             let text = fragments.entry(format!("{mode}.yaml")).or_default();
+            let entries = examples.get(mode).filter(|entries| !entries.is_empty());
             // A comment-only file remains empty YAML: exporting defaults alone
             // must not create a keys section or trigger configured compilation.
-            if text.is_empty() {
-                text.push_str("# Built-in defaults. Uncomment bind, the mode, and entries to customize.\n# bind:\n");
-                text.push_str(&format!("#   {mode}:\n"));
-            } else {
-                text.push_str(
+            // The file is written even with nothing in it, so that one left by
+            // an earlier export cannot go on supplying keys.
+            match (text.is_empty(), entries.is_some()) {
+                (true, true) => {
+                    text.push_str("# Built-in defaults. Uncomment bind, the mode, and entries to customize.\n# bind:\n");
+                    text.push_str(&format!("#   {mode}:\n"));
+                }
+                (false, true) => text.push_str(
                     "\n# Built-in defaults. Uncomment individual entries to customize.\n",
-                );
+                ),
+                (true, false) => text.push_str(&format!(
+                    "# No {mode} bindings, and keys.defaults is false, so no built-in ones.\n"
+                )),
+                (false, false) => {}
             }
-            if let Some(entries) = examples.get(mode).filter(|entries| !entries.is_empty()) {
+            if let Some(entries) = entries {
                 for line in serde_yaml::to_string(entries)?.lines() {
                     text.push_str("#     ");
                     text.push_str(line);

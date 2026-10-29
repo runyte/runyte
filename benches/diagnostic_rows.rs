@@ -21,7 +21,7 @@ use runyte::{
     config::Config,
     input::KeyStroke,
     layout::Rect,
-    lsp::{Diagnostic, DiagnosticStore},
+    lsp::{Diagnostic, DiagnosticStore, ServerId},
 };
 
 fn diagnostic(row: u32, severity: DiagnosticSeverity) -> Diagnostic {
@@ -111,6 +111,7 @@ fn main() {
     println!(
         "shape     added  insert ms  replace ms  40-row lookup us  40-row severity us  120x40 frame ms"
     );
+    let server = ServerId::new("rust", "/tmp");
     for (shape, additional, dense) in [
         ("sparse", 0, false),
         ("sparse", 100, false),
@@ -123,23 +124,23 @@ fn main() {
             let mut store = DiagnosticStore::default();
             let input = diagnostics.clone();
             let start = Instant::now();
-            store.set("rust", path.clone(), input);
+            store.set(&server, path.clone(), input);
             let elapsed = start.elapsed();
             black_box(store);
             elapsed
         });
         let mut replacing_store = DiagnosticStore::default();
-        replacing_store.set("rust", path.clone(), diagnostics.clone());
+        replacing_store.set(&server, path.clone(), diagnostics.clone());
         let replacement = median(|| {
             let input = diagnostics.clone();
             let start = Instant::now();
-            replacing_store.set("rust", path.clone(), input);
+            replacing_store.set(&server, path.clone(), input);
             start.elapsed()
         });
         black_box(replacing_store);
 
         let mut store = DiagnosticStore::default();
-        store.set("rust", path.clone(), diagnostics.clone());
+        store.set(&server, path.clone(), diagnostics.clone());
         let lookup = median(|| {
             let start = Instant::now();
             for _ in 0..1_000 {
@@ -158,7 +159,7 @@ fn main() {
             }
             start.elapsed() / 1_000
         });
-        app.diagnostics.set("rust", path.clone(), diagnostics);
+        app.diagnostics.set(&server, path.clone(), diagnostics);
         let frame = median(|| {
             let start = Instant::now();
             for index in 0..100 {

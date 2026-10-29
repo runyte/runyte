@@ -13,7 +13,7 @@ The most visible distinction is agent status: Herdr helps identify which agent n
 ## Feature comparison
 
 Runyte capabilities follow the [project overview](../../README.md),
-[user guide](../user-guide.md), [plugin contract](../plugins.md), and
+[user guide](../user-guide/README.md), [plugin contract](../plugins.md), and
 [built-in MCP adapter](../mcp.md).
 The bridge requires native grants; terminal-text proposals need approval and do not submit Enter.
 

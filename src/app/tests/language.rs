@@ -44,6 +44,12 @@ pub(super) fn rust_app(text: &str) -> (App, PathBuf, tokio::sync::mpsc::Receiver
     (app, path, queue)
 }
 
+/// The server a test buffer under the app's project root belongs to: with
+/// no marker files there, every language's server is rooted at the project.
+pub(super) fn server_id(app: &App, language: &str) -> ServerId {
+    ServerId::new(language, app.project_root.clone())
+}
+
 pub(super) fn tracked(app: &App, pending: PendingRequest) -> TrackedRequest {
     TrackedRequest::new(0, app.buffers[0].revision(), pending)
 }
@@ -82,7 +88,7 @@ fn ready_language_with_sync(
     sync: DocumentSync,
 ) {
     app.apply_lsp_event(LspEvent::Ready {
-        language: language.to_owned(),
+        server: server_id(app, language),
         generation: 1,
         name: format!("mock-{language}-server"),
         encoding,
@@ -288,27 +294,27 @@ fn status_stop_and_restart_clear_every_language_owned_transient() {
         buffer: 0,
         revision: app.buffers[0].revision(),
         documents: HashMap::new(),
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         generation: 1,
     });
     app.lsp_actions
         .push(crate::lsp::ActionEntry::unresolved_for_test("fix"));
     app.list_actions.push(ListAction::CodeAction(0));
     app.pending_lsp_replies.push_back(LspCommand::EditApplied {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         generation: 1,
         id: serde_json::Value::from(1),
         applied: true,
     });
     app.pending_lsp_replies.push_back(LspCommand::EditApplied {
-        language: "python".to_owned(),
+        server: server_id(&app, "python"),
         generation: 1,
         id: serde_json::Value::from(2),
         applied: true,
     });
 
     app.apply_lsp_event(LspEvent::Stopped {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         message: "server exited".to_owned(),
     });
     assert!(app.status_error);
@@ -321,7 +327,7 @@ fn status_stop_and_restart_clear_every_language_owned_transient() {
     assert!(matches!(
         app.pending_lsp_replies.front(),
         Some(LspCommand::EditApplied {
-            language,
+            server: ServerId { language, .. },
             id,
             applied: true,
             ..
@@ -344,7 +350,7 @@ fn status_stop_and_restart_clear_every_language_owned_transient() {
     });
     app.hover = Some(HoverState { lines: Vec::new() });
     app.apply_lsp_event(LspEvent::Restarted {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
     });
     assert!(app.completion.is_none());
     assert!(app.signature.is_none());
@@ -363,11 +369,11 @@ fn active_document_lsp_availability_tracks_server_lifecycle() {
     assert!(app.command_capabilities().lsp_document.is_available());
     assert!(drain(&mut queue).iter().any(|command| matches!(
         command,
-        LspCommand::Open { language, .. } if language == "rust"
+        LspCommand::Open { server: ServerId { language, .. }, .. } if language == "rust"
     )));
 
     app.apply_lsp_event(LspEvent::Stopped {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         message: "mock server stopped".to_owned(),
     });
     assert_eq!(
@@ -382,23 +388,23 @@ fn restarting_a_live_server_retires_editor_state_before_reopening() {
     ready(&mut app, Encoding::Utf8);
     drain(&mut queue);
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: path.clone(),
         version: Some(1),
         diagnostics: vec![diagnostic(0, 0, 2, "old")],
     });
 
     app.apply_lsp_event(LspEvent::Restarted {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
     });
-    assert!(!app.lsp_servers.contains_key("rust"));
+    assert!(!app.lsp_servers.contains_key(&server_id(&app, "rust")));
     assert!(app.lsp_documents.is_empty());
     assert!(app.diagnostics.for_path(&path).is_empty());
 
     app.lsp_touch(0);
     assert!(matches!(
         drain(&mut queue).as_slice(),
-        [LspCommand::Ensure { language }] if language == "rust"
+        [LspCommand::Ensure { server: ServerId { language, .. } }] if language == "rust"
     ));
 }
 
@@ -493,14 +499,14 @@ fn windows_server_path_spellings_preserve_live_buffer_identity() {
     assert_eq!(returned.canonicalize().unwrap(), canonical);
 
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: returned.clone(),
         version: Some(version),
         diagnostics: vec![diagnostic(0, 0, 2, "current")],
     });
     assert_eq!(app.diagnostics.for_path(&canonical).len(), 1);
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: returned.clone(),
         version: Some(version - 1),
         diagnostics: Vec::new(),
@@ -586,7 +592,7 @@ fn deliver_document_edits(
     drain(queue);
     if server_initiated {
         app.apply_lsp_event(LspEvent::ApplyEdit {
-            language: "rust".to_owned(),
+            server: server_id(app, "rust"),
             generation: 1,
             encoding: Encoding::Utf8,
             id: serde_json::json!(904),
@@ -721,7 +727,7 @@ fn a_document_is_announced_only_once_the_handshake_lands() {
     let before = drain(&mut queue);
     assert!(matches!(
         before.as_slice(),
-        [LspCommand::Ensure { language }] if language == "rust"
+        [LspCommand::Ensure { server: ServerId { language, .. } }] if language == "rust"
     ));
 
     ready(&mut app, Encoding::Utf8);
@@ -756,7 +762,7 @@ fn extensionless_shebang_edits_switch_syntax_and_lsp_without_cross_language_chan
     let commands = drain(&mut queue);
     assert!(commands.iter().any(|command| matches!(
         command,
-        LspCommand::Open { language, path: opened, .. }
+        LspCommand::Open { server: ServerId { language, .. }, path: opened, .. }
             if language == "bash" && opened == &path
     )));
     assert!(
@@ -766,7 +772,7 @@ fn extensionless_shebang_edits_switch_syntax_and_lsp_without_cross_language_chan
     );
 
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "bash".to_owned(),
+        server: server_id(&app, "bash"),
         path: path.clone(),
         version: None,
         diagnostics: vec![diagnostic(0, 0, 2, "old bash diagnostic")],
@@ -781,7 +787,7 @@ fn extensionless_shebang_edits_switch_syntax_and_lsp_without_cross_language_chan
     let commands = drain(&mut queue);
     assert!(commands.iter().any(|command| matches!(
         command,
-        LspCommand::Close { language, path: closed }
+        LspCommand::Close { server: ServerId { language, .. }, path: closed }
             if language == "bash" && closed == &path
     )));
     assert!(
@@ -795,7 +801,7 @@ fn extensionless_shebang_edits_switch_syntax_and_lsp_without_cross_language_chan
     let commands = drain(&mut queue);
     assert!(commands.iter().any(|command| matches!(
         command,
-        LspCommand::Open { language, path: opened, .. }
+        LspCommand::Open { server: ServerId { language, .. }, path: opened, .. }
             if language == "bash" && opened == &path
     )));
     assert!(
@@ -809,7 +815,7 @@ fn extensionless_shebang_edits_switch_syntax_and_lsp_without_cross_language_chan
     let commands = drain(&mut queue);
     assert!(commands.iter().any(|command| matches!(
         command,
-        LspCommand::Close { language, path: closed }
+        LspCommand::Close { server: ServerId { language, .. }, path: closed }
             if language == "bash" && closed == &path
     )));
     assert!(
@@ -839,7 +845,7 @@ fn a_fixed_shell_extension_keeps_one_language_document_when_the_shebang_changes(
     let commands = drain(&mut queue);
     assert!(commands.iter().any(|command| matches!(
         command,
-        LspCommand::Change { language, path: changed, .. }
+        LspCommand::Change { server: ServerId { language, .. }, path: changed, .. }
             if language == "bash" && changed == &path
     )));
     assert!(
@@ -877,7 +883,7 @@ fn closing_a_buffer_closes_its_language_server_document() {
     app.lsp_requests
         .insert(73, tracked(&app, PendingRequest::Hover));
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: path.clone(),
         version: None,
         diagnostics: vec![diagnostic(0, 0, 2, "stale diagnostic")],
@@ -943,8 +949,8 @@ fn filesystem_rename_reopens_the_same_language_at_a_savable_new_path() {
     assert!(matches!(
         commands.as_slice(),
         [
-            LspCommand::Close { language: closed_language, path: closed },
-            LspCommand::Open { language: opened_language, path: opened, .. },
+            LspCommand::Close { server: ServerId { language: closed_language, .. }, path: closed },
+            LspCommand::Open { server: ServerId { language: opened_language, .. }, path: opened, .. },
         ] if closed_language == "bash"
             && opened_language == "bash"
             && closed == &old_path
@@ -957,7 +963,7 @@ fn filesystem_rename_reopens_the_same_language_at_a_savable_new_path() {
     ));
     assert!(matches!(
         drain(&mut queue).as_slice(),
-        [LspCommand::Change { language, path, .. }]
+        [LspCommand::Change { server: ServerId { language, .. }, path, .. }]
             if language == "bash" && path == &new_path
     ));
     app.save(None, false).unwrap();
@@ -1005,8 +1011,8 @@ fn filesystem_rename_reinfers_language_before_future_changes() {
     assert!(matches!(
         commands.as_slice(),
         [
-            LspCommand::Close { language: closed_language, path: closed },
-            LspCommand::Open { language: opened_language, path: opened, .. },
+            LspCommand::Close { server: ServerId { language: closed_language, .. }, path: closed },
+            LspCommand::Open { server: ServerId { language: opened_language, .. }, path: opened, .. },
         ] if closed_language == "bash"
             && opened_language == "go"
             && closed == &old_path
@@ -1019,7 +1025,7 @@ fn filesystem_rename_reinfers_language_before_future_changes() {
     ));
     assert!(matches!(
         drain(&mut queue).as_slice(),
-        [LspCommand::Change { language, path, .. }]
+        [LspCommand::Change { server: ServerId { language, .. }, path, .. }]
             if language == "go" && path == &new_path
     ));
     fs::remove_dir_all(directory).unwrap();
@@ -1137,7 +1143,7 @@ fn reload_retires_an_extensionless_document_when_its_shebang_disappears() {
     let commands = drain(&mut queue);
     assert!(commands.iter().any(|command| matches!(
         command,
-        LspCommand::Close { language, path: closed }
+        LspCommand::Close { server: ServerId { language, .. }, path: closed }
             if language == "bash" && closed == &path
     )));
     assert!(
@@ -1173,7 +1179,7 @@ fn save_as_closes_the_old_path_before_recomputing_language_identity() {
     let commands = drain(&mut queue);
     assert!(commands.iter().any(|command| matches!(
         command,
-        LspCommand::Close { language, path }
+        LspCommand::Close { server: ServerId { language, .. }, path }
             if language == "bash" && path == &old_path
     )));
     assert!(!commands.iter().any(|command| matches!(
@@ -1203,9 +1209,9 @@ fn save_as_reopens_a_stable_language_at_the_new_document_uri() {
     assert!(matches!(
         commands.as_slice(),
         [
-            LspCommand::Close { language: closed_language, path: closed },
-            LspCommand::Open { language: opened_language, path: opened, .. },
-            LspCommand::Save { language: saved_language, path: saved, .. },
+            LspCommand::Close { server: ServerId { language: closed_language, .. }, path: closed },
+            LspCommand::Open { server: ServerId { language: opened_language, .. }, path: opened, .. },
+            LspCommand::Save { server: ServerId { language: saved_language, .. }, path: saved, .. },
         ] if closed_language == "bash"
             && opened_language == "bash"
             && saved_language == "bash"
@@ -1244,7 +1250,7 @@ fn failed_save_as_preserves_syntax_and_the_open_lsp_document() {
     );
     assert_eq!(syntax_language_name(&app, buffer_id), Some("bash"));
     let document = app.lsp_documents.get(&buffer_id).unwrap();
-    assert_eq!(document.language, "bash");
+    assert_eq!(document.server.language, "bash");
     assert_eq!(document.path, old_path);
     assert!(drain(&mut queue).is_empty());
     fs::remove_dir_all(directory).unwrap();
@@ -1255,7 +1261,7 @@ fn diagnostics_render_as_signs_spans_and_an_inline_message() {
     let (mut app, path, _queue) = rust_app("let x = 1;\nlet y = 2;\n");
     ready(&mut app, Encoding::Utf8);
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: path.clone(),
         version: None,
         diagnostics: vec![diagnostic(1, 4, 5, "unused variable")],
@@ -1277,7 +1283,7 @@ fn diagnostic_row_index_keeps_encoding_and_zero_width_presentation() {
     let (mut app, path, _queue) = rust_app("a😀x\n");
     ready(&mut app, Encoding::Utf16);
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: path.clone(),
         version: None,
         diagnostics: vec![
@@ -1300,7 +1306,7 @@ fn diagnostic_row_index_keeps_encoding_and_zero_width_presentation() {
     );
 
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path,
         version: None,
         diagnostics: Vec::new(),
@@ -1315,7 +1321,7 @@ fn diagnostics_picker_uses_the_publishing_servers_encoding() {
     let (mut app, path, _queue) = rust_app("aéx\n");
     ready(&mut app, Encoding::Utf8);
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path,
         version: Some(app.lsp_documents[&0].version),
         diagnostics: vec![diagnostic(0, 3, 4, "utf-8 location")],
@@ -1333,7 +1339,7 @@ fn stale_or_unowned_diagnostic_publications_are_ignored() {
     let version = app.lsp_documents[&0].version;
 
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: path.clone(),
         version: Some(version),
         diagnostics: vec![diagnostic(0, 0, 2, "current")],
@@ -1341,7 +1347,7 @@ fn stale_or_unowned_diagnostic_publications_are_ignored() {
     assert_eq!(app.diagnostics.for_path(&path)[0].message, "current");
 
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: path.clone(),
         version: Some(version - 1),
         diagnostics: vec![diagnostic(0, 0, 2, "stale")],
@@ -1350,7 +1356,7 @@ fn stale_or_unowned_diagnostic_publications_are_ignored() {
 
     let outside = temporary("unowned.rs");
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: outside.clone(),
         version: None,
         diagnostics: vec![diagnostic(0, 0, 2, "unowned")],
@@ -1378,7 +1384,7 @@ fn no_change_sync_still_advances_the_local_document_version() {
     assert_eq!(app.lsp_documents[&0].version, old_version + 1);
     assert!(drain(&mut queue).is_empty());
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: path.clone(),
         version: Some(old_version),
         diagnostics: vec![diagnostic(0, 0, 2, "stale")],
@@ -1403,7 +1409,7 @@ fn a_rejected_change_forces_full_resync_before_the_next_request() {
     assert_eq!(app.lsp_documents[&0].version, old_version + 1);
 
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: path.clone(),
         version: None,
         diagnostics: vec![diagnostic(0, 0, 2, "untrusted while desynced")],
@@ -1431,7 +1437,7 @@ fn a_stopped_server_drops_its_diagnostics_without_touching_the_buffer() {
     let (mut app, path, _queue) = rust_app("let x = 1;\n");
     ready(&mut app, Encoding::Utf8);
     app.apply_lsp_event(LspEvent::Diagnostics {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         path: path.clone(),
         version: None,
         diagnostics: vec![diagnostic(0, 4, 5, "unused variable")],
@@ -1439,7 +1445,7 @@ fn a_stopped_server_drops_its_diagnostics_without_touching_the_buffer() {
     let before = text(&app);
 
     app.apply_lsp_event(LspEvent::Stopped {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
         message: "mock-analyzer stopped: exited".to_owned(),
     });
 
@@ -1975,6 +1981,7 @@ fn a_rename_across_files_is_one_undo_step_per_file() {
 fn a_server_edit_outside_the_project_is_refused() {
     let (mut app, path, _queue) = rust_app("let name = 1;\n");
     ready(&mut app, Encoding::Utf8);
+    let server = server_id(&app, "rust");
     let project = temporary("confined-project");
     fs::create_dir_all(&project).unwrap();
     app.project_root = project.clone();
@@ -1984,7 +1991,7 @@ fn a_server_edit_outside_the_project_is_refused() {
     fs::write(&outside, "# untouched\n").unwrap();
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
-        language: "rust".into(),
+        server: server.clone(),
         generation: 1,
         encoding: Encoding::Utf8,
         id: serde_json::json!(9),
@@ -2008,7 +2015,7 @@ fn a_server_edit_outside_the_project_is_refused() {
 
     // A file inside the project is still edited normally.
     app.apply_lsp_event(LspEvent::ApplyEdit {
-        language: "rust".into(),
+        server: server.clone(),
         generation: 1,
         encoding: Encoding::Utf8,
         id: serde_json::json!(10),
@@ -2284,7 +2291,7 @@ fn server_lifecycle_does_not_close_a_picker_that_replaced_code_actions() {
     let title = app.list.as_ref().unwrap().title.clone();
 
     app.apply_lsp_event(LspEvent::Restarted {
-        language: "rust".to_owned(),
+        server: server_id(&app, "rust"),
     });
 
     assert_eq!(
@@ -2394,7 +2401,7 @@ fn resolved_code_action_command_keeps_server_provenance_and_is_preflighted() {
                 },
             )
             .with_documents(documents)
-            .with_server("rust".to_owned(), 1),
+            .with_server(server_id(&app, "rust"), 1),
         );
         app.apply_lsp_event(LspEvent::Response {
             token: 104,
@@ -2418,7 +2425,7 @@ fn resolved_code_action_command_keeps_server_provenance_and_is_preflighted() {
             assert_eq!(text(&app), "changed\n");
             assert!(drain(&mut queue).iter().any(|command| matches!(
                 command,
-                LspCommand::Request { language, kind, .. }
+                LspCommand::Request { server: ServerId { language, .. }, kind, .. }
                     if language == "rust"
                         && matches!(kind.as_ref(), RequestKind::ExecuteCommand(command) if command.command == "mock.command")
             )));
@@ -2446,7 +2453,7 @@ fn code_action_command_is_suppressed_when_an_edit_cannot_be_synchronized() {
             },
         )
         .with_documents(documents)
-        .with_server("rust".to_owned(), 1),
+        .with_server(server_id(&app, "rust"), 1),
     );
     for _ in 0..crate::lsp::COMMAND_CAPACITY {
         assert!(app.lsp_send(LspCommand::Status { action: None }));
@@ -2502,7 +2509,7 @@ fn code_action_command_is_suppressed_when_a_new_target_cannot_be_opened() {
             },
         )
         .with_documents(documents)
-        .with_server("rust".to_owned(), 1),
+        .with_server(server_id(&app, "rust"), 1),
     );
     for _ in 0..crate::lsp::COMMAND_CAPACITY {
         assert!(app.lsp_send(LspCommand::Status { action: None }));
@@ -2566,7 +2573,7 @@ fn code_action_command_is_suppressed_for_a_target_owned_by_another_server() {
             },
         )
         .with_documents(documents)
-        .with_server("rust".to_owned(), 1),
+        .with_server(server_id(&app, "rust"), 1),
     );
 
     app.apply_lsp_event(LspEvent::Response {
@@ -2591,7 +2598,7 @@ fn code_action_command_is_suppressed_for_a_target_owned_by_another_server() {
     assert!(app.status.contains("command not sent"));
     let commands = drain(&mut queue);
     assert!(commands.iter().any(
-        |command| matches!(command, LspCommand::Change { language, .. } if language == "python")
+        |command| matches!(command, LspCommand::Change { server: ServerId { language, .. }, .. } if language == "python")
     ));
     assert!(commands.iter().all(|command| {
         !matches!(
@@ -2613,7 +2620,7 @@ fn workspace_edit_acknowledgement_retries_after_manager_backpressure() {
     }
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
-        language: "rust".into(),
+        server: server_id(&app, "rust"),
         generation: 1,
         encoding: Encoding::Utf8,
         id: serde_json::json!(900),
@@ -2647,7 +2654,7 @@ fn versioned_workspace_edit_is_rejected_after_the_document_advances() {
     let newer = text(&app);
     drain(&mut queue);
     app.apply_lsp_event(LspEvent::ApplyEdit {
-        language: "rust".into(),
+        server: server_id(&app, "rust"),
         generation: 1,
         encoding: Encoding::Utf8,
         id: serde_json::json!(84),
@@ -2678,7 +2685,7 @@ fn a_later_invalid_document_rejects_a_workspace_edit_atomically() {
     let before = text(&app);
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
-        language: "rust".into(),
+        server: server_id(&app, "rust"),
         generation: 1,
         encoding: Encoding::Utf8,
         id: serde_json::json!(841),
@@ -2718,7 +2725,7 @@ fn duplicate_workspace_edit_documents_form_one_transaction() {
     drain(&mut queue);
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
-        language: "rust".into(),
+        server: server_id(&app, "rust"),
         generation: 1,
         encoding: Encoding::Utf8,
         id: serde_json::json!(842),
@@ -2749,7 +2756,7 @@ fn overlapping_duplicate_workspace_edits_are_rejected_atomically() {
     drain(&mut queue);
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
-        language: "rust".into(),
+        server: server_id(&app, "rust"),
         generation: 1,
         encoding: Encoding::Utf8,
         id: serde_json::json!(843),
@@ -2790,7 +2797,7 @@ fn malformed_workspace_edit_ranges_are_rejected_atomically() {
         ready(&mut app, Encoding::Utf8);
         drain(&mut queue);
         app.apply_lsp_event(LspEvent::ApplyEdit {
-            language: "rust".into(),
+            server: server_id(&app, "rust"),
             generation: 1,
             encoding: Encoding::Utf8,
             id: serde_json::json!(845),
@@ -2816,7 +2823,7 @@ fn a_workspace_edit_cannot_split_an_encoded_character() {
     ready(&mut app, Encoding::Utf8);
     drain(&mut queue);
     app.apply_lsp_event(LspEvent::ApplyEdit {
-        language: "rust".into(),
+        server: server_id(&app, "rust"),
         generation: 1,
         encoding: Encoding::Utf8,
         id: serde_json::json!(846),
@@ -2850,7 +2857,7 @@ fn a_versioned_workspace_edit_reuses_an_open_symlink_alias() {
     let version = app.lsp_documents[&0].version;
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
-        language: "rust".into(),
+        server: server_id(&app, "rust"),
         generation: 1,
         encoding: Encoding::Utf8,
         id: serde_json::json!(844),
@@ -2887,7 +2894,7 @@ fn numeric_workspace_version_cannot_be_satisfied_by_opening_a_closed_file() {
     fs::write(&closed, "fn closed() {}\n").unwrap();
 
     app.apply_lsp_event(LspEvent::ApplyEdit {
-        language: "rust".into(),
+        server: server_id(&app, "rust"),
         generation: 1,
         encoding: Encoding::Utf8,
         id: serde_json::json!(85),
@@ -4469,7 +4476,7 @@ fn workspace_lsp_permission_gates_all_servers_and_remembers_both_answers() {
     app.attach_lsp(handle);
     assert!(commands.try_recv().is_err());
     assert!(!app.lsp_send(LspCommand::Ensure {
-        language: "custom".to_owned()
+        server: server_id(&app, "custom")
     }));
     assert!(commands.try_recv().is_err());
     // Esc dismisses the question without granting permission or persisting.
@@ -4701,4 +4708,127 @@ fn lsp_storage_failure_stays_visible_and_temporary_refusal_still_works() {
         std::fs::rename(moved, &storage).unwrap();
         assert_eq!(app.lsp_trust.as_ref().unwrap().load().unwrap(), Some(true));
     }
+}
+
+#[test]
+fn documents_of_one_language_in_two_projects_use_two_servers() {
+    let (mut app, _, mut queue) = rust_app("");
+    let workspace = temporary("two-crates");
+    for name in ["tools", "game"] {
+        fs::create_dir_all(workspace.join(name).join("src")).unwrap();
+        fs::write(workspace.join(name).join("Cargo.toml"), "").unwrap();
+        fs::write(workspace.join(name).join("src/main.rs"), "fn main() {}\n").unwrap();
+    }
+    let workspace = workspace.canonicalize().unwrap();
+    app.project_root = workspace.clone();
+    let tools = ServerId::new("rust", workspace.join("tools"));
+    let game = ServerId::new("rust", workspace.join("game"));
+    drain(&mut queue);
+
+    app.open_file(workspace.join("tools/src/main.rs")).unwrap();
+    let tools_buffer = app.active().buffer;
+    app.open_file(workspace.join("game/src/main.rs")).unwrap();
+    let game_buffer = app.active().buffer;
+    let ensured = drain(&mut queue)
+        .into_iter()
+        .filter_map(|command| match command {
+            LspCommand::Ensure { server } => Some(server),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(ensured.contains(&tools), "{ensured:?}");
+    assert!(ensured.contains(&game), "{ensured:?}");
+
+    for server in [&tools, &game] {
+        app.apply_lsp_event(LspEvent::Ready {
+            server: server.clone(),
+            generation: 1,
+            name: "mock-rust-server".to_owned(),
+            encoding: Encoding::Utf8,
+            sync: DocumentSync {
+                open_close: true,
+                change: ChangeSync::Incremental,
+                save: Some(true),
+            },
+            capabilities: Capabilities::everything_for_test(),
+        });
+    }
+    let opened = drain(&mut queue)
+        .into_iter()
+        .filter_map(|command| match command {
+            LspCommand::Open { server, path, .. } => Some((server, path)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(opened.contains(&(tools.clone(), workspace.join("tools/src/main.rs"))));
+    assert!(opened.contains(&(game.clone(), workspace.join("game/src/main.rs"))));
+
+    // One crate's server stopping leaves the other crate's document attached.
+    app.apply_lsp_event(LspEvent::Stopped {
+        server: tools.clone(),
+        message: "rust-analyzer stopped".to_owned(),
+    });
+    assert!(!app.lsp_documents.contains_key(&tools_buffer));
+    assert_eq!(app.lsp_documents[&game_buffer].server, game);
+
+    fs::remove_dir_all(workspace).unwrap();
+}
+
+#[test]
+fn a_marker_file_added_later_takes_effect_on_restart() {
+    let (mut app, _, mut queue) = rust_app("");
+    let workspace = temporary("late-marker").join("project");
+    fs::create_dir_all(workspace.join("tool/src")).unwrap();
+    fs::write(workspace.join("tool/src/main.rs"), "fn main() {}\n").unwrap();
+    let workspace = workspace.canonicalize().unwrap();
+    app.project_root = workspace.clone();
+    app.open_file(workspace.join("tool/src/main.rs")).unwrap();
+    let buffer = app.active().buffer;
+    assert_eq!(
+        app.lsp_server_of(buffer),
+        Some(ServerId::new("rust", workspace.clone()))
+    );
+
+    // Remembered until a restart asks again.
+    fs::write(workspace.join("tool/Cargo.toml"), "").unwrap();
+    assert_eq!(
+        app.lsp_server_of(buffer),
+        Some(ServerId::new("rust", workspace.clone()))
+    );
+    type_command(&mut app, "lsp-restart");
+    drain(&mut queue);
+    assert_eq!(
+        app.lsp_server_of(buffer),
+        Some(ServerId::new("rust", workspace.join("tool")))
+    );
+
+    fs::remove_dir_all(workspace.parent().unwrap()).unwrap();
+}
+
+#[test]
+fn a_restart_that_moves_a_document_still_closes_the_old_servers_popups() {
+    let (mut app, _, mut queue) = rust_app("");
+    let workspace = temporary("moved-root").join("project");
+    fs::create_dir_all(workspace.join("tool/src")).unwrap();
+    fs::write(workspace.join("tool/src/main.rs"), "fn main() {}\n").unwrap();
+    let workspace = workspace.canonicalize().unwrap();
+    app.project_root = workspace.clone();
+    app.open_file(workspace.join("tool/src/main.rs")).unwrap();
+    let old = ServerId::new("rust", workspace.clone());
+    ready_language(&mut app, "rust", Encoding::Utf8);
+    drain(&mut queue);
+    assert_eq!(app.lsp_documents[&app.active().buffer].server, old);
+    app.hover = Some(HoverState { lines: Vec::new() });
+
+    // A crate manifest appears, the restart forgets remembered roots, and
+    // the old server's restart arrives once the buffer already belongs to
+    // the new root.
+    fs::write(workspace.join("tool/Cargo.toml"), "").unwrap();
+    type_command(&mut app, "lsp-restart rust");
+    app.apply_lsp_event(LspEvent::Restarted { server: old });
+
+    assert!(app.hover.is_none());
+    assert!(app.lsp_documents.is_empty());
+
+    fs::remove_dir_all(workspace.parent().unwrap()).unwrap();
 }

@@ -176,6 +176,9 @@ jobs:
           fi
           cp -R licenses "$package_dir/licenses"
           mkdir -p "$package_dir/docs"
+          if [ -d docs/user-guide ]; then
+            cp -R docs/user-guide "$package_dir/docs/user-guide"
+          fi
           install -m 0644 docs/user-guide.md "$package_dir/docs/user-guide.md"
 
           COPYFILE_DISABLE=1 tar -C "$package_root" -cJf "$archive_path" \
@@ -206,6 +209,9 @@ jobs:
           }
           Copy-Item -LiteralPath licenses -Destination $packageDir -Recurse
           New-Item -ItemType Directory -Path "$packageDir/docs" | Out-Null
+          if (Test-Path -LiteralPath docs/user-guide) {
+            Copy-Item -Recurse -LiteralPath docs/user-guide -Destination "$packageDir/docs/user-guide"
+          }
           Copy-Item -LiteralPath docs/user-guide.md -Destination "$packageDir/docs/user-guide.md"
           New-Item -ItemType Directory -Path "$packageDir/contrib" | Out-Null
           Copy-Item -LiteralPath contrib/runyte.ps1 -Destination "$packageDir/contrib/runyte.ps1"

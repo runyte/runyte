@@ -264,7 +264,7 @@ async fn native_lsp_requires_permission_and_missing_servers_fail_nonfatally_afte
             app.execute(parse_colon_command("lsp-restart").unwrap())
                 .unwrap();
             assert!(handle.send(LspCommand::Ensure {
-                language: "rust".into()
+                server: lsp::ServerId::new("rust", project.clone())
             }));
         }
         let event = tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -278,8 +278,8 @@ async fn native_lsp_requires_permission_and_missing_servers_fail_nonfatally_afte
         })
         .await
         .unwrap();
-        assert!(matches!(&event, LspEvent::Stopped { language, message }
-            if language == "rust" && message.contains("cannot start missing-native-language-server.exe")));
+        assert!(matches!(&event, LspEvent::Stopped { server, message }
+            if server.language == "rust" && message.contains("cannot start missing-native-language-server.exe")));
         app.apply_lsp_event(event);
         assert!(!app.should_quit);
         assert!(app.command_capabilities().lsp_manager.is_available());

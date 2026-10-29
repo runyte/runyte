@@ -4,7 +4,7 @@
 #
 # Themes and key bindings may also live in their own files beside this one,
 # themes.d/<name>.yaml and keybinds.d/*.yaml; see "Themes and key bindings in
-# their own files" in docs/user-guide.md.
+# their own files" in docs/user-guide/configuration.md.
 #
 # Run :config-reload after editing this file to apply it to a running editor.
 # editor.mouse, editor.font_size, lsp.enable, mode, and workspace.state are read at startup and
@@ -72,7 +72,7 @@ notifications:
 
 # Remap built-in prefixes, descendants, and advertised aliases. Left sides
 # always use default spellings; Leader and Window on right sides expand to the
-# configured one-key prefixes. See "Custom key bindings" in docs/user-guide.md.
+# configured one-key prefixes. See docs/user-guide/custom-key-bindings.md.
 # keys:
 #   leader: Ctrl-x
 #   window: Ctrl-a
@@ -106,7 +106,7 @@ notifications:
 # ember-light, dark, light, base16, paper, gruvbox, matrix, neon, atom-one-light,
 # github-light, the four Catppuccin flavours, the six Everforest variants, the
 # Nightfox pair and Terafox, and the Zenbones collection. Run `:theme` with no
-# name to browse them all; docs/user-guide.md lists them.
+# name to browse them all; docs/user-guide/themes.md lists them.
 theme: gruvbox
 
 # Custom themes can be added here. Every color has a default, so fields may be

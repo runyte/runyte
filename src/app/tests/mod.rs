@@ -240,7 +240,7 @@ mod workspace;
 
 use commands::{type_command, type_text, vim_app};
 use editing_and_buffers::MemoryClipboard;
-use language::{drain, ready, rust_app, temporary, tracked};
+use language::{drain, ready, rust_app, server_id, temporary, tracked};
 
 fn terminal_fixture_command() -> String {
     #[cfg(windows)]

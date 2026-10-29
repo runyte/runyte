@@ -296,7 +296,11 @@ try:
     assert len(set(initial)) > 8, "first editor frame remained blank"
     def pixel(xpos, ypos):
         im=x.XGetImage(d,win,xpos,ypos,1,1,0xffffffffffffffff,2)
-        assert im
+        if not im:
+            attrs=Attr(); exists=x.XGetWindowAttributes(d,win,C.byref(attrs))
+            raise AssertionError(('cannot read window pixel', xpos, ypos,
+                                  'editor exit', p.poll(), 'window exists', exists,
+                                  'map state', attrs.map_state, 'size', attrs.width, attrs.height))
         value=x.XGetPixel(im,0,0)&0xffffff
         x.XDestroyImage(im)
         return value
@@ -907,6 +911,23 @@ try:
         command('write'); close_window(); p.wait(timeout=15)
         assert p.returncode==0,p.returncode
     print('PASS: first paint, window identity/icon, key-driven edit/save, image, PDF paging/page-buffer/back navigation/text selection, zoom/pan/region clipboard, hints, split, terminal; ' + ('persistent detach, terminal/window handoff, unsaved state, live child, switching, quit fallback' if args.mux else 'dirty close refusal, quit'))
+except Exception:
+    # Preserve evidence before the fixture and its host logs are removed.
+    # Only fixture-owned logs are read; keep CI failure output bounded.
+    log.flush()
+    print('Native acceptance failed; editor exit status:', p.poll(), flush=True)
+    diagnostics = [root/'window.log'] + [path for path in sorted(storage.rglob('*.log'))
+                                       if path != root/'window.log']
+    for diagnostic in diagnostics[:8]:
+        try:
+            with diagnostic.open('rb') as stream:
+                stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, stream.tell() - 32768))
+                tail = stream.read(32768).decode(errors='replace')
+            print('Fixture log:', diagnostic.relative_to(storage), '\n' + tail, flush=True)
+        except OSError as error:
+            print('Could not read fixture log:', error, flush=True)
+    raise
 finally:
     if p.poll() is None:p.terminate();p.wait(timeout=15)
     if args.mux:

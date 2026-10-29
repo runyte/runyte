@@ -31,6 +31,7 @@ def check_layout(directory, repository):
         expected |= {'contrib/packaging/icons/' + name for name in files(repository / 'contrib/packaging/icons')}
         if not (directory / 'runed').is_symlink() or os.readlink(directory / 'runed') != 'runyte':
             raise ValueError('package requires runed -> runyte')
+        expected |= {"docs/user-guide/" + name for name in files(repository / "docs/user-guide")}
     actual = files(directory)
     if actual != expected:
         raise ValueError(f'package files differ: missing={sorted(expected-actual)}, extra={sorted(actual-expected)}')

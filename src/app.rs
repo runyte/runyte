@@ -78,8 +78,8 @@ use crate::{
     lsp::{
         ActionEntry, Capabilities, ChangeSync, Completion, DiagnosticStore, DocumentEdit,
         DocumentSync, Encoding, LspCommand, LspEvent, LspHandle, LspRange, RequestKind, Response,
-        SignatureContext, SignatureLine, TextDocumentContentChangeEvent, checked_lsp_range,
-        from_lsp_position, from_lsp_range, to_lsp_position,
+        ServerId, SignatureContext, SignatureLine, TextDocumentContentChangeEvent,
+        checked_lsp_range, from_lsp_position, from_lsp_range, to_lsp_position,
     },
     notification::{
         NotificationCenter, NotificationCounts, NotificationDraft, NotificationSeverity,
@@ -2373,7 +2373,7 @@ fn hover_content_rows(editor_height: u16) -> usize {
     )
 }
 
-/// What a language server's negotiated handshake means for one language.
+/// What a language server's negotiated handshake means for its documents.
 #[derive(Clone, Debug)]
 struct ServerState {
     name: String,
@@ -2386,7 +2386,7 @@ struct ServerState {
 /// A document the editor has told a language server about.
 #[derive(Clone, Debug)]
 struct DocumentState {
-    language: String,
+    server: ServerId,
     path: PathBuf,
     version: i32,
     /// A manager-queue refusal means the server did not see the previous
@@ -2459,7 +2459,7 @@ struct TrackedRequest {
     documents: HashMap<PathBuf, (usize, u64)>,
     pending: PendingRequest,
     cancelled: bool,
-    server: Option<(String, u64)>,
+    server: Option<(ServerId, u64)>,
 }
 
 #[derive(Clone, Debug)]
@@ -2467,7 +2467,7 @@ struct ActionSource {
     buffer: usize,
     revision: u64,
     documents: HashMap<PathBuf, (usize, u64)>,
-    language: String,
+    server: ServerId,
     generation: u64,
 }
 
@@ -2488,8 +2488,8 @@ impl TrackedRequest {
         self
     }
 
-    fn with_server(mut self, language: String, generation: u64) -> Self {
-        self.server = Some((language, generation));
+    fn with_server(mut self, server: ServerId, generation: u64) -> Self {
+        self.server = Some((server, generation));
         self
     }
 }
@@ -3299,8 +3299,13 @@ pub struct App {
     lsp_trust_error: Option<String>,
     pub(crate) context_ui: context_access::ContextUi,
     lsp_workspace_allowed: bool,
-    lsp_servers: HashMap<String, ServerState>,
+    lsp_servers: HashMap<ServerId, ServerState>,
     lsp_documents: HashMap<usize, DocumentState>,
+    /// The server root each language's documents in one directory use, kept
+    /// because finding it reads the filesystem. Cleared when configuration
+    /// is reloaded and when servers are restarted, the two moments a reader
+    /// expects a new marker file or a changed `roots` to take effect.
+    lsp_roots: RefCell<HashMap<(String, PathBuf), PathBuf>>,
     lsp_requests: HashMap<u64, TrackedRequest>,
     /// Protocol replies that must not be lost when the manager queue is
     /// briefly full. Retried from the frame lifecycle and before new work.
@@ -3899,6 +3904,7 @@ impl App {
             lsp_workspace_allowed: false,
             lsp_servers: HashMap::new(),
             lsp_documents: HashMap::new(),
+            lsp_roots: RefCell::default(),
             lsp_requests: HashMap::new(),
             pending_lsp_replies: VecDeque::new(),
             list_actions: Vec::new(),
@@ -4058,22 +4064,7 @@ enum ListAction {
     Workspace(usize),
 }
 
-/// Whether a keystroke leaves Insert mode instead of reaching a terminal.
-///
-/// `Escape` cannot be it: `vim` and `htop` inside the pane need it, and every
-/// agent uses it too. `Ctrl-\\` begins the staged Normal/review transition;
-/// `Ctrl-w` begins the Insert-mode pane-navigation namespace instead.
-pub(crate) fn is_terminal_normal_key(key: KeyStroke) -> bool {
-    // Two spellings of Ctrl-\\. A terminal implementing the kitty keyboard
-    // protocol reports `Ctrl-\` as the character it is; a legacy one has only
-    // the control byte `0x1c`, which Crossterm decodes as `Ctrl-4` because
-    // that is what the historical table says. Runyte asks for the enhanced
-    // protocol but cannot require it — it is off on macOS entirely — so the
-    // escape hatch has to answer to both or it would be unreachable on the
-    // terminals that need it most.
-    key.modifiers.contains(Modifiers::CONTROL)
-        && matches!(key.code, KeyCode::Char('\\') | KeyCode::Char('4'))
-}
+pub(crate) use crate::keymap::is_terminal_normal_key;
 
 /// Whether a command has no meaning over a live terminal.
 ///

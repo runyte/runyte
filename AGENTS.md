@@ -12,7 +12,7 @@ record for what matches and what does not; do not describe Runyte as
 Helix-compatible without checking it.
 
 Before making substantial changes, read `README.md`, the relevant part of
-`docs/user-guide.md`, and `context/README.md`. Then load only the development
+`docs/user-guide/README.md`, and `context/README.md`. Then load only the development
 records relevant to the task:
 
 - `context/plans/README.md` explains the plan lifecycle and routes to the

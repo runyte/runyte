@@ -40,7 +40,10 @@ impl Drop for Root {
 #[ignore = "launched only by the native helper runtime tests"]
 fn child_fixture() {
     if Path::new("park-helper").exists() {
-        std::fs::write("helper.pid", std::process::id().to_string()).unwrap();
+        // Readers use existence as readiness. Publish only after the complete
+        // PID is written and closed, never the empty file created by write().
+        std::fs::write("helper.pid.pending", std::process::id().to_string()).unwrap();
+        std::fs::rename("helper.pid.pending", "helper.pid").unwrap();
         loop {
             std::thread::park();
         }

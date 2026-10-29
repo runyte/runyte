@@ -75,7 +75,7 @@ follows. A pull request should:
   [`context/reference/test-coverage.md`](context/reference/test-coverage.md).
 - Pass `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
   `cargo test`.
-- Update [`docs/user-guide.md`](docs/user-guide.md) when user-visible behavior
+- Update [`docs/user-guide/README.md`](docs/user-guide/README.md) when user-visible behavior
   changes.
 
 Runyte is licensed under the [Mozilla Public License 2.0](LICENSE), and

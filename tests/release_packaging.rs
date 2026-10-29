@@ -74,6 +74,7 @@ fn published_crate_contains_the_runtime_inputs_and_not_repository_context() {
     let files = String::from_utf8(output.stdout).unwrap().replace('\\', "/");
     let files = files.lines().collect::<HashSet<_>>();
     for required in [
+        "build.rs",
         "Cargo.lock",
         "Cargo.toml",
         "LICENSE",
@@ -126,8 +127,14 @@ fn ci_enforces_the_committed_dependency_graph() {
             "gates",
             "cargo clippy --all-targets --locked -- -D warnings",
         ),
-        ("gates", "cargo test --locked"),
-        ("macos", "cargo test --locked"),
+        (
+            "gates",
+            "cargo llvm-cov --locked --package runyte --no-report",
+        ),
+        (
+            "macos",
+            "cargo llvm-cov --locked --package runyte --no-report",
+        ),
         (
             "performance",
             "cargo test --release --locked --test performance -- --ignored --test-threads=1",
@@ -142,12 +149,26 @@ fn ci_enforces_the_committed_dependency_graph() {
         let steps = jobs[serde_yaml::Value::from(job)]["steps"]
             .as_sequence()
             .unwrap();
-        assert!(
-            steps
+        let has_command = steps.iter().any(|step| {
+            if step["run"].as_str() == Some(command) {
+                return true;
+            }
+            if step["uses"].as_str() != Some("./.ci-tools/.github/actions/core-coverage") {
+                return false;
+            }
+            let action = fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join(".github/actions/core-coverage/action.yml"),
+            )
+            .unwrap();
+            let action: serde_yaml::Value = serde_yaml::from_str(&action).unwrap();
+            action["runs"]["steps"]
+                .as_sequence()
+                .unwrap()
                 .iter()
-                .any(|step| step["run"].as_str() == Some(command)),
-            "CI job {job} omits locked command: {command}"
-        );
+                .any(|step| step["run"].as_str() == Some(command))
+        });
+        assert!(has_command, "CI job {job} omits locked command: {command}");
     }
 }
 
@@ -263,6 +284,8 @@ fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
         "config.example.yaml",
         "cp -R licenses",
         "docs/user-guide.md",
+        r#"cp -R docs/user-guide "$package_dir/docs/user-guide""#,
+        r#"Copy-Item -Recurse -LiteralPath docs/user-guide -Destination "$packageDir/docs/user-guide""#,
     ] {
         assert!(source.contains(required), "archive omits {required}");
     }
@@ -390,9 +413,7 @@ fn cwd_file_option_still_works_though_undocumented() {
 
 #[test]
 fn documented_shell_wrapper_avoids_zsh_read_only_parameters() {
-    let guide =
-        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/user-guide.md"))
-            .unwrap();
+    let guide = runyte::manual::USER_GUIDE;
     assert!(guide.contains("local runyte_tmp runyte_cwd runyte_exit"));
     assert!(!guide.contains("local tmp cwd status"));
     assert!(!guide.contains("status=$?"));
