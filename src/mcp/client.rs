@@ -24,32 +24,11 @@ const SUPPORTED_HOSTS: &str = ">=0.3.0, <0.5.0";
 /// Shown when every live host was registered from another environment, which
 /// is what an MCP client that starts servers with a reduced environment sees.
 pub(super) const HIDDEN_HELP: &str = "Running Runyte workspaces exist but were registered from a different environment: XDG_RUNTIME_DIR or XDG_CACHE_HOME here differs from the editor's. Configure the MCP client to pass both variables through to runyte mcp and restart it, or rerun with include_hidden=true.";
-pub(super) struct WakeEvent {
-    pub workspace: String,
-    pub active: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-struct Driver {
-    writer: tokio::io::WriteHalf<BufReader<Box<dyn Stream>>>,
-    replies: tokio::sync::mpsc::Receiver<Value>,
-    task: tokio::task::JoinHandle<()>,
-    active: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-impl Drop for Driver {
-    fn drop(&mut self) {
-        self.active
-            .store(false, std::sync::atomic::Ordering::Release);
-        self.task.abort();
-    }
-}
-
 struct Connection {
     durable: bool,
-    notify: bool,
     /// The host takes `nudge` on channel posts.
     nudge: bool,
-    socket: Option<BufReader<Box<dyn Stream>>>,
-    driver: Option<Driver>,
+    socket: BufReader<Box<dyn Stream>>,
     scopes: BTreeSet<Scope>,
     generation: u64,
     count: usize,
@@ -57,60 +36,6 @@ struct Connection {
     identity: String,
 }
 impl Connection {
-    fn start_notifications(
-        &mut self,
-        workspace: String,
-        wakes: tokio::sync::mpsc::Sender<WakeEvent>,
-    ) {
-        if self.driver.is_some() || !self.notify {
-            return;
-        }
-        let (mut reader, writer) =
-            tokio::io::split(self.socket.take().expect("undriven connection"));
-        let (send, replies) = tokio::sync::mpsc::channel(1);
-        let active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let live = active.clone();
-        let limit = self.limit;
-        let task = tokio::spawn(async move {
-            // read_frame requires a buffered reader after the split.
-            let mut reader = BufReader::new(&mut reader);
-            loop {
-                let value = match read_frame(&mut reader, limit).await {
-                    Ok(raw) => match parse(&raw) {
-                        Ok(v) => v,
-                        Err(_) => break,
-                    },
-                    Err(_) => break,
-                };
-                let sent = if value == json!({"type":"channel_notification"}) {
-                    timeout(
-                        Duration::from_secs(2),
-                        wakes.send(WakeEvent {
-                            workspace: workspace.clone(),
-                            active: live.clone(),
-                        }),
-                    )
-                    .await
-                    .is_ok_and(|r| r.is_ok())
-                } else {
-                    timeout(Duration::from_secs(2), send.send(value))
-                        .await
-                        .is_ok_and(|r| r.is_ok())
-                };
-                if !sent {
-                    break;
-                }
-            }
-            live.store(false, std::sync::atomic::Ordering::Release);
-        });
-        self.driver = Some(Driver {
-            writer,
-            replies,
-            task,
-            active,
-        });
-    }
-
     async fn refresh(mut self, identity: &storage::Identity) -> Option<Self> {
         if self.identity != identity.fingerprint() || self.count == wire::MAX_DEDUPLICATED_REQUESTS
         {
@@ -140,19 +65,9 @@ impl Connection {
         .then_some(self)
     }
     async fn exchange(&mut self, message: &Value) -> Result<Value> {
-        if let Some(driver) = &mut self.driver {
-            write_frame(&mut driver.writer, message, self.limit).await?;
-            driver
-                .replies
-                .recv()
-                .await
-                .ok_or_else(|| Failure::new("unavailable", "Context connection closed"))
-        } else {
-            let socket = self.socket.as_mut().expect("undriven connection");
-            write_frame(socket.get_mut(), message, self.limit).await?;
-            let raw = read_frame(socket, self.limit).await?;
-            parse(&raw)
-        }
+        write_frame(self.socket.get_mut(), message, self.limit).await?;
+        let raw = read_frame(&mut self.socket, self.limit).await?;
+        parse(&raw)
     }
     fn limits(&mut self, value: &Value) -> Result<()> {
         let limit = value["limits"]["line_bytes"]
@@ -183,10 +98,8 @@ impl Connection {
         let socket = discovery::connect(record).await?;
         let mut connection = Self {
             durable: false,
-            notify: false,
-            driver: None,
             nudge: false,
-            socket: Some(BufReader::new(Box::new(socket))),
+            socket: BufReader::new(Box::new(socket)),
             scopes: BTreeSet::new(),
             generation: 0,
             count: 0,
@@ -246,12 +159,6 @@ impl Connection {
                 features.push(wire::NUDGE_FEATURE);
             }
         }
-        connection.notify = hello["features"]
-            .as_array()
-            .is_some_and(|v| v.contains(&json!(wire::NOTIFY_FEATURE)));
-        if connection.notify {
-            features.push(wire::NOTIFY_FEATURE);
-        }
         connection.durable = hello["features"]
             .as_array()
             .is_some_and(|v| v.contains(&json!(wire::DURABLE_FEATURE)));
@@ -300,9 +207,6 @@ struct Resource {
 }
 
 pub(super) struct Bridge {
-    pub(super) wake_mode: super::wake::WakeMode,
-    wake_sender: tokio::sync::mpsc::Sender<WakeEvent>,
-    pub(super) wake_receiver: Option<tokio::sync::mpsc::Receiver<WakeEvent>>,
     pub(super) durable_profile: Option<super::durable::Profile>,
     root: Option<PathBuf>,
     pub(super) identity: String,
@@ -346,11 +250,7 @@ impl Bridge {
         identity: String,
         timeout: Duration,
     ) -> std::io::Result<Self> {
-        let (wake_sender, wake_receiver) = tokio::sync::mpsc::channel(8);
         Ok(Self {
-            wake_mode: super::wake::WakeMode::Disabled,
-            wake_sender,
-            wake_receiver: Some(wake_receiver),
             durable_profile: None,
             root,
             identity,
@@ -370,9 +270,6 @@ impl Bridge {
     /// The connection generation for a workspace handle, while connected.
     pub(super) fn generation(&self, workspace: &str) -> Option<u64> {
         self.connections.get(workspace).map(|c| c.generation)
-    }
-    pub(super) fn notify_supported(&self, workspace: &str) -> bool {
-        self.connections.get(workspace).is_some_and(|c| c.notify)
     }
     pub(super) fn nudge_supported(&self, workspace: &str) -> bool {
         self.connections.get(workspace).is_some_and(|c| c.nudge)
@@ -511,7 +408,6 @@ impl Bridge {
                         connection.generation = self.next;
                     }
                     let scopes = connection.scopes.clone();
-                    connection.start_notifications(key.clone(), self.wake_sender.clone());
                     self.connections.insert(key.clone(), connection);
                     self.order.push_back(key.clone());
                     (scopes, None)

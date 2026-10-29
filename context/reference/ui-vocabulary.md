@@ -716,7 +716,7 @@ opening prefers an existing grant; `n` cycles known identities without applying
 pending choices. Scope keys `1`–`7` use plain-language labels and maintain
 prerequisites automatically: `5` skips proposal review and needs `4`, which
 needs `1`; `6` admits the agent channel and needs nothing else; `7` accepts
-channel wakes (notifications or explicit terminal backup) and needs `6`. Remember key `r`
+channel nudges and needs `6`. Remember key `r`
 reflects the active grant; `x` revokes, the review motions below scroll, Tab
 chooses, and Enter applies **Apply permissions**. Esc closes without applying.
 These are local overlay keys.

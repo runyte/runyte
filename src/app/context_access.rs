@@ -747,8 +747,7 @@ impl App {
                             Scope::TerminalInsert =>
                                 "Skip review: insert proposals directly (no Enter)",
                             Scope::AgentChannel => "Join the agent channel: read and post messages",
-                            Scope::ChannelNudge =>
-                                "Accept channel wakes (terminal backup sends Enter)",
+                            Scope::ChannelNudge => "Accept channel nudges: a fixed line and Enter",
                         }
                     ),
                     Vec::new(),

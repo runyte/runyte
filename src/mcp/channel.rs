@@ -75,17 +75,7 @@ impl Bridge {
                             "This Runyte cannot nudge; post without nudge, or update Runyte",
                         ));
                     }
-                    let transport = args["nudge_transport"].as_str().unwrap_or("notification");
-                    if transport != "terminal" && !self.notify_supported(&workspace) {
-                        return Err(Failure::new(
-                            "unsupported",
-                            "Host does not support channel notifications; explicit nudge_transport=terminal selects the legacy backup",
-                        ));
-                    }
                     params["nudge"] = nudge.clone();
-                    if self.notify_supported(&workspace) {
-                        params["nudge_transport"] = json!(transport);
-                    }
                 }
                 self.request(&workspace, "channel.post", params).await
             }
@@ -195,9 +185,6 @@ impl Bridge {
         location: Location,
     ) -> Result<Value> {
         let mut params = json!({"provider":provider,"task":task,"location":location});
-        if self.notify_supported(workspace) {
-            params["notifications"] = json!(self.wake_mode != super::wake::WakeMode::Disabled);
-        }
         if let Some(client) = &self.client {
             params["client"] = json!(client);
         }

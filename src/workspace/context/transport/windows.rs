@@ -272,46 +272,19 @@ async fn connection(
     let mut lease: Option<Arc<Lease>> = None;
     loop {
         let mut bytes = Vec::new();
-        let read = {
-            let read = async {
-                (&mut reader)
-                    .take((FRAME_BYTES + 1) as u64)
-                    .read_until(b'\n', &mut bytes)
-                    .await
-            };
-            let budget = if lease.as_ref().is_some_and(|l| l.notifications_enabled()) {
-                None
-            } else {
-                Some(Duration::from_secs(if lease.is_some() { 300 } else { 10 }))
-            };
-            let read = async {
-                match budget {
-                    Some(budget) => tokio::time::timeout(budget, read).await.ok(),
-                    None => Some(read.await),
-                }
-            };
-            tokio::pin!(read);
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = stopped(&mut shutdown) => return,
-                    _ = revoked(&lease) => return,
-                    result = &mut read => break result,
-                    _ = super::notification(&lease) => {
-                        let written = tokio::select! {
-                            biased;
-                            _ = stopped(&mut shutdown) => return,
-                            _ = revoked(&lease) => return,
-                            result = tokio::time::timeout(Duration::from_secs(2), writer.write_all(b"{\"type\":\"channel_notification\"}\n")) => result,
-                        };
-                        if !matches!(written, Ok(Ok(()))) { return; }
-                    }
-                }
-            }
+        let read = async {
+            (&mut reader)
+                .take((FRAME_BYTES + 1) as u64)
+                .read_until(b'\n', &mut bytes)
+                .await
         };
-        if !matches!(read, Some(Ok(1..)))
-            || bytes.len() > FRAME_BYTES
-            || bytes.last() != Some(&b'\n')
+        let read = tokio::select! {
+            biased;
+            _ = stopped(&mut shutdown) => return,
+            _ = revoked(&lease) => return,
+            read = tokio::time::timeout(Duration::from_secs(if lease.is_some() { 300 } else { 10 }), read) => read,
+        };
+        if !matches!(read, Ok(Ok(1..))) || bytes.len() > FRAME_BYTES || bytes.last() != Some(&b'\n')
         {
             return;
         }

@@ -186,7 +186,6 @@ impl WorkspaceHost {
         let now_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
         let result = match request {
             Request::ChannelJoin {
-                notifications: _,
                 provider,
                 task,
                 client,
@@ -226,7 +225,6 @@ impl WorkspaceHost {
                 )
             }
             Request::ChannelPost {
-                nudge_transport,
                 text,
                 to,
                 location,
@@ -253,10 +251,7 @@ impl WorkspaceHost {
                         .nudge
                         .iter()
                         .map(|participant| {
-                            let state = match nudge_transport {
-                                crate::workspace::context::wire::NudgeTransport::Terminal => self.context_nudge(&from, participant),
-                                crate::workspace::context::wire::NudgeTransport::Notification => self.context_notify(participant),
-                            };
+                            let state = self.context_nudge(&from, participant);
                             json!({"participant":participant,"nick":self.context.channel.nick(participant),"state":state})
                         })
                         .collect::<Vec<_>>();
@@ -304,16 +299,6 @@ impl WorkspaceHost {
         };
         self.context_channel_changed();
         result
-    }
-
-    fn context_notify(&self, participant: &str) -> &'static str {
-        let Some(participant) = self.context.channel.participant(participant) else {
-            return "unavailable";
-        };
-        let Some(connection) = participant.connection else {
-            return "unavailable";
-        };
-        self.context.queue_channel_notification(connection)
     }
 
     /// Asks for a nudge of `participant` and says what became of it: `sent`

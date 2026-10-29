@@ -12,7 +12,7 @@ if not os.access(binary, os.X_OK):
 suite = unittest.TestSuite(
     unittest.defaultTestLoader.discover(str(Path(__file__).parent), pattern=pattern)
     for pattern in ('test_native_mcp.py', 'test_runyte.py', 'test_native_pty.py',
-                    'test_workspace_readiness.py', 'test_durable_channel.py', 'test_channel_notifications.py')
+                    'test_workspace_readiness.py', 'test_durable_channel.py')
 )
 result = unittest.TextTestRunner(verbosity=2).run(suite)
 raise SystemExit(0 if result.wasSuccessful() and result.testsRun and not result.skipped else 1)

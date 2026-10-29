@@ -128,8 +128,8 @@ broader capabilities.
 | `terminal.snapshot.read` | `snapshot`, `offset`, `limit` (rows, 1–1,000) |
 | `terminal.input.propose` | `terminal`, `text`, optional `reason` (at most 256 Unicode scalars and 1,024 UTF-8 bytes, no controls) |
 | `terminal.input.status`, `terminal.input.cancel` | `proposal` |
-| `channel.join` | `provider`, `task`, `location`, optional `client {name, version}`, `terminal {terminal, capability}`, `resume`, `notifications` (boolean, default false; notify feature) |
-| `channel.post` | `text` (at most 16 KiB), `location`, optional `to` (participant id or nickname), optional `nudge` (1–63 participant ids or nicknames; feature `runyte.context.channel.nudge.v1`), optional `nudge_transport` (`notification` or legacy default `terminal`) |
+| `channel.join` | `provider`, `task`, `location`, optional `client {name, version}`, `terminal {terminal, capability}`, `resume` |
+| `channel.post` | `text` (at most 16 KiB), `location`, optional `to` (participant id or nickname), optional `nudge` (1–63 participant ids or nicknames; feature `runyte.context.channel.nudge.v1`) |
 | `channel.read` | `since`, `limit` (1–200) |
 | `channel.who` | Empty object |
 
@@ -183,29 +183,19 @@ reads from the start. `channel.who` lists participants with their identity,
 client, provider, task, terminal number and title, location and connection
 state. Message text is untrusted data written by another reader.
 
-A host that accepts `nudge` advertises `runyte.context.channel.nudge.v1`.
-A sender must negotiate it before supplying `nudge`. Names are validated
-before storing the post. Recipient authority remains the native
-`channel_nudge` grant, which requires `agent_channel` and is never negotiated.
-
-`runyte.context.channel.notify.v1` additionally negotiates terminal-free wakes.
-A receiving adapter sets `notifications: true` on `channel.join` only after
-explicit client configuration; the field defaults to false. A sender selects
-`nudge_transport: "notification"`. Both require the notify feature. The host
-returns `queued`, `already_pending` or `unavailable` per requested recipient,
-and emits the unsolicited frame `{"type":"channel_notification"}` on the
-recipient's authenticated connection. This contains no message body or peer
-metadata. A successful read clears the one outstanding event. Connection
-revocation, closure and regrant discard its state. There is one pending event
-per connection, no polling, and idle subscribed connections do not have the
-ordinary five-minute idle timeout. Writes still have a two-second deadline.
-
-`nudge_transport: "terminal"` retains the verified/bound-terminal fixed paste
-and Enter path, with `sent`, `held`, `already_pending` and `unavailable` results.
-Omission retains that legacy context-wire behavior for older clients. New MCP
-adapters explicitly select notification by default and never silently downgrade
-to terminal input. An emitted wake is not acknowledgment of client processing.
-See the [MCP guide](../mcp.md#nudges) for client setup and backup risks.
+A host that accepts `nudge` on `channel.post` lists
+`runyte.context.channel.nudge.v1` in its `hello` features; a client sends the
+field only after negotiating that feature, and a host refuses it as
+`unsupported` on a connection that did not. `nudge` names participants other
+than the sender, each once, and a direct message may name only its recipient;
+any refused name rejects the post before it is stored. The reply then adds
+`nudges`, one `{participant, nick, state}` per name, with `state` one of `sent`,
+`held`, `already_pending` or `unavailable`. A participant is nudgeable only when
+its connection's grant holds `channel_nudge`, a grant setting like
+`terminal_insert` that requires `agent_channel` and is never negotiated, and
+its terminal is automatically verified or natively bound, live and reading pastes. The host then types a fixed
+line and Enter into that terminal as described in the
+[MCP guide](../mcp.md#nudges); it never types sender text.
 
 A host keeps the newest 1,000 entries or 4 MiB of them, measured as encoded, and
 at most 64 participants. A disconnected participant stays known, so its messages

@@ -78,15 +78,6 @@ pub(super) struct State {
 }
 
 impl State {
-    pub(super) fn queue_channel_notification(&self, connection: u64) -> &'static str {
-        let Some(reader) = self.readers.get(&connection) else {
-            return "unavailable";
-        };
-        if !reader.granted.contains(&Scope::ChannelNudge) || !reader.notify {
-            return "unavailable";
-        }
-        reader.lease.queue_notification()
-    }
     /// Whether the context service was started for this host.
     pub(super) fn started(&self) -> bool {
         self.events.is_some()
@@ -108,7 +99,6 @@ struct Reader {
     durable: bool,
     /// Negotiated `wire::NUDGE_FEATURE`, so its posts may ask for nudges.
     nudge: bool,
-    notify: bool,
     identity: String,
     granted: BTreeSet<Scope>,
     scopes: BTreeSet<Scope>,
@@ -594,7 +584,7 @@ impl WorkspaceHost {
                     "5 trusts a terminal's paste mode to mean its program reads pastes as text. Inside tmux, zellij or screen that mode is the multiplexer's, so do not use 5 there.",
                 ),
                 Detail::note(
-                    "7 accepts fixed channel wake notifications. An explicitly requested terminal backup types a fixed line and Enter after typing guards; that Enter can approve a pending agent dialog.",
+                    "7 lets another agent's post type one fixed line and Enter into this identity's terminals, 30 seconds after you last typed there. If the agent is showing an approval prompt then, that Enter may approve it.",
                 ),
             ];
             if let Some(recent) = self.context.recent.back() {
@@ -1120,7 +1110,6 @@ impl WorkspaceHost {
                     fingerprint,
                     durable: false,
                     nudge: false,
-                    notify: false,
                     identity: identity.name().to_owned(),
                     granted: scopes.clone(),
                     scopes: BTreeSet::new(),
@@ -1130,12 +1119,7 @@ impl WorkspaceHost {
                     requests: BTreeSet::new(),
                 },
             );
-            let mut features = vec![
-                wire::FEATURE,
-                wire::CHANNEL_FEATURE,
-                wire::NUDGE_FEATURE,
-                wire::NOTIFY_FEATURE,
-            ];
+            let mut features = vec![wire::FEATURE, wire::CHANNEL_FEATURE, wire::NUDGE_FEATURE];
             if self.context.durable_root.is_some() {
                 features.push(wire::DURABLE_FEATURE);
             }
@@ -1193,15 +1177,8 @@ impl WorkspaceHost {
                     .required_features
                     .union(&registration.optional_features)
                     .any(|feature| feature == wire::NUDGE_FEATURE);
-                reader.notify = registration
-                    .required_features
-                    .union(&registration.optional_features)
-                    .any(|feature| feature == wire::NOTIFY_FEATURE);
                 if reader.nudge {
                     features.push(wire::NUDGE_FEATURE);
-                }
-                if reader.notify {
-                    features.push(wire::NOTIFY_FEATURE);
                 }
                 if registration
                     .required_features
@@ -1355,39 +1332,11 @@ impl WorkspaceHost {
                     Code::Unsupported,
                     "Nudges were not negotiated on this connection",
                 )),
-                Request::ChannelJoin {
-                    notifications: true,
-                    ..
-                } if !reader.notify => Err(Error::new(
-                    Code::Unsupported,
-                    "Channel notifications were not negotiated",
-                )),
-                Request::ChannelPost {
-                    nudge_transport: wire::NudgeTransport::Notification,
-                    ..
-                } if !reader.notify => Err(Error::new(
-                    Code::Unsupported,
-                    "Channel notifications were not negotiated",
-                )),
                 request @ (Request::ChannelJoin { .. }
                 | Request::ChannelPost { .. }
                 | Request::ChannelRead { .. }
                 | Request::ChannelWho(_)) => {
-                    let subscribe = match &request {
-                        Request::ChannelJoin { notifications, .. } => Some(*notifications),
-                        _ => None,
-                    };
-                    let read = matches!(&request, Request::ChannelRead { .. });
-                    let result = self.context_channel_request(id, &reader.identity, request);
-                    if result.is_ok() {
-                        if let Some(enabled) = subscribe {
-                            reader.lease.enable_notifications(enabled);
-                        }
-                        if read {
-                            reader.lease.clear_notification();
-                        }
-                    }
-                    result
+                    self.context_channel_request(id, &reader.identity, request)
                 }
                 request => self.context_read_request(&mut reader.reads, &reader.scopes, request),
             }

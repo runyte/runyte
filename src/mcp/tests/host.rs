@@ -953,7 +953,7 @@ async fn a_post_asks_for_nudges_only_from_a_host_that_offers_them() {
     bridge
         .call(
             "post_message",
-            json!({"text":"ready","to":"codex-1","nudge":["codex-1"],"nudge_transport":"terminal"}),
+            json!({"text":"ready","to":"codex-1","nudge":["codex-1"]}),
         )
         .await
         .unwrap();

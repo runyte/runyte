@@ -626,10 +626,6 @@ Acceptance:
 
 ### 4. Channel nudges
 
-The terminal delivery below remains the explicit backup in the `exp`
-notification experiment. [The notification plan](PLAN_CHANNEL_NOTIFICATIONS.md)
-records the new default MCP transport and client-specific limitations (#43).
-
 Decided 2026-10-26 after the manual user test above and tracked in
 [#40](https://github.com/runyte/runyte/issues/40); implemented (see the
 evidence below). It

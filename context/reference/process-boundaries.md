@@ -97,32 +97,23 @@ Neither the public context wire nor MCP exposes this authority. A binding change
 cancels pending nudges and preserves a draft hold if a paste may already have
 reached the terminal. See [issue #42](https://github.com/runyte/runyte/issues/42).
 
-Channel nudges require the recipient's native `channel_nudge` grant and a
-sender-requested list on `channel.post`. The updated MCP adapter defaults to
-terminal-free notifications (feature `runyte.context.channel.notify.v1`). A
-recipient opts in through trusted adapter launch configuration. The host queues
-one fixed event per connection until channel read, checks the live grant, and
-publishes it through the existing bounded local transport. No new listener,
-credential store, polling timer or terminal association is needed. Revocation
-cancels the connection; already delivered client events cannot be recalled.
-
-`runyte mcp --channel-notifications claude` advertises only `claude/channel` and
-emits `notifications/claude/channel`; it has no permission-relay capability.
-`--channel-notifications codex --codex-thread UUID` uses an explicit trusted
-thread target and spawns the external `codex queue` CLI in a bounded worker,
-with arguments rather than a shell, null input/output, a five-second deadline
-and kill-on-drop. It inherits the adapter's daemon environment. No peer-provided
-text or thread target becomes a process argument. Codex's queue interface is
-version-tested, not a documented MCP extension. Neither delivery failure causes
-a retry or terminal fallback. The experiment and evidence are in
-[the notification plan](../plans/active/PLAN_CHANNEL_NOTIFICATIONS.md).
-
-Legacy terminal nudges remain an explicit MCP backup (`nudge_transport:
-terminal`), and the omitted transport retains legacy context-client behavior.
-They type one constant line and Enter into the verified/bound terminal, guarded
-by draft, typing and proposal state. An approval dialog can still receive that
-Enter; permission `7` continues to disclose this risk. Terminal-free delivery
-never submits terminal bytes and cannot answer a terminal dialog.
+Channel nudges (feature `runyte.context.channel.nudge.v1`) are the one path by
+which the host submits Enter into a terminal. A sender's `channel.post` may name
+participants to nudge; the host, not the sender, then types one fixed constant
+line as a bracketed paste and, after it is written, a single carriage return,
+into each named participant's verified terminal. Sender text never reaches the
+terminal. The authority belongs to the recipient: its identity's grant must
+include `channel_nudge`, a grant setting that is never negotiated, needs
+`agent_channel`, and is never a configured default. The host holds a nudge while
+the terminal's line may hold unsubmitted person or proposal input, for 30
+seconds after the person's last physical input, while a proposal for that
+terminal is outstanding, and while the terminal is not reading pastes. It drops
+the Enter if any other input reached the terminal after the paste, and then
+treats the line as an unsubmitted draft. One nudge per
+terminal is outstanding until the participant reads. Runyte does not inspect the
+screen, so an approval prompt showing at that moment may receive the Enter; the
+grant description states this. Implementation: `src/workspace/host/context_channel.rs`
+and the typing record in `src/terminal/mod.rs`.
 
 The
 [context contract](../../docs/plugins/context.md) defines the profile and its

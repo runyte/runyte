@@ -18,52 +18,9 @@ static NEXT_CONNECTION: AtomicU64 = AtomicU64::new(1);
 pub struct Lease {
     cancelled: AtomicBool,
     wake: Notify,
-    notifications: AtomicBool,
-    notification_pending: AtomicBool,
-    notification_outstanding: AtomicBool,
-    notification_wake: Notify,
 }
 
 impl Lease {
-    pub fn enable_notifications(&self, enabled: bool) {
-        self.notifications.store(enabled, Ordering::Release);
-        if !enabled {
-            self.clear_notification();
-        }
-    }
-    pub fn notifications_enabled(&self) -> bool {
-        self.notifications.load(Ordering::Acquire)
-    }
-    pub fn clear_notification(&self) {
-        self.notification_pending.store(false, Ordering::Release);
-        self.notification_outstanding
-            .store(false, Ordering::Release);
-    }
-    pub fn queue_notification(&self) -> &'static str {
-        if !self.active() || !self.notifications_enabled() {
-            return "unavailable";
-        }
-        if self.notification_outstanding.swap(true, Ordering::AcqRel) {
-            return "already_pending";
-        }
-        self.notification_pending.store(true, Ordering::Release);
-        self.notification_wake.notify_one();
-        "queued"
-    }
-    async fn notification(&self) {
-        loop {
-            let notified = self.notification_wake.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-            if self.active()
-                && self.notifications_enabled()
-                && self.notification_pending.swap(false, Ordering::AcqRel)
-            {
-                return;
-            }
-            notified.await;
-        }
-    }
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
         self.wake.notify_waiters();
@@ -105,13 +62,6 @@ pub enum Event {
     },
 }
 
-pub(super) async fn notification(lease: &Option<Arc<Lease>>) {
-    match lease {
-        Some(lease) => lease.notification().await,
-        None => std::future::pending().await,
-    }
-}
-
 pub(super) async fn revoked(lease: &Option<Arc<Lease>>) {
     match lease {
         Some(lease) => lease.cancelled().await,
@@ -139,7 +89,3 @@ mod tests;
 #[cfg(all(test, windows))]
 #[path = "tests/transport_windows.rs"]
 mod tests;
-
-#[cfg(test)]
-#[path = "tests/notifications.rs"]
-mod notification_tests;
