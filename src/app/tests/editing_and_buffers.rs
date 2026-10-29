@@ -1977,7 +1977,7 @@ fn the_path_popup_and_its_action_menu_publish_one_overlay_each() {
             .iter()
             .map(|action| action.key_hint.as_str())
             .collect::<Vec<_>>(),
-        ["Tab", "Esc"]
+        ["Tab", "Esc/Ctrl-c/Space"]
     );
 
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
@@ -3701,4 +3701,150 @@ fn syntax_newline_adds_a_level_exactly_below_rows_that_open_one() {
         fs::remove_file(path).unwrap();
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+fn configurable_path_menu(keys: &str) -> App {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let section = serde_yaml::from_str(keys).unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+    app.path_popup = Some(PathPopup {
+        path: "example.txt".into(),
+    });
+    app
+}
+
+#[test]
+fn configurable_path_actions_preserve_nested_ownership_and_structural_choices() {
+    let mut app = configurable_path_menu(
+        "ui: {path: {open-actions: [F9], cancel: [F7]}, path-actions: {next: [F8], previous: [F6], accept: [F5], cancel: [F7]}}",
+    );
+    for code in [KeyCode::Tab, KeyCode::Escape, KeyCode::Char(' ')] {
+        key(&mut app, code, Modifiers::NONE);
+    }
+    assert!(app.path_popup.is_some());
+    assert!(app.path_action_menu.is_none());
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    press(&mut app, 'j');
+    assert_eq!(app.path_action_menu.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::Function(8), Modifiers::ALT);
+    assert_eq!(app.path_action_menu.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.path_action_menu.as_ref().unwrap().selected, 1);
+    let snapshots = app.overlay_snapshots();
+    let snapshot = snapshots
+        .iter()
+        .find(|s| s.kind == crate::snapshot::OverlayKind::PathActions)
+        .unwrap();
+    assert!(snapshot.actions.iter().any(|a| a.key_hint.contains("F8")));
+    assert!(snapshot.actions.iter().any(|a| a.key_hint == "F7"));
+    for code in [KeyCode::Escape, KeyCode::Tab, KeyCode::Char(' ')] {
+        key(&mut app, code, Modifiers::NONE);
+    }
+    assert!(app.path_action_menu.is_some());
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(app.path_action_menu.is_none());
+    assert!(app.path_popup.is_some());
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    key(
+        &mut app,
+        KeyCode::Char('r'),
+        Modifiers::CONTROL | Modifiers::ALT,
+    );
+    assert!(app.path_popup.is_none());
+    assert_eq!(app.registers.get(&'"').unwrap().text, "example.txt");
+    app.path_popup = Some(PathPopup {
+        path: "second.txt".into(),
+    });
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.path_action_menu.is_some());
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(app.registers.get(&'"').unwrap().text, "second.txt");
+    app.path_popup = Some(PathPopup {
+        path: "third.txt".into(),
+    });
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(app.path_popup.is_none());
+}
+
+fn simple_context_menu() -> ContextActionMenu {
+    use crate::keymap::{BindingScope, ContextAction, Key};
+    ContextActionMenu {
+        actions: vec![
+            ContextAction::buffer(
+                BindingScope::Markdown,
+                Key::char('a'),
+                "up",
+                EditorCommand::MoveUp,
+            ),
+            ContextAction::buffer(
+                BindingScope::Markdown,
+                Key::char('b'),
+                "down",
+                EditorCommand::MoveDown,
+            ),
+        ],
+        selected: 0,
+    }
+}
+
+#[test]
+fn configurable_context_actions_keep_choices_and_do_not_leak_removed_keys() {
+    let mut app = configurable_path_menu(
+        "ui: {context-actions: {next: [F9], previous: [F8], accept: [F7], cancel: []}}",
+    );
+    app.path_popup = None;
+    seed(&mut app, "one\ntwo\nthree");
+    app.context_action_menu = Some(simple_context_menu());
+    for code in [
+        KeyCode::Down,
+        KeyCode::Char('j'),
+        KeyCode::Escape,
+        KeyCode::Tab,
+        KeyCode::Char(' '),
+        KeyCode::Enter,
+    ] {
+        key(&mut app, code, Modifiers::NONE);
+    }
+    key(
+        &mut app,
+        KeyCode::Char('c'),
+        Modifiers::CONTROL | Modifiers::ALT,
+    );
+    assert_eq!(app.context_action_menu.as_ref().unwrap().selected, 0);
+    assert_eq!(app.active().selection.primary().head, 0);
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    assert_eq!(app.context_action_menu.as_ref().unwrap().selected, 1);
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(app.context_action_menu.is_none());
+    assert_eq!(app.active().selection.primary().head, 4);
+    app.context_action_menu = Some(simple_context_menu());
+    press(&mut app, 'a');
+    assert!(app.context_action_menu.is_none());
+    assert_eq!(app.active().selection.primary().head, 0);
+    assert_eq!(text(&app), "one\ntwo\nthree");
+}
+
+#[test]
+fn configured_leader_is_an_inherited_menu_cancel_without_rewriting_other_owners() {
+    let mut app = configurable_path_menu("leader: F12\nui: {path-actions: {cancel: []}}");
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    key(&mut app, KeyCode::Function(12), Modifiers::NONE);
+    assert!(
+        app.path_action_menu.is_some(),
+        "removed cancel also removes leader dismissal"
+    );
+    app.path_action_menu = None;
+    key(&mut app, KeyCode::Function(12), Modifiers::NONE);
+    assert!(
+        app.path_popup.is_none(),
+        "bare popup retains inherited leader cancellation"
+    );
+    app.context_action_menu = Some(simple_context_menu());
+    key(&mut app, KeyCode::Function(12), Modifiers::NONE);
+    assert!(app.context_action_menu.is_none());
 }

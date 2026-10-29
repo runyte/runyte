@@ -10,7 +10,7 @@ The `keys` section configures keyboard actions and pane gestures:
 | `keys.bind` | Assigns named actions to keys, per mode. Also removes bindings. |
 | `keys.defaults` | `false` starts `bind` from an empty keyboard instead of Runyte's. See [Without the built-in keys](custom-key-bindings.md#without-the-built-in-keys). |
 | `keys.pointer` | Replaces pane move/extend drag gestures. |
-| `keys.ui` | Replaces completion popup action bindings. |
+| `keys.ui` | Replaces completion, context-menu, and path-popup action bindings. |
 | `keys.scopes` | Assigns or removes actions in individual editor views and result lists. |
 
 - `keys` is read from the configuration file and from
@@ -216,6 +216,32 @@ Esc/Enter binding. They never synthesize input. UI bindings currently accept
 single strokes, with up to 32 aliases per action. Configured modifiers match
 exactly using the same character Shift normalization as editor bindings.
 Unchanged defaults retain their existing handling of additional modifiers.
+
+The `context-actions` and `path-actions` owners support `next`, `previous`,
+`accept`, and `cancel`. Their defaults are Down/j, Up/k/Shift-Tab, Enter, and
+Tab/Esc/Ctrl-c respectively. The `path` popup supports `open-actions` (Tab) and
+`cancel` (Esc/Ctrl-c). These menu owners also inherit the effective leader as a
+cancel key. Reassigning or removing `cancel` removes that leader binding too.
+
+```yaml
+keys:
+  ui:
+    context-actions:
+      next: [Ctrl-n]
+      previous: [Ctrl-p]
+    path:
+      open-actions: [F9]
+    path-actions:
+      cancel: [F7]
+```
+
+Menu letters remain structural choices. Context menus reserve plain alphabetic
+choice keys other than j/k; path actions reserve r and s with any modifiers,
+preserving their existing choice handling. An inherited leader keeps its old
+cancellation precedence even if it matches a menu choice or navigation key.
+Changing `cancel` restores the covered key's ordinary meaning. Hints show only
+currently reachable shortcuts. Cancel in path actions returns to the path
+popup; cancel there closes it.
 
 Pane drag gestures can be changed independently of keyboard bindings:
 

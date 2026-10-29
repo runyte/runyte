@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Shared semantic UI actions. Input owners resolve actions before executing
-//! them; literal input and structural option identifiers are never rewritten.
+//! Shared semantic UI actions. Owners execute actions without rewriting input;
+//! literal input and structural option identifiers retain their own meaning.
 
 use crate::input::{KeyCode, KeyStroke, Modifiers};
 use serde_yaml::Value;
@@ -14,6 +14,53 @@ mod tests;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Owner {
     Completion,
+    ContextActions,
+    Path,
+    PathActions,
+}
+
+impl Owner {
+    const ALL: [Self; 4] = [
+        Self::Completion,
+        Self::ContextActions,
+        Self::Path,
+        Self::PathActions,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Completion => "completion",
+            Self::ContextActions => "context-actions",
+            Self::Path => "path",
+            Self::PathActions => "path-actions",
+        }
+    }
+    fn actions(self) -> &'static [Action] {
+        use Action::*;
+        match self {
+            Self::Completion => &[
+                Next,
+                Previous,
+                Accept,
+                Cancel,
+                CancelOrContinue,
+                DismissAndContinue,
+            ],
+            Self::ContextActions | Self::PathActions => &[Next, Previous, Accept, Cancel],
+            Self::Path => &[OpenActions, Cancel],
+        }
+    }
+    fn structural(self, key: KeyStroke) -> bool {
+        match self {
+            Self::ContextActions => {
+                key.modifiers.is_empty()
+                    && matches!(key.code, KeyCode::Char(c) if c.is_ascii_alphabetic() && !matches!(c, 'j' | 'k'))
+            }
+            // This menu historically matches its choice character regardless
+            // of modifiers. Preserve that broader structural input policy.
+            Self::PathActions => matches!(key.code, KeyCode::Char('r' | 's')),
+            Self::Completion | Self::Path => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -24,6 +71,7 @@ pub enum Action {
     Cancel,
     CancelOrContinue,
     DismissAndContinue,
+    OpenActions,
 }
 
 impl Action {
@@ -35,99 +83,211 @@ impl Action {
             Self::Cancel => "cancel",
             Self::CancelOrContinue => "cancel-or-continue",
             Self::DismissAndContinue => "dismiss-and-continue",
+            Self::OpenActions => "open-actions",
         }
     }
-    const ALL: [Self; 6] = [
-        Self::Next,
-        Self::Previous,
-        Self::Accept,
-        Self::Cancel,
-        Self::CancelOrContinue,
-        Self::DismissAndContinue,
-    ];
+}
+
+#[derive(Clone, Debug, Default)]
+struct OwnerBindings {
+    keys: Arc<HashMap<KeyStroke, Action>>,
+    labels: Arc<HashMap<Action, Vec<String>>>,
 }
 
 #[derive(Clone, Debug)]
 pub struct Bindings {
-    completion: Arc<HashMap<KeyStroke, Action>>,
-    labels: Arc<HashMap<Action, Vec<String>>>,
+    owners: HashMap<Owner, OwnerBindings>,
 }
 
 impl Default for Bindings {
     fn default() -> Self {
-        static DEFAULTS: LazyLock<Bindings> = LazyLock::new(Bindings::built_in);
+        static DEFAULTS: LazyLock<Bindings> =
+            LazyLock::new(|| Bindings::with_leader(KeyStroke::char(' ')));
         DEFAULTS.clone()
     }
 }
 
 impl Bindings {
-    fn built_in() -> Self {
-        use Action::*;
-        let mut completion = HashMap::new();
-        // Legacy completion defaults match non-character keys regardless of
-        // modifiers and Ctrl-character keys with additional modifiers. Expand
-        // these authored policies once; configured bindings match exactly.
-        for bits in 0..64 {
-            let modifiers = Modifiers::from_bits(bits).expect("six-bit modifiers");
-            for (code, action) in [
-                (KeyCode::Escape, CancelOrContinue),
-                (KeyCode::Down, Next),
-                (KeyCode::Up, Previous),
-                (KeyCode::Tab, Accept),
-                (KeyCode::Enter, DismissAndContinue),
-            ] {
-                completion.insert(
-                    KeyStroke::new(code, modifiers).canonical_for_binding(),
-                    action,
-                );
+    fn legacy() -> &'static Self {
+        static DEFAULTS: LazyLock<Bindings> = LazyLock::new(|| {
+            let owners = Owner::ALL
+                .into_iter()
+                .map(|owner| {
+                    let mut keys = HashMap::new();
+                    for bits in 0..64 {
+                        let modifiers = Modifiers::from_bits(bits).expect("six-bit modifiers");
+                        for code in [
+                            KeyCode::Escape,
+                            KeyCode::Down,
+                            KeyCode::Up,
+                            KeyCode::Tab,
+                            KeyCode::BackTab,
+                            KeyCode::Enter,
+                            KeyCode::Char('c'),
+                            KeyCode::Char('n'),
+                            KeyCode::Char('p'),
+                            KeyCode::Char('j'),
+                            KeyCode::Char('k'),
+                        ] {
+                            let key = KeyStroke::new(code, modifiers);
+                            if let Some(action) = legacy_action(owner, key) {
+                                keys.insert(key.canonical_for_binding(), action);
+                            }
+                        }
+                    }
+                    let labels = owner
+                        .actions()
+                        .iter()
+                        .map(|&action| {
+                            (
+                                action,
+                                legacy_labels(owner, action)
+                                    .iter()
+                                    .map(|s| (*s).to_owned())
+                                    .collect(),
+                            )
+                        })
+                        .collect();
+                    (
+                        owner,
+                        OwnerBindings {
+                            keys: Arc::new(keys),
+                            labels: Arc::new(labels),
+                        },
+                    )
+                })
+                .collect();
+            Bindings { owners }
+        });
+        &DEFAULTS
+    }
+    fn with_leader(leader: KeyStroke) -> Self {
+        let mut defaults = Self::legacy().clone();
+        for (&owner, bindings) in &mut defaults.owners {
+            if owner != Owner::Completion {
+                bindings.add_leader(leader);
             }
-            if modifiers.contains(Modifiers::CONTROL) {
-                for (character, action) in [('c', Cancel), ('n', Next), ('p', Previous)] {
-                    completion.insert(
-                        KeyStroke::new(KeyCode::Char(character), modifiers).canonical_for_binding(),
-                        action,
-                    );
+        }
+        defaults
+    }
+    pub fn lookup(&self, owner: Owner, key: KeyStroke) -> Option<Action> {
+        self.owners[&owner]
+            .keys
+            .get(&key.canonical_for_binding())
+            .copied()
+    }
+    pub fn label(&self, owner: Owner, action: Action) -> String {
+        self.owners[&owner]
+            .labels
+            .get(&action)
+            .filter(|keys| !keys.is_empty())
+            .map_or_else(|| "unbound".into(), |keys| keys.join("/"))
+    }
+}
+
+impl OwnerBindings {
+    fn add_leader(&mut self, leader: KeyStroke) {
+        let leader = leader.canonical_for_binding();
+        // The old frontend rewrote the effective leader to Escape before
+        // owner dispatch. Preserve that precedence for inherited cancel only.
+        Arc::make_mut(&mut self.keys).insert(leader, Action::Cancel);
+        let labels = Arc::make_mut(&mut self.labels);
+        for (&action, keys) in labels.iter_mut() {
+            keys.retain(|source| {
+                KeyStroke::parse(source)
+                    .is_ok_and(|key| self.keys.get(&key.canonical_for_binding()) == Some(&action))
+            });
+        }
+        // A default spelling can stand for a legacy modifier family. If
+        // leader masks its usual spelling, advertise a surviving exact key
+        // rather than claiming that the entire action is unbound.
+        for (&action, labels) in labels.iter_mut() {
+            if labels.is_empty() {
+                let mut alternatives = self
+                    .keys
+                    .iter()
+                    .filter(|(_, found)| **found == action)
+                    .map(|(key, _)| key.label())
+                    .filter(|label| {
+                        KeyStroke::parse(label).is_ok_and(|key| {
+                            self.keys.get(&key.canonical_for_binding()) == Some(&action)
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                alternatives.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
+                if let Some(label) = alternatives.into_iter().next() {
+                    labels.push(label);
                 }
             }
         }
-        let labels = [
-            (Next, vec!["Down", "Ctrl-n"]),
-            (Previous, vec!["Up", "Ctrl-p"]),
-            (Accept, vec!["Tab"]),
-            (Cancel, vec!["Ctrl-c"]),
-            (CancelOrContinue, vec!["Esc"]),
-            (DismissAndContinue, vec!["Enter"]),
-        ]
-        .into_iter()
-        .map(|(a, labels)| (a, labels.into_iter().map(str::to_owned).collect()))
-        .collect();
-        Self {
-            completion: Arc::new(completion),
-            labels: Arc::new(labels),
+        let cancel = labels.entry(Action::Cancel).or_default();
+        if !cancel.iter().any(|source| {
+            KeyStroke::parse(source).is_ok_and(|key| key.canonical_for_binding() == leader)
+        }) {
+            cancel.push(leader.label());
         }
     }
 }
 
-impl Bindings {
-    pub fn lookup(&self, owner: Owner, key: KeyStroke) -> Option<Action> {
-        match owner {
-            Owner::Completion => self.completion.get(&key.canonical_for_binding()).copied(),
-        }
+fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
+    use Action::*;
+    let control = key.modifiers.contains(Modifiers::CONTROL);
+    if owner == Owner::Completion {
+        return match (key.code, control) {
+            (KeyCode::Escape, _) => Some(CancelOrContinue),
+            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => Some(Next),
+            (KeyCode::Up, _) | (KeyCode::Char('p'), true) => Some(Previous),
+            (KeyCode::Tab, _) => Some(Accept),
+            (KeyCode::Enter, _) => Some(DismissAndContinue),
+            (KeyCode::Char('c'), true) => Some(Cancel),
+            _ => None,
+        };
     }
-
-    pub fn label(&self, owner: Owner, action: Action) -> String {
-        match owner {
-            Owner::Completion => self
-                .labels
-                .get(&action)
-                .filter(|v| !v.is_empty())
-                .map_or_else(|| "unbound".into(), |labels| labels.join("/")),
-        }
+    if owner == Owner::Path {
+        return match (key.code, control) {
+            (KeyCode::Tab, _) => Some(OpenActions),
+            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => Some(Cancel),
+            _ => None,
+        };
+    }
+    match (key.code, control) {
+        (KeyCode::Escape | KeyCode::Tab, _) | (KeyCode::Char('c'), true) => Some(Cancel),
+        (KeyCode::Down | KeyCode::Char('j'), false) => Some(Next),
+        (KeyCode::Up | KeyCode::Char('k'), false) | (KeyCode::BackTab, _) => Some(Previous),
+        (KeyCode::Enter, false) => Some(Accept),
+        _ => None,
     }
 }
 
-pub(super) fn compile(section: Option<&Value>, errors: &mut Vec<String>) -> Bindings {
-    let mut result = Bindings::default();
+fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    use Action::*;
+    match (owner, action) {
+        (Owner::Completion, Next) => &["Down", "Ctrl-n"],
+        (Owner::Completion, Previous) => &["Up", "Ctrl-p"],
+        (Owner::Completion, Accept) => &["Tab"],
+        (Owner::Completion, Cancel) => &["Ctrl-c"],
+        (Owner::Completion, CancelOrContinue) => &["Esc"],
+        (Owner::Completion, DismissAndContinue) => &["Enter"],
+        (_, Next) => &["Down", "j"],
+        (_, Previous) => &["Up", "k", "BackTab"],
+        (_, Accept) => &["Enter"],
+        (Owner::Path, Cancel) => &["Esc", "Ctrl-c"],
+        (_, Cancel) => &["Tab", "Esc", "Ctrl-c"],
+        (_, OpenActions) => &["Tab"],
+        _ => &[],
+    }
+}
+
+pub(super) fn compile(
+    section: Option<&Value>,
+    leader: KeyStroke,
+    errors: &mut Vec<String>,
+) -> Bindings {
+    let mut result = if leader == KeyStroke::char(' ') {
+        Bindings::default()
+    } else {
+        Bindings::with_leader(leader)
+    };
     let Some(section) = section else {
         return result;
     };
@@ -139,20 +299,25 @@ pub(super) fn compile(section: Option<&Value>, errors: &mut Vec<String>) -> Bind
         errors.push("ui rejected: too many owners".into());
         return result;
     }
-    for (owner, mapping) in owners {
-        if owner.as_str() != Some("completion") {
-            errors.push("ui rejected: unknown owner (expected completion)".into());
+    for (name, mapping) in owners {
+        let Some(owner) = Owner::ALL
+            .into_iter()
+            .find(|owner| Some(owner.name()) == name.as_str())
+        else {
+            errors.push("ui rejected: unknown owner".into());
             continue;
-        }
-        let parsed = (|| -> Result<Bindings, String> {
+        };
+        let parsed = (|| -> Result<OwnerBindings, String> {
             let mapping = mapping.as_mapping().ok_or("expected action mappings")?;
-            if mapping.len() > Action::ALL.len() {
+            if mapping.len() > owner.actions().len() {
                 return Err("too many actions".into());
             }
             let mut assignments = HashMap::new();
             for (name, value) in mapping {
-                let action = Action::ALL
-                    .into_iter()
+                let action = owner
+                    .actions()
+                    .iter()
+                    .copied()
                     .find(|a| Some(a.name()) == name.as_str())
                     .ok_or("unknown action")?;
                 let keys = value
@@ -168,6 +333,9 @@ pub(super) fn compile(section: Option<&Value>, errors: &mut Vec<String>) -> Bind
                         return Err("key spelling exceeds 64 bytes".into());
                     }
                     let key = KeyStroke::parse(source)?.canonical_for_binding();
+                    if owner.structural(key) {
+                        return Err("key belongs to a structural menu choice".into());
+                    }
                     if parsed.contains(&key) {
                         return Err("duplicate normalized key".into());
                     }
@@ -175,14 +343,19 @@ pub(super) fn compile(section: Option<&Value>, errors: &mut Vec<String>) -> Bind
                 }
                 assignments.insert(action, parsed);
             }
-            let mut candidate = Bindings::default();
-            Arc::make_mut(&mut candidate.completion)
+            // Start without the leader overlay: removing/reassigning cancel
+            // restores any legacy movement/choice that leader used to cover.
+            let mut candidate = Bindings::legacy().owners[&owner].clone();
+            Arc::make_mut(&mut candidate.keys)
                 .retain(|_, action| !assignments.contains_key(action));
+            if owner != Owner::Completion && !assignments.contains_key(&Action::Cancel) {
+                candidate.add_leader(leader);
+            }
             for (action, keys) in assignments {
                 Arc::make_mut(&mut candidate.labels)
                     .insert(action, keys.iter().map(|key| key.label()).collect());
                 for key in keys {
-                    if Arc::make_mut(&mut candidate.completion)
+                    if Arc::make_mut(&mut candidate.keys)
                         .insert(key, action)
                         .is_some()
                     {
@@ -193,9 +366,12 @@ pub(super) fn compile(section: Option<&Value>, errors: &mut Vec<String>) -> Bind
             Ok(candidate)
         })();
         match parsed {
-            Ok(candidate) => result = candidate,
+            Ok(candidate) => {
+                result.owners.insert(owner, candidate);
+            }
             Err(error) => errors.push(format!(
-                "ui.completion rejected: {error}; defaults retained"
+                "ui.{} rejected: {error}; defaults retained",
+                owner.name()
             )),
         }
     }

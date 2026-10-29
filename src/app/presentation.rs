@@ -1845,24 +1845,11 @@ impl App {
                         OverlayAction::new("Esc", "cancel"),
                     ],
                 ),
-                OverlayKind::Path => (
+                OverlayKind::Path | OverlayKind::PathActions => (
                     OverlayPurpose::Info,
                     OverlayInput::None,
                     OverlayLayout::Standard,
-                    vec![
-                        OverlayAction::new("Tab", "actions"),
-                        OverlayAction::new("Esc", "close"),
-                    ],
-                ),
-                OverlayKind::PathActions => (
-                    OverlayPurpose::Info,
-                    OverlayInput::None,
-                    OverlayLayout::Standard,
-                    vec![
-                        OverlayAction::new("j/k, ↑/↓, or Shift-Tab", "select"),
-                        OverlayAction::new("mnemonic/Enter", "copy"),
-                        OverlayAction::new("Tab/Esc", "back"),
-                    ],
+                    Vec::new(), // Filled from the effective owning UI map below.
                 ),
                 OverlayKind::Prompt => (
                     OverlayPurpose::Input,
@@ -2385,15 +2372,20 @@ impl App {
                 OverlayKind::BufferActions,
                 format!("Actions · {}", self.active_buffer().display_name()),
                 "",
-                context_action_rows(&menu.actions, &self.command_capabilities()),
+                context_action_rows(
+                    &menu.actions,
+                    &self.command_capabilities(),
+                    self.keymap.ui(),
+                ),
                 Some(menu.selected),
                 None,
             );
-            snapshot.actions = vec![
-                OverlayAction::new("j/k, ↑/↓, or Shift-Tab", "select"),
-                OverlayAction::new("mnemonic/Enter", "run"),
-                OverlayAction::new("Tab/Esc/Ctrl-c", "cancel"),
-            ];
+            snapshot.actions = menu_action_hints(
+                self.keymap.ui(),
+                crate::keymap::ui::Owner::ContextActions,
+                "run",
+                "cancel",
+            );
             overlays.push(snapshot);
         }
         if let Some(popup) = &self.path_popup {
@@ -2405,7 +2397,19 @@ impl App {
                         .map(|action| {
                             row(
                                 action.mnemonic().to_string(),
-                                action.mnemonic().to_string(),
+                                if self
+                                    .keymap
+                                    .ui()
+                                    .lookup(
+                                        crate::keymap::ui::Owner::PathActions,
+                                        crate::input::KeyStroke::char(action.mnemonic()),
+                                    )
+                                    .is_some()
+                                {
+                                    String::new()
+                                } else {
+                                    action.mnemonic().to_string()
+                                },
                                 action.label(),
                             )
                         })
@@ -2414,14 +2418,23 @@ impl App {
                 ),
                 None => (OverlayKind::Path, Vec::new(), None),
             };
-            overlays.push(bounded(
-                kind,
-                "Path",
-                "",
-                rows,
-                selected,
-                Some(popup.path.clone()),
-            ));
+            let mut snapshot = bounded(kind, "Path", "", rows, selected, Some(popup.path.clone()));
+            use crate::keymap::ui::{Action, Owner};
+            snapshot.actions = if self.path_action_menu.is_some() {
+                menu_action_hints(self.keymap.ui(), Owner::PathActions, "copy", "back")
+            } else {
+                vec![
+                    OverlayAction::new(
+                        self.keymap.ui().label(Owner::Path, Action::OpenActions),
+                        "actions",
+                    ),
+                    OverlayAction::new(
+                        self.keymap.ui().label(Owner::Path, Action::Cancel),
+                        "close",
+                    ),
+                ]
+            };
+            overlays.push(snapshot);
         }
         if let Some(menu) = &self.buffer_action_menu {
             overlays.push(bounded(
@@ -3137,6 +3150,7 @@ fn file_overlay_preview(
 fn context_action_rows(
     actions: &[ContextAction],
     capabilities: &crate::service_health::AppCapabilitySnapshot,
+    bindings: &crate::keymap::ui::Bindings,
 ) -> Vec<crate::snapshot::OverlayRow> {
     use crate::snapshot::OverlayRow;
 
@@ -3173,7 +3187,14 @@ fn context_action_rows(
             OverlayRow {
                 heading: false,
                 identity: action.mnemonic.label().into(),
-                label: action.mnemonic.label(),
+                label: if bindings
+                    .lookup(crate::keymap::ui::Owner::ContextActions, action.mnemonic)
+                    .is_some()
+                {
+                    String::new()
+                } else {
+                    action.mnemonic.label()
+                },
                 detail: format!(
                     "{name:name_width$}  {context:context_width$}  {}",
                     action.description
@@ -3189,4 +3210,28 @@ fn context_action_rows(
             }
         })
         .collect()
+}
+
+fn menu_action_hints(
+    bindings: &crate::keymap::ui::Bindings,
+    owner: crate::keymap::ui::Owner,
+    accept: &str,
+    cancel: &str,
+) -> Vec<crate::snapshot::OverlayAction> {
+    use crate::{keymap::ui::Action, snapshot::OverlayAction};
+    vec![
+        OverlayAction::new(
+            format!(
+                "{}/{}",
+                bindings.label(owner, Action::Next),
+                bindings.label(owner, Action::Previous)
+            ),
+            "select",
+        ),
+        OverlayAction::new(
+            format!("mnemonic/{}", bindings.label(owner, Action::Accept)),
+            accept,
+        ),
+        OverlayAction::new(bindings.label(owner, Action::Cancel), cancel),
+    ]
 }

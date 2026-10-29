@@ -172,3 +172,13 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   navigation/closing. Faster help exposed a fixture's implicit dependency on
   publication pacing; the fixture now explicitly clears its pacing timestamp,
   following existing model tests. Production pacing is unchanged.
+- Context action, path popup, and path action owners now resolve shared UI
+  actions before their structural choice identifiers. Their defaults retain
+  legacy modifier matching and leader dismissal; replacing cancellation also
+  replaces the inherited leader. Effective snapshot hints follow the same map.
+  Astra approved the source. Regression coverage includes every modifier mask,
+  owner-local rollback, structural reservations, nested dismissal, actual app
+  transitions, and leader keys that mask only some default aliases. Root and
+  desktop Clippy/tests passed. One unrelated temporary file-lock fixture failed
+  during the initial parallel root run, passed isolated, and the full suite
+  passed with four test threads; production lock behavior was not changed.

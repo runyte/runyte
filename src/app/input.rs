@@ -1920,56 +1920,58 @@ impl App {
         // and nested action menus each retain their existing cancellation
         // semantics. Exact-text confirmations are the exception because a
         // branch or path can legitimately contain a space.
-        if key.canonical_for_binding() == self.keymap.leader()
+        let legacy_key = if key.canonical_for_binding() == self.keymap.leader()
             && self.space_dismisses_input_overlay()
         {
-            key = KeyStroke::new(KeyCode::Escape, Modifiers::NONE);
-        }
+            KeyStroke::new(KeyCode::Escape, Modifiers::NONE)
+        } else {
+            key
+        };
         if self.merge_ui.review.is_some() {
-            return self.handle_merge_review_key(key);
+            return self.handle_merge_review_key(legacy_key);
         }
         if self.directory_tree_delete.is_some() {
-            self.handle_tree_delete_key(key);
+            self.handle_tree_delete_key(legacy_key);
             return Ok(());
         }
         if self.directory_tree_destination.is_some() {
-            return self.handle_tree_destination_key(key);
+            return self.handle_tree_destination_key(legacy_key);
         }
         if self.fs_confirmation.is_some() {
-            return self.handle_fs_confirmation(key);
+            return self.handle_fs_confirmation(legacy_key);
         }
         if self.directory_reload_confirmation.is_some() {
-            return self.handle_directory_reload_confirmation(key);
+            return self.handle_directory_reload_confirmation(legacy_key);
         }
         if self.file_reload_confirmation.is_some() {
-            return self.handle_file_reload_confirmation(key);
+            return self.handle_file_reload_confirmation(legacy_key);
         }
         if self.git_discard_confirmation.is_some() {
-            return self.handle_git_discard_confirmation(key);
+            return self.handle_git_discard_confirmation(legacy_key);
         }
         if self.git_stash_confirmation.is_some() {
-            return self.handle_git_stash_confirmation(key);
+            return self.handle_git_stash_confirmation(legacy_key);
         }
         if self.git_branch_switch.is_some() {
-            return self.handle_branch_switch_confirmation(key);
+            return self.handle_branch_switch_confirmation(legacy_key);
         }
         if self.git_branch_deletion.is_some() {
-            return self.handle_branch_deletion_confirmation(key);
+            return self.handle_branch_deletion_confirmation(legacy_key);
         }
         if self.git_pull_rebase.is_some() {
-            return self.handle_pull_rebase_confirmation(key);
+            return self.handle_pull_rebase_confirmation(legacy_key);
         }
         if self.git_worktree_removal.is_some() {
-            return self.handle_worktree_removal_confirmation(key);
+            return self.handle_worktree_removal_confirmation(legacy_key);
         }
         if self.buffer_discard_confirmation.is_some() {
-            return self.handle_buffer_discard_confirmation(key);
+            return self.handle_buffer_discard_confirmation(legacy_key);
         }
         if self.context_action_menu.is_some() {
             return self.handle_context_action_key(key);
         }
         if self.program_action_menu.is_some() {
-            return self.handle_program_action_key(key);
+            return self.handle_program_action_key(legacy_key);
         }
         if self.path_action_menu.is_some() {
             return self.handle_path_action_key(key);
@@ -1977,6 +1979,7 @@ impl App {
         if self.path_popup.is_some() {
             return self.handle_path_popup_key(key);
         }
+        key = legacy_key;
         if self.picker.is_some() {
             return self.handle_picker(key);
         }

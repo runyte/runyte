@@ -293,7 +293,7 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
     };
     keymap = super::scopes::apply(section.get("scopes"), keymap, &mut errors);
     keymap.pane_gestures = super::pointer::compile(section.get("pointer"), &mut errors);
-    keymap.ui = super::ui::compile(section.get("ui"), &mut errors);
+    keymap.ui = super::ui::compile(section.get("ui"), keymap.leader(), &mut errors);
     CompiledKeymap {
         keymap: Arc::new(keymap),
         errors,

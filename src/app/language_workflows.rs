@@ -3256,20 +3256,20 @@ impl App {
     }
 
     pub(super) fn handle_context_action_key(&mut self, key: KeyStroke) -> Result<()> {
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, control) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) | (KeyCode::Tab, _) => {
+        use crate::keymap::ui::{Action, Owner};
+        match self.keymap.ui().lookup(Owner::ContextActions, key) {
+            Some(Action::Cancel) => {
                 self.context_action_menu = None;
             }
-            (KeyCode::Down, false) | (KeyCode::Char('j'), false) => {
+            Some(Action::Next) => {
                 let menu = self.context_action_menu.as_mut().unwrap();
                 menu.selected = (menu.selected + 1) % menu.actions.len();
             }
-            (KeyCode::Up, false) | (KeyCode::Char('k'), false) | (KeyCode::BackTab, _) => {
+            Some(Action::Previous) => {
                 let menu = self.context_action_menu.as_mut().unwrap();
                 menu.selected = (menu.selected + menu.actions.len() - 1) % menu.actions.len();
             }
-            (KeyCode::Enter, false) => {
+            Some(Action::Accept) => {
                 if let Some(action) = self
                     .context_action_menu
                     .as_ref()
@@ -3324,17 +3324,15 @@ impl App {
     }
 
     pub(super) fn handle_path_popup_key(&mut self, key: KeyStroke) -> Result<()> {
-        match key.code {
-            KeyCode::Tab => {
+        use crate::keymap::ui::{Action, Owner};
+        match self.keymap.ui().lookup(Owner::Path, key) {
+            Some(Action::OpenActions) => {
                 self.path_action_menu = Some(PathActionMenu {
                     actions: vec![PathClipboardTarget::System, PathClipboardTarget::Register],
                     selected: 0,
                 });
             }
-            KeyCode::Escape => {
-                self.path_popup = None;
-            }
-            KeyCode::Char('c') if key.modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::Cancel) => {
                 self.path_popup = None;
             }
             _ => {}
@@ -3343,20 +3341,20 @@ impl App {
     }
 
     pub(super) fn handle_path_action_key(&mut self, key: KeyStroke) -> Result<()> {
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, control) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) | (KeyCode::Tab, _) => {
+        use crate::keymap::ui::{Action, Owner};
+        match self.keymap.ui().lookup(Owner::PathActions, key) {
+            Some(Action::Cancel) => {
                 self.path_action_menu = None;
             }
-            (KeyCode::Down, false) | (KeyCode::Char('j'), false) => {
+            Some(Action::Next) => {
                 let menu = self.path_action_menu.as_mut().unwrap();
                 menu.selected = (menu.selected + 1) % menu.actions.len();
             }
-            (KeyCode::Up, false) | (KeyCode::Char('k'), false) | (KeyCode::BackTab, _) => {
+            Some(Action::Previous) => {
                 let menu = self.path_action_menu.as_mut().unwrap();
                 menu.selected = (menu.selected + menu.actions.len() - 1) % menu.actions.len();
             }
-            (KeyCode::Enter, false) => {
+            Some(Action::Accept) => {
                 if let Some(action) = self
                     .path_action_menu
                     .as_ref()
