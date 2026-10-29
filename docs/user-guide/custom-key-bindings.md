@@ -11,6 +11,7 @@ The `keys` section configures keyboard actions and pane gestures:
 | `keys.defaults` | `false` starts `bind` from an empty keyboard instead of Runyte's. See [Without the built-in keys](custom-key-bindings.md#without-the-built-in-keys). |
 | `keys.pointer` | Replaces pane move/extend drag gestures. |
 | `keys.ui` | Replaces completion popup action bindings. |
+| `keys.scopes` | Assigns or removes actions in individual editor views and result lists. |
 
 - `keys` is read from the configuration file and from
   [`keybinds.d/`](configuration.md#themes-and-key-bindings-in-their-own-files) beside it; the
@@ -124,6 +125,63 @@ keys:
 - remove a binding,
 - bind a command that has no default key,
 - move most direct single-key editing bindings.
+
+### View and list bindings
+
+`keys.scopes.<scope>.<mode>` assigns one supported action name to a key, or
+`null` to suppress that exact binding in that view. Other views and modes keep
+their bindings. Suppression also hides inherited bindings; it does not reveal
+the global action underneath, and does not remove longer sequences beginning
+with the same key.
+
+```yaml
+keys:
+  scopes:
+    markdown:
+      normal:
+        j: move-up
+        k: null
+    global:
+      list:
+        F9: list-next
+        Ctrl-n: null
+    session-manager:
+      list:
+        F8: list-previous
+```
+
+Editor scope names are `markdown`, `directory`, `directory-tree`, `settings`,
+`media`, `pdf-pages`, `help`, `commit-message`, `diff`, `workspace-search`,
+`terminal`, and the Git scopes: `git-status`, `git-branches`, `git-conflicts`,
+`git-conflict-file`, `git-conflict-markdown`, `git-merge-review`,
+`git-merge-detail`, `git-merge-input`, `git-worktrees`, `git-comparison`,
+`git-revision-diff`, `git-log`, `git-network`, `git-blame`, and `git-stash`.
+Ordinary editor scopes support `normal`, `select`, `insert`, and `replace`.
+The merge review scopes currently dispatch `normal` only. Terminal Insert and
+Replace configuration awaits migration of the terminal input gate.
+
+Use `global.list` for ordinary result-list bindings and `session-manager.list`
+for overrides in the session manager. List bindings contain one key. List
+navigation actions are `list-next`, `list-previous`, `list-page-down`,
+`list-page-up`, `list-first`, `list-last`, `list-toggle-preview`,
+`list-clear-filter`, and `list-close`. Nested action menus own their input
+separately. Numbered session choices remain structural input.
+
+`:help key-actions` includes the scoped action names and their modes.
+Actions must be supported by the selected view and mode. Scoped assignments
+currently take one action name, without arguments or action lists. Editor
+sequences may contain up to eight keys, including `Leader` and `Window`.
+Context-action Tab, raw list Enter/Tab/Backspace, overlay leader dismissal,
+and merge acknowledgment editing still belong to their existing input owners;
+assignments or removals that those handlers would bypass are rejected.
+
+Assignments apply simultaneously. Invalid scoped configuration rolls back the
+**whole `scopes` section**, while `bind`, `ui`, and `pointer` remain independent.
+A child override wins over inherited parents. If both Markdown and conflict-file
+scopes override the same key, `git-conflict-markdown` must decide explicitly,
+including by assigning `null`. Configuration fragments merge by scope, mode,
+and key. Existing scoped defaults remain with `keys.defaults: false`; that
+option still controls only global editor defaults.
 
 ### Binding actions
 

@@ -31,18 +31,33 @@ pub struct Violation {
     pub message: String,
 }
 
-const MODES: [Mode; 5] = [
+const MODES: [Mode; 6] = [
     Mode::Normal,
     Mode::Insert,
     Mode::Replace,
     Mode::Select,
     Mode::Command,
+    Mode::List,
 ];
 
 pub fn validate(
     bindings: &[Binding],
     namespaces: &[BindingNamespace],
     actions: &[ContextAction],
+) -> Vec<Violation> {
+    with_overrides(
+        bindings,
+        namespaces,
+        actions,
+        &super::effective::Overrides::default(),
+    )
+}
+
+pub(super) fn with_overrides(
+    bindings: &[Binding],
+    namespaces: &[BindingNamespace],
+    actions: &[ContextAction],
+    overrides: &super::effective::Overrides,
 ) -> Vec<Violation> {
     let mut violations = Vec::new();
     let mut views: HashMap<(Mode, BindingScope), Vec<&Binding>> = HashMap::new();
@@ -68,29 +83,10 @@ pub fn validate(
                 .copied()
                 .filter(|binding| binding.visible_in(mode, scope))
                 .collect::<Vec<_>>();
-            let scoped = if scope == BindingScope::Global {
-                Vec::new()
-            } else {
-                bindings
-                    .iter()
-                    .filter(|binding| {
-                        binding.is_active_in(mode) && super::scope_includes(scope, binding.scope)
-                    })
-                    .collect::<Vec<_>>()
-            };
-            let scoped_sequences = scoped
-                .iter()
-                .map(|binding| &binding.sequence)
-                .collect::<HashSet<_>>();
-            let mut effective = scoped;
-            effective.extend(globals.iter().copied().filter(|binding| {
-                scope == BindingScope::Global
-                    || (!scoped_sequences.contains(&binding.sequence)
-                        && !(scope == BindingScope::DirectoryTree
-                            && scoped_sequences
-                                .iter()
-                                .any(|sequence| binding.sequence.starts_with(sequence))))
-            }));
+            let effective = super::effective::indices(bindings, overrides, mode, scope)
+                .into_iter()
+                .map(|index| &bindings[index])
+                .collect::<Vec<_>>();
 
             let mut by_sequence: HashMap<&KeySequence, &Binding> = HashMap::new();
             for binding in &effective {
@@ -194,7 +190,9 @@ pub fn validate(
                     .iter()
                     .filter(|binding| super::scope_includes(scope, binding.scope))
                 {
-                    if let Some(global) = globals_by_sequence.get(&scoped.sequence) {
+                    if let Some(global) = globals_by_sequence.get(&scoped.sequence)
+                        && !overrides.contains(mode, scoped.scope, &scoped.sequence)
+                    {
                         violations.push(Violation {
                             kind: ViolationKind::GlobalScopedShadowing,
                             mode,
@@ -243,7 +241,9 @@ pub fn validate(
                     sequences: vec![namespace.sequence.clone()],
                     message: format!("namespace {} is executable", namespace.sequence),
                 });
-            } else if !descendant {
+            } else if !descendant
+                && !overrides.affects(mode, namespace.scope, &namespace.sequence, true)
+            {
                 violations.push(Violation {
                     kind: ViolationKind::NamespaceUnreachable,
                     mode,
@@ -264,7 +264,9 @@ pub fn validate(
                 .iter()
                 .find(|candidate| candidate.sequence == *alias)
                 .map(|candidate| candidate.target);
-            if reached != Some(binding.target) {
+            if reached != Some(binding.target)
+                && !overrides.affects(mode, binding.scope, alias, false)
+            {
                 violations.push(Violation {
                     kind: ViolationKind::AliasBroken,
                     mode,
@@ -297,10 +299,11 @@ pub fn validate(
 }
 
 pub fn assert_valid(keymap: &super::Keymap) {
-    let violations = validate(
+    let violations = with_overrides(
         keymap.bindings(),
         keymap.namespaces(),
         keymap.all_context_actions(),
+        &keymap.overrides,
     );
     assert!(
         violations.is_empty(),

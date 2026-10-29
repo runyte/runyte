@@ -725,6 +725,24 @@ impl KeyHintState {
             .collect::<Vec<_>>();
         rows.extend(fold_undeclared_prefixes(&self.pending, continuations));
         rows.extend(namespaces.into_iter().map(KeyHintRow::from_namespace));
+        // Aliases belong to the effective view: a child can suppress or change
+        // the alias without changing what siblings advertise.
+        for row in &mut rows {
+            if let Some(alias) = &row.alias {
+                let valid = row
+                    .alias_modes
+                    .unwrap_or(std::slice::from_ref(&mode))
+                    .iter()
+                    .all(|&alias_mode| {
+                        matches!(keymap.lookup_in(alias_mode, scope, alias), Lookup::Exact(binding)
+                        if Some(binding.target) == row.target && binding.is_plain_action())
+                    });
+                if !valid {
+                    row.alias = None;
+                    row.alias_modes = None;
+                }
+            }
+        }
         collapse_session_hints(&mut rows, &self.pending);
         rows.sort_by(|left, right| {
             left.role

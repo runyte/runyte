@@ -166,7 +166,7 @@ pub fn mode_name(mode: Mode) -> &'static str {
     }
 }
 
-fn mode_slice(mode: Mode) -> &'static [Mode] {
+pub(super) fn mode_slice(mode: Mode) -> &'static [Mode] {
     match mode {
         Mode::Normal => &[Mode::Normal],
         Mode::Select => &[Mode::Select],
@@ -890,6 +890,7 @@ pub fn reference() -> String {
             );
         }
     }
+    out.push_str(&super::scopes::reference());
     out
 }
 

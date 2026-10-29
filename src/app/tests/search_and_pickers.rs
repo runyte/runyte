@@ -5477,3 +5477,56 @@ fn background_finder_keeps_selected_surviving_result_when_a_terminal_exits() {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[test]
+fn configurable_list_actions_execute_without_old_navigation_or_close_handlers() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let section = serde_yaml::from_str("scopes: {global: {list: {Down: null, Ctrl-n: null, F9: list-next, F8: list-previous, Esc: null, Ctrl-c: null, F7: list-close}}}").unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+    let items = (0..25)
+        .map(|index| PickerItem::new(format!("service-{index}"), "healthy", index))
+        .collect();
+    app.list = Some(ListPicker::new("Service health", items).as_report());
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('n'), Modifiers::CONTROL);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    key(&mut app, KeyCode::Char('c'), Modifiers::CONTROL);
+    assert_eq!(app.list.as_ref().unwrap().report_offset, 0);
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().report_offset, 1);
+    key(&mut app, KeyCode::Function(9), Modifiers::ALT);
+    assert_eq!(app.list.as_ref().unwrap().report_offset, 1);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().report_offset, 0);
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(app.list.is_none());
+}
+
+#[test]
+fn configured_markdown_scope_moves_and_removes_actions_without_changing_other_modes() {
+    let mut config = Config::default();
+    config.editor.scratch_markdown = true;
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, "one\ntwo\nthree");
+    assert_eq!(
+        app.key_binding_scope(),
+        crate::keymap::BindingScope::Markdown
+    );
+    let section =
+        serde_yaml::from_str("scopes: {markdown: {normal: {j: move-up, k: null}}}").unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+    app.active_mut().replace_selection(Selection::point(4));
+    press(&mut app, 'j');
+    assert_eq!(app.active().selection.primary().head, 0);
+    app.active_mut().replace_selection(Selection::point(4));
+    press(&mut app, 'k');
+    assert_eq!(app.active().selection.primary().head, 4);
+    app.mode = Mode::Select;
+    press(&mut app, 'k');
+    assert_eq!(app.active().selection.primary().head, 0);
+    assert_eq!(text(&app), "one\ntwo\nthree");
+}

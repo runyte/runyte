@@ -149,3 +149,26 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   conflicting inherited parent overrides must be diagnosed. Include List in
   shared validation, preserve merge-review isolation and directory-tree prefix
   masking, and retain metadata through runtime plugin map rebuilding.
+
+- Scoped checkpoint adds exact suppression/provenance and a shared effective
+  resolver used by lookup, validation and discovery. The inherited scope graph
+  is validated atomically: invalid `keys.scopes` rolls back that whole section,
+  independently of `bind`, UI and pointer configuration. This deliberately
+  avoids order-dependent recovery between multiple parents.
+- Scoped assignments initially accept one existing action name or null; direct
+  list and merge executors do not support action lists/arguments. Raw owner
+  handlers remain pending migration: terminal Insert/Replace, context Tab,
+  list accept/edit/context actions, overlay leader dismissal, and merge input
+  editing. Unsupported modes/keys are rejected rather than falsely advertised.
+  Nested action menus remain separate UI owners. Stage 4 is not complete yet.
+- Validation for the published pane/completion checkpoint: root and desktop
+  Clippy/tests passed, guide links passed, root canonical coverage 92.21%
+  (89% floor). Later scoped work requires another validation pass.
+- Astra approved the scoped checkpoint after reservations for unmigrated owner
+  handlers, structural digits, cross-mode alias filtering, and nonallocating
+  namespace checks. Root and desktop full tests and Clippy passed; keymap tests
+  cover inherited removals/conflicts, plugin rebuilds, fragments/export, scoped
+  hints and action reference. App tests exercise actual scoped movement and list
+  navigation/closing. Faster help exposed a fixture's implicit dependency on
+  publication pacing; the fixture now explicitly clears its pacing timestamp,
+  following existing model tests. Production pacing is unchanged.
