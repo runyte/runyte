@@ -26,6 +26,10 @@ current sources take precedence.
 
 Active work:
 
+- [Configurable UI actions](active/PLAN_CONFIGURABLE_UI_ACTIONS.md): shared,
+  scoped keyboard and pointer actions with unchanged defaults, structural option
+  input, and effective bindings across terminal and native surfaces ([#46](https://github.com/runyte/runyte/issues/46)).
+
 - [MCP read and write permissions](active/PLAN_MCP_READ_WRITE_PERMISSIONS.md):
   two per-workspace permissions, direct terminal writes with a revision-guarded
   delayed Enter, and removal of nudges, terminal bindings and reviewed
