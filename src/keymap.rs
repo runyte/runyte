@@ -20,6 +20,7 @@ mod effective;
 pub mod native_window;
 pub mod pointer;
 mod scopes;
+pub mod terminal_input;
 pub mod ui;
 pub mod validate;
 
@@ -675,6 +676,7 @@ pub struct Keymap {
     pane_gestures: pointer::PaneGestures,
     ui: ui::Bindings,
     overrides: effective::Overrides,
+    terminal_input: terminal_input::Index,
     bindings: Vec<Binding>,
     lookup_index: Arc<HashMap<(Mode, BindingScope), HashMap<KeySequence, IndexedLookup>>>,
     fast_pane_keys: bool,
@@ -835,6 +837,7 @@ impl Keymap {
             pane_gestures: pointer::PaneGestures::default(),
             ui: ui::Bindings::default(),
             overrides: effective::Overrides::default(),
+            terminal_input: terminal_input::Index::default(),
             bindings,
             lookup_index: Arc::new(HashMap::new()),
             fast_pane_keys: false,
@@ -898,6 +901,7 @@ impl Keymap {
             }
         }
         self.lookup_index = Arc::new(index);
+        self.terminal_input = terminal_input::Index::build(self);
     }
 
     pub fn with_namespaces(
@@ -944,6 +948,7 @@ impl Keymap {
         self.leader = leader;
         self.window = window;
         self.default_spellings = default_spellings;
+        self.terminal_input = terminal_input::Index::build(&self);
         self
     }
 

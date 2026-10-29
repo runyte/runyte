@@ -14,7 +14,7 @@
 use std::{fmt::Write as _, ops::Range};
 
 use crate::{
-    command::{EditorCommand, GrammarKind, Mode},
+    command::{GrammarKind, Mode},
     help_document::{HelpDocument, HelpDocumentWriter, HelpRole},
     input::{KeyCode, Modifiers},
     keymap::{BindingScope, BindingTarget, Key, KeySequence, Keymap, Lookup},
@@ -977,39 +977,8 @@ fn terminal_insert_admits(binding: &crate::keymap::Binding, keymap: &Keymap) -> 
     let Some(&first) = binding.sequence.as_slice().first() else {
         return false;
     };
-    let first = first.canonical_for_binding();
-    let terminal_escape = crate::app::is_terminal_normal_key(first);
-    let window_prefix = first == keymap.window_prefix();
-    let fast_pane_move =
-        fast_pane_keys_are_active(keymap) && crate::keymap::is_fast_pane_key(first);
-    let navigation = |binding: &crate::keymap::Binding| {
-        matches!(
-            binding.target,
-            BindingTarget::Editor(
-                EditorCommand::NextRunningSession
-                    | EditorCommand::PreviousRunningSession
-                    | EditorCommand::PreviousSession
-            )
-        )
-    };
-    let persistent_navigation = match keymap.lookup_in(
-        Mode::Insert,
-        BindingScope::Terminal,
-        &KeySequence::from(first),
-    ) {
-        Lookup::Exact(binding) => navigation(binding),
-        Lookup::Prefix(bindings) => bindings.iter().any(|binding| navigation(binding)),
-        Lookup::ExactAndPrefix {
-            exact,
-            continuations,
-        } => navigation(exact) || continuations.iter().any(|binding| navigation(binding)),
-        Lookup::NoMatch => false,
-    };
-    terminal_escape
-        || window_prefix
-        || fast_pane_move
-        || persistent_navigation
-        || keymap.terminal_clipboard_key(first)
+    keymap.terminal_input_route(first, true, keymap.fast_pane_keys())
+        == crate::keymap::terminal_input::Route::EditorGrammar
 }
 
 fn help_key_label(key: Key) -> String {

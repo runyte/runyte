@@ -99,7 +99,7 @@ fn compile(section: &Value, base: &Keymap) -> Result<Keymap, String> {
                 return Err("global and session-manager support list; editor scopes support editor modes (use keys.bind for global editor bindings)".into());
             }
             if (scope.is_merge_review() && mode != Mode::Normal)
-                || (scope == BindingScope::Terminal && matches!(mode, Mode::Insert | Mode::Replace))
+                || (scope == BindingScope::Terminal && mode == Mode::Replace)
             {
                 return Err(
                     "mode belongs to an input owner awaiting scoped dispatch migration".into(),
@@ -313,6 +313,14 @@ fn admit(scope: BindingScope, mode: Mode, name: &str) -> Option<BindingTarget> {
                 let mut actions = defaults
                     .bindings_for_scope(mode, scope)
                     .filter(|binding| binding.availability == BindingAvailability::Implemented)
+                    .filter(|binding| {
+                        scope != BindingScope::Terminal
+                            || mode != Mode::Insert
+                            || binding.sequence.as_slice().first().is_some_and(|&first| {
+                                defaults.terminal_input_route(first, true, false)
+                                    == super::terminal_input::Route::EditorGrammar
+                            })
+                    })
                     .map(|binding| (binding.target.name(), binding.target))
                     .collect::<HashMap<_, _>>();
                 if matches!(mode, Mode::Normal | Mode::Select) {
@@ -322,7 +330,10 @@ fn admit(scope: BindingScope, mode: Mode, name: &str) -> Option<BindingTarget> {
                             .map(|action| (action.target.name(), action.target)),
                     );
                 }
-                if !scope.owns_modal_input() && mode != Mode::List {
+                if !scope.owns_modal_input()
+                    && mode != Mode::List
+                    && !(scope == BindingScope::Terminal && mode == Mode::Insert)
+                {
                     for &command in crate::command::EditorCommand::ALL {
                         if super::actions::editor_modes(command).contains(&mode) {
                             actions
@@ -365,7 +376,7 @@ pub(super) fn reference() -> String {
             if ((scope == BindingScope::Global || scope == BindingScope::SessionManager)
                 != (mode == Mode::List))
                 || (scope.is_merge_review() && mode != Mode::Normal)
-                || (scope == BindingScope::Terminal && matches!(mode, Mode::Insert | Mode::Replace))
+                || (scope == BindingScope::Terminal && mode == Mode::Replace)
             {
                 continue;
             }

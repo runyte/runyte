@@ -282,3 +282,183 @@ fn cross_mode_aliases_and_scope_action_reference_follow_admission() {
     assert!(reference.contains("### directory-tree\n"));
     assert!(!reference.contains("`commit-undo-checkpoint`"));
 }
+
+#[test]
+fn terminal_insert_actions_claim_only_effective_scoped_keys_and_prefixes() {
+    use crate::keymap::{Key, terminal_input::Route::*};
+    let map = configured(
+        "scopes: {terminal: {insert: {F6: enter-normal-mode, 'F7 h': focus-window-left, 'Ctrl-4': null, 'Ctrl-\\': null, 'Ctrl-w': null}}}",
+    );
+    let route = |s| map.terminal_input_route(Key::parse(s).unwrap(), false, false);
+    assert_eq!(route("F6"), EditorGrammar);
+    assert_eq!(route("F7"), EditorGrammar);
+    assert_eq!(route("Shift-F6"), Child);
+    assert_eq!(route("Ctrl-4"), Child);
+    assert_eq!(route("Ctrl-\\"), Child);
+    assert_eq!(route("Alt-Ctrl-4"), EditorGrammar);
+    // Exact removal does not remove the surviving window namespace.
+    assert_eq!(route("Ctrl-w"), EditorGrammar);
+    assert_eq!(route("Esc"), Child);
+    assert_eq!(route("Enter"), Child);
+    assert_eq!(route("a"), Child);
+    let rebuilt = map.with_plugin_bindings(vec![]).unwrap();
+    assert_eq!(
+        rebuilt.terminal_input_route(Key::parse("F6").unwrap(), false, false),
+        EditorGrammar
+    );
+    assert_eq!(
+        rebuilt.terminal_input_route(Key::ctrl('4'), false, false),
+        Child
+    );
+    let map = configured("scopes: {terminal: {insert: {'F8': next-running-session}}}");
+    assert_eq!(
+        map.terminal_input_route(Key::parse("F8").unwrap(), false, false),
+        EditorGrammar
+    );
+}
+
+#[test]
+fn terminal_insert_rejects_text_actions_and_replace_mode_atomically() {
+    for source in [
+        "scopes: {terminal: {insert: {F6: insert-newline}}}",
+        "scopes: {terminal: {insert: {F6: move-down}}}",
+        "scopes: {terminal: {replace: {F6: null}}}",
+    ] {
+        let result = keymap::configured::compile(
+            &serde_yaml::from_str(source).unwrap(),
+            keymap::default_keymap(),
+        );
+        assert_eq!(result.errors.len(), 1, "{source}");
+    }
+}
+
+#[test]
+fn terminal_first_key_routing_preserves_all_default_modifier_policies() {
+    use crate::{
+        input::{KeyCode, KeyStroke, Modifiers},
+        keymap::terminal_input::Route,
+    };
+    for fast in [false, true] {
+        let map = keymap::keymap_for(fast);
+        for persistent in [false, true] {
+            for code in (0x20..=0x7e)
+                .map(|c| KeyCode::Char(char::from_u32(c).unwrap()))
+                .chain([
+                    KeyCode::Escape,
+                    KeyCode::Enter,
+                    KeyCode::Left,
+                    KeyCode::Right,
+                    KeyCode::BackTab,
+                    KeyCode::Tab,
+                ])
+            {
+                for bits in 0..64 {
+                    let key = KeyStroke::new(code, Modifiers::from_bits(bits).unwrap());
+                    let navigation = |binding: &Binding| {
+                        matches!(
+                            binding.target,
+                            BindingTarget::Editor(
+                                EditorCommand::NextRunningSession
+                                    | EditorCommand::PreviousRunningSession
+                                    | EditorCommand::PreviousSession
+                            )
+                        )
+                    };
+                    let navigation =
+                        match map.lookup_in(Mode::Insert, S::Terminal, &KeySequence::from(key)) {
+                            Lookup::Exact(b) => navigation(b),
+                            Lookup::Prefix(bs) => bs.iter().any(|b| navigation(b)),
+                            Lookup::ExactAndPrefix {
+                                exact,
+                                continuations,
+                            } => navigation(exact) || continuations.iter().any(|b| navigation(b)),
+                            Lookup::NoMatch => false,
+                        };
+                    let old = keymap::is_terminal_normal_key(key)
+                        || key.canonical_for_binding() == map.window_prefix()
+                        || (fast && keymap::is_fast_pane_key(key))
+                        || (persistent && navigation)
+                        || map.terminal_clipboard_key(key);
+                    assert_eq!(
+                        map.terminal_input_route(key, persistent, fast) == Route::EditorGrammar,
+                        old,
+                        "{key:?}, fast={fast}, persistent={persistent}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn terminal_window_tombstone_suppresses_capture_only_after_last_descendant_removed() {
+    use crate::keymap::{Key, terminal_input::Route};
+    let removals = keymap::default_keymap()
+        .bindings_for_scope(Mode::Insert, S::Terminal)
+        .filter(|b| b.sequence.as_slice().first() == Some(&Key::ctrl('w')))
+        .map(|b| format!("      '{}': null\n", b.sequence))
+        .collect::<String>();
+    let source = format!("scopes:\n  terminal:\n    insert:\n{removals}");
+    let map = configured(&source);
+    assert_eq!(
+        map.terminal_input_route(Key::ctrl('w'), false, false),
+        Route::EditorGrammar
+    );
+    let map = configured(&format!("{source}      Ctrl-w: null\n"));
+    assert_eq!(
+        map.terminal_input_route(Key::ctrl('w'), false, false),
+        Route::Child
+    );
+    let map = configured(&format!(
+        "{source}      Ctrl-w: null\n      'Ctrl-w q': toggle-zen\n"
+    ));
+    assert_eq!(
+        map.terminal_input_route(Key::ctrl('w'), false, false),
+        Route::EditorGrammar
+    );
+}
+
+#[test]
+fn terminal_help_and_routing_follow_scoped_remaps_and_removals() {
+    use crate::{
+        command::GrammarKind,
+        help::{self, HelpTopic},
+    };
+    let map = configured(
+        "window: F10\nscopes: {terminal: {insert: {F6: enter-normal-mode, 'Ctrl-4': null, 'Ctrl-\\': null, 'F7 z': toggle-zen}}}",
+    );
+    let document = help::render(
+        HelpTopic::Terminal,
+        GrammarKind::Runyte,
+        S::Terminal,
+        &map,
+        true,
+    );
+    let rows = document
+        .split_once("Terminal Insert\n")
+        .unwrap()
+        .1
+        .split_once("\nReplace\n")
+        .unwrap()
+        .0;
+    for key in ["F6 ", "F7 z ", "F10 h "] {
+        assert!(
+            rows.lines().any(|line| line.trim_start().starts_with(key)),
+            "{key}: {rows}"
+        );
+    }
+    for key in ["Ctrl-4 ", "Ctrl-\\ ", "Ctrl-w h "] {
+        assert!(
+            !rows.lines().any(|line| line.trim_start().starts_with(key)),
+            "{key}: {rows}"
+        );
+    }
+    assert_eq!(
+        map.terminal_input_route(keymap::Key::parse("F10").unwrap(), false, false),
+        keymap::terminal_input::Route::EditorGrammar
+    );
+    assert_eq!(
+        map.terminal_input_route(keymap::Key::ctrl('w'), false, false),
+        keymap::terminal_input::Route::Child
+    );
+}

@@ -24,12 +24,11 @@ use super::{
     TextObjectPart, Transaction, ViewAlignment, VimMotion, VimOperator, VimRangeTarget,
     VimTextObject, buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path,
     external_open, hint_is_not_before, hover_content_rows, is_path_separator,
-    is_path_token_boundary, is_terminal_normal_key, is_word, is_word_completion_character,
-    keymap_for, mapped_applied_path, operative_span, persistent_session_availability, pointer_pane,
-    pointer_resize_pair, prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert,
-    prompt_left, prompt_right, prompt_word_backward, prompt_word_forward, quote_path_hint,
-    rect_contains, resolve_command, resolved_operation_path, row_characters,
-    unclosed_or_complete_quoted_path,
+    is_path_token_boundary, is_word, is_word_completion_character, keymap_for, mapped_applied_path,
+    operative_span, persistent_session_availability, pointer_pane, pointer_resize_pair,
+    prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert, prompt_left, prompt_right,
+    prompt_word_backward, prompt_word_forward, quote_path_hint, rect_contains, resolve_command,
+    resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
 };
 
 /// How soon a second left press on the same directory tree entry must follow
@@ -81,45 +80,6 @@ impl App {
                         || !self.config.indentation.files.is_empty(),
                 ),
         );
-    }
-
-    /// Whether this key moves between panes on its own right now.
-    ///
-    /// A terminal in Insert mode owns every key its child could want, so a key
-    /// only reaches Runyte when something above names it. `Ctrl-w` is named
-    /// there permanently; these four join it exactly while the option is on.
-    fn is_persistent_navigation_key(&self, key: KeyStroke) -> bool {
-        if !self.persistent_session {
-            return false;
-        }
-        let navigation = |binding: &crate::keymap::Binding| {
-            matches!(
-                binding.target,
-                crate::keymap::BindingTarget::Editor(
-                    EditorCommand::NextRunningSession
-                        | EditorCommand::PreviousRunningSession
-                        | EditorCommand::PreviousSession
-                )
-            )
-        };
-        match self
-            .keymap
-            .lookup_in(self.mode, self.key_binding_scope(), &KeySequence::from(key))
-        {
-            crate::keymap::Lookup::Exact(binding) => navigation(binding),
-            crate::keymap::Lookup::Prefix(bindings) => {
-                bindings.iter().any(|binding| navigation(binding))
-            }
-            crate::keymap::Lookup::ExactAndPrefix {
-                exact,
-                continuations,
-            } => navigation(exact) || continuations.iter().any(|binding| navigation(binding)),
-            crate::keymap::Lookup::NoMatch => false,
-        }
-    }
-
-    fn is_fast_pane_key(&self, key: KeyStroke) -> bool {
-        self.config.editor.fast_pane_keys && crate::keymap::is_fast_pane_key(key)
     }
 
     /// Replaces the host clipboard boundary. Primarily useful to deterministic
@@ -2016,18 +1976,15 @@ impl App {
         }
         self.hover = None;
 
-        // A terminal in Insert mode owns every key except Ctrl-\\, the
-        // registered effective window prefix, and the single-key pane moves
-        // while those are configured on. Pending prefix suffixes continue through
-        // the same declarative grammar as every other view.
+        // A pending sequence is already owned by the editor grammar.
         if self.mode == Mode::Insert
             && let Some(id) = self.active_terminal()
             && self.grammar.pending_sequence().is_empty()
-            && !is_terminal_normal_key(key)
-            && key.canonical_for_binding() != self.keymap.window_prefix()
-            && !self.is_fast_pane_key(key)
-            && !self.is_persistent_navigation_key(key)
-            && !self.keymap.terminal_clipboard_key(key)
+            && self.keymap.terminal_input_route(
+                key,
+                self.persistent_session,
+                self.config.editor.fast_pane_keys,
+            ) == crate::keymap::terminal_input::Route::Child
         {
             return self.handle_terminal_key(id, key);
         }

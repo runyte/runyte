@@ -4064,8 +4064,6 @@ enum ListAction {
     Workspace(usize),
 }
 
-pub(crate) use crate::keymap::is_terminal_normal_key;
-
 /// Whether a command has no meaning over a live terminal.
 ///
 /// Refusing by category rather than by name so a command added later is

@@ -157,8 +157,29 @@ Editor scope names are `markdown`, `directory`, `directory-tree`, `settings`,
 `git-merge-detail`, `git-merge-input`, `git-worktrees`, `git-comparison`,
 `git-revision-diff`, `git-log`, `git-network`, `git-blame`, and `git-stash`.
 Ordinary editor scopes support `normal`, `select`, `insert`, and `replace`.
-The merge review scopes currently dispatch `normal` only. Terminal Insert and
-Replace configuration awaits migration of the terminal input gate.
+The merge review scopes currently dispatch `normal` only. Terminal `replace`
+is unavailable. Terminal `insert` admits terminal-safe mode, pane, clipboard,
+and persistent-session actions. For example:
+
+```yaml
+keys:
+  scopes:
+    terminal:
+      insert:
+        F6: enter-normal-mode
+        Ctrl-4: null
+        'Ctrl-\': null
+        'F7 h': focus-window-left
+```
+
+Ordinary keys still reach the child. An assigned action claims its first key
+and any following sequence; an explicit persistent-session action also claims
+its key outside a persistent session and reports when unavailable. A `null`
+removes only the exact binding and its legacy capture policy. Longer surviving
+bindings still claim their prefix. Removing `Ctrl-w` alone therefore does not
+remove the window namespace. Unmodified Escape still reaches the child unless
+explicitly assigned. Global custom text-editing bindings remain excluded from
+Terminal Insert.
 
 Use `global.list` for ordinary result-list bindings and `session-manager.list`
 for overrides in the session manager. List bindings contain one key. List

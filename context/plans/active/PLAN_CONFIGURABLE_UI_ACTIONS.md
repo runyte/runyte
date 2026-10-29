@@ -182,3 +182,13 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   desktop Clippy/tests passed. One unrelated temporary file-lock fixture failed
   during the initial parallel root run, passed isolated, and the full suite
   passed with four test threads; production lock behavior was not changed.
+- Terminal Insert now shares a cached first-key routing decision with help.
+  Scoped assignments admit terminal-safe factory actions and claim their keys;
+  default persistent navigation remains conditional, while an explicit scoped
+  session action reports unavailable outside persistent mode. Exact nulls also
+  suppress legacy capture-only policies without removing surviving prefixes.
+  Terminal Replace remains unavailable. Astra approved the source after tests
+  excluded ordinary Ctrl-j text editing from the factory admission inventory.
+  Regression coverage compares all default modifier combinations, actual child
+  input forwarding, remapped mode changes, prefix cancellation/execution,
+  standalone unavailable actions, plugin rebuilds and effective help rows.
