@@ -1101,7 +1101,11 @@ impl RunyteGrammar {
             });
         }
 
-        if key.code == KeyCode::Escape && !self.pending.is_empty() {
+        let prefix_action = context
+            .keymap
+            .ui()
+            .lookup(crate::keymap::ui::Owner::GrammarPrefix, key);
+        if prefix_action == Some(crate::keymap::ui::Action::Cancel) && !self.pending.is_empty() {
             self.pending.clear();
             self.count = None;
             self.count_keys.clear();
@@ -1109,7 +1113,7 @@ impl RunyteGrammar {
                 GrammarNotice::SequenceCancelled,
             )));
         }
-        if key.code == KeyCode::Backspace && !self.pending.is_empty() {
+        if prefix_action == Some(crate::keymap::ui::Action::Back) && !self.pending.is_empty() {
             self.pending.pop();
             return Ok(GrammarOutput::one(EditorIntent::Notice(
                 if self.pending.is_empty() {

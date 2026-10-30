@@ -7,7 +7,6 @@ use crate::{
     config::{Color as RunyteColor, Theme, ThemeAppearance},
     diff::Change,
     git::{CountKind, DiffLine, LineChange},
-    input::KeyCode,
     key_hints::{KeyHintRow, KeyHintState, key_hint_description, key_hint_keys, key_hint_layout},
     layout::Rect,
     snapshot::{
@@ -5286,12 +5285,9 @@ fn draw_key_hints(
         layout.height,
     );
     let range = if rows.len() > visible.len() {
-        let arrows_are_free =
-            key_hints.scrolls_with_arrow_in(KeyCode::Up, mode, scope, app.keymap())
-                && key_hints.scrolls_with_arrow_in(KeyCode::Down, mode, scope, app.keymap());
-        let arrows = if arrows_are_free { " ↑/↓" } else { "" };
+        let scroll_keys = key_hints.scroll_key_label(mode, scope, app.keymap());
         format!(
-            " {}-{}/{} Ctrl-n/p{arrows}",
+            " {}-{}/{} {scroll_keys}",
             layout.offset + 1,
             layout.offset + visible.len(),
             rows.len()

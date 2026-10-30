@@ -1373,22 +1373,8 @@ impl WorkspaceHost {
                     }
                 })
                 .collect::<Vec<_>>();
-            let arrows_are_free = key_hints.scrolls_with_arrow_in(
-                crate::input::KeyCode::Up,
-                mode,
-                self.app.key_binding_scope(),
-                self.app.keymap(),
-            ) && key_hints.scrolls_with_arrow_in(
-                crate::input::KeyCode::Down,
-                mode,
-                self.app.key_binding_scope(),
-                self.app.keymap(),
-            );
-            let scroll_keys = if arrows_are_free {
-                "Ctrl-n/p ↑/↓"
-            } else {
-                "Ctrl-n/p"
-            };
+            let scroll_keys =
+                key_hints.scroll_key_label(mode, self.app.key_binding_scope(), self.app.keymap());
             let sequence = if key_hints.is_pending() {
                 format!("{} …", key_hints.display_pending())
             } else {
@@ -1402,7 +1388,10 @@ impl WorkspaceHost {
                 legend: Vec::new(),
                 actions: vec![
                     crate::snapshot::OverlayAction::new(scroll_keys, "scroll"),
-                    crate::snapshot::OverlayAction::new("Esc", "dismiss"),
+                    crate::snapshot::OverlayAction::new(
+                        key_hints.cancel_key_label(mode, self.app.keymap()),
+                        "dismiss",
+                    ),
                 ],
                 title: format!("Keys: {sequence}"),
                 query: String::new(),

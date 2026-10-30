@@ -394,3 +394,17 @@ constraints were reviewed with Astra before implementation.
   for the first of two operands; the expanded matrix now covers both phases,
   counted finds and macro-register operands in Normal/Select. All 32 grammar
   tests passed, followed by the expanded matrix, root Clippy and guide checks.
+- Modal prefix cancellation/backtracking and hint scrolling now use shared UI
+  actions. Factory arrow hints yield to registered continuations; authored aliases
+  own pending hint input. Counts, exact raw Ctrl-n/p modifiers and Insert/Replace
+  fallback behavior are preserved. Effective policy participates in global/scoped
+  compilation and runtime plugin admission. Null removals apply before the final
+  policy check; a conflicting policy group triggers one bounded source retry
+  under defaults, revalidating dependent edits while retaining other UI owners.
+  Astra identified root-prefix hint cancellation, conditional-arrow masking and
+  merge-scope reservation gaps; all are fixed and covered. Both hint renderers
+  use effective scroll labels, and host snapshots use effective cancellation.
+  Astra's final source review is clear. The complete root suite passed (4,201
+  active library tests, 16 ignored, plus all integration/doc suites); nine new
+  policy tests cover modifiers, counts, releases, plugins, root controls, scoped
+  nulls, rollback, merge isolation and arrow precedence. Guide validation passed.

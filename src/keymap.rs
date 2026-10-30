@@ -788,7 +788,11 @@ impl Keymap {
                             && key.modifiers.is_empty()
                             && matches!(key.code, KeyCode::Char('1'..='9')))
                             && !(index > 0
-                                && matches!(key.code, KeyCode::Escape | KeyCode::Backspace))
+                                && binding
+                                    .modes
+                                    .iter()
+                                    .any(|mode| matches!(mode, Mode::Normal | Mode::Select))
+                                && self.ui().lookup(ui::Owner::GrammarPrefix, *key).is_some())
                     }),
                 "plugin binding {} uses a grammar-reserved count or cancellation key",
                 binding.sequence
@@ -799,11 +803,12 @@ impl Keymap {
             .bindings
             .retain(|b| !matches!(b.target, BindingTarget::Plugin(_)));
         candidate.bindings.extend(bindings);
-        let violations = validate::with_overrides(
+        let violations = validate::with_input_policy(
             &candidate.bindings,
             &candidate.namespaces,
             &candidate.context_actions,
             &candidate.overrides,
+            Some(candidate.ui()),
         );
         anyhow::ensure!(
             violations.is_empty(),

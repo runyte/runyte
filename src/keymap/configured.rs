@@ -83,6 +83,11 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
             errors,
         };
     };
+    // These owners do not inherit the leader. Their ownership policy can be
+    // checked before namespace resolution; all UI diagnostics are reported once
+    // after the final leader is known.
+    let input_policy = super::ui::compile(section.get("ui"), built_in.leader(), &mut Vec::new());
+    let defer_policy = input_policy.input_policy_configured();
     // Reported only if the defaults do stay out: a rejected `defaults: false`
     // compiles again with these rebinds applied.
     let ignored_rebinds = if parsed.standalone {
@@ -147,10 +152,12 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
                 errors,
             };
         }
-        let mut violations = validate::validate(
+        let mut violations = validate::with_input_policy(
             &candidate.bindings,
             &candidate.namespaces,
             built_in.all_context_actions(),
+            &super::effective::Overrides::default(),
+            (!defer_policy).then_some(&input_policy),
         );
         // A namespace whose defaults are gone may still be continued by
         // `bind`, which prunes it afterwards; until then it is not a conflict.
@@ -258,12 +265,13 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
         Some(complete) => complete.spelling.clone(),
         None => resolution.spelling,
     };
-    let keymap = Keymap::with_namespaces(resolution.bindings, resolution.namespaces)
+    let mut keymap = Keymap::with_namespaces(resolution.bindings, resolution.namespaces)
         .expect("the configured-keymap validator rejected every duplicate")
         .with_context_actions(built_in.all_context_actions().to_vec())
         .with_fast_pane_keys_enabled(built_in.fast_pane_keys())
         .with_spelling_metadata(resolution.leader, resolution.window, spelling);
-    let keymap = super::actions::apply(section.get("bind"), keymap, &mut errors);
+    keymap.ui = super::ui::compile(section.get("ui"), keymap.leader(), &mut errors);
+    let keymap = super::actions::apply(section.get("bind"), keymap, &mut errors, defer_policy);
     if parsed.standalone
         && let Some(missing) = super::actions::missing_way_out(&keymap)
     {
@@ -288,12 +296,42 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
     }
     errors.extend(ignored_rebinds);
     let mut keymap = match complete {
-        Some(complete) => super::actions::name_scoped_prefixes(keymap, &complete.namespaces),
+        Some(complete) => {
+            super::actions::name_scoped_prefixes(keymap, &complete.namespaces, defer_policy)
+        }
         None => keymap,
     };
     keymap.pane_gestures = super::pointer::compile(section.get("pointer"), &mut errors);
-    keymap.ui = super::ui::compile(section.get("ui"), keymap.leader(), &mut errors);
-    keymap = super::scopes::apply(section.get("scopes"), keymap, &mut errors);
+    keymap = super::scopes::apply(section.get("scopes"), keymap, &mut errors, defer_policy);
+    if defer_policy {
+        let conflict = keymap.ui().input_policy_conflict().or_else(|| {
+            validate::with_input_policy(
+                &keymap.bindings,
+                &keymap.namespaces,
+                &keymap.context_actions,
+                &keymap.overrides,
+                Some(keymap.ui()),
+            )
+            .first()
+            .map(|violation| violation.message.clone())
+        });
+        if let Some(conflict) = conflict {
+            // One bounded retry under the factory policy. Recompile from the
+            // source so edits depending on released keys are validated again;
+            // unrelated UI owners and binding edits retain their usual rollback.
+            let mut retry = section.clone();
+            if let Some(ui) = retry.get_mut("ui").and_then(Value::as_mapping_mut) {
+                ui.remove("grammar-prefix");
+                ui.remove("key-hints");
+            }
+            let mut compiled = compile(&retry, built_in);
+            compiled.errors.insert(
+                0,
+                format!("ui.grammar-prefix/ui.key-hints rejected; defaults restored: {conflict}"),
+            );
+            return compiled;
+        }
+    }
     CompiledKeymap {
         keymap: Arc::new(keymap),
         errors,

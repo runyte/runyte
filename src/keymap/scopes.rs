@@ -48,11 +48,16 @@ impl BindingScope {
     }
 }
 
-pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<String>) -> Keymap {
+pub(super) fn apply(
+    section: Option<&Value>,
+    base: Keymap,
+    errors: &mut Vec<String>,
+    defer_policy: bool,
+) -> Keymap {
     let Some(section) = section else {
         return base;
     };
-    match compile(section, &base) {
+    match compile(section, &base, defer_policy) {
         Ok(candidate) => candidate,
         Err(reason) => {
             errors.push(format!(
@@ -63,7 +68,7 @@ pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<Stri
     }
 }
 
-fn compile(section: &Value, base: &Keymap) -> Result<Keymap, String> {
+fn compile(section: &Value, base: &Keymap, defer_policy: bool) -> Result<Keymap, String> {
     let scopes = section.as_mapping().ok_or("expected scope mappings")?;
     if scopes.len() > BindingScope::ALL.len() {
         return Err("too many scopes".into());
@@ -156,7 +161,14 @@ fn compile(section: &Value, base: &Keymap) -> Result<Keymap, String> {
                                 .lookup(super::ui::Owner::MergePrefix, *key)
                                 .is_some()
                         } else {
-                            matches!(key.code, KeyCode::Escape | KeyCode::Backspace)
+                            !value.is_null()
+                                && if matches!(mode, Mode::Normal | Mode::Select) {
+                                    base.ui()
+                                        .lookup(super::ui::Owner::GrammarPrefix, *key)
+                                        .is_some()
+                                } else {
+                                    matches!(key.code, KeyCode::Escape | KeyCode::Backspace)
+                                }
                         }
                     })
                 {
@@ -277,11 +289,12 @@ fn compile(section: &Value, base: &Keymap) -> Result<Keymap, String> {
         })
         .collect();
     candidate.bindings.extend(assignments);
-    let violations = validate::with_overrides(
+    let violations = validate::with_input_policy(
         &candidate.bindings,
         &candidate.namespaces,
         &candidate.context_actions,
         &candidate.overrides,
+        (!defer_policy).then_some(candidate.ui()),
     );
     if let Some(violation) = violations.first() {
         return Err(violation.message.clone());

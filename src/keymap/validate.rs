@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::command::Mode;
-use crate::input::{KeyCode, Modifiers};
+use crate::input::KeyCode;
 
 use super::{Binding, BindingNamespace, BindingScope, ContextAction, KeySequence};
 
@@ -59,6 +59,24 @@ pub(super) fn with_overrides(
     actions: &[ContextAction],
     overrides: &super::effective::Overrides,
 ) -> Vec<Violation> {
+    with_input_policy(
+        bindings,
+        namespaces,
+        actions,
+        overrides,
+        Some(&super::ui::Bindings::default()),
+    )
+}
+
+/// A missing policy defers only dynamic ownership checks until all candidate
+/// removals have applied. Structural counts and registry collisions still apply.
+pub(super) fn with_input_policy(
+    bindings: &[Binding],
+    namespaces: &[BindingNamespace],
+    actions: &[ContextAction],
+    overrides: &super::effective::Overrides,
+    policy: Option<&super::ui::Bindings>,
+) -> Vec<Violation> {
     let mut violations = Vec::new();
     let mut views: HashMap<(Mode, BindingScope), Vec<&Binding>> = HashMap::new();
     let mut scopes = BindingScope::ALL.to_vec();
@@ -98,7 +116,10 @@ pub(super) fn with_overrides(
                         .iter()
                         .enumerate()
                         .any(|(index, key)| {
-                            (index > 0 && matches!(key.code, KeyCode::Escape | KeyCode::Backspace))
+                            (index > 0
+                                && policy.is_some_and(|ui| {
+                                    ui.lookup(super::ui::Owner::GrammarPrefix, *key).is_some()
+                                }))
                                 || (index == 0
                                     && scope != BindingScope::DirectoryTree
                                     && key.modifiers.is_empty()
@@ -115,9 +136,9 @@ pub(super) fn with_overrides(
                                 && binding.sequence.starts_with(&namespace.sequence)
                         }));
                 let hint_reservation = observes_hints
+                    && !scope.is_merge_review()
                     && binding.sequence.as_slice().iter().skip(1).any(|key| {
-                        key.modifiers == Modifiers::CONTROL
-                            && matches!(key.code, KeyCode::Char('n' | 'p'))
+                        policy.is_some_and(|ui| ui.unconditional_hint_action(*key).is_some())
                     });
                 if modal_reservation || hint_reservation {
                     violations.push(Violation {
@@ -299,11 +320,12 @@ pub(super) fn with_overrides(
 }
 
 pub fn assert_valid(keymap: &super::Keymap) {
-    let violations = with_overrides(
+    let violations = with_input_policy(
         keymap.bindings(),
         keymap.namespaces(),
         keymap.all_context_actions(),
         &keymap.overrides,
+        Some(keymap.ui()),
     );
     assert!(
         violations.is_empty(),

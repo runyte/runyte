@@ -1168,3 +1168,22 @@ cannot be assigned to cancellation. Named keys and function keys are available.
 Other non-character keys retain their existing “expected a character” result;
 removing cancellation does not make them valid operands. The owner adds no
 leader alias.
+
+`ui.grammar-prefix` supports `cancel` (Escape) and `back` (Backspace) while a
+Normal/Select key sequence is pending. Cancellation clears its count; backtracking
+keeps it. Both default keys accept all modifiers. The same key can still start a
+sequence when nothing is pending. Insert/Replace retain their existing prefix
+fallback behavior. Character operands use their separate owner above.
+
+`ui.key-hints` supports `next` and `previous`, defaulting to exact Ctrl-n/Ctrl-p
+and plain Down/Up. Default arrows yield to registered continuations; explicitly
+configured arrows own pending hint input. Window-prefix hints in Insert/Replace
+also support configured scrolling. Both frontends show effective scroll keys.
+
+Prefix controls and hint scrolling are validated together against the final
+binding map. Null removals can release conflicting bindings; released control
+keys can then appear inside configured sequences. If the final map still has a
+collision, both of these UI owners return to defaults and binding edits are
+compiled again against that policy. Other UI owners keep their configuration.
+A key cannot belong to both prefix control and hint scrolling. Merge reviews
+retain their separate scoped controls and do not pass through hint scrolling.
