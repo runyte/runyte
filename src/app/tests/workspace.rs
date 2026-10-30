@@ -206,7 +206,7 @@ fn worktree_removal_names_its_session_and_takes_it_down_before_the_directory() {
         .git_worktree_removal
         .as_ref()
         .expect("a clean session should be offered rather than refused");
-    let message = confirmation.message();
+    let message = confirmation.message("Enter", "Escape");
     assert!(
         message.contains("This also stops and forgets session 5 (runyte-feature)."),
         "{message}"
@@ -3273,7 +3273,7 @@ fn worktree_control_path_is_one_safe_row_and_confirmation_with_typed_identity() 
     context_action(&mut app, 'D');
     let confirmation = app.git_worktree_removal.as_ref().unwrap();
     assert_eq!(confirmation.plan.path, linked);
-    let question = confirmation.message();
+    let question = confirmation.message("Enter", "Escape");
     assert!(
         question
             .chars()

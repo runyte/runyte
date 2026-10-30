@@ -282,3 +282,13 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   remap/removal, stale disk/repository captures, actual discard/rebase effects,
   dynamic hints and stacked owner behavior. Text and filesystem confirmations
   remain separate pending checkpoints.
+- Exact-text branch/worktree confirmations now share configurable acceptance,
+  cancellation and grapheme editing actions. Raw literal text, wildcard named-key
+  defaults, revision invalidation on ineffective editing intent, conditional
+  leader cancellation and required Typed-versus-Enter authorization remain
+  unchanged. Dynamic body/status/footer hints include typed forms. Astra found
+  no production blocker; the extracted terminal fixture retains its original
+  Unix-only boundary. All 45 focused confirmation tests and root Clippy passed;
+  formatting and guide validation passed. New regressions exercise grapheme
+  edits in all three forms, exact-name refusal, remapped checkout and captured
+  branch/worktree mutation requests with both authorization requirements.

@@ -287,6 +287,15 @@ suppresses it). Replacing `cancel` also replaces inherited leader cancellation.
 A remapped acceptance still revalidates the captured file, repository, or other
 target, and requires the current presented frame wherever that check applies.
 
+The `text-confirmation` owner handles branch switching/deletion and worktree
+removal. It supports `accept`, `cancel`, `backspace`, `delete`, `move-left`,
+`move-right`, `move-start`, and `move-end`. Editing defaults are Backspace,
+Delete, Left, Right, Home, and End; prompt-style Ctrl-h/Ctrl-a aliases are not
+inherited. Text and pasted names remain structural input. Remapping acceptance
+does not bypass an exact-name requirement or change the authorization required
+by the captured operation. Untyped branch/worktree decisions use the same owner,
+but their editing actions remain inactive.
+
 The `session-directory` and `session-inventory` owners handle direct session
 navigation independently of `global.list`. They support `next`, `previous`,
 `page-up`, `page-down`, `first`, `last`, `accept`, `cancel`, and `backspace`.

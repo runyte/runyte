@@ -1983,16 +1983,16 @@ impl App {
             return self.handle_git_stash_confirmation(key);
         }
         if self.git_branch_switch.is_some() {
-            return self.handle_branch_switch_confirmation(legacy_key);
+            return self.handle_branch_switch_confirmation(key);
         }
         if self.git_branch_deletion.is_some() {
-            return self.handle_branch_deletion_confirmation(legacy_key);
+            return self.handle_branch_deletion_confirmation(key);
         }
         if self.git_pull_rebase.is_some() {
             return self.handle_pull_rebase_confirmation(key);
         }
         if self.git_worktree_removal.is_some() {
-            return self.handle_worktree_removal_confirmation(legacy_key);
+            return self.handle_worktree_removal_confirmation(key);
         }
         if self.buffer_discard_confirmation.is_some() {
             return self.handle_buffer_discard_confirmation(key);
@@ -3278,7 +3278,7 @@ impl App {
         self.normalize_buffer(buffer_id);
     }
 
-    pub(super) fn simple_confirmation_ui_owner(&self) -> Option<crate::keymap::ui::Owner> {
+    pub(super) fn confirmation_ui_owner(&self) -> Option<crate::keymap::ui::Owner> {
         use crate::keymap::ui::Owner;
         if self.context_overlay_active()
             || self.plugins.input.is_some()
@@ -3303,24 +3303,21 @@ impl App {
             return Some(Owner::StashConfirmation);
         }
         if self.git_branch_switch.is_some() || self.git_branch_deletion.is_some() {
-            return None;
+            return Some(Owner::TextConfirmation);
         }
         if self.git_pull_rebase.is_some() {
             return Some(Owner::Confirmation);
         }
         if self.git_worktree_removal.is_some() {
-            return None;
+            return Some(Owner::TextConfirmation);
         }
         self.buffer_discard_confirmation
             .map(|_| Owner::Confirmation)
     }
 
-    pub(super) fn simple_confirmation_action(
-        &self,
-        key: KeyStroke,
-    ) -> Option<crate::keymap::ui::Action> {
+    pub(super) fn confirmation_action(&self, key: KeyStroke) -> Option<crate::keymap::ui::Action> {
         self.keymap.ui().lookup_with_leader(
-            self.simple_confirmation_ui_owner()?,
+            self.confirmation_ui_owner()?,
             key,
             self.space_dismisses_input_overlay(),
         )
@@ -3388,7 +3385,7 @@ impl App {
     }
 
     fn handle_directory_reload_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match self.simple_confirmation_action(key) {
+        match self.confirmation_action(key) {
             Some(crate::keymap::ui::Action::Cancel) => {
                 self.directory_reload_confirmation = None;
                 self.status("directory refresh cancelled");
@@ -3417,7 +3414,7 @@ impl App {
     }
 
     fn handle_git_discard_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match self.simple_confirmation_action(key) {
+        match self.confirmation_action(key) {
             Some(crate::keymap::ui::Action::Cancel) => {
                 self.git_discard_confirmation = None;
                 self.status("discard cancelled; nothing was changed");
@@ -3434,16 +3431,13 @@ impl App {
     }
 
     fn handle_branch_deletion_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        let action = self.confirmation_action(key);
+        match action {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 self.git_branch_deletion = None;
                 self.status("delete cancelled; the branch is still there");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.git_branch_deletion = None;
-                self.status("delete cancelled; the branch is still there");
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let valid = self
                     .git_branch_deletion
                     .as_ref()
@@ -3473,7 +3467,12 @@ impl App {
                 if let Some(confirmation) = self.git_branch_deletion.as_mut()
                     && confirmation.typed()
                 {
-                    edit_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, key);
+                    edit_confirmation_text(
+                        &mut confirmation.input,
+                        &mut confirmation.cursor,
+                        action,
+                        key,
+                    );
                     self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
                 }
             }
@@ -3482,18 +3481,14 @@ impl App {
     }
 
     fn handle_branch_switch_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        let action = self.confirmation_action(key);
+        match action {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 if let Some(confirmation) = self.git_branch_switch.take() {
                     self.status(confirmation.action.cancelled_message());
                 }
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                if let Some(confirmation) = self.git_branch_switch.take() {
-                    self.status(confirmation.action.cancelled_message());
-                }
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let valid = self
                     .git_branch_switch
                     .as_ref()
@@ -3509,7 +3504,12 @@ impl App {
             }
             _ => {
                 if let Some(confirmation) = self.git_branch_switch.as_mut() {
-                    edit_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, key);
+                    edit_confirmation_text(
+                        &mut confirmation.input,
+                        &mut confirmation.cursor,
+                        action,
+                        key,
+                    );
                     self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
                 }
             }
@@ -3518,7 +3518,7 @@ impl App {
     }
 
     fn handle_pull_rebase_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        let cancelled = match self.simple_confirmation_action(key) {
+        let cancelled = match self.confirmation_action(key) {
             Some(crate::keymap::ui::Action::Cancel) => true,
             Some(crate::keymap::ui::Action::Accept) => {
                 if self.git_pull_rebase.take().is_some() {
@@ -3540,8 +3540,9 @@ impl App {
     }
 
     fn handle_worktree_removal_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        let action = self.confirmation_action(key);
+        match action {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 let Some(confirmation) = self.git_worktree_removal.take() else {
                     return Ok(());
                 };
@@ -3550,16 +3551,7 @@ impl App {
                     crate::git::display_path(&confirmation.plan.path)
                 ));
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                let Some(confirmation) = self.git_worktree_removal.take() else {
-                    return Ok(());
-                };
-                self.status(format!(
-                    "remove cancelled; worktree {} was kept and no branch was deleted",
-                    crate::git::display_path(&confirmation.plan.path)
-                ));
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let valid = self
                     .git_worktree_removal
                     .as_ref()
@@ -3593,7 +3585,12 @@ impl App {
                 if let Some(confirmation) = self.git_worktree_removal.as_mut()
                     && confirmation.typed()
                 {
-                    edit_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, key);
+                    edit_confirmation_text(
+                        &mut confirmation.input,
+                        &mut confirmation.cursor,
+                        action,
+                        key,
+                    );
                     self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
                 }
             }
@@ -3602,7 +3599,7 @@ impl App {
     }
 
     fn handle_buffer_discard_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match self.simple_confirmation_action(key) {
+        match self.confirmation_action(key) {
             Some(crate::keymap::ui::Action::Cancel) => {
                 self.buffer_discard_confirmation = None;
                 self.status("discard cancelled");
@@ -3619,7 +3616,7 @@ impl App {
     }
 
     fn handle_file_reload_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match self.simple_confirmation_action(key) {
+        match self.confirmation_action(key) {
             Some(crate::keymap::ui::Action::Cancel) => {
                 self.file_reload_confirmation = None;
                 self.status("reload cancelled");
@@ -6984,31 +6981,39 @@ fn edits_picker_query(key: KeyStroke, action: Option<crate::keymap::ui::Action>)
             .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER))
 }
 
-fn edit_confirmation_text(input: &mut String, cursor: &mut usize, key: KeyStroke) {
+fn edit_confirmation_text(
+    input: &mut String,
+    cursor: &mut usize,
+    action: Option<crate::keymap::ui::Action>,
+    key: KeyStroke,
+) {
+    use crate::keymap::ui::Action;
     let mut characters = input.chars().collect::<Vec<_>>();
     *cursor = (*cursor).min(characters.len());
-    match (key.code, key.modifiers) {
-        (KeyCode::Char(character), modifiers)
-            if !modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT) =>
+    match (action, key.code) {
+        (None, KeyCode::Char(character))
+            if !key
+                .modifiers
+                .intersects(Modifiers::CONTROL | Modifiers::ALT) =>
         {
             characters.insert(*cursor, character);
             *cursor += 1;
         }
-        (KeyCode::Backspace, _) if *cursor > 0 => {
+        (Some(Action::Backspace), _) if *cursor > 0 => {
             let start = crate::grapheme::str_previous(input, *cursor);
             characters.drain(start..*cursor);
             *cursor = start;
         }
-        (KeyCode::Delete, _) if *cursor < characters.len() => {
+        (Some(Action::Delete), _) if *cursor < characters.len() => {
             let end = crate::grapheme::str_next(input, *cursor);
             characters.drain(*cursor..end);
         }
-        (KeyCode::Left, _) => *cursor = crate::grapheme::str_previous(input, *cursor),
-        (KeyCode::Right, _) => {
+        (Some(Action::MoveLeft), _) => *cursor = crate::grapheme::str_previous(input, *cursor),
+        (Some(Action::MoveRight), _) => {
             *cursor = crate::grapheme::str_next(input, *cursor).min(characters.len());
         }
-        (KeyCode::Home, _) => *cursor = 0,
-        (KeyCode::End, _) => *cursor = characters.len(),
+        (Some(Action::MoveStart), _) => *cursor = 0,
+        (Some(Action::MoveEnd), _) => *cursor = characters.len(),
         _ => return,
     }
     *input = characters.into_iter().collect();

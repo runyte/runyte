@@ -316,7 +316,7 @@ fn configured_confirmation_covers_armed_terminal_in_rendering_and_dispatch() {
     assert!(
         !app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
     );
-    app.status_simple_confirmation();
+    app.status_confirmation();
     assert!(app.status.contains("Discard changes"));
     key(&mut app, KeyCode::Function(8), Modifiers::NONE);
     assert!(app.buffers[buffer].to_string().is_empty());
@@ -330,4 +330,223 @@ fn configured_confirmation_covers_armed_terminal_in_rendering_and_dispatch() {
     assert_eq!(snapshot.title, "Force kill terminal");
     assert_eq!(snapshot.actions[0].key_hint, "Enter");
     fs::remove_dir_all(root).unwrap();
+}
+
+pub(super) fn configure_text(app: &mut App) {
+    let source = serde_yaml::from_str("ui: {text-confirmation: {accept: [F8], cancel: [F10], move-start: [F1], move-end: [F2], move-left: [F3], move-right: [F4], delete: [F6], backspace: [F7]}}").unwrap();
+    let compiled = crate::keymap::configured::compile(&source, &app.keymap);
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.keymap = compiled.keymap;
+}
+
+#[test]
+fn configured_text_confirmation_preserves_graphemes_revision_and_exact_authorization() {
+    for form in 0..3 {
+        let mut app = App::new(Config::default(), None).unwrap();
+        configure_text(&mut app);
+        match form {
+            0 => {
+                app.git_branch_switch = Some(BranchSwitchConfirmation {
+                    repository: Repository::new("/example"),
+                    action: BranchSwitch::Checkout {
+                        branch: "expected".into(),
+                    },
+                    input: String::new(),
+                    cursor: 0,
+                })
+            }
+            1 => {
+                app.git_branch_deletion = Some(BranchDeletionConfirmation {
+                    plan: BranchDeletionPlan {
+                        branch: "expected".into(),
+                        tip: "a".repeat(40),
+                        upstream: None,
+                        retaining_branches: vec![],
+                        required_authorization: DeletionAuthorization::Typed,
+                    },
+                    cascade: None,
+                    input: String::new(),
+                    cursor: 0,
+                })
+            }
+            _ => {
+                app.git_worktree_removal = Some(WorktreeRemovalConfirmation {
+                    plan: WorktreeRemovalPlan {
+                        path: PathBuf::from("/example/linked"),
+                        head: Some("a".repeat(40)),
+                        branch: Some("expected".into()),
+                        upstream: None,
+                        detached_retained: false,
+                        required_authorization: DeletionAuthorization::Typed,
+                    },
+                    session: None,
+                    #[cfg(windows)]
+                    reviewed_live: None,
+                    input: String::new(),
+                    cursor: 0,
+                })
+            }
+        }
+        let state = |app: &App| {
+            if let Some(c) = &app.git_branch_switch {
+                (c.input.clone(), c.cursor)
+            } else if let Some(c) = &app.git_branch_deletion {
+                (c.input.clone(), c.cursor)
+            } else {
+                let c = app.git_worktree_removal.as_ref().unwrap();
+                (c.input.clone(), c.cursor)
+            }
+        };
+        app.handle_input(InputEvent::Text("a👩‍💻e\u{301}".into()))
+            .unwrap();
+        let revision = app.confirmation_revision;
+        key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+        assert_eq!(state(&app).0, "a👩‍💻e\u{301}");
+        assert_eq!(
+            app.confirmation_revision,
+            revision.wrapping_add(1),
+            "even unmatched editing intent invalidates an older frame"
+        );
+        key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+        assert_eq!(state(&app), ("a👩‍💻".into(), 4));
+        key(&mut app, KeyCode::Function(3), Modifiers::NONE);
+        assert_eq!(state(&app).1, 1);
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert_eq!(state(&app), ("a".into(), 1));
+        key(&mut app, KeyCode::Function(1), Modifiers::NONE);
+        key(&mut app, KeyCode::Char('λ'), Modifiers::SUPER);
+        press(&mut app, ' ');
+        assert_eq!(
+            state(&app),
+            ("λ a".into(), 2),
+            "literal input and spaces keep their structural meaning"
+        );
+        let accept = InputEvent::Key(KeyStroke::plain(KeyCode::Function(8)));
+        assert!(app.input_requires_presented_approval(&accept));
+        assert!(
+            !app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(
+                KeyCode::Enter
+            )))
+        );
+        app.handle_input(accept).unwrap();
+        assert!(app.status.contains("exact branch name"));
+        assert_eq!(state(&app).0, "λ a");
+        let snapshot = app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|s| s.kind == crate::snapshot::OverlayKind::Confirmation)
+            .unwrap();
+        assert_eq!(snapshot.actions[0].key_hint, "F8");
+        assert_eq!(snapshot.actions[0].label, "confirm exact text");
+        assert!(snapshot.message.unwrap().contains("F10 keeps"));
+        key(&mut app, KeyCode::Function(10), Modifiers::NONE);
+        assert!(
+            app.git_branch_switch.is_none()
+                && app.git_branch_deletion.is_none()
+                && app.git_worktree_removal.is_none()
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn configured_text_confirmation_accept_keeps_deletion_authorization_and_captured_plan() {
+    use crate::git::{GitOperation, GitServiceHandle};
+    for worktree in [false, true] {
+        for authorization in [DeletionAuthorization::Enter, DeletionAuthorization::Typed] {
+            let root = temporary("configured-typed-authorization");
+            fs::create_dir_all(&root).unwrap();
+            let repository = Repository::new(&root);
+            let mut app = App::new_in_isolated_project(
+                &root,
+                HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                    String::new(),
+                ))))),
+            )
+            .unwrap();
+            let (service, operations) = GitServiceHandle::recording_for_test();
+            app.attach_git_service(service);
+            let _ = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+            app.git.attach(Some(repository.clone()));
+            configure(&mut app, "text-confirmation", "Esc");
+            let branch = "captured-branch".to_owned();
+            if worktree {
+                app.git_worktree_removal = Some(WorktreeRemovalConfirmation {
+                    plan: WorktreeRemovalPlan {
+                        path: root.join("linked"),
+                        head: Some("a".repeat(40)),
+                        branch: Some(branch.clone()),
+                        upstream: None,
+                        detached_retained: false,
+                        required_authorization: authorization,
+                    },
+                    session: None,
+                    input: String::new(),
+                    cursor: 0,
+                });
+            } else {
+                app.git_branch_deletion = Some(BranchDeletionConfirmation {
+                    plan: BranchDeletionPlan {
+                        branch: branch.clone(),
+                        tip: "a".repeat(40),
+                        upstream: None,
+                        retaining_branches: vec!["main".into()],
+                        required_authorization: authorization,
+                    },
+                    cascade: None,
+                    input: String::new(),
+                    cursor: 0,
+                });
+            }
+            if authorization == DeletionAuthorization::Typed {
+                key(&mut app, KeyCode::Escape, Modifiers::NONE);
+                assert!(
+                    operations.try_recv().is_err(),
+                    "new acceptance still requires exact text"
+                );
+                app.handle_input(InputEvent::Text(branch.clone())).unwrap();
+            }
+            assert!(
+                app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(
+                    KeyCode::Escape
+                )))
+            );
+            key(&mut app, KeyCode::Enter, Modifiers::NONE);
+            assert!(operations.try_recv().is_err());
+            key(&mut app, KeyCode::Escape, Modifiers::NONE);
+            let operation = operations.recv_timeout(Duration::from_secs(1)).unwrap();
+            match operation {
+                GitOperation::Mutate {
+                    repository: target,
+                    mutation:
+                        GitMutation::DeleteBranch {
+                            plan,
+                            authorization: granted,
+                        },
+                    ..
+                } if !worktree => {
+                    assert_eq!(target, repository);
+                    assert_eq!(plan.branch, branch);
+                    assert_eq!(plan.tip, "a".repeat(40));
+                    assert_eq!(granted, authorization);
+                }
+                GitOperation::Mutate {
+                    repository: target,
+                    mutation:
+                        GitMutation::RemoveWorktree {
+                            plan,
+                            authorization: granted,
+                        },
+                    ..
+                } if worktree => {
+                    assert_eq!(target, repository);
+                    assert_eq!(plan.path, root.join("linked"));
+                    assert_eq!(plan.branch, Some(branch));
+                    assert_eq!(granted, authorization);
+                }
+                other => panic!("unexpected operation: {other:?}"),
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
 }

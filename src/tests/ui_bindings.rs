@@ -832,3 +832,49 @@ fn simple_confirmation_defaults_preserve_every_modifier_and_stash_ctrl_c_excepti
         assert!(owner.structural(KeyStroke::char('\n')));
     }
 }
+
+#[test]
+fn text_confirmation_defaults_keep_wildcard_named_keys_and_no_prompt_aliases() {
+    let bindings = Bindings::default();
+    let owner = Owner::TextConfirmation;
+    for bits in 0..64 {
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        for (code, action) in [
+            (KeyCode::Enter, Action::Accept),
+            (KeyCode::Escape, Action::Cancel),
+            (KeyCode::Backspace, Action::Backspace),
+            (KeyCode::Delete, Action::Delete),
+            (KeyCode::Left, Action::MoveLeft),
+            (KeyCode::Right, Action::MoveRight),
+            (KeyCode::Home, Action::MoveStart),
+            (KeyCode::End, Action::MoveEnd),
+        ] {
+            assert_eq!(
+                bindings.lookup(owner, KeyStroke::new(code, modifiers)),
+                Some(action)
+            );
+        }
+    }
+    for character in ['h', 'd', 'a', 'e', 'b', 'f'] {
+        assert_eq!(bindings.lookup(owner, KeyStroke::ctrl(character)), None);
+    }
+    assert!(owner.structural(KeyStroke::new(KeyCode::Char('a'), Modifiers::SUPER)));
+    assert!(owner.structural(KeyStroke::char('\n')));
+    let (bindings, errors) =
+        configured("text-confirmation: {accept: [Esc], cancel: [], backspace: []}");
+    assert!(errors.is_empty());
+    assert_eq!(
+        bindings.lookup(owner, KeyStroke::plain(KeyCode::Escape)),
+        Some(Action::Accept)
+    );
+    assert_eq!(
+        bindings.lookup(owner, KeyStroke::plain(KeyCode::Enter)),
+        None
+    );
+    assert_eq!(
+        bindings.lookup(owner, KeyStroke::plain(KeyCode::Backspace)),
+        None
+    );
+    assert_eq!(bindings.lookup(owner, KeyStroke::ctrl('c')), None);
+    assert_eq!(bindings.lookup(owner, KeyStroke::char(' ')), None);
+}

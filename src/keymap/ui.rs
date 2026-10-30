@@ -2,6 +2,7 @@
 //! Shared semantic UI actions. Owners execute actions without rewriting input;
 //! literal input and structural option identifiers retain their own meaning.
 
+mod confirmation;
 mod picker;
 mod prompt;
 mod session_navigation;
@@ -36,10 +37,11 @@ pub enum Owner {
     SessionInventory,
     Confirmation,
     StashConfirmation,
+    TextConfirmation,
 }
 
 impl Owner {
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 20] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -59,6 +61,7 @@ impl Owner {
         Self::SessionInventory,
         Self::Confirmation,
         Self::StashConfirmation,
+        Self::TextConfirmation,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -81,7 +84,14 @@ impl Owner {
             Self::SessionInventory => "session-inventory",
             Self::Confirmation => "confirmation",
             Self::StashConfirmation => "stash-confirmation",
+            Self::TextConfirmation => "text-confirmation",
         }
+    }
+    pub fn is_confirmation(self) -> bool {
+        matches!(
+            self,
+            Self::Confirmation | Self::StashConfirmation | Self::TextConfirmation
+        )
     }
     pub fn is_session_navigation(self) -> bool {
         matches!(self, Self::SessionDirectory | Self::SessionInventory)
@@ -123,7 +133,9 @@ impl Owner {
             }
             Self::Path => &[OpenActions, Cancel],
             Self::PluginManagerActions => &[Cancel],
-            Self::Confirmation | Self::StashConfirmation => &[Accept, Cancel],
+            Self::Confirmation | Self::StashConfirmation | Self::TextConfirmation => {
+                confirmation::actions(self)
+            }
             Self::FilePicker | Self::Finder => picker::actions(self),
             Self::SessionDirectory | Self::SessionInventory => session_navigation::actions(self),
             Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
@@ -161,7 +173,8 @@ impl Owner {
             | Self::PathPrompt
             | Self::ProgramPrompt
             | Self::SessionDirectory
-            | Self::SessionInventory => {
+            | Self::SessionInventory
+            | Self::TextConfirmation => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control())
                     || matches!(key.code, KeyCode::Char(_))
                         && !key
@@ -474,17 +487,8 @@ impl OwnerBindings {
 
 fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     use Action::*;
-    if matches!(owner, Owner::Confirmation | Owner::StashConfirmation) {
-        return match key.code {
-            KeyCode::Enter => Some(Accept),
-            KeyCode::Escape => Some(Cancel),
-            KeyCode::Char('c')
-                if owner == Owner::Confirmation && key.modifiers.contains(Modifiers::CONTROL) =>
-            {
-                Some(Cancel)
-            }
-            _ => None,
-        };
+    if owner.is_confirmation() {
+        return confirmation::legacy_action(owner, key);
     }
     if owner.is_session_navigation() {
         return session_navigation::legacy_action(owner, key);
@@ -542,13 +546,8 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
-    if matches!(owner, Owner::Confirmation | Owner::StashConfirmation) {
-        return match action {
-            Action::Accept => &["Enter"],
-            Action::Cancel if owner == Owner::Confirmation => &["Esc", "Ctrl-c"],
-            Action::Cancel => &["Esc"],
-            _ => &[],
-        };
+    if owner.is_confirmation() {
+        return confirmation::labels(owner, action);
     }
     if owner.is_session_navigation() {
         return session_navigation::labels(action);

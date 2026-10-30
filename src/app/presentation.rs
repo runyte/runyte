@@ -1718,9 +1718,8 @@ impl App {
                     crate::command::EditorCommand::ListAccept,
                 ));
         }
-        if self.simple_confirmation_ui_owner().is_some() {
-            return self.simple_confirmation_action(*key)
-                == Some(crate::keymap::ui::Action::Accept);
+        if self.confirmation_ui_owner().is_some() {
+            return self.confirmation_action(*key) == Some(crate::keymap::ui::Action::Accept);
         }
         if key.code == KeyCode::Escape {
             return false;
@@ -1763,17 +1762,15 @@ impl App {
         self.settings_view.is_some()
     }
 
-    pub(super) fn status_simple_confirmation(&mut self) {
+    pub(super) fn status_confirmation(&mut self) {
         if let Some(confirmation) = self.confirmation_overlay() {
             self.status(confirmation.message);
         }
     }
 
-    pub(super) fn simple_confirmation_keys(&self) -> (String, String) {
+    pub(super) fn confirmation_keys(&self) -> (String, String) {
         use crate::keymap::ui::{Action, Owner};
-        let owner = self
-            .simple_confirmation_ui_owner()
-            .unwrap_or(Owner::Confirmation);
+        let owner = self.confirmation_ui_owner().unwrap_or(Owner::Confirmation);
         let label = |action| {
             self.keymap.ui().compact_label_with_leader(
                 owner,
@@ -1793,8 +1790,8 @@ impl App {
         )
     }
 
-    pub(super) fn simple_confirmation_message(&self, message: &str) -> String {
-        let (accept, cancel) = self.simple_confirmation_keys();
+    pub(super) fn confirmation_message(&self, message: &str) -> String {
+        let (accept, cancel) = self.confirmation_keys();
         format!("{message}\n{accept} confirms.\n{cancel} cancels.")
     }
 
@@ -1802,7 +1799,7 @@ impl App {
     /// line. Service feedback and action echoes may change while a decision is
     /// open; its popup must continue to name the exact operation Enter accepts.
     fn confirmation_overlay(&self) -> Option<ConfirmationOverlay> {
-        let (accept_key, cancel_key) = self.simple_confirmation_keys();
+        let (accept_key, cancel_key) = self.confirmation_keys();
         if let Some(confirmation) = &self.plugins.provider_overwrite {
             return Some(ConfirmationOverlay {
                 title: "Overwrite remote document",
@@ -1855,7 +1852,7 @@ impl App {
             return Some(ConfirmationOverlay {
                 title,
                 accept,
-                message: self.simple_confirmation_message(&confirmation.message),
+                message: self.confirmation_message(&confirmation.message),
                 input: None,
             });
         }
@@ -1863,7 +1860,7 @@ impl App {
             return Some(ConfirmationOverlay {
                 title: "Switch branch",
                 accept: "switch branches",
-                message: confirmation.action.message(),
+                message: confirmation.action.message(&cancel_key),
                 input: Some((confirmation.input.clone(), confirmation.cursor)),
             });
         }
@@ -1871,7 +1868,7 @@ impl App {
             return Some(ConfirmationOverlay {
                 title: "Delete branch",
                 accept: "delete branch",
-                message: confirmation.message(),
+                message: confirmation.message(&accept_key, &cancel_key),
                 input: confirmation
                     .typed()
                     .then(|| (confirmation.input.clone(), confirmation.cursor)),
@@ -1889,7 +1886,7 @@ impl App {
             return Some(ConfirmationOverlay {
                 title: "Remove worktree",
                 accept: "remove worktree",
-                message: confirmation.message(),
+                message: confirmation.message(&accept_key, &cancel_key),
                 input: confirmation
                     .typed()
                     .then(|| (confirmation.input.clone(), confirmation.cursor)),
@@ -1903,7 +1900,7 @@ impl App {
             return Some(ConfirmationOverlay {
                 title: "Discard buffer changes",
                 accept: "discard changes",
-                message: self.simple_confirmation_message(&format!("Discard changes to {name}?")),
+                message: self.confirmation_message(&format!("Discard changes to {name}?")),
                 input: None,
             });
         }
@@ -2872,7 +2869,7 @@ impl App {
                 ),
                 OverlayAction::new("Esc", "cancel"),
             ];
-            if let Some(owner) = self.simple_confirmation_ui_owner() {
+            if let Some(owner) = self.confirmation_ui_owner() {
                 use crate::keymap::ui::Action;
                 let label = |action| {
                     self.keymap.ui().compact_label_with_leader(
@@ -2883,7 +2880,14 @@ impl App {
                     )
                 };
                 overlay.actions = vec![
-                    OverlayAction::new(label(Action::Accept), confirmation.accept),
+                    OverlayAction::new(
+                        label(Action::Accept),
+                        if typed_input.is_some() {
+                            "confirm exact text"
+                        } else {
+                            confirmation.accept
+                        },
+                    ),
                     OverlayAction::new(label(Action::Cancel), "cancel"),
                 ];
             }

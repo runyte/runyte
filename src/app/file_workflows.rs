@@ -565,7 +565,7 @@ impl App {
             };
             self.directory_reload_confirmation = Some(confirmation);
             self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-            self.status_simple_confirmation();
+            self.status_confirmation();
             return Ok(());
         }
         self.reload_directory_buffer(buffer)
@@ -914,7 +914,7 @@ impl App {
             };
             self.directory_reload_confirmation = Some(confirmation);
             self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-            self.status_simple_confirmation();
+            self.status_confirmation();
             return Ok(None);
         }
         let view = self.listing_view();
@@ -2260,7 +2260,7 @@ impl App {
             observation: observation.observation,
         };
         self.file_reload_confirmation = Some(confirmation);
-        self.status_simple_confirmation();
+        self.status_confirmation();
         self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
         Ok(())
     }

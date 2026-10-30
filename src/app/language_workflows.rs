@@ -3629,7 +3629,7 @@ impl App {
                 self.buffer_action_menu = None;
                 self.buffer_discard_confirmation = Some(buffer);
                 self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-                self.status_simple_confirmation();
+                self.status_confirmation();
             }
             BufferAction::Close => self.close_buffer(buffer),
             BufferAction::CloseHidden => {

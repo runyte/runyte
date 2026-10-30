@@ -1556,7 +1556,7 @@ impl BranchSwitch {
         }
     }
 
-    fn message(&self) -> String {
+    fn message(&self, cancel: &str) -> String {
         let action = match self {
             Self::Checkout { branch } => format!("Switch to branch {branch}."),
             Self::Create { branch, .. } => format!("Create and switch to branch {branch}."),
@@ -1568,7 +1568,7 @@ impl BranchSwitch {
             }
         };
         format!(
-            "{action}\nA terminal session is still running in this workspace and will keep using the same working directory while Git replaces files.\nType {} exactly to continue.\nEscape keeps the current branch.",
+            "{action}\nA terminal session is still running in this workspace and will keep using the same working directory while Git replaces files.\nType {} exactly to continue.\n{cancel} keeps the current branch.",
             self.branch()
         )
     }
@@ -1605,7 +1605,7 @@ impl BranchDeletionConfirmation {
         self.plan.required_authorization == DeletionAuthorization::Typed || self.cascade.is_some()
     }
 
-    fn message(&self) -> String {
+    fn message(&self, accept: &str, cancel: &str) -> String {
         let mut sentences = vec![format!("Delete branch {}.", self.plan.branch)];
         if let Some(cascade) = &self.cascade {
             sentences.push("This also:".to_owned());
@@ -1651,9 +1651,9 @@ impl BranchDeletionConfirmation {
                 self.plan.branch
             ));
         } else {
-            sentences.push("Press Enter to continue.".to_owned());
+            sentences.push(format!("Press {accept} to continue."));
         }
-        sentences.push("Escape keeps it.".to_owned());
+        sentences.push(format!("{cancel} keeps it."));
         sentences.join("\n")
     }
 }
@@ -1689,7 +1689,7 @@ impl WorktreeRemovalConfirmation {
             .unwrap_or_else(|| crate::git::display_path(&self.plan.path))
     }
 
-    fn message(&self) -> String {
+    fn message(&self, accept: &str, cancel: &str) -> String {
         let branch_note = self.plan.branch.as_deref().map_or_else(
             || "No branch will be deleted".to_owned(),
             |branch| format!("Branch {branch} will remain"),
@@ -1723,9 +1723,9 @@ impl WorktreeRemovalConfirmation {
         if self.typed() {
             lines.push(format!("Type {} exactly to continue.", self.expected()));
         } else {
-            lines.push("Press Enter to continue.".to_owned());
+            lines.push(format!("Press {accept} to continue."));
         }
-        lines.push("Escape keeps it.".to_owned());
+        lines.push(format!("{cancel} keeps it."));
         lines.join("\n")
     }
 }
