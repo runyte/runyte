@@ -180,6 +180,7 @@ pub struct EditorSnapshot {
     pub window_bindings: crate::keymap::native_window::Bindings,
     pub preview_bindings: crate::keymap::native_preview::Bindings,
     pub preview_source: Option<(usize, usize)>,
+    pub preview_terminal: Option<(usize, u64)>,
     pub preview_structural: bool,
     pub status: StatusSnapshot,
     pub session_strip: Option<SessionStripSnapshot>,
@@ -987,6 +988,9 @@ impl App {
             preview_bindings,
             preview_structural: matches!(self.mode, Mode::Insert | Mode::Replace)
                 || self.awaiting_character_command().is_some(),
+            preview_terminal: self
+                .active_terminal()
+                .map(|id| (self.active_pane, id.get())),
             preview_source: self
                 .active_terminal()
                 .is_none()

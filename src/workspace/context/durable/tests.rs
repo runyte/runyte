@@ -335,7 +335,11 @@ fn refusal_preserves_unknown_corrupt_and_future_databases() {
         if mode == "corrupt" {
             use std::io::Write;
             f.write_all(b"not sqlite").unwrap();
-        } else {
+        }
+        // The private Windows creation handle includes DELETE access. SQLite
+        // does not share DELETE, so close our writer before opening its handle.
+        drop(f);
+        if mode != "corrupt" {
             let c = Connection::open(root.path().join(FILE)).unwrap();
             if mode == "unknown" {
                 c.execute_batch("CREATE TABLE unrelated(value TEXT);")
@@ -344,10 +348,11 @@ fn refusal_preserves_unknown_corrupt_and_future_databases() {
                 c.pragma_update(None, "user_version", 99).unwrap();
             }
         }
-        drop(f);
         let before = std::fs::read(root.path().join(FILE)).unwrap();
-        assert!(Store::open(root.path()).is_err());
-        assert_eq!(before, std::fs::read(root.path().join(FILE)).unwrap());
+        for private in [false, true] {
+            assert!(Store::open_with_private_sidecars(root.path(), private).is_err());
+            assert_eq!(before, std::fs::read(root.path().join(FILE)).unwrap());
+        }
     }
 }
 
@@ -516,54 +521,58 @@ fn bounded_expiry_progress_survives_quota_refusal_and_renews_matching_receipt() 
 
 #[test]
 fn simultaneous_first_open_and_send_are_transactional() {
-    let root = root();
-    let child = root.join("new-store");
-    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let handles: Vec<_> = (0..2)
-        .map(|_| {
-            let path = child.clone();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                barrier.wait();
-                Store::open(&path)
+    for private in [false, true] {
+        let root = root();
+        let child = root.join("new-store");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let path = child.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    Store::open_with_private_sidecars(&path, private)
+                })
             })
-        })
-        .collect();
-    for handle in handles {
-        match handle.join().unwrap() {
-            Ok(_) => (),
-            Err(error) => {
-                // SQLite lock contention is a supported bounded refusal; a
-                // filesystem creation race or invalid schema is not.
-                assert!(
-                    matches!(error.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(code,_)) if code.code==rusqlite::ErrorCode::DatabaseBusy),
-                    "{error:#}"
-                );
+            .collect();
+        for handle in handles {
+            match handle.join().unwrap() {
+                Ok(_) => (),
+                Err(error) => {
+                    // SQLite lock contention is a supported bounded refusal; a
+                    // filesystem creation race or invalid schema is not.
+                    assert!(
+                        matches!(error.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(code,_)) if code.code==rusqlite::ErrorCode::DatabaseBusy),
+                        "{error:#}"
+                    );
+                }
             }
         }
-    }
-    let mut s = Store::open(&child).unwrap();
-    let a = actor(&mut s, 1);
-    let c = s.create(&a, "race", ConversationKind::Public, &[]).unwrap();
-    let handles: Vec<_> = (0..2)
-        .map(|_| {
-            let path = child.clone();
-            let a = a.clone();
-            let c = c.clone();
-            let barrier = barrier.clone();
-            std::thread::spawn(move || {
-                let mut s = Store::open(&path).unwrap();
-                barrier.wait();
-                send(&mut s, &a, &c, 1)
+        let mut s = Store::open_with_private_sidecars(&child, private).unwrap();
+        let a = actor(&mut s, 1);
+        let c = s.create(&a, "race", ConversationKind::Public, &[]).unwrap();
+        let handles: Vec<_> = (0..2)
+            .map(|_| {
+                let path = child.clone();
+                let a = a.clone();
+                let c = c.clone();
+                let barrier = barrier.clone();
+                // Open before spawning: a bounded admission refusal must not strand
+                // another worker at the send barrier.
+                let mut s = Store::open_with_private_sidecars(&path, private).unwrap();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    send(&mut s, &a, &c, 1)
+                })
             })
-        })
-        .collect();
-    let ids: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-    assert_eq!(ids[0], ids[1]);
-    let count: i64 =
-        s.db.query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
-            .unwrap();
-    assert_eq!(count, 1);
+            .collect();
+        let ids: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(ids[0], ids[1]);
+        let count: i64 =
+            s.db.query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+                .unwrap();
+        assert_eq!(count, 1);
+    }
 }
 
 #[test]
@@ -611,4 +620,56 @@ fn ten_independent_participants_keep_receipts_until_each_acknowledges() {
             .messages
             .is_empty()
     );
+}
+
+#[test]
+fn private_sidecars_survive_bootstrap_live_connections_and_last_close() {
+    let root = root();
+    let mut one = Store::open_with_private_sidecars(root.path(), true).unwrap();
+    let a = actor(&mut one, 1);
+    let mut two = Store::open_with_private_sidecars(root.path(), true).unwrap();
+    assert_eq!(actor(&mut two, 1).id(), a.id());
+    drop(one);
+    drop(two);
+    let directory = Directory::open_existing(root.path(), true).unwrap();
+    for name in ["agent-channels.sqlite3-wal", "agent-channels.sqlite3-shm"] {
+        directory.open_read(OsStr::new(name)).unwrap();
+    }
+    let mut reopened = Store::open_with_private_sidecars(root.path(), true).unwrap();
+    assert_eq!(actor(&mut reopened, 1).id(), a.id());
+    assert_eq!(
+        reopened
+            .db
+            .pragma_query_value(None, "journal_mode", |r| r.get::<_, String>(0))
+            .unwrap(),
+        "wal"
+    );
+}
+
+#[test]
+fn private_bootstrap_recovers_an_empty_database_with_an_abandoned_journal() {
+    let root = root();
+    let directory = Directory::open(root.path(), true).unwrap();
+    bootstrap::ensure_file(&directory, FILE).unwrap();
+    bootstrap::ensure_file(&directory, "agent-channels.sqlite3-journal").unwrap();
+    let mut store = Store::open_with_private_sidecars(root.path(), true).unwrap();
+    let identity = actor(&mut store, 1).id().to_owned();
+    drop(store);
+    let mut store = Store::open_with_private_sidecars(root.path(), true).unwrap();
+    assert_eq!(actor(&mut store, 1).id(), identity);
+}
+
+#[test]
+fn private_bootstrap_contention_is_a_bounded_sqlite_busy_refusal() {
+    let root = root();
+    let directory = Directory::open(root.path(), true).unwrap();
+    let guard = bootstrap::acquire(&directory).unwrap();
+    let error = Store::open_with_private_sidecars(root.path(), true)
+        .err()
+        .unwrap();
+    assert!(matches!(error.downcast_ref::<rusqlite::Error>(),
+        Some(rusqlite::Error::SqliteFailure(code, _))
+        if code.code == rusqlite::ErrorCode::DatabaseBusy));
+    drop(guard);
+    Store::open_with_private_sidecars(root.path(), true).unwrap();
 }

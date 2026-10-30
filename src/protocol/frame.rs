@@ -214,6 +214,7 @@ impl EditorDamageFrame {
             || base.editor.preview_bindings != next.editor.preview_bindings
             || base.editor.preview_fallback != next.editor.preview_fallback
             || base.editor.preview_source != next.editor.preview_source
+            || base.editor.preview_terminal != next.editor.preview_terminal
             || base.editor.preview_structural != next.editor.preview_structural
             || base.editor.preview_unavailable != next.editor.preview_unavailable
             || base.editor.directory_tree != next.editor.directory_tree
@@ -372,6 +373,7 @@ impl TerminalDamageFrame {
             || base.editor.preview_bindings != next.editor.preview_bindings
             || base.editor.preview_fallback != next.editor.preview_fallback
             || base.editor.preview_source != next.editor.preview_source
+            || base.editor.preview_terminal != next.editor.preview_terminal
             || base.editor.preview_structural != next.editor.preview_structural
             || base.editor.preview_unavailable != next.editor.preview_unavailable
             || base.editor.directory_tree != next.editor.directory_tree
@@ -603,6 +605,7 @@ pub struct EditorSnapshot {
     pub preview_bindings: Vec<PreviewBinding>,
     pub preview_fallback: Vec<PreviewBinding>,
     pub preview_source: Option<(usize, usize)>,
+    pub preview_terminal: Option<(usize, u64)>,
     pub preview_structural: bool,
     pub preview_unavailable: bool,
     pub status: StatusSnapshot,
@@ -696,6 +699,7 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
                 })
                 .collect(),
             preview_source: value.preview_source,
+            preview_terminal: value.preview_terminal,
             preview_structural: value.preview_structural,
             preview_unavailable: value.preview_bindings.unavailable,
             window_authored: value.window_bindings.authored(),
@@ -793,6 +797,7 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
         Ok(Self {
             preview_bindings,
             preview_source: value.preview_source,
+            preview_terminal: value.preview_terminal,
             preview_structural: value.preview_structural,
             window_bindings,
             geometry: value.geometry.into(),
@@ -1210,6 +1215,7 @@ mod tests {
                 preview_bindings: Vec::new(),
                 preview_fallback: Vec::new(),
                 preview_source: None,
+                preview_terminal: None,
                 preview_structural: false,
                 preview_unavailable: false,
                 geometry: FrameGeometry::default(),
@@ -1574,6 +1580,18 @@ mod tests {
         let decoded = core::EditorSnapshot::try_from(decoded.editor).unwrap();
         assert_eq!(decoded.preview_bindings, map);
         assert_eq!(decoded.preview_source, Some((2, 7)));
+        let mut terminal_change = next.clone();
+        terminal_change.editor.preview_terminal = Some((3, 19));
+        assert!(TerminalDamageFrame::between(&next, &terminal_change).is_none());
+        assert!(EditorDamageFrame::between(&next, &terminal_change).is_none());
+        let decoded: HostFrame =
+            serde_json::from_slice(&serde_json::to_vec(&terminal_change).unwrap()).unwrap();
+        assert_eq!(
+            core::EditorSnapshot::try_from(decoded.editor)
+                .unwrap()
+                .preview_terminal,
+            Some((3, 19))
+        );
         for mutation in 0..5 {
             let mut editor = next.editor.clone();
             match mutation {

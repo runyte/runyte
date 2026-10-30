@@ -478,6 +478,7 @@ mod tests {
             window_bindings: Default::default(),
             preview_bindings: Default::default(),
             preview_source: None,
+            preview_terminal: None,
             preview_structural: false,
             routing_serial: 0,
             metadata_paths: vec![],

@@ -871,3 +871,117 @@ fn preview_queue_combines_captured_maps_prefixes_handoff_and_host_acknowledgemen
         "replacement attachment discards old captured input"
     );
 }
+
+#[test]
+fn acknowledged_focus_preserves_old_painted_input_only_for_the_pinned_destination() {
+    use super::{FocusHandoff, InputOwnership, InputRoute, Target};
+    let origin = Target {
+        pane: 1,
+        source: 2,
+        generation: 3,
+    };
+    let destination = (4, 5);
+    let armed = || InputOwnership {
+        focus: Some(FocusHandoff {
+            origin,
+            serial: Some(7),
+            destination: None,
+        }),
+        ..Default::default()
+    };
+    let mut ownership = armed();
+    ownership.acknowledge_focus(6, Some(destination));
+    assert_eq!(
+        ownership.route(Some(origin), None, Some(destination), true, false),
+        InputRoute::Discard
+    );
+    ownership.acknowledge_focus(7, Some(destination));
+    assert_eq!(
+        ownership.route(Some(origin), None, Some(destination), true, false),
+        InputRoute::Host,
+        "queued colon after focus must reach the newly focused source"
+    );
+    assert_eq!(
+        ownership.route(Some(origin), None, Some(destination), false, true),
+        InputRoute::Host,
+        "the rest of the queued command stays with that source"
+    );
+    assert_eq!(
+        ownership.route(Some(origin), None, Some((4, 6)), true, false),
+        InputRoute::Discard
+    );
+    assert_eq!(
+        ownership.route(Some(origin), None, Some((8, 5)), true, false),
+        InputRoute::Discard
+    );
+    ownership = armed();
+    ownership.acknowledge_focus(7, Some(destination));
+    assert_eq!(
+        ownership.route(None, None, Some(destination), true, false),
+        InputRoute::Host
+    );
+    assert!(
+        ownership.focus.is_none(),
+        "newly painted input retires the old handoff"
+    );
+    assert_eq!(
+        ownership.route(Some(origin), None, Some(destination), true, false),
+        InputRoute::Discard
+    );
+    let mut unsuccessful = armed();
+    unsuccessful.acknowledge_focus(7, Some((origin.pane, origin.source)));
+    assert!(unsuccessful.focus.is_none());
+    assert_eq!(
+        unsuccessful.route(Some(origin), None, Some(destination), true, false),
+        InputRoute::Discard
+    );
+    let mut same_pane = armed();
+    same_pane.acknowledge_focus(7, Some((origin.pane, 99)));
+    assert!(same_pane.focus.is_none());
+    let mut generic = InputOwnership::default();
+    generic.forward(Some(origin), true, false);
+    generic.acknowledge_focus(7, Some(destination));
+    assert_eq!(
+        generic.route(Some(origin), None, Some(destination), true, false),
+        InputRoute::Discard
+    );
+    let mut views = super::Views {
+        attachment: 1,
+        ownership: armed(),
+        ..Default::default()
+    };
+    views.acknowledge_focus(2, 7, Some(destination), None);
+    assert!(views.ownership.focus.is_none());
+}
+
+#[test]
+fn focus_handoff_pins_terminal_identity_and_cannot_revive_after_mismatch() {
+    use super::{FocusHandoff, InputOwnership, InputRoute, Target, focus_source};
+    let origin = Target {
+        pane: 0,
+        source: 3,
+        generation: 2,
+    };
+    let mut ownership = InputOwnership {
+        focus: Some(FocusHandoff {
+            origin,
+            serial: Some(7),
+            destination: None,
+        }),
+        ..Default::default()
+    };
+    ownership.acknowledge_focus_source(7, focus_source(None, Some((1, 4))));
+    assert_eq!(
+        ownership.route_with_terminal(Some(origin), None, None, Some((1, 4)), (true, false)),
+        InputRoute::Host
+    );
+    assert_eq!(
+        ownership.route_with_terminal(Some(origin), None, None, Some((1, 5)), (true, false)),
+        InputRoute::Discard
+    );
+    assert!(ownership.focus.is_none());
+    assert_eq!(
+        ownership.route_with_terminal(Some(origin), None, None, Some((1, 4)), (true, false)),
+        InputRoute::Discard
+    );
+}

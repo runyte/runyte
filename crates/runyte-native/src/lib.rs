@@ -129,6 +129,7 @@ struct FrameData {
     window_bindings: runyte::keymap::native_window::Bindings,
     preview_bindings: runyte::keymap::native_preview::Bindings,
     preview_source: Option<(usize, usize)>,
+    preview_terminal: Option<(usize, u64)>,
     preview_structural: bool,
     routing_serial: u64,
     metadata_paths: Vec<PathBuf>,
@@ -228,6 +229,7 @@ struct Bridge {
     window_bindings: Mutex<runyte::keymap::native_window::Bindings>,
     preview_bindings: Mutex<runyte::keymap::native_preview::Bindings>,
     preview_source: Mutex<Option<(usize, usize)>>,
+    preview_terminal: Mutex<Option<(usize, u64)>>,
     preview_structural: AtomicBool,
     dequeued_serial: AtomicU64,
     remote_serial: AtomicU64,
@@ -358,6 +360,7 @@ fn capture_snapshot_media(snapshot: &runyte::workspace::HostFrame, counts: &[med
     *bridge.window_bindings.lock().unwrap() = snapshot.editor.window_bindings.clone();
     *bridge.preview_bindings.lock().unwrap() = snapshot.editor.preview_bindings.clone();
     *bridge.preview_source.lock().unwrap() = snapshot.editor.preview_source;
+    *bridge.preview_terminal.lock().unwrap() = snapshot.editor.preview_terminal;
     bridge
         .preview_structural
         .store(snapshot.editor.preview_structural, Ordering::Release);
@@ -604,6 +607,7 @@ impl Surface {
                     window_bindings: bridge.window_bindings.lock().unwrap().clone(),
                     preview_bindings: bridge.preview_bindings.lock().unwrap().clone(),
                     preview_source: *bridge.preview_source.lock().unwrap(),
+                    preview_terminal: *bridge.preview_terminal.lock().unwrap(),
                     preview_structural: bridge.preview_structural.load(Ordering::Acquire),
                     routing_serial: if snapshot_area.is_some() {
                         bridge.remote_serial.load(Ordering::Acquire)
@@ -788,6 +792,7 @@ pub(crate) fn launch(
         window_bindings: Mutex::new(Default::default()),
         preview_bindings: Mutex::new(Default::default()),
         preview_source: Mutex::new(None),
+        preview_terminal: Mutex::new(None),
         preview_structural: AtomicBool::new(false),
         dequeued_serial: AtomicU64::new(0),
         remote_serial: AtomicU64::new(0),

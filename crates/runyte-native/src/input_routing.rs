@@ -307,6 +307,12 @@ impl super::NativeView {
             .as_ref()
             .filter(|frame| frame.attachment == attachment)
             .map_or(0, |frame| frame.routing_serial);
+        self.previews.acknowledge_focus(
+            attachment,
+            serial,
+            self.frame.as_ref().and_then(|frame| frame.preview_source),
+            self.frame.as_ref().and_then(|frame| frame.preview_terminal),
+        );
         let routing_ready = self.preview_routing_ready
             || self.frame.as_ref().is_none_or(|frame| {
                 !frame.media_input || !frame.previews.iter().any(|pane| pane.active)
@@ -456,6 +462,7 @@ impl super::NativeView {
             for index in 0..copies {
                 if barrier && index + 1 == copies {
                     self.routing.forward(&mut input);
+                    self.previews.focus_forwarded_serial(input.routing_serial);
                 }
                 if !self.bridge.send_captured(input.clone()) {
                     self.routing.clear();

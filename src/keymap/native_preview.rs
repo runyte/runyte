@@ -31,9 +31,10 @@ pub enum Action {
     Forward,
     DismissAndForward,
     ForwardInput,
+    ForwardFocus,
 }
 impl Action {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::Down,
         Self::Up,
         Self::Left,
@@ -52,6 +53,7 @@ impl Action {
         Self::Forward,
         Self::DismissAndForward,
         Self::ForwardInput,
+        Self::ForwardFocus,
     ];
     pub fn description(self) -> &'static str {
         match self {
@@ -70,7 +72,7 @@ impl Action {
             Self::ResetZoom => "Reset zoom",
             Self::Copy => "Copy selection",
             Self::Back => "Return to source",
-            Self::Forward | Self::ForwardInput => "Editor input",
+            Self::Forward | Self::ForwardInput | Self::ForwardFocus => "Editor input",
             Self::DismissAndForward => "Return to source and continue",
         }
     }
@@ -174,7 +176,10 @@ impl Bindings {
             }
             if matches!(
                 action,
-                Action::Forward | Action::ForwardInput | Action::DismissAndForward
+                Action::Forward
+                    | Action::ForwardInput
+                    | Action::ForwardFocus
+                    | Action::DismissAndForward
             ) && sequence.len() != 1
             {
                 return Err("preview forwarding must own its first stroke".into());
@@ -272,7 +277,10 @@ impl Bindings {
                 sequence.starts_with(keys)
                     && !matches!(
                         action,
-                        Action::Forward | Action::ForwardInput | Action::DismissAndForward
+                        Action::Forward
+                            | Action::ForwardInput
+                            | Action::ForwardFocus
+                            | Action::DismissAndForward
                     )
             })
             .map(|(sequence, action)| format!("{sequence}: {}", action.description()))
@@ -317,11 +325,13 @@ impl Keymap {
                 {
                     Lookup::Action(found) => {
                         found == projected
-                            || projected == Action::Forward && found == Action::ForwardInput
+                            || projected == Action::Forward
+                                && matches!(found, Action::ForwardInput | Action::ForwardFocus)
                     }
                     Lookup::None => bindings.fallback_action(key).is_some_and(|found| {
                         found == projected
-                            || projected == Action::Forward && found == Action::ForwardInput
+                            || projected == Action::Forward
+                                && matches!(found, Action::ForwardInput | Action::ForwardFocus)
                     }),
                     Lookup::Prefix => false,
                 });
@@ -409,6 +419,28 @@ fn project(map: &Keymap, mode: Mode, source: BindingScope) -> Bindings {
             forwarding.entry(first).or_insert(Action::DismissAndForward);
         }
     }
+    // Only an exact implemented focus command proves that the host input may
+    // intentionally transfer the following queued keystrokes to another pane.
+    for binding in map.bindings_for_scope(mode, source) {
+        if binding.sequence.len() == 1
+            && pane(binding)
+            && matches!(
+                binding.target,
+                BindingTarget::Editor(
+                    C::FocusWindowLeft
+                        | C::FocusWindowRight
+                        | C::FocusWindowUp
+                        | C::FocusWindowDown
+                )
+            )
+            && matches!(
+                map.lookup_in(mode, source, &binding.sequence),
+                super::Lookup::Exact(_)
+            )
+        {
+            forwarding.insert(binding.sequence.as_slice()[0], Action::ForwardFocus);
+        }
+    }
     let mut fallback = Vec::new();
     for (key, action) in map.ui().keys(Owner::NativePreview) {
         let projected = match action {
@@ -423,7 +455,9 @@ fn project(map: &Keymap, mode: Mode, source: BindingScope) -> Bindings {
             _ => unreachable!(),
         };
         if action == U::ForwardPane {
-            forwarding.insert(key.canonical_for_binding(), Action::Forward);
+            forwarding
+                .entry(key.canonical_for_binding())
+                .or_insert(Action::Forward);
         } else if map.ui().explicitly_configured(Owner::NativePreview, action) {
             let key = key.canonical_for_binding();
             entries.retain(|(sequence, _)| sequence.as_slice()[0] != key);
@@ -472,6 +506,29 @@ mod tests {
     }
     fn sequence(source: &str) -> KeySequence {
         KeySequence::parse(source).unwrap()
+    }
+    #[test]
+    fn only_exact_effective_focus_bindings_grant_a_focus_handoff() {
+        let map = configured(
+            "bind: {normal: {F8: focus-window-right, 'F9 h': focus-window-left, 'F9 x': close-window}}",
+        );
+        let preview = map.native_preview(Mode::Normal, BindingScope::Global);
+        assert_eq!(
+            preview.lookup(&sequence("F8")),
+            Lookup::Action(Action::ForwardFocus)
+        );
+        assert_eq!(
+            preview.lookup(&sequence("F9")),
+            Lookup::Action(Action::Forward)
+        );
+        assert_eq!(
+            preview.lookup(&sequence("Ctrl-w")),
+            Lookup::Action(Action::Forward)
+        );
+        assert_eq!(
+            preview.fallback_action(KeyStroke::plain(KeyCode::Char(':'))),
+            Some(Action::Forward)
+        );
     }
     #[test]
     fn preview_projection_uses_effective_media_navigation_and_source_forwarding() {
@@ -602,10 +659,10 @@ mod policy_tests {
                     Some(ui::Action::Copy) => Some(Action::Copy),
                     Some(ui::Action::KeepOpenAndContinue) => Some(Action::Forward),
                     Some(ui::Action::ForwardPane) => {
-                        assert_eq!(
+                        assert!(matches!(
                             map.lookup(&KeySequence::from(key)),
-                            Lookup::Action(Action::Forward)
-                        );
+                            Lookup::Action(Action::Forward | Action::ForwardFocus)
+                        ));
                         None
                     }
                     _ => None,

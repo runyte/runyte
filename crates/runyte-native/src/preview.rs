@@ -170,6 +170,7 @@ enum Navigation {
     Forward,
     DismissAndForward,
     ForwardInput,
+    ForwardFocus,
 }
 fn navigation_action(action: runyte::keymap::native_preview::Action, page: f64) -> Navigation {
     use runyte::keymap::native_preview::Action as A;
@@ -191,6 +192,7 @@ fn navigation_action(action: runyte::keymap::native_preview::Action, page: f64) 
         A::Back => Navigation::Back,
         A::Forward => Navigation::Forward,
         A::ForwardInput => Navigation::ForwardInput,
+        A::ForwardFocus => Navigation::ForwardFocus,
         A::DismissAndForward => Navigation::DismissAndForward,
     }
 }
@@ -208,7 +210,8 @@ fn effective_navigation(
     };
     if let Lookup::Action(
         action @ (runyte::keymap::native_preview::Action::Forward
-        | runyte::keymap::native_preview::Action::ForwardInput),
+        | runyte::keymap::native_preview::Action::ForwardInput
+        | runyte::keymap::native_preview::Action::ForwardFocus),
     ) = bindings.lookup(&runyte::keymap::KeySequence::from(stroke))
     {
         keys.clear();
@@ -243,7 +246,10 @@ fn preview_navigation(
     value.filter(|value| {
         !matches!(
             value,
-            Navigation::Forward | Navigation::ForwardInput | Navigation::DismissAndForward
+            Navigation::Forward
+                | Navigation::ForwardInput
+                | Navigation::ForwardFocus
+                | Navigation::DismissAndForward
         )
     })
 }
@@ -258,10 +264,13 @@ fn editor_pane_key(key: KeyEvent) -> bool {
     else {
         return false;
     };
-    factory_bindings().lookup(&runyte::keymap::KeySequence::from(stroke))
-        == runyte::keymap::native_preview::Lookup::Action(
-            runyte::keymap::native_preview::Action::Forward,
+    matches!(
+        factory_bindings().lookup(&runyte::keymap::KeySequence::from(stroke)),
+        runyte::keymap::native_preview::Lookup::Action(
+            runyte::keymap::native_preview::Action::Forward
+                | runyte::keymap::native_preview::Action::ForwardFocus
         )
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -308,12 +317,33 @@ fn forwards_structural_input(
     }
     false
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Source {
+    Buffer(usize),
+    Terminal(u64),
+}
+fn focus_source(
+    buffer: Option<(usize, usize)>,
+    terminal: Option<(usize, u64)>,
+) -> Option<(usize, Source)> {
+    terminal
+        .map(|(pane, id)| (pane, Source::Terminal(id)))
+        .or_else(|| buffer.map(|(pane, id)| (pane, Source::Buffer(id))))
+}
+
 #[derive(Default)]
 struct InputOwnership {
     handoff: Option<Target>,
     forwarded: Option<Target>,
+    focus: Option<FocusHandoff>,
+}
+struct FocusHandoff {
+    origin: Target,
+    serial: Option<u64>,
+    destination: Option<(usize, Source)>,
 }
 impl InputOwnership {
+    #[cfg(test)]
     fn route(
         &mut self,
         captured: Option<Target>,
@@ -322,6 +352,28 @@ impl InputOwnership {
         eligible: bool,
         structural: bool,
     ) -> InputRoute {
+        self.route_with_terminal(captured, current, source, None, (eligible, structural))
+    }
+    fn route_with_terminal(
+        &mut self,
+        captured: Option<Target>,
+        current: Option<Target>,
+        source: Option<(usize, usize)>,
+        terminal: Option<(usize, u64)>,
+        (eligible, structural): (bool, bool),
+    ) -> InputRoute {
+        if let Some(focus) = &self.focus {
+            if captured != Some(focus.origin) {
+                self.focus = None;
+            } else if let Some(destination) = focus.destination {
+                return if focus_source(source, terminal) == Some(destination) {
+                    InputRoute::Host
+                } else {
+                    self.focus = None;
+                    InputRoute::Discard
+                };
+            }
+        }
         let route = input_route(captured, current, source, eligible, self.handoff);
         if route == InputRoute::Local
             && forwards_structural_input(&mut self.forwarded, captured, structural)
@@ -338,6 +390,49 @@ impl InputOwnership {
     }
     fn back(&mut self, target: Option<Target>) {
         self.handoff = target;
+    }
+}
+impl Views {
+    pub(super) fn focus_forwarded_serial(&mut self, serial: u64) {
+        if let Some(focus) = &mut self.ownership.focus
+            && focus.serial.is_none()
+        {
+            focus.serial = Some(serial);
+        }
+    }
+    pub(super) fn acknowledge_focus(
+        &mut self,
+        attachment: u64,
+        serial: u64,
+        source: Option<(usize, usize)>,
+        terminal: Option<(usize, u64)>,
+    ) {
+        if self.attachment != attachment {
+            self.ownership.focus = None;
+            return;
+        }
+        self.ownership
+            .acknowledge_focus_source(serial, focus_source(source, terminal));
+    }
+}
+impl InputOwnership {
+    #[cfg(test)]
+    fn acknowledge_focus(&mut self, serial: u64, source: Option<(usize, usize)>) {
+        self.acknowledge_focus_source(serial, focus_source(source, None));
+    }
+    fn acknowledge_focus_source(&mut self, serial: u64, source: Option<(usize, Source)>) {
+        if let Some(focus) = &mut self.focus
+            && focus.destination.is_none()
+            && focus.serial.is_some_and(|sent| serial >= sent)
+        {
+            if let Some(destination) = source
+                && destination.0 != focus.origin.pane
+            {
+                focus.destination = Some(destination);
+            } else {
+                self.focus = None;
+            }
+        }
     }
 }
 impl State {
@@ -1062,12 +1157,12 @@ impl NativeView {
                 source: pane.document.source,
                 generation: pane.document.generation,
             });
-        match self.previews.ownership.route(
+        match self.previews.ownership.route_with_terminal(
             input.preview_target,
             current,
             frame.preview_source,
-            frame.media_input,
-            frame.preview_structural,
+            frame.preview_terminal,
+            (frame.media_input, frame.preview_structural),
         ) {
             InputRoute::Host => return false,
             InputRoute::Discard => return true,
@@ -1088,8 +1183,15 @@ impl NativeView {
         let navigation = state.navigation(key, page, &input.preview_bindings);
         if matches!(
             navigation,
-            Some(Navigation::Forward | Navigation::ForwardInput)
+            Some(Navigation::Forward | Navigation::ForwardInput | Navigation::ForwardFocus)
         ) {
+            if navigation == Some(Navigation::ForwardFocus) {
+                self.previews.ownership.focus = input.preview_target.map(|origin| FocusHandoff {
+                    origin,
+                    serial: None,
+                    destination: None,
+                });
+            }
             self.previews.ownership.forward(
                 input.preview_target,
                 navigation == Some(Navigation::ForwardInput),
