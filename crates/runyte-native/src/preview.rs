@@ -880,7 +880,12 @@ impl NativeView {
         cx.notify();
         true
     }
-    pub(super) fn preview_key(&mut self, key: KeyEvent, cx: &mut Context<Self>) -> bool {
+    pub(super) fn preview_key(
+        &mut self,
+        key: KeyEvent,
+        window_bindings: &runyte::keymap::native_window::Bindings,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(frame) = &self.frame else {
             return false;
         };
@@ -971,8 +976,8 @@ impl NativeView {
         }
         if let Ok(Some(runyte::input::InputEvent::Key(stroke))) =
             runyte::tui::input::convert_event(Event::Key(key))
-            && runyte::keymap::native_window::lookup(stroke).is_some_and(|b| {
-                matches!(b.action, runyte::keymap::native_window::Action::FontSize(_))
+            && window_bindings.lookup(stroke).is_some_and(|action| {
+                matches!(action, runyte::keymap::native_window::Action::FontSize(_))
             })
         {
             return false;

@@ -17,7 +17,7 @@ mod session_navigation;
 use crate::input::{KeyCode, KeyStroke, Modifiers};
 use serde_yaml::Value;
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 #[cfg(test)]
 #[path = "../tests/ui_bindings.rs"]
@@ -62,12 +62,13 @@ pub enum Owner {
     Hover,
     CharacterInput,
     ContextLauncher,
+    NativeWindow,
     GrammarPrefix,
     KeyHints,
 }
 
 impl Owner {
-    const ALL: [Self; 39] = [
+    const ALL: [Self; 40] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -105,6 +106,7 @@ impl Owner {
         Self::Hover,
         Self::CharacterInput,
         Self::ContextLauncher,
+        Self::NativeWindow,
         Self::GrammarPrefix,
         Self::KeyHints,
     ];
@@ -147,6 +149,7 @@ impl Owner {
             Self::Hover => "hover",
             Self::CharacterInput => "character-input",
             Self::ContextLauncher => "context-launcher",
+            Self::NativeWindow => "native-window",
             Self::GrammarPrefix => "grammar-prefix",
             Self::KeyHints => "key-hints",
         }
@@ -204,6 +207,7 @@ impl Owner {
                 | Self::Hover
                 | Self::CharacterInput
                 | Self::ContextLauncher
+                | Self::NativeWindow
                 | Self::GrammarPrefix
                 | Self::KeyHints
         ) && !self.is_plugin_input()
@@ -233,6 +237,7 @@ impl Owner {
             Self::MacroReplay | Self::CharacterInput => &[Cancel],
             Self::Hover => &[Accept],
             Self::ContextLauncher => &[OpenActions],
+            Self::NativeWindow => &[FontIncrease, FontDecrease, PasteText],
             Self::GrammarPrefix => &[Cancel, Back],
             Self::KeyHints => &[Next, Previous],
             Self::PluginConfirmation => &[Accept, Cancel],
@@ -280,10 +285,13 @@ impl Owner {
             }
         }
     }
-    fn structural(self, key: KeyStroke) -> bool {
+    pub(crate) fn structural(self, key: KeyStroke) -> bool {
         match self {
             Self::MergePrefix | Self::MacroReplay | Self::GrammarPrefix | Self::KeyHints => false,
             Self::CharacterInput => matches!(key.code, KeyCode::Char(_)),
+            Self::NativeWindow => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control() || !key.modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER))
+            }
             Self::Hover | Self::ContextLauncher => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control() || (c.is_ascii_digit() && key.modifiers.is_empty()))
             }
@@ -356,6 +364,9 @@ impl Owner {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Action {
+    FontIncrease,
+    FontDecrease,
+    PasteText,
     ResetAndContinue,
     Next,
     Previous,
@@ -398,6 +409,9 @@ pub enum Action {
 impl Action {
     pub fn name(self) -> &'static str {
         match self {
+            Self::FontIncrease => "font-increase",
+            Self::FontDecrease => "font-decrease",
+            Self::PasteText => "paste-text",
             Self::ResetAndContinue => "reset-and-continue",
             Self::Next => "next",
             Self::Previous => "previous",
@@ -451,6 +465,7 @@ struct OwnerBindings {
 #[derive(Clone, Debug)]
 pub struct Bindings {
     owners: HashMap<Owner, OwnerBindings>,
+    window: OnceLock<super::native_window::Bindings>,
 }
 
 impl Default for Bindings {
@@ -485,6 +500,10 @@ impl Bindings {
                             KeyCode::PageUp,
                             KeyCode::PageDown,
                             KeyCode::Char('v'),
+                            KeyCode::Char('V'),
+                            KeyCode::Char('+'),
+                            KeyCode::Char('='),
+                            KeyCode::Char('-'),
                             KeyCode::Char('t'),
                             KeyCode::Backspace,
                             KeyCode::Delete,
@@ -534,7 +553,10 @@ impl Bindings {
                     )
                 })
                 .collect();
-            Bindings { owners }
+            Bindings {
+                owners,
+                window: OnceLock::new(),
+            }
         });
         &DEFAULTS
     }
@@ -572,6 +594,49 @@ impl Bindings {
         }
         Some(action)
     }
+    pub fn native_window(&self) -> &super::native_window::Bindings {
+        self.window.get_or_init(|| {
+            let mut entries = self.owners[&Owner::NativeWindow]
+                .keys
+                .iter()
+                .map(|(key, action)| {
+                    (
+                        *key,
+                        match action {
+                            Action::FontIncrease => super::native_window::Action::FontSize(1),
+                            Action::FontDecrease => super::native_window::Action::FontSize(-1),
+                            Action::PasteText => super::native_window::Action::PasteText,
+                            _ => unreachable!("native window owner action"),
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            entries.sort_by_key(|(key, _)| key.label());
+            entries.dedup_by_key(|(key, _)| *key);
+            // Factory aliases may include raw spellings with the same canonical
+            // key. The window's historical matcher is canonical.
+            let mut canonical = std::collections::HashMap::new();
+            for (key, action) in entries {
+                canonical.insert(key.canonical_for_binding(), action);
+            }
+            super::native_window::Bindings::from_entries(canonical.into_iter().collect())
+                .expect("bounded compiled window bindings")
+                .with_policy(
+                    [
+                        (Action::FontIncrease, 1),
+                        (Action::FontDecrease, 2),
+                        (Action::PasteText, 4),
+                    ]
+                    .into_iter()
+                    .filter(|(action, _)| self.explicitly_configured(Owner::NativeWindow, *action))
+                    .map(|(_, bit)| bit)
+                    .sum(),
+                    0,
+                )
+                .expect("window provenance")
+        })
+    }
+
     pub(crate) fn named_label(&self, source: &str) -> Result<String, String> {
         let (owner, action) = source.split_once('.').ok_or("expected UI owner.action")?;
         let owner = Owner::ALL
@@ -739,6 +804,14 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     if matches!(owner, Owner::GrammarPrefix | Owner::KeyHints) {
         return grammar::legacy_action(owner, key);
     }
+    if owner == Owner::NativeWindow {
+        return super::native_window::lookup(key).map(|binding| match binding.action {
+            super::native_window::Action::FontSize(1) => FontIncrease,
+            super::native_window::Action::FontSize(-1) => FontDecrease,
+            super::native_window::Action::PasteText => PasteText,
+            _ => unreachable!("factory window action"),
+        });
+    }
     if owner == Owner::ContextLauncher {
         return (key == KeyStroke::plain(KeyCode::Tab)).then_some(OpenActions);
     }
@@ -822,6 +895,20 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner == Owner::NativeWindow {
+        return match action {
+            Action::FontIncrease => &["Ctrl-+", "Ctrl-="],
+            Action::FontDecrease => &["Ctrl--"],
+            Action::PasteText => {
+                if cfg!(target_os = "macos") {
+                    &["Super-v", "Ctrl-V"]
+                } else {
+                    &["Ctrl-V"]
+                }
+            }
+            _ => &[],
+        };
+    }
     if owner == Owner::ContextLauncher {
         return &["Tab"];
     }
@@ -904,6 +991,7 @@ pub(super) fn compile(
     let Some(section) = section else {
         return result;
     };
+    result.window = OnceLock::new();
     let Some(owners) = section.as_mapping() else {
         errors.push("ui rejected: expected owner mappings".into());
         return result;

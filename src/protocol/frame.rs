@@ -208,6 +208,9 @@ impl EditorDamageFrame {
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.pane_drop != next.editor.pane_drop
             || base.editor.pane_gestures != next.editor.pane_gestures
+            || base.editor.window_bindings != next.editor.window_bindings
+            || base.editor.window_authored != next.editor.window_authored
+            || base.editor.window_guard != next.editor.window_guard
             || base.editor.directory_tree != next.editor.directory_tree
             || base.editor.panes.len() != next.editor.panes.len()
         {
@@ -358,6 +361,9 @@ impl TerminalDamageFrame {
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.pane_drop != next.editor.pane_drop
             || base.editor.pane_gestures != next.editor.pane_gestures
+            || base.editor.window_bindings != next.editor.window_bindings
+            || base.editor.window_authored != next.editor.window_authored
+            || base.editor.window_guard != next.editor.window_guard
             || base.editor.directory_tree != next.editor.directory_tree
             || base.editor.panes.len() != next.editor.panes.len()
         {
@@ -581,8 +587,24 @@ pub struct EditorSnapshot {
     pub panes: Vec<PaneSnapshot>,
     pub pane_drop: Option<Rect>,
     pub pane_gestures: [u64; 2],
+    pub window_bindings: Vec<WindowBinding>,
+    pub window_authored: u8,
+    pub window_guard: u8,
     pub status: StatusSnapshot,
     pub session_strip: Option<SessionStripSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WindowBinding {
+    pub key: super::input::KeyStroke,
+    pub action: WindowAction,
+}
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum WindowAction {
+    FontIncrease,
+    FontDecrease,
+    PasteText,
 }
 
 impl From<core::EditorSnapshot> for EditorSnapshot {
@@ -600,6 +622,26 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
                 value.pane_gestures.move_pane,
                 value.pane_gestures.extend_pane,
             ],
+            window_authored: value.window_bindings.authored(),
+            window_guard: value.window_bindings.guard(),
+            window_bindings: value
+                .window_bindings
+                .entries()
+                .iter()
+                .map(|(key, action)| WindowBinding {
+                    key: (*key).into(),
+                    action: match action {
+                        crate::keymap::native_window::Action::FontSize(1) => {
+                            WindowAction::FontIncrease
+                        }
+                        crate::keymap::native_window::Action::FontSize(-1) => {
+                            WindowAction::FontDecrease
+                        }
+                        crate::keymap::native_window::Action::PasteText => WindowAction::PasteText,
+                        _ => unreachable!("validated window action"),
+                    },
+                })
+                .collect(),
             status: value.status.into(),
             session_strip: value.session_strip.map(Into::into),
         }
@@ -612,7 +654,38 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
         if value.pane_gestures[0] & value.pane_gestures[1] != 0 {
             return Err("overlapping pane gestures".into());
         }
+        if value.window_bindings.len() > crate::keymap::native_window::Bindings::MAX_ENTRIES {
+            return Err("too many window bindings".into());
+        }
+        let window_bindings = crate::keymap::native_window::Bindings::from_entries(
+            value
+                .window_bindings
+                .into_iter()
+                .map(|binding| {
+                    if crate::input::Modifiers::from_bits(binding.key.modifiers).is_none() {
+                        return Err("invalid window key modifiers".to_owned());
+                    }
+                    Ok((
+                        binding.key.into(),
+                        match binding.action {
+                            WindowAction::FontIncrease => {
+                                crate::keymap::native_window::Action::FontSize(1)
+                            }
+                            WindowAction::FontDecrease => {
+                                crate::keymap::native_window::Action::FontSize(-1)
+                            }
+                            WindowAction::PasteText => {
+                                crate::keymap::native_window::Action::PasteText
+                            }
+                        },
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        )?;
+        let window_bindings =
+            window_bindings.with_policy(value.window_authored, value.window_guard)?;
         Ok(Self {
+            window_bindings,
             geometry: value.geometry.into(),
             theme: value.theme.into(),
             terminal_theme_colors: value.terminal_theme_colors,
@@ -1025,6 +1098,9 @@ mod tests {
                 session_strip: None,
                 pane_drop: None,
                 pane_gestures: [1 << 4, 1 << 5],
+                window_bindings: Vec::new(),
+                window_authored: 0,
+                window_guard: 0,
                 geometry: FrameGeometry::default(),
                 theme: theme.into(),
                 terminal_theme_colors: true,
@@ -1283,6 +1359,53 @@ mod tests {
         assert_eq!(editor.pane_gestures.extend_pane, 1 << 6);
         next.editor.pane_gestures = [1 << 6, 1 << 6];
         assert!(core::EditorSnapshot::try_from(next.editor).is_err());
+    }
+
+    #[test]
+    fn window_bindings_force_full_publication_and_validate_the_wire_projection() {
+        let base = terminal_frame(1, 1, 'x');
+        let mut next = base.clone();
+        let binding = WindowBinding {
+            key: crate::input::KeyStroke::plain(crate::input::KeyCode::Function(8)).into(),
+            action: WindowAction::FontIncrease,
+        };
+        next.editor.window_bindings = vec![binding];
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        let decoded: HostFrame =
+            serde_json::from_slice(&serde_json::to_vec(&next).unwrap()).unwrap();
+        let editor = core::EditorSnapshot::try_from(decoded.editor).unwrap();
+        assert_eq!(
+            editor
+                .window_bindings
+                .lookup(crate::input::KeyStroke::plain(
+                    crate::input::KeyCode::Function(8)
+                )),
+            Some(crate::keymap::native_window::Action::FontSize(1))
+        );
+        assert_eq!(EditorSnapshot::from(editor).window_bindings, vec![binding]);
+        for entries in [
+            vec![binding; 2],
+            vec![binding; 97],
+            vec![WindowBinding {
+                key: super::super::input::KeyStroke {
+                    modifiers: 128,
+                    ..binding.key
+                },
+                ..binding
+            }],
+            vec![WindowBinding {
+                key: crate::input::KeyStroke::char('x').into(),
+                ..binding
+            }],
+        ] {
+            let mut editor = next.editor.clone();
+            editor.window_bindings = entries;
+            assert!(core::EditorSnapshot::try_from(editor).is_err());
+        }
+        let mut wire = serde_json::to_value(&next).unwrap();
+        wire["editor"]["window_bindings"][0]["action"] = serde_json::json!("Unknown");
+        assert!(serde_json::from_value::<HostFrame>(wire).is_err());
     }
 
     #[test]

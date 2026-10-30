@@ -127,6 +127,14 @@ impl<T> Queue<T> {
     }
 }
 
+fn window_requires_barrier(
+    captured: &runyte::keymap::native_window::Bindings,
+    current: Option<&runyte::keymap::native_window::Bindings>,
+) -> bool {
+    captured.has_authored_characters()
+        || current.is_some_and(|bindings| bindings.has_authored_characters())
+}
+
 fn text_bytes(input: &NativeInput) -> usize {
     match &input.event {
         super::Event::Paste(text) => text.len(),
@@ -202,10 +210,22 @@ impl super::NativeView {
                 match action {
                     RoutingAction::Direct => {
                         if let Event::Key(key) = input.event {
-                            if self.preview_key(key, cx) {
+                            let window_bindings = self
+                                .frame
+                                .as_ref()
+                                .filter(|frame| frame.attachment == input.attachment)
+                                .map_or_else(
+                                    || input.window_bindings.clone(),
+                                    |frame| {
+                                        input
+                                            .window_bindings
+                                            .with_current_guard(&frame.window_bindings)
+                                    },
+                                );
+                            if self.preview_key(key, &window_bindings, cx) {
                                 continue;
                             }
-                            if let Some(event) = self.window_shortcut(key, cx) {
+                            if let Some(event) = self.window_shortcut(key, &window_bindings, cx) {
                                 let Some(event) = event else {
                                     continue;
                                 };
@@ -279,7 +299,11 @@ impl super::NativeView {
             let barrier = self
                 .frame
                 .as_ref()
-                .is_some_and(|frame| !frame.previews.is_empty());
+                .is_some_and(|frame| !frame.previews.is_empty())
+                || window_requires_barrier(
+                    &input.window_bindings,
+                    self.frame.as_ref().map(|frame| &frame.window_bindings),
+                );
             for index in 0..copies {
                 if barrier && index + 1 == copies {
                     self.routing.forward(&mut input);

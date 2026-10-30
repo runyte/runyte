@@ -1157,7 +1157,7 @@ impl App {
         );
         let mut text = document.text().to_owned();
         if self.native_media {
-            text.push_str(&crate::keymap::native_window::help());
+            text.push_str(&self.native_window_bindings().help());
         }
         let existing = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_help()).then_some(index)

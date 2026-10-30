@@ -177,6 +177,7 @@ pub struct EditorSnapshot {
     /// now, outlined over the panes it would displace.
     pub pane_drop: Option<Rect>,
     pub pane_gestures: crate::keymap::pointer::PaneGestures,
+    pub window_bindings: crate::keymap::native_window::Bindings,
     pub status: StatusSnapshot,
     pub session_strip: Option<SessionStripSnapshot>,
 }
@@ -970,6 +971,7 @@ impl App {
             panes,
             pane_drop: self.pane_drop_preview(prepared),
             pane_gestures: self.keymap().pane_gestures(),
+            window_bindings: self.native_window_bindings(),
             status: StatusSnapshot {
                 mode: self.mode,
                 workspace_number: self.workspace_number,

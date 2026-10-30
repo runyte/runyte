@@ -4159,3 +4159,67 @@ fn context_launcher_defaults_keep_exact_tab_modifiers_and_counts_structural() {
         "Tab"
     );
 }
+
+#[test]
+fn authored_window_chords_yield_to_structural_operands_but_factory_aliases_remain() {
+    use crate::keymap::native_window::Action;
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_keymap(launcher_map(
+        "ui: {native-window: {font-increase: [Ctrl-x]}}",
+    ));
+    let key = KeyStroke::ctrl('x');
+    assert_eq!(
+        app.native_window_bindings().lookup(key),
+        Some(Action::FontSize(1))
+    );
+    let captured = app.native_window_bindings();
+    seed(&mut app, "abcx");
+    press(&mut app, 'f');
+    assert!(
+        captured
+            .with_current_guard(&app.native_window_bindings())
+            .lookup(key)
+            .is_none()
+    );
+    assert!(app.native_window_bindings().lookup(key).is_none());
+    assert_eq!(
+        app.native_window_bindings().lookup(KeyStroke::ctrl('V')),
+        Some(Action::PasteText)
+    );
+    app.handle_key(key).unwrap();
+    assert_eq!(app.active().selection.primary().head, 3);
+    assert_eq!(
+        app.native_window_bindings().lookup(key),
+        Some(Action::FontSize(1))
+    );
+}
+
+#[test]
+fn authored_window_chords_yield_to_menu_mnemonics_and_prompt_text() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_keymap(launcher_map(
+        "ui: {native-window: {font-increase: [Ctrl-r], font-decrease: [Super-x]}}",
+    ));
+    app.path_popup = Some(PathPopup {
+        path: "example.txt".into(),
+    });
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert!(app.path_action_menu.is_some());
+    assert!(
+        app.native_window_bindings()
+            .lookup(KeyStroke::ctrl('r'))
+            .is_none()
+    );
+    key(&mut app, KeyCode::Char('r'), Modifiers::CONTROL);
+    assert_eq!(app.registers.get(&'"').unwrap().text, "example.txt");
+    assert!(
+        app.native_window_bindings()
+            .lookup(KeyStroke::ctrl('r'))
+            .is_some()
+    );
+    press(&mut app, ':');
+    let super_x = KeyStroke::parse("Super-x").unwrap();
+    assert!(app.native_window_bindings().lookup(super_x).is_none());
+    app.handle_key(super_x).unwrap();
+    assert_eq!(app.command, "x");
+}

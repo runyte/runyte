@@ -26,6 +26,7 @@ fn key(code: char, attachment: u64) -> NativeInput {
         presented: Some(runyte::protocol::FrameId::from_raw(42).into()),
         presentation_only: false,
         pane_gestures: Default::default(),
+        window_bindings: Default::default(),
         routing_serial: 0,
     }
 }
@@ -159,6 +160,7 @@ fn consecutive_drags_coalesce_without_crossing_physical_input_boundaries() {
         }),
         presentation_only: false,
         pane_gestures: Default::default(),
+        window_bindings: Default::default(),
         routing_serial: 0,
     };
     for column in 0..300 {
@@ -424,4 +426,87 @@ fn queued_pane_press_keeps_the_painted_configuration() {
         let (input, ()) = queue.next(1, 0, true).unwrap();
         assert_eq!(queue.editor_pane_gesture(&input), expected);
     }
+}
+
+#[test]
+fn queued_window_shortcuts_retain_the_painted_map_across_replacement() {
+    use runyte::{
+        input::{KeyCode as CoreCode, KeyStroke},
+        keymap::native_window::{Action as WindowAction, Bindings},
+    };
+    let stroke = KeyStroke::plain(CoreCode::Function(8));
+    let mut first = key('x', 1);
+    first.event = Event::Key(KeyEvent::new(KeyCode::F(8), KeyModifiers::NONE));
+    first.window_bindings =
+        Bindings::from_entries(vec![(stroke, WindowAction::FontSize(1))]).unwrap();
+    let mut replacement = first.clone();
+    replacement.presented = Some(runyte::protocol::FrameId::from_raw(43).into());
+    replacement.window_bindings =
+        Bindings::from_entries(vec![(stroke, WindowAction::PasteText)]).unwrap();
+    let mut queue = Queue::default();
+    queue.push(first, ());
+    queue.push(replacement, ());
+    let first = queue.next(1, 0, true).unwrap().0;
+    let second = queue.next(1, 0, true).unwrap().0;
+    assert_eq!(first.presented.unwrap().get(), 42);
+    assert_eq!(
+        first.window_bindings.lookup(stroke),
+        Some(WindowAction::FontSize(1))
+    );
+    assert_eq!(second.presented.unwrap().get(), 43);
+    assert_eq!(
+        second.window_bindings.lookup(stroke),
+        Some(WindowAction::PasteText)
+    );
+}
+
+#[test]
+fn queued_window_operand_waits_for_host_and_keeps_captured_configuration() {
+    use runyte::{
+        input::KeyStroke,
+        keymap::native_window::{Action as WindowAction, Bindings},
+    };
+    let stroke = KeyStroke::ctrl('x');
+    let map = Bindings::from_entries(vec![(stroke, WindowAction::FontSize(1))])
+        .unwrap()
+        .with_policy(1, 0)
+        .unwrap();
+    let mut prefix = key('f', 1);
+    prefix.window_bindings = map.clone();
+    let mut operand = key('x', 1);
+    operand.event = Event::Key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
+    operand.window_bindings = map.clone();
+    let mut queue: Queue = Queue::default();
+    queue.push(prefix, ());
+    queue.push(operand, ());
+    let (mut prefix, ()) = queue.next(1, 0, true).unwrap();
+    assert!(window_requires_barrier(&prefix.window_bindings, Some(&map)));
+    queue.forward(&mut prefix);
+    assert!(queue.next(1, 0, true).is_none());
+    // The host acknowledges f and publishes an operand owner. A simultaneous
+    // config reload removes the chord, but cannot change its captured identity.
+    let current = Bindings::from_entries(vec![])
+        .unwrap()
+        .with_policy(0, 1)
+        .unwrap();
+    let (operand, ()) = queue.next(1, prefix.routing_serial, true).unwrap();
+    assert!(
+        operand
+            .window_bindings
+            .with_current_guard(&current)
+            .lookup(stroke)
+            .is_none()
+    );
+    let released = current.with_policy(0, 0).unwrap();
+    assert_eq!(
+        operand
+            .window_bindings
+            .with_current_guard(&released)
+            .lookup(stroke),
+        Some(WindowAction::FontSize(1))
+    );
+    assert!(!window_requires_barrier(
+        &Bindings::default(),
+        Some(&released)
+    ));
 }

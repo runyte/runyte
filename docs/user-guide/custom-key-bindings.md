@@ -1199,3 +1199,25 @@ without a ready language server it reports that no actions are available; with
 one it passes the actual pressed key to the editor keymap, retaining the count.
 For a remapped launcher, assign the desired editor fallback to that same key.
 It does not synthesize Tab. Help prose and action tables show the effective key.
+
+`ui.native-window` supports `font-increase`, `font-decrease`, and `paste-text`.
+These actions run in the desktop window and use the same effective bindings as
+its help. Defaults remain Ctrl-+/Ctrl-=, Ctrl--, and Ctrl-Shift-v (also Super-v
+on macOS). For example:
+
+```yaml
+keys:
+  ui:
+    native-window:
+      font-increase: [F8]
+      font-decrease: [F7]
+      paste-text: [Alt-v]
+```
+
+Plain text characters cannot be window shortcuts. Authored character chords yield
+to structural operands and text owned by an active prompt or menu. Factory
+shortcuts retain their historical precedence. Queued input keeps the bindings
+from the frame where it was captured; structural ownership is checked after
+preceding editor input has been processed. Document previews still receive
+navigation before window shortcuts, and pasting keeps its existing preview
+dismissal behavior.

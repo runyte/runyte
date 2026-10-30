@@ -419,3 +419,37 @@ constraints were reviewed with Astra before implementation.
   tests (2 ignored), 132 keymap-related tests, root Clippy, formatting and guide
   checks passed. Coverage includes modifier masks, removal, native choices,
   actual-key fallback, structural counts/operands and literal marker boundaries.
+
+### Native frontend projection
+
+Window controls and document previews must use effective shared bindings captured
+with the painted input identity. Preserve routing order: pane gesture ownership,
+preview navigation/forwarding, window controls, then host input. Window controls
+will first receive a bounded immutable key/action projection in frontend frames;
+map changes force full publication and queued input retains its captured map.
+
+The preview projection will retain only supported single semantic navigation
+commands. Action chains, plugin commands and palette invocations remain host-owned.
+Shared prefix families need coherent ownership before consuming their first key.
+Pending preview chords must be tied to the map and document generation. Local
+preview operations must verify attachment, pane, generation and input eligibility,
+without treating an ordinary repaint of the same document as a new owner. Preserve
+raw modifier compatibility and paste's existing dismiss-before-forward behavior.
+Private DTOs must validate bounds, enums, keys and duplicate entries. Astra reviewed
+these constraints before implementation. Explicit UI replacement must suppress
+inherited aliases for the same action, with provenance retained for registry
+navigation versus native compatibility aliases.
+
+- Native window font and clipboard controls now resolve `ui.native-window`.
+  A bounded projection and provenance travel through protocol 84 and are captured
+  with painted input. Structural eligibility is refreshed separately after host
+  acknowledgement, preserving captured configuration across reloads. This fixes
+  the fast operand/window-chord race identified by Astra; authored character maps
+  add a queue barrier, while factory and named-only maps retain existing timing.
+  Operand, prompt, menu and typed-confirmation ownership preserve exact behavior.
+  Tests cover modifier matrices, cache replacement, removal, malformed wire data,
+  full publication, queued map identity, fast operand bursts, and guard equivalence.
+  Astra's review fixes include stacked owner precedence and typed-form ownership.
+  All 27 window-related root tests, both queued window tests, root and desktop
+  Clippy, complete desktop-package tests, formatting and guide checks passed.
+  Preview projection and remaining pointer actions are still pending.

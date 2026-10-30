@@ -291,6 +291,7 @@ mod language_workflows;
 mod lsp_trust_workflows;
 mod mouse_autoscroll;
 mod movement;
+mod native_input;
 mod navigation_workflows;
 mod pane_drag;
 use navigation_workflows::DestinationScope;
