@@ -678,16 +678,36 @@ impl App {
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
         let previous = self.plugin_physical_input;
-        self.plugin_physical_input = matches!(
-            input,
-            InputEvent::Key(KeyStroke {
-                code: KeyCode::Enter,
-                modifiers: Modifiers::NONE,
-            })
-        );
+        self.plugin_physical_input = self.fresh_physical_approval_key(&input);
         let result = self.handle_frontend_input(input, true);
         self.plugin_physical_input = previous;
         result
+    }
+
+    pub(super) fn fresh_physical_approval_key(&self, input: &InputEvent) -> bool {
+        let InputEvent::Key(key) = input else {
+            return false;
+        };
+        let plain_enter = key.code == KeyCode::Enter && key.modifiers.is_empty();
+        if self.mode == Mode::Command
+            && !self.has_input_overlay()
+            && !self.context_overlay_active()
+            && self.jump.is_none()
+            && self.macro_replay.is_none()
+            && !self.session_inventory_open()
+            && !self.session_directory_chooser_open()
+        {
+            use crate::keymap::ui::Action;
+            let owner = self.prompt_ui_owner();
+            self.keymap.ui().lookup(owner, *key) == Some(Action::Accept)
+                && (plain_enter
+                    || self
+                        .keymap
+                        .ui()
+                        .explicitly_configured(owner, Action::Accept))
+        } else {
+            plain_enter
+        }
     }
 
     /// Applies an operating-system key repeat through the ordinary input
@@ -3926,30 +3946,30 @@ impl App {
         self.active_server_capabilities().is_some()
     }
 
+    pub(crate) fn prompt_ui_owner(&self) -> crate::keymap::ui::Owner {
+        use crate::keymap::ui::Owner;
+        match self.prompt_kind {
+            PromptKind::Command => Owner::CommandPrompt,
+            PromptKind::ExternalProgram => Owner::ProgramPrompt,
+            PromptKind::FinderPath
+            | PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) => Owner::PathPrompt,
+            _ => Owner::TextPrompt,
+        }
+    }
+
     fn handle_command(&mut self, key: KeyStroke) -> Result<()> {
         if self.prompt_kind != PromptKind::Command {
             return self.handle_search_prompt(key);
         }
-        if key.modifiers.contains(Modifiers::CONTROL) {
-            return self.handle_prompt_control(key);
-        }
-        if key.modifiers.contains(Modifiers::ALT) {
-            match key.code {
-                KeyCode::Char('b') => {
-                    self.command_cursor = prompt_word_backward(&self.command, self.command_cursor);
-                }
-                KeyCode::Char('f') => {
-                    self.command_cursor = prompt_word_forward(&self.command, self.command_cursor);
-                }
-                _ => {}
-            }
+        use crate::keymap::ui::Action;
+        let action = self.keymap.ui().lookup(self.prompt_ui_owner(), key);
+        if let Some(action) = action
+            && self.handle_prompt_action(action)?
+        {
             return Ok(());
         }
-        match key.code {
-            KeyCode::Escape => {
-                self.close_prompt();
-            }
-            KeyCode::Enter => {
+        match action {
+            Some(Action::Accept) => {
                 if self
                     .matching_path_hints()
                     .is_some_and(|hints| self.palette_enter_accepts_path_hint(&hints))
@@ -4034,24 +4054,21 @@ impl App {
                     self.mode = mode;
                 }
             }
-            KeyCode::Backspace => {
-                prompt_backspace(&mut self.command, &mut self.command_cursor);
-                self.command_selection = 0;
-            }
-            KeyCode::Up | KeyCode::BackTab => self.select_previous_command(),
-            KeyCode::Down => self.select_next_command(),
-            KeyCode::Home => self.command_selection = 0,
-            KeyCode::End => {
+            Some(Action::Previous) => self.select_previous_command(),
+            Some(Action::Next) => self.select_next_command(),
+            Some(Action::First) => self.command_selection = 0,
+            Some(Action::Last) => {
                 self.command_selection = self.command_hint_count().saturating_sub(1);
             }
-            KeyCode::Tab => self.complete_selected_command(),
-            KeyCode::Left => {
-                self.command_cursor = prompt_left(&self.command, self.command_cursor);
-            }
-            KeyCode::Right => {
-                self.command_cursor = prompt_right(&self.command, self.command_cursor);
-            }
-            KeyCode::Char(ch) => {
+            Some(Action::Complete) => self.complete_selected_command(),
+            None if matches!(key.code, KeyCode::Char(_))
+                && !key
+                    .modifiers
+                    .intersects(Modifiers::CONTROL | Modifiers::ALT) =>
+            {
+                let KeyCode::Char(ch) = key.code else {
+                    unreachable!()
+                };
                 prompt_insert(&mut self.command, self.command_cursor, ch);
                 self.command_cursor += 1;
                 self.command_selection = 0;
@@ -5090,24 +5107,15 @@ impl App {
     }
 
     fn handle_search_prompt(&mut self, key: KeyStroke) -> Result<()> {
-        if key.modifiers.contains(Modifiers::CONTROL) {
-            return self.handle_prompt_control(key);
-        }
-        if key.modifiers.contains(Modifiers::ALT) {
-            match key.code {
-                KeyCode::Char('b') => {
-                    self.command_cursor = prompt_word_backward(&self.command, self.command_cursor);
-                }
-                KeyCode::Char('f') => {
-                    self.command_cursor = prompt_word_forward(&self.command, self.command_cursor);
-                }
-                _ => {}
-            }
+        use crate::keymap::ui::Action;
+        let action = self.keymap.ui().lookup(self.prompt_ui_owner(), key);
+        if let Some(action) = action
+            && self.handle_prompt_action(action)?
+        {
             return Ok(());
         }
-        match key.code {
-            KeyCode::Escape => self.close_prompt(),
-            KeyCode::Enter => {
+        match action {
+            Some(Action::Accept) => {
                 let kind = self.prompt_kind;
                 if kind == PromptKind::FinderPath
                     && self
@@ -5350,38 +5358,24 @@ impl App {
                     self.report_completed_action(spelling, description, outcome);
                 }
             }
-            KeyCode::Backspace => {
-                prompt_backspace(&mut self.command, &mut self.command_cursor);
-                self.command_selection = 0;
-            }
-            KeyCode::Delete => {
-                prompt_delete(&mut self.command, self.command_cursor);
-                self.command_selection = 0;
-            }
-            KeyCode::Left => self.command_cursor = prompt_left(&self.command, self.command_cursor),
-            KeyCode::Right => {
-                self.command_cursor = prompt_right(&self.command, self.command_cursor);
-            }
-            KeyCode::Home => self.command_cursor = 0,
-            KeyCode::End => self.command_cursor = self.command.chars().count(),
-            KeyCode::Up | KeyCode::BackTab if self.prompt_kind == PromptKind::ExternalProgram => {
+            Some(Action::Previous) if self.prompt_kind == PromptKind::ExternalProgram => {
                 self.command_selection = self.command_selection.saturating_sub(1);
             }
-            KeyCode::Down if self.prompt_kind == PromptKind::ExternalProgram => {
+            Some(Action::Next) if self.prompt_kind == PromptKind::ExternalProgram => {
                 let last = self.matching_program_choices().len().saturating_sub(1);
                 self.command_selection = (self.command_selection + 1).min(last);
             }
-            KeyCode::Tab if self.prompt_kind == PromptKind::ExternalProgram => {
+            Some(Action::OpenActions) if self.prompt_kind == PromptKind::ExternalProgram => {
                 self.open_program_actions();
             }
-            KeyCode::Up | KeyCode::BackTab
+            Some(Action::Previous)
                 if self.prompt_kind == PromptKind::FinderPath
                     || self.prompt_kind
                         == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) =>
             {
                 self.command_selection = self.command_selection.saturating_sub(1);
             }
-            KeyCode::Down
+            Some(Action::Next)
                 if self.prompt_kind == PromptKind::FinderPath
                     || self.prompt_kind
                         == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) =>
@@ -5391,14 +5385,21 @@ impl App {
                     .map_or(0, |hints| hints.len().saturating_sub(1));
                 self.command_selection = (self.command_selection + 1).min(last);
             }
-            KeyCode::Tab
+            Some(Action::Complete)
                 if self.prompt_kind == PromptKind::FinderPath
                     || self.prompt_kind
                         == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) =>
             {
                 self.complete_selected_finder_path();
             }
-            KeyCode::Char(ch) => {
+            None if matches!(key.code, KeyCode::Char(_))
+                && !key
+                    .modifiers
+                    .intersects(Modifiers::CONTROL | Modifiers::ALT) =>
+            {
+                let KeyCode::Char(ch) = key.code else {
+                    unreachable!()
+                };
                 prompt_insert(&mut self.command, self.command_cursor, ch);
                 self.command_cursor += 1;
                 self.command_selection = 0;
@@ -5542,40 +5543,56 @@ impl App {
         }
     }
 
-    fn handle_prompt_control(&mut self, key: KeyStroke) -> Result<()> {
-        match key.code {
-            KeyCode::Char('c') => self.close_prompt(),
-            KeyCode::Char('s') => return self.save(None, false),
-            KeyCode::Char('b') => {
-                self.command_cursor = prompt_left(&self.command, self.command_cursor);
+    /// Execute editing actions without synthesizing their old key spellings.
+    fn handle_prompt_action(&mut self, action: crate::keymap::ui::Action) -> Result<bool> {
+        use crate::keymap::ui::Action;
+        match action {
+            Action::Cancel => self.close_prompt(),
+            Action::Save => {
+                self.save(None, false)?;
             }
-            KeyCode::Char('f') => {
-                self.command_cursor = prompt_right(&self.command, self.command_cursor);
+            Action::MoveLeft => {
+                self.command_cursor = prompt_left(&self.command, self.command_cursor)
             }
-            KeyCode::Char('a') => self.command_cursor = 0,
-            KeyCode::Char('e') => self.command_cursor = self.command.chars().count(),
-            KeyCode::Char('w') => {
+            Action::MoveRight => {
+                self.command_cursor = prompt_right(&self.command, self.command_cursor)
+            }
+            Action::MoveStart => self.command_cursor = 0,
+            Action::MoveEnd => self.command_cursor = self.command.chars().count(),
+            Action::WordLeft => {
+                self.command_cursor = prompt_word_backward(&self.command, self.command_cursor)
+            }
+            Action::WordRight => {
+                self.command_cursor = prompt_word_forward(&self.command, self.command_cursor)
+            }
+            Action::DeleteWordBackward => {
                 let start = prompt_word_backward(&self.command, self.command_cursor);
                 prompt_delete_range(&mut self.command, start, self.command_cursor);
                 self.command_cursor = start;
             }
-            KeyCode::Char('u') => {
+            Action::DeleteToStart => {
                 prompt_delete_range(&mut self.command, 0, self.command_cursor);
                 self.command_cursor = 0;
             }
-            KeyCode::Char('k') => {
+            Action::DeleteToEnd => {
                 let end = self.command.chars().count();
                 prompt_delete_range(&mut self.command, self.command_cursor, end);
             }
-            KeyCode::Char('h') => {
+            Action::Backspace | Action::DeleteBackward => {
                 prompt_backspace(&mut self.command, &mut self.command_cursor);
+                if action == Action::Backspace {
+                    self.command_selection = 0;
+                }
             }
-            KeyCode::Char('d') => {
+            Action::Delete | Action::DeleteForward => {
                 prompt_delete(&mut self.command, self.command_cursor);
+                if action == Action::Delete {
+                    self.command_selection = 0;
+                }
             }
-            _ => {}
+            _ => return Ok(false),
         }
-        Ok(())
+        Ok(true)
     }
 
     pub(super) fn open_prompt(&mut self, kind: PromptKind) {

@@ -304,3 +304,128 @@ fn program_menu_defaults_preserve_wildcard_modifiers_and_replacements_remove_ali
         Some(Action::Cancel)
     );
 }
+
+#[test]
+fn prompt_defaults_preserve_modifier_precedence_and_owner_specific_keys() {
+    use Action::*;
+    let bindings = Bindings::default();
+    for owner in [
+        Owner::CommandPrompt,
+        Owner::TextPrompt,
+        Owner::PathPrompt,
+        Owner::ProgramPrompt,
+    ] {
+        for bits in 0..64 {
+            let m = Modifiers::from_bits(bits).unwrap();
+            for (code, ordinary, control, alt) in [
+                (KeyCode::Enter, Some(Accept), None, None),
+                (KeyCode::Escape, Some(Cancel), None, None),
+                (KeyCode::Char('b'), None, Some(MoveLeft), Some(WordLeft)),
+                (KeyCode::Char('f'), None, Some(MoveRight), Some(WordRight)),
+                (KeyCode::Char('h'), None, Some(DeleteBackward), None),
+                (KeyCode::Char('d'), None, Some(DeleteForward), None),
+                (KeyCode::Char('n'), None, None, None),
+                (KeyCode::Char('p'), None, None, None),
+                (KeyCode::Char('s'), None, Some(Save), None),
+                (KeyCode::Char('c'), None, Some(Cancel), None),
+                (KeyCode::Backspace, Some(Backspace), None, None),
+                (
+                    KeyCode::Delete,
+                    (owner != Owner::CommandPrompt).then_some(Delete),
+                    None,
+                    None,
+                ),
+                (
+                    KeyCode::Home,
+                    Some(if owner == Owner::CommandPrompt {
+                        First
+                    } else {
+                        MoveStart
+                    }),
+                    None,
+                    None,
+                ),
+                (
+                    KeyCode::End,
+                    Some(if owner == Owner::CommandPrompt {
+                        Last
+                    } else {
+                        MoveEnd
+                    }),
+                    None,
+                    None,
+                ),
+                (
+                    KeyCode::Down,
+                    (owner != Owner::TextPrompt).then_some(Next),
+                    None,
+                    None,
+                ),
+                (
+                    KeyCode::Up,
+                    (owner != Owner::TextPrompt).then_some(Previous),
+                    None,
+                    None,
+                ),
+                (
+                    KeyCode::Tab,
+                    match owner {
+                        Owner::TextPrompt => None,
+                        Owner::ProgramPrompt => Some(OpenActions),
+                        _ => Some(Complete),
+                    },
+                    None,
+                    None,
+                ),
+                (KeyCode::Char(' '), None, None, None),
+            ] {
+                let expected = if m.contains(Modifiers::CONTROL) {
+                    control
+                } else if m.contains(Modifiers::ALT) {
+                    alt
+                } else {
+                    ordinary
+                };
+                assert_eq!(
+                    bindings.lookup(owner, KeyStroke::new(code, m)),
+                    expected,
+                    "{owner:?} {code:?} {m:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn prompt_literal_input_is_reserved_and_failed_owner_does_not_grant_accept_authority() {
+    for key in ["a", "Space", "Super-a", "Ctrl-\u{1}"] {
+        let mut keys = serde_yaml::Mapping::new();
+        keys.insert(
+            serde_yaml::Value::String("accept".into()),
+            serde_yaml::Value::Sequence(vec![serde_yaml::Value::String(key.into())]),
+        );
+        let mut section = serde_yaml::Mapping::new();
+        section.insert(
+            serde_yaml::Value::String("command-prompt".into()),
+            serde_yaml::Value::Mapping(keys),
+        );
+        let mut errors = vec![];
+        let bindings = compile(
+            Some(&serde_yaml::Value::Mapping(section)),
+            KeyStroke::char(' '),
+            &mut errors,
+        );
+        assert_eq!(errors.len(), 1, "{key:?}");
+        assert!(!bindings.explicitly_configured(Owner::CommandPrompt, Action::Accept));
+    }
+    let (bindings, errors) = configured("command-prompt: {accept: [F9], cancel: []}");
+    assert!(errors.is_empty());
+    assert!(bindings.explicitly_configured(Owner::CommandPrompt, Action::Accept));
+    assert!(!bindings.explicitly_configured(Owner::TextPrompt, Action::Accept));
+    for key in ["Enter", "Shift-Enter", "Esc", "Ctrl-c"] {
+        assert_eq!(
+            bindings.lookup(Owner::CommandPrompt, KeyStroke::parse(key).unwrap()),
+            None
+        );
+    }
+}

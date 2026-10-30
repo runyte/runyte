@@ -2,6 +2,8 @@
 //! Shared semantic UI actions. Owners execute actions without rewriting input;
 //! literal input and structural option identifiers retain their own meaning.
 
+mod prompt;
+
 use crate::input::{KeyCode, KeyStroke, Modifiers};
 use serde_yaml::Value;
 use std::collections::HashMap;
@@ -18,15 +20,23 @@ pub enum Owner {
     Path,
     PathActions,
     ProgramActions,
+    CommandPrompt,
+    TextPrompt,
+    PathPrompt,
+    ProgramPrompt,
 }
 
 impl Owner {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 9] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
         Self::PathActions,
         Self::ProgramActions,
+        Self::CommandPrompt,
+        Self::TextPrompt,
+        Self::PathPrompt,
+        Self::ProgramPrompt,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -35,7 +45,20 @@ impl Owner {
             Self::Path => "path",
             Self::PathActions => "path-actions",
             Self::ProgramActions => "program-actions",
+            Self::CommandPrompt => "command-prompt",
+            Self::TextPrompt => "text-prompt",
+            Self::PathPrompt => "path-prompt",
+            Self::ProgramPrompt => "program-prompt",
         }
+    }
+    pub fn is_prompt(self) -> bool {
+        matches!(
+            self,
+            Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt
+        )
+    }
+    fn inherits_leader(self) -> bool {
+        self != Self::Completion && !self.is_prompt()
     }
     fn actions(self) -> &'static [Action] {
         use Action::*;
@@ -52,6 +75,9 @@ impl Owner {
                 &[Next, Previous, Accept, Cancel]
             }
             Self::Path => &[OpenActions, Cancel],
+            Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
+                prompt::actions(self)
+            }
         }
     }
     fn structural(self, key: KeyStroke) -> bool {
@@ -64,6 +90,13 @@ impl Owner {
             // of modifiers. Preserve that broader structural input policy.
             Self::PathActions => matches!(key.code, KeyCode::Char('r' | 's')),
             Self::Completion | Self::Path | Self::ProgramActions => false,
+            Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+                    || matches!(key.code, KeyCode::Char(_))
+                        && !key
+                            .modifiers
+                            .intersects(Modifiers::CONTROL | Modifiers::ALT)
+            }
         }
     }
 }
@@ -77,6 +110,23 @@ pub enum Action {
     CancelOrContinue,
     DismissAndContinue,
     OpenActions,
+    Save,
+    MoveLeft,
+    MoveRight,
+    MoveStart,
+    MoveEnd,
+    WordLeft,
+    WordRight,
+    DeleteBackward,
+    DeleteForward,
+    DeleteWordBackward,
+    DeleteToStart,
+    DeleteToEnd,
+    Backspace,
+    Delete,
+    First,
+    Last,
+    Complete,
 }
 
 impl Action {
@@ -89,6 +139,23 @@ impl Action {
             Self::CancelOrContinue => "cancel-or-continue",
             Self::DismissAndContinue => "dismiss-and-continue",
             Self::OpenActions => "open-actions",
+            Self::Save => "save",
+            Self::MoveLeft => "move-left",
+            Self::MoveRight => "move-right",
+            Self::MoveStart => "move-start",
+            Self::MoveEnd => "move-end",
+            Self::WordLeft => "word-left",
+            Self::WordRight => "word-right",
+            Self::DeleteBackward => "delete-backward",
+            Self::DeleteForward => "delete-forward",
+            Self::DeleteWordBackward => "delete-word-backward",
+            Self::DeleteToStart => "delete-to-start",
+            Self::DeleteToEnd => "delete-to-end",
+            Self::Backspace => "backspace",
+            Self::Delete => "delete",
+            Self::First => "first",
+            Self::Last => "last",
+            Self::Complete => "complete",
         }
     }
 }
@@ -97,6 +164,7 @@ impl Action {
 struct OwnerBindings {
     keys: Arc<HashMap<KeyStroke, Action>>,
     labels: Arc<HashMap<Action, Vec<String>>>,
+    configured: std::collections::HashSet<Action>,
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +201,21 @@ impl Bindings {
                             KeyCode::Char('p'),
                             KeyCode::Char('j'),
                             KeyCode::Char('k'),
+                            KeyCode::Backspace,
+                            KeyCode::Delete,
+                            KeyCode::Home,
+                            KeyCode::End,
+                            KeyCode::Left,
+                            KeyCode::Right,
+                            KeyCode::Char('s'),
+                            KeyCode::Char('b'),
+                            KeyCode::Char('f'),
+                            KeyCode::Char('a'),
+                            KeyCode::Char('e'),
+                            KeyCode::Char('w'),
+                            KeyCode::Char('u'),
+                            KeyCode::Char('h'),
+                            KeyCode::Char('d'),
                         ] {
                             let key = KeyStroke::new(code, modifiers);
                             if let Some(action) = legacy_action(owner, key) {
@@ -158,6 +241,7 @@ impl Bindings {
                         OwnerBindings {
                             keys: Arc::new(keys),
                             labels: Arc::new(labels),
+                            configured: Default::default(),
                         },
                     )
                 })
@@ -169,11 +253,14 @@ impl Bindings {
     fn with_leader(leader: KeyStroke) -> Self {
         let mut defaults = Self::legacy().clone();
         for (&owner, bindings) in &mut defaults.owners {
-            if owner != Owner::Completion {
+            if owner.inherits_leader() {
                 bindings.add_leader(leader);
             }
         }
         defaults
+    }
+    pub fn explicitly_configured(&self, owner: Owner, action: Action) -> bool {
+        self.owners[&owner].configured.contains(&action)
     }
     pub fn lookup(&self, owner: Owner, key: KeyStroke) -> Option<Action> {
         self.owners[&owner]
@@ -236,6 +323,9 @@ impl OwnerBindings {
 
 fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     use Action::*;
+    if owner.is_prompt() {
+        return prompt::legacy_action(owner, key);
+    }
     let control = key.modifiers.contains(Modifiers::CONTROL);
     if owner == Owner::Completion {
         return match (key.code, control) {
@@ -274,6 +364,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner.is_prompt() {
+        return prompt::labels(owner, action);
+    }
     use Action::*;
     match (owner, action) {
         (Owner::Completion, Next) => &["Down", "Ctrl-n"],
@@ -350,7 +443,7 @@ pub(super) fn compile(
                     }
                     let key = KeyStroke::parse(source)?.canonical_for_binding();
                     if owner.structural(key) {
-                        return Err("key belongs to a structural menu choice".into());
+                        return Err("key belongs to structural text or a menu choice".into());
                     }
                     if parsed.contains(&key) {
                         return Err("duplicate normalized key".into());
@@ -364,9 +457,10 @@ pub(super) fn compile(
             let mut candidate = Bindings::legacy().owners[&owner].clone();
             Arc::make_mut(&mut candidate.keys)
                 .retain(|_, action| !assignments.contains_key(action));
-            if owner != Owner::Completion && !assignments.contains_key(&Action::Cancel) {
+            if owner.inherits_leader() && !assignments.contains_key(&Action::Cancel) {
                 candidate.add_leader(leader);
             }
+            candidate.configured = assignments.keys().copied().collect();
             for (action, keys) in assignments {
                 Arc::make_mut(&mut candidate.labels)
                     .insert(action, keys.iter().map(|key| key.label()).collect());

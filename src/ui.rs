@@ -1041,8 +1041,16 @@ fn draw_setting_prompt(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rec
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " {} · {constraint} · Enter save · Esc cancel ",
-            descriptor.key
+            " {} · {constraint} · {} save · {} cancel ",
+            descriptor.key,
+            app.keymap().ui().label(
+                crate::keymap::ui::Owner::TextPrompt,
+                crate::keymap::ui::Action::Accept
+            ),
+            app.keymap().ui().label(
+                crate::keymap::ui::Owner::TextPrompt,
+                crate::keymap::ui::Action::Cancel
+            )
         ))
         .style(
             Style::default()
@@ -4945,11 +4953,26 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.accent))
-                .title(if app.command.trim_start().starts_with(':') {
-                    " Plugin commands · ↑/↓ select · Tab complete "
-                } else {
-                    " Commands by category · ↑/↓ select · Tab complete "
-                }),
+                .title(format!(
+                    " {} · {}/{} select · {} complete ",
+                    if app.command.trim_start().starts_with(':') {
+                        "Plugin commands"
+                    } else {
+                        "Commands by category"
+                    },
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::CommandPrompt,
+                        crate::keymap::ui::Action::Previous
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::CommandPrompt,
+                        crate::keymap::ui::Action::Next
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::CommandPrompt,
+                        crate::keymap::ui::Action::Complete
+                    ),
+                )),
         )
         .style(
             Style::default()
@@ -4989,8 +5012,14 @@ fn draw_program_hints(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect
 
     let items = if choices.is_empty() {
         vec![
-            ListItem::new("No matching programs · type one and press Enter")
-                .style(Style::default().fg(app.theme.muted)),
+            ListItem::new(format!(
+                "No matching programs · type one and press {}",
+                app.keymap().ui().label(
+                    crate::keymap::ui::Owner::ProgramPrompt,
+                    crate::keymap::ui::Action::Accept
+                )
+            ))
+            .style(Style::default().fg(app.theme.muted)),
         ]
     } else {
         choices
@@ -5017,7 +5046,25 @@ fn draw_program_hints(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.accent))
-                .title(" Open with · Enter open · ↑/↓ select · Tab actions "),
+                .title(format!(
+                    " Open with · {} open · {}/{} select · {} actions ",
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::ProgramPrompt,
+                        crate::keymap::ui::Action::Accept
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::ProgramPrompt,
+                        crate::keymap::ui::Action::Previous
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::ProgramPrompt,
+                        crate::keymap::ui::Action::Next
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::ProgramPrompt,
+                        crate::keymap::ui::Action::OpenActions
+                    ),
+                )),
         )
         .style(
             Style::default()

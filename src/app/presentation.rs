@@ -2606,6 +2606,12 @@ impl App {
         }
 
         if self.mode == Mode::Command {
+            use crate::keymap::ui::Action;
+            let owner = self.prompt_ui_owner();
+            let label = |action| self.keymap.ui().label(owner, action);
+            let accept = label(Action::Accept);
+            let cancel = label(Action::Cancel);
+            let overlay_start = overlays.len();
             if self.prompt_kind == PromptKind::Command {
                 if let Some(hints) = self.matching_plugin_hints() {
                     let command = self.command.split_once(char::is_whitespace).unwrap().0;
@@ -2729,7 +2735,10 @@ impl App {
                 let choices = self.matching_program_choices();
                 overlays.push(bounded(
                     OverlayKind::ProgramHints,
-                    "Open with · Enter open · Tab actions",
+                    format!(
+                        "Open with · {accept} open · {} actions",
+                        label(Action::OpenActions)
+                    ),
                     "",
                     choices
                         .iter()
@@ -2775,14 +2784,14 @@ impl App {
                 let (title, detail) = if let Some(scope) = &self.indentation_prompt_scope {
                     (
                         format!(
-                            "{} · {} · integer 1–16 · Enter save · Esc cancel",
+                            "{} · {} · integer 1–16 · {accept} save · {cancel} cancel",
                             setting.descriptor().title,
                             scope.label()
                         ),
                         self.indentation_prompt_hint.clone().unwrap_or_default(),
                     )
                 } else {
-                    ("File pattern · Enter continue · Esc cancel".into(), "Workspace-relative / paths; * and ? match within a directory; ** crosses directories; basename patterns match at any depth. Later matching rules win.".into())
+                    (format!("File pattern · {accept} continue · {cancel} cancel"), "Workspace-relative / paths; * and ? match within a directory; ** crosses directories; basename patterns match at any depth. Later matching rules win.".into())
                 };
                 let message = if self.status_error {
                     format!("{detail} · {}", self.status)
@@ -2803,11 +2812,14 @@ impl App {
                 let title = match self.prompt_kind {
                     PromptKind::SettingValue(setting) => match setting.descriptor().value_type {
                         SettingType::Integer { minimum, maximum } => format!(
-                            "{} · integer {minimum}–{maximum} · Enter save · Esc cancel",
+                            "{} · integer {minimum}–{maximum} · {accept} save · {cancel} cancel",
                             setting.descriptor().key
                         ),
                         SettingType::Text => {
-                            format!("{} · Enter save · Esc cancel", setting.descriptor().key)
+                            format!(
+                                "{} · {accept} save · {cancel} cancel",
+                                setting.descriptor().key
+                            )
                         }
                         SettingType::Grammar
                         | SettingType::Boolean
@@ -2832,6 +2844,43 @@ impl App {
                 );
                 snapshot.query_cursor = Some(self.command_cursor);
                 overlays.push(snapshot);
+            }
+            for overlay in &mut overlays[overlay_start..] {
+                match overlay.kind {
+                    OverlayKind::CommandPalette
+                    | OverlayKind::ProgramHints
+                    | OverlayKind::Prompt => {
+                        for action in &mut overlay.actions {
+                            action.key_hint = match action.key_hint.as_str() {
+                                "Enter" => accept.clone(),
+                                "Esc" => cancel.clone(),
+                                "Tab" if overlay.kind == OverlayKind::ProgramHints => {
+                                    label(Action::OpenActions)
+                                }
+                                _ => action.key_hint.clone(),
+                            };
+                        }
+                    }
+                    OverlayKind::PathCompletion => {
+                        let enter_completes =
+                            overlay.actions.iter().any(|a| a.key_hint == "Tab/Enter");
+                        overlay.actions = vec![
+                            OverlayAction::new(
+                                format!("{}/{}", label(Action::Previous), label(Action::Next)),
+                                "select",
+                            ),
+                            OverlayAction::new(
+                                if enter_completes {
+                                    format!("{}/{accept}", label(Action::Complete))
+                                } else {
+                                    label(Action::Complete)
+                                },
+                                "complete",
+                            ),
+                        ];
+                    }
+                    _ => {}
+                }
             }
         }
         if let Some(message) = self.prompt_input_error

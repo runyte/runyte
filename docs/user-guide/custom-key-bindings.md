@@ -269,6 +269,43 @@ Changing `cancel` restores the covered key's ordinary meaning. Hints show only
 currently reachable shortcuts. Cancel in path actions returns to the path
 popup; cancel there closes it.
 
+Prompt owners are `command-prompt` (the command palette), `text-prompt`
+(search, rename, settings and other text entry), `path-prompt` (Finder path
+and directory-tree Move), and `program-prompt` (Open with). They do not inherit
+leader cancellation: literal characters, including spaces, remain text.
+
+All prompt owners support `accept`, `cancel`, `save`, `move-left`, `move-right`,
+`move-start`, `move-end`, `word-left`, `word-right`, `delete-backward`,
+`delete-forward`, `delete-word-backward`, `delete-to-start`, `delete-to-end`,
+and `backspace`. The defaults retain Ctrl-c/s/b/f/a/e, Alt-b/f, Ctrl-h/d/w/u/k,
+and Backspace respectively. `backspace` resets completion selection;
+`delete-backward` (Ctrl-h) preserves it. Non-command prompts additionally
+support `delete` (Delete), which resets completion selection;
+`delete-forward` (Ctrl-d) preserves it. The command palette's physical Delete
+key remains unbound by default.
+
+Command, path and program prompts support `next` (Down) and `previous`
+(Up/Shift-Tab). Command prompts also support `first`/`last` (Home/End) and
+`complete` (Tab). Path prompts support `complete` (Tab); program prompts
+support `open-actions` (Tab). Home/End in other prompts move the text cursor.
+Plain characters and literal control characters cannot be assigned as prompt
+actions. Defaults preserve their existing modifier rules; configured keys
+match exactly.
+
+```yaml
+keys:
+  ui:
+    command-prompt:
+      accept: [F9]
+      complete: [Ctrl-Space]
+    text-prompt:
+      cancel: [F10]
+```
+
+Accepting a command from an explicitly configured key retains the same native
+handoff eligibility as fresh Enter. Repeated or replayed input cannot acquire
+that authority. Existing modified-Enter defaults retain their original limits.
+
 Pane drag gestures can be changed independently of keyboard bindings:
 
 ```yaml

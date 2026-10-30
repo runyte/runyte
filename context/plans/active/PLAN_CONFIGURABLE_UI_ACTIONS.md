@@ -202,3 +202,17 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   all 19 program-related tests and root Clippy passed. Buffer action menus stay
   in their existing list dispatch position pending shared stale-selection and
   list-owner migration.
+- Command, text, path and program prompts now resolve shared UI actions.
+  Literal text retains ownership; prompt actions do not inherit leader cancel.
+  Separate deletion actions preserve the original completion-selection reset
+  differences, and defaults retain Control-before-Alt precedence and per-owner
+  navigation/completion behavior. Snapshot and standalone prompt hints use the
+  effective map. Fresh configured acceptance retains native handoff authority;
+  inherited modified Enter, repeats and replay retain their prior limits.
+  Covering overlays, jump labels and macro replay cannot grant prompt authority.
+  Astra approved the implementation and Windows fixture. All 4,105 active
+  library tests passed (16 ignored) before the final owner-predicate follow-up;
+  all 68 focused prompt tests and root Clippy passed after it. New app tests
+  inspect captured plugin requests across fresh/repeat/replay. A Windows host
+  regression additionally exercises actual handoff success/refusal; it requires
+  Windows CI/runtime, unavailable in this Linux environment.
