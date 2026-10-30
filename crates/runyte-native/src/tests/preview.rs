@@ -921,12 +921,38 @@ fn acknowledged_focus_preserves_old_painted_input_only_for_the_pinned_destinatio
         InputRoute::Host
     );
     assert!(
-        ownership.focus.is_none(),
-        "newly painted input retires the old handoff"
+        ownership.focus.is_some(),
+        "an older plain paint has no target"
     );
     assert_eq!(
         ownership.route(Some(origin), None, Some(destination), true, false),
+        InputRoute::Host
+    );
+    assert_eq!(
+        ownership.route(
+            Some(Target {
+                generation: 4,
+                ..origin
+            }),
+            None,
+            Some(destination),
+            true,
+            false
+        ),
         InputRoute::Discard
+    );
+    assert!(ownership.focus.is_none());
+    let mut changed = armed();
+    changed.acknowledge_focus(7, Some(destination));
+    assert_eq!(
+        changed.route(None, None, Some((4, 6)), true, false),
+        InputRoute::Host
+    );
+    assert!(changed.focus.is_none());
+    assert_eq!(
+        changed.route(Some(origin), None, Some(destination), true, false),
+        InputRoute::Discard,
+        "targetless input still retires the pin when its destination changes"
     );
     let mut returned = armed();
     returned.acknowledge_focus(7, Some(destination));
@@ -981,6 +1007,94 @@ fn acknowledged_focus_preserves_old_painted_input_only_for_the_pinned_destinatio
     };
     views.acknowledge_focus(2, 7, Some(destination), None);
     assert!(views.ownership.focus.is_none());
+}
+
+#[test]
+fn focus_from_an_old_overlay_preserves_commands_across_intervening_preview_paints() {
+    use super::{InputOwnership, InputRoute, Target};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let origin = Target {
+        pane: 0,
+        source: 2,
+        generation: 3,
+    };
+    let source = Some((origin.pane, origin.source));
+    let destination = Some((1, 4));
+    let down = KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL);
+    let section = serde_json::from_value(
+        serde_json::json!({"bind": {"normal": {"Ctrl-Down": "focus-window-down"}}}),
+    )
+    .unwrap();
+    let compiled = runyte::keymap::configured::compile(&section, runyte::keymap::default_keymap());
+    assert!(compiled.errors.is_empty());
+    let bindings = compiled.keymap.native_preview(
+        runyte::command::Mode::Normal,
+        runyte::keymap::BindingScope::Global,
+    );
+    let mut views = super::Views::default();
+    assert_eq!(
+        views
+            .ownership
+            .route(None, Some(origin), source, true, false),
+        InputRoute::Host
+    );
+    views
+        .ownership
+        .observe_host_key(down, None, Some(origin), true, &bindings);
+    assert!(views.ownership.focus.is_some());
+    views.focus_forwarded_serial(7);
+    // The focus command itself was captured from an old command overlay. Its
+    // acknowledgement must precede any forwarding from the preview target.
+    assert_eq!(
+        views
+            .ownership
+            .route(Some(origin), None, destination, true, false),
+        InputRoute::Discard
+    );
+    views.acknowledge_focus(0, 7, destination, None);
+    // CI painted the old plain pane for ':qu', then the intervening preview
+    // for 'it', then the destination for Enter. All belong to the same prompt.
+    for captured in [None, None, None, Some(origin), Some(origin), None] {
+        assert_eq!(
+            views
+                .ownership
+                .route(captured, None, destination, false, false),
+            InputRoute::Host
+        );
+    }
+    assert_eq!(
+        views
+            .ownership
+            .route(Some(origin), Some(origin), source, true, false),
+        InputRoute::Local
+    );
+    assert!(views.ownership.focus.is_none());
+    assert_eq!(
+        views
+            .ownership
+            .route(Some(origin), None, destination, true, false),
+        InputRoute::Discard
+    );
+
+    // Only an effective one-stroke focus action on an eligible current
+    // preview may establish this exception. Ordinary input and overlays do not.
+    for (key, captured, current, eligible, map) in [
+        (
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            None,
+            Some(origin),
+            true,
+            bindings.clone(),
+        ),
+        (down, Some(origin), Some(origin), true, bindings.clone()),
+        (down, None, None, true, bindings.clone()),
+        (down, None, Some(origin), false, bindings.clone()),
+        (down, None, Some(origin), true, Default::default()),
+    ] {
+        let mut ownership = InputOwnership::default();
+        ownership.observe_host_key(key, captured, current, eligible, &map);
+        assert!(ownership.focus.is_none());
+    }
 }
 
 #[test]

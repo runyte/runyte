@@ -344,8 +344,12 @@ try:
         # as preview navigation or dismissing the retained capture.
         command('hsplit plain.txt',burst=True);key('Up',ctrl=True);time.sleep(.6)
         wait_pixel(350,200,0x0099aa,'persistent command burst dismissed preview')
-        key('Down',ctrl=True);command('quit');time.sleep(.5)
+        key('Down',ctrl=True);command('quit')
+        # q belongs to the restored preview, not the command prompt or plain
+        # pane that may still be painted while the host finishes closing it.
+        wait_pixel(600,400,0x0099aa,'closing the plain pane did not restore the preview')
         key('q')
+        wait_pixel(600,400,source_background,'source preview did not dismiss before workspace attach')
         command('session-attach '+str(destination));time.sleep(1)
         command('open other.html');command('preview');time.sleep(1)
         wait_pixel(600,400,0xee00ee,'destination workspace did not preview')

@@ -363,15 +363,21 @@ impl InputOwnership {
         (eligible, structural): (bool, bool),
     ) -> InputRoute {
         if let Some(focus) = &self.focus {
-            if captured != Some(focus.origin) {
+            if captured.is_some_and(|captured| captured != focus.origin) {
                 self.focus = None;
             } else if let Some(destination) = focus.destination {
                 if focus_source(source, terminal) == Some(destination) {
-                    return InputRoute::Host;
+                    // None may come from an older command overlay or plain
+                    // pane painted before the focus command was processed.
+                    // It does not prove the destination has been painted.
+                    if captured == Some(focus.origin) {
+                        return InputRoute::Host;
+                    }
+                } else {
+                    // Closing the destination can return to the original preview.
+                    // Retire the exception, then apply ordinary target validation.
+                    self.focus = None;
                 }
-                // Closing the destination can return to the original preview.
-                // Retire the exception, then apply ordinary target validation.
-                self.focus = None;
             }
         }
         let route = input_route(captured, current, source, eligible, self.handoff);
@@ -390,6 +396,36 @@ impl InputOwnership {
     }
     fn back(&mut self, target: Option<Target>) {
         self.handoff = target;
+    }
+    fn forward_focus(&mut self, origin: Target) {
+        self.focus = Some(FocusHandoff {
+            origin,
+            serial: None,
+            destination: None,
+        });
+    }
+    fn observe_host_key(
+        &mut self,
+        key: KeyEvent,
+        captured: Option<Target>,
+        current: Option<Target>,
+        eligible: bool,
+        bindings: &runyte::keymap::native_preview::Bindings,
+    ) {
+        use runyte::keymap::native_preview::{Action, Lookup};
+        if captured.is_none()
+            && eligible
+            && let Some(origin) = current
+            && let Ok(Some(runyte::input::InputEvent::Key(stroke))) =
+                runyte::tui::input::convert_event(Event::Key(key))
+            && bindings.lookup(&runyte::keymap::KeySequence::from(stroke))
+                == Lookup::Action(Action::ForwardFocus)
+        {
+            // Input captured from an older overlay still goes to the host.
+            // Record the current host-owned focus action so later input from
+            // the intervening preview paint can follow its acknowledgement.
+            self.forward_focus(origin);
+        }
     }
 }
 impl Views {
@@ -1164,7 +1200,16 @@ impl NativeView {
             frame.preview_terminal,
             (frame.media_input, frame.preview_structural),
         ) {
-            InputRoute::Host => return false,
+            InputRoute::Host => {
+                self.previews.ownership.observe_host_key(
+                    key,
+                    input.preview_target,
+                    current,
+                    frame.media_input,
+                    &frame.preview_bindings,
+                );
+                return false;
+            }
             InputRoute::Discard => return true,
             InputRoute::Local => (),
         }
@@ -1185,12 +1230,10 @@ impl NativeView {
             navigation,
             Some(Navigation::Forward | Navigation::ForwardInput | Navigation::ForwardFocus)
         ) {
-            if navigation == Some(Navigation::ForwardFocus) {
-                self.previews.ownership.focus = input.preview_target.map(|origin| FocusHandoff {
-                    origin,
-                    serial: None,
-                    destination: None,
-                });
+            if navigation == Some(Navigation::ForwardFocus)
+                && let Some(origin) = input.preview_target
+            {
+                self.previews.ownership.forward_focus(origin);
             }
             self.previews.ownership.forward(
                 input.preview_target,
