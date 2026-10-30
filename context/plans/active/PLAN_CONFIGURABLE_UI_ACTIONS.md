@@ -260,3 +260,13 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   share that resolution. Astra cleared the change; all 11 plugin-manager tests,
   root Clippy, formatting and guide validation passed. A complete root suite is
   running across the accumulated list/menu checkpoints.
+- Direct session-directory and session-inventory views now have independent UI
+  owners. Directory browsing remains separate from workspace acceptance; report
+  navigation retains its ordinary picker behavior. Literal query input, captured
+  destinations/incarnations, cancellation restoration and stale-response guards
+  are preserved. Both renderers use effective direct-view hints, including report
+  return keys after reload. Astra found no blocker. All 122 session-related tests
+  passed. The complete root run reached the key-hints integration suite and found
+  an Open-with title clipping regression from expanded prompt aliases; compact
+  effective labels fix it and the exact integration regression now passes. Final
+  full-suite validation remains pending.

@@ -4319,46 +4319,54 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     // name, its counts, and the keys that act on it.
     use crate::command::EditorCommand;
     let keys = |action| app.list_action_keys(action);
-    let mut hints = Vec::new();
-    if picker.has_tags() {
-        hints.push(format!(
-            "{} {}",
-            keys(EditorCommand::ListOpenActions),
-            picker.tag_label()
-        ));
-    }
-    if let Some(action) = &picker.primary_action {
-        hints.push(format!("{} {action}", keys(EditorCommand::ListAccept)));
-    }
-    if let Some((key, action)) = &picker.secondary_action {
-        let key = if key == "Tab" {
-            keys(EditorCommand::ListOpenActions)
-        } else {
-            key.clone()
-        };
-        hints.push(format!("{key} {action}"));
-    }
-    if preview_layout && !picker.has_key_legend() {
-        hints.push(format!(
-            "{} preview",
-            keys(EditorCommand::ListTogglePreview)
-        ));
-    }
-    if picker.purpose == crate::picker::ListPurpose::Report {
-        hints.push(format!("{} scroll", app.list_scroll_keys()));
-    }
-    if let Some(keys) = app.plugin_manager_return_keys() {
-        hints.push(format!("{keys} back"));
-    }
-    if let Some(close) = app.list_close_keys() {
-        hints.push(if picker.purpose == crate::picker::ListPurpose::Report {
-            format!("{close} dismiss")
-        } else if picker.has_key_legend() {
-            format!("{close} close")
-        } else {
-            format!("{close} cancel")
-        });
-    }
+    let hints = if let Some(actions) = app.session_navigation_actions() {
+        actions
+            .into_iter()
+            .map(|action| format!("{} {}", action.key_hint, action.label))
+            .collect::<Vec<_>>()
+    } else {
+        let mut hints = Vec::new();
+        if picker.has_tags() {
+            hints.push(format!(
+                "{} {}",
+                keys(EditorCommand::ListOpenActions),
+                picker.tag_label()
+            ));
+        }
+        if let Some(action) = &picker.primary_action {
+            hints.push(format!("{} {action}", keys(EditorCommand::ListAccept)));
+        }
+        if let Some((key, action)) = &picker.secondary_action {
+            let key = if key == "Tab" {
+                keys(EditorCommand::ListOpenActions)
+            } else {
+                key.clone()
+            };
+            hints.push(format!("{key} {action}"));
+        }
+        if preview_layout && !picker.has_key_legend() {
+            hints.push(format!(
+                "{} preview",
+                keys(EditorCommand::ListTogglePreview)
+            ));
+        }
+        if picker.purpose == crate::picker::ListPurpose::Report {
+            hints.push(format!("{} scroll", app.list_scroll_keys()));
+        }
+        if let Some(keys) = app.plugin_manager_return_keys() {
+            hints.push(format!("{keys} back"));
+        }
+        if let Some(close) = app.list_close_keys() {
+            hints.push(if picker.purpose == crate::picker::ListPurpose::Report {
+                format!("{close} dismiss")
+            } else if picker.has_key_legend() {
+                format!("{close} close")
+            } else {
+                format!("{close} cancel")
+            });
+        }
+        hints
+    };
     let title = format!(" {} · {} ", picker.title, hints.join(" · "));
     let block = Block::default()
         .borders(Borders::ALL)
@@ -5053,9 +5061,10 @@ fn draw_program_hints(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect
         vec![
             ListItem::new(format!(
                 "No matching programs · type one and press {}",
-                app.keymap().ui().label(
+                app.keymap().ui().compact_label(
                     crate::keymap::ui::Owner::ProgramPrompt,
-                    crate::keymap::ui::Action::Accept
+                    crate::keymap::ui::Action::Accept,
+                    1
                 )
             ))
             .style(Style::default().fg(app.theme.muted)),
@@ -5087,21 +5096,25 @@ fn draw_program_hints(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect
                 .border_style(Style::default().fg(app.theme.accent))
                 .title(format!(
                     " Open with · {} open · {}/{} select · {} actions ",
-                    app.keymap().ui().label(
+                    app.keymap().ui().compact_label(
                         crate::keymap::ui::Owner::ProgramPrompt,
-                        crate::keymap::ui::Action::Accept
+                        crate::keymap::ui::Action::Accept,
+                        1
                     ),
-                    app.keymap().ui().label(
+                    app.keymap().ui().compact_label(
                         crate::keymap::ui::Owner::ProgramPrompt,
-                        crate::keymap::ui::Action::Previous
+                        crate::keymap::ui::Action::Previous,
+                        1
                     ),
-                    app.keymap().ui().label(
+                    app.keymap().ui().compact_label(
                         crate::keymap::ui::Owner::ProgramPrompt,
-                        crate::keymap::ui::Action::Next
+                        crate::keymap::ui::Action::Next,
+                        1
                     ),
-                    app.keymap().ui().label(
+                    app.keymap().ui().compact_label(
                         crate::keymap::ui::Owner::ProgramPrompt,
-                        crate::keymap::ui::Action::OpenActions
+                        crate::keymap::ui::Action::OpenActions,
+                        1
                     ),
                 )),
         )
@@ -5148,13 +5161,15 @@ fn draw_program_actions(frame: &mut Frame<'_>, app: &TuiApp<'_>, parent: Rect) {
                 .title(format!(
                     " {} · {} select · {} back ",
                     menu.choice.program,
-                    app.keymap().ui().label(
+                    app.keymap().ui().compact_label(
                         crate::keymap::ui::Owner::ProgramActions,
-                        crate::keymap::ui::Action::Accept
+                        crate::keymap::ui::Action::Accept,
+                        1
                     ),
-                    app.keymap().ui().label(
+                    app.keymap().ui().compact_label(
                         crate::keymap::ui::Owner::ProgramActions,
-                        crate::keymap::ui::Action::Cancel
+                        crate::keymap::ui::Action::Cancel,
+                        2
                     )
                 )),
         )

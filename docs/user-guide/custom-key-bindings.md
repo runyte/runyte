@@ -278,6 +278,16 @@ for example, removing this owner's cancel makes Escape perform `list-close`
 unless you also change Escape in `global.list`. Removing its inherited leader
 restores literal filter input without an implicit Escape translation.
 
+The `session-directory` and `session-inventory` owners handle direct session
+navigation independently of `global.list`. They support `next`, `previous`,
+`page-up`, `page-down`, `first`, `last`, `accept`, `cancel`, and `backspace`.
+Directory navigation also supports `enter-directory`: Tab browses into the
+selected directory, while Enter opens it as a workspace. Inventory Tab has no
+action. These owners preserve literal filter text and do not inherit leader
+cancellation. Inventory cancellation returns to the session list with its
+selection preserved; directory cancellation restores the preceding editor mode.
+Report hints show only the available return action.
+
 ```yaml
 keys:
   ui:

@@ -661,3 +661,118 @@ fn plugin_manager_return_defaults_and_filter_reservations_match_transparent_owne
         assert_eq!(errors.len(), 1, "{spelling}");
     }
 }
+
+#[test]
+fn session_navigation_defaults_preserve_modifiers_and_do_not_inherit_leader() {
+    use Action::*;
+    let map = Bindings::with_leader(KeyStroke::plain(KeyCode::Enter));
+    for owner in [Owner::SessionDirectory, Owner::SessionInventory] {
+        for bits in 0..64 {
+            let m = Modifiers::from_bits(bits).unwrap();
+            for (code, action) in [
+                (KeyCode::Enter, Some(Accept)),
+                (KeyCode::Escape, Some(Cancel)),
+                (
+                    KeyCode::Tab,
+                    (owner == Owner::SessionDirectory).then_some(EnterDirectory),
+                ),
+                (KeyCode::Backspace, Some(Backspace)),
+                (KeyCode::Down, Some(Next)),
+                (KeyCode::Up, Some(Previous)),
+                (KeyCode::BackTab, Some(Previous)),
+                (KeyCode::PageUp, Some(PageUp)),
+                (KeyCode::PageDown, Some(PageDown)),
+                (KeyCode::Home, Some(First)),
+                (KeyCode::End, Some(Last)),
+                (
+                    KeyCode::Char('c'),
+                    m.contains(Modifiers::CONTROL).then_some(Cancel),
+                ),
+                (
+                    KeyCode::Char('n'),
+                    m.contains(Modifiers::CONTROL).then_some(Next),
+                ),
+                (
+                    KeyCode::Char('p'),
+                    m.contains(Modifiers::CONTROL).then_some(Previous),
+                ),
+                (
+                    KeyCode::Char('u'),
+                    m.contains(Modifiers::CONTROL).then_some(PageUp),
+                ),
+                (
+                    KeyCode::Char('d'),
+                    m.contains(Modifiers::CONTROL).then_some(PageDown),
+                ),
+            ] {
+                assert_eq!(
+                    map.lookup(owner, KeyStroke::new(code, m)),
+                    action,
+                    "{owner:?} {code:?} {m:?}"
+                );
+            }
+        }
+        for spelling in ["a", "Super-a", "Meta-a", "\\u0001"] {
+            let (_, errors) =
+                configured(&format!("{}: {{accept: [\"{spelling}\"]}}", owner.name()));
+            assert_eq!(errors.len(), 1, "{owner:?} {spelling}");
+        }
+        let (map, errors) = configured(&format!(
+            "{}: {{accept: [F8], cancel: [], next: [Ctrl-F6]}}",
+            owner.name()
+        ));
+        assert!(errors.is_empty());
+        for spelling in [
+            "Enter",
+            "Alt-Enter",
+            "Esc",
+            "Ctrl-c",
+            "Space",
+            "Down",
+            "Ctrl-n",
+            "F6",
+        ] {
+            assert_eq!(
+                map.lookup(owner, KeyStroke::parse(spelling).unwrap()),
+                None,
+                "{owner:?} {spelling}"
+            );
+        }
+        assert_eq!(
+            map.lookup(owner, KeyStroke::parse("F8").unwrap()),
+            Some(Accept)
+        );
+        assert_eq!(
+            map.lookup(owner, KeyStroke::parse("Ctrl-F6").unwrap()),
+            Some(Next)
+        );
+    }
+}
+
+#[test]
+fn compact_ui_labels_use_effective_authored_aliases_and_preserve_unbound_state() {
+    let (map, errors) = configured(
+        "program-prompt: {previous: [F5, Ctrl-p], next: [], accept: [F8, F9]}\nprogram-actions: {cancel: [F10, F11, F12]}",
+    );
+    assert!(errors.is_empty());
+    assert_eq!(
+        map.compact_label(Owner::ProgramPrompt, Action::Previous, 1),
+        "F5"
+    );
+    assert_eq!(
+        map.compact_label(Owner::ProgramPrompt, Action::Next, 1),
+        "unbound"
+    );
+    assert_eq!(
+        map.compact_label(Owner::ProgramPrompt, Action::Accept, 1),
+        "F8"
+    );
+    assert_eq!(
+        map.compact_label(Owner::ProgramActions, Action::Cancel, 2),
+        "F10/F11"
+    );
+    assert_eq!(
+        map.label(Owner::ProgramActions, Action::Cancel),
+        "F10/F11/F12"
+    );
+}

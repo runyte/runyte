@@ -4,6 +4,7 @@
 
 mod picker;
 mod prompt;
+mod session_navigation;
 
 use crate::input::{KeyCode, KeyStroke, Modifiers};
 use serde_yaml::Value;
@@ -31,10 +32,12 @@ pub enum Owner {
     ProgramPrompt,
     FilePicker,
     Finder,
+    SessionDirectory,
+    SessionInventory,
 }
 
 impl Owner {
-    const ALL: [Self; 15] = [
+    const ALL: [Self; 17] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -50,6 +53,8 @@ impl Owner {
         Self::ProgramPrompt,
         Self::FilePicker,
         Self::Finder,
+        Self::SessionDirectory,
+        Self::SessionInventory,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -68,7 +73,12 @@ impl Owner {
             Self::ProgramPrompt => "program-prompt",
             Self::FilePicker => "file-picker",
             Self::Finder => "finder",
+            Self::SessionDirectory => "session-directory",
+            Self::SessionInventory => "session-inventory",
         }
+    }
+    pub fn is_session_navigation(self) -> bool {
+        matches!(self, Self::SessionDirectory | Self::SessionInventory)
     }
     pub fn is_list_menu(self) -> bool {
         matches!(
@@ -86,7 +96,7 @@ impl Owner {
         )
     }
     fn inherits_leader(self) -> bool {
-        self != Self::Completion && !self.is_prompt()
+        self != Self::Completion && !self.is_prompt() && !self.is_session_navigation()
     }
     fn actions(self) -> &'static [Action] {
         use Action::*;
@@ -108,6 +118,7 @@ impl Owner {
             Self::Path => &[OpenActions, Cancel],
             Self::PluginManagerActions => &[Cancel],
             Self::FilePicker | Self::Finder => picker::actions(self),
+            Self::SessionDirectory | Self::SessionInventory => session_navigation::actions(self),
             Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
                 prompt::actions(self)
             }
@@ -135,7 +146,12 @@ impl Owner {
                             .modifiers
                             .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
             }
-            Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
+            Self::CommandPrompt
+            | Self::TextPrompt
+            | Self::PathPrompt
+            | Self::ProgramPrompt
+            | Self::SessionDirectory
+            | Self::SessionInventory => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control())
                     || matches!(key.code, KeyCode::Char(_))
                         && !key
@@ -179,6 +195,7 @@ pub enum Action {
     SplitHorizontal,
     TogglePreview,
     ToggleMode,
+    EnterDirectory,
 }
 
 impl Action {
@@ -215,6 +232,7 @@ impl Action {
             Self::SplitHorizontal => "split-horizontal",
             Self::TogglePreview => "toggle-preview",
             Self::ToggleMode => "toggle-mode",
+            Self::EnterDirectory => "enter-directory",
         }
     }
 }
@@ -344,6 +362,18 @@ impl Bindings {
     pub fn label(&self, owner: Owner, action: Action) -> String {
         self.label_with_leader(owner, action, true)
     }
+    /// Compact titles name a bounded subset of effective aliases; the full
+    /// action legend can still use `label` to show every authored spelling.
+    pub fn compact_label(&self, owner: Owner, action: Action, aliases: usize) -> String {
+        self.owner_bindings(owner, true)
+            .labels
+            .get(&action)
+            .filter(|keys| !keys.is_empty())
+            .map_or_else(
+                || "unbound".into(),
+                |keys| keys[..keys.len().min(aliases.max(1))].join("/"),
+            )
+    }
     pub fn label_with_leader(&self, owner: Owner, action: Action, leader_active: bool) -> String {
         self.owner_bindings(owner, leader_active)
             .labels
@@ -425,6 +455,9 @@ impl OwnerBindings {
 
 fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     use Action::*;
+    if owner.is_session_navigation() {
+        return session_navigation::legacy_action(owner, key);
+    }
     if owner.is_prompt() {
         return prompt::legacy_action(owner, key);
     }
@@ -478,6 +511,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner.is_session_navigation() {
+        return session_navigation::labels(action);
+    }
     if owner.is_prompt() {
         return prompt::labels(owner, action);
     }

@@ -66,7 +66,7 @@ impl App {
                             "Session destinations",
                             vec![PickerItem::new(
                                 "No open destinations",
-                                "Escape returns to sessions",
+                                "Return to sessions",
                                 0,
                             )],
                         )
@@ -78,7 +78,7 @@ impl App {
                 self.list = Some(
                     ListPicker::new(
                         "Session destinations · unavailable",
-                        vec![PickerItem::new(error, "Escape returns to sessions", 0)],
+                        vec![PickerItem::new(error, "Return to sessions", 0)],
                     )
                     .as_report(),
                 );
@@ -1886,44 +1886,45 @@ impl App {
         key: super::KeyStroke,
     ) -> super::Result<()> {
         use super::{KeyCode, Modifiers};
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, control) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => {
+        use crate::keymap::ui::{Action, Owner};
+        let action = self.keymap.ui().lookup(Owner::SessionDirectory, key);
+        match (action, key.code) {
+            (Some(Action::Cancel), _) => {
                 let chooser = self.session_navigation.directory.take().unwrap();
                 self.mode = chooser.previous_mode;
                 self.list = None;
             }
-            (KeyCode::Up, _) | (KeyCode::Char('p'), true) | (KeyCode::BackTab, _) => {
+            (Some(Action::Previous), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.up();
                 }
             }
-            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
+            (Some(Action::Next), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.down();
                 }
             }
-            (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => {
+            (Some(Action::PageUp), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.page_up(10);
                 }
             }
-            (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => {
+            (Some(Action::PageDown), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.page_down(10);
                 }
             }
-            (KeyCode::Home, _) => {
+            (Some(Action::First), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.first();
                 }
             }
-            (KeyCode::End, _) => {
+            (Some(Action::Last), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.last();
                 }
             }
-            (KeyCode::Tab, _) | (KeyCode::Enter, _) => {
+            (Some(Action::EnterDirectory | Action::Accept), _) => {
                 let path = self
                     .list
                     .as_ref()
@@ -1941,7 +1942,7 @@ impl App {
                         self.action_failed("that directory is no longer available");
                         return Ok(());
                     }
-                    if key.code == KeyCode::Tab {
+                    if action == Some(Action::EnterDirectory) {
                         let chooser = self.session_navigation.directory.as_mut().unwrap();
                         chooser.root = path;
                         chooser.query.clear();
@@ -1954,7 +1955,7 @@ impl App {
                     }
                 }
             }
-            (KeyCode::Backspace, _) => {
+            (Some(Action::Backspace), _) => {
                 self.session_navigation
                     .directory
                     .as_mut()
@@ -1963,7 +1964,11 @@ impl App {
                     .pop();
                 self.rebuild_session_directory_chooser();
             }
-            (KeyCode::Char(character), false) if !key.modifiers.contains(Modifiers::ALT) => {
+            (None, KeyCode::Char(character))
+                if !key
+                    .modifiers
+                    .intersects(Modifiers::CONTROL | Modifiers::ALT) =>
+            {
                 self.session_navigation
                     .directory
                     .as_mut()
@@ -2318,6 +2323,16 @@ fn home_relative_directory(query: &str, windows_path_syntax: bool) -> &str {
 }
 
 impl App {
+    pub(crate) fn session_navigation_ui_owner(&self) -> Option<crate::keymap::ui::Owner> {
+        if self.session_inventory_open() {
+            Some(crate::keymap::ui::Owner::SessionInventory)
+        } else if self.session_directory_chooser_open() {
+            Some(crate::keymap::ui::Owner::SessionDirectory)
+        } else {
+            None
+        }
+    }
+
     pub(super) fn session_inventory_open(&self) -> bool {
         self.session_navigation.inventory.is_some()
     }
@@ -2371,7 +2386,7 @@ impl App {
         self.list = Some(
             ListPicker::new(
                 "Session destinations",
-                vec![PickerItem::new(message, "Escape returns to sessions", 0)],
+                vec![PickerItem::new(message, "Return to sessions", 0)],
             )
             .as_report(),
         );
@@ -2386,7 +2401,7 @@ impl App {
                 self.list = Some(
                     ListPicker::new(
                         "Session destinations · unavailable",
-                        vec![PickerItem::new(error, "Escape returns to sessions", 0)],
+                        vec![PickerItem::new(error, "Return to sessions", 0)],
                     )
                     .as_report(),
                 );
@@ -2399,9 +2414,10 @@ impl App {
         key: super::KeyStroke,
     ) -> super::Result<()> {
         use super::{KeyCode, Modifiers};
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, control) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => {
+        use crate::keymap::ui::{Action, Owner};
+        let action = self.keymap.ui().lookup(Owner::SessionInventory, key);
+        match (action, key.code) {
+            (Some(Action::Cancel), _) => {
                 let inventory = self.session_navigation.inventory.take().unwrap();
                 self.list = Some(inventory.saved_picker);
                 #[cfg(any(unix, windows))]
@@ -2417,38 +2433,38 @@ impl App {
                     }
                 }
             }
-            (KeyCode::Up, _) | (KeyCode::Char('p'), true) | (KeyCode::BackTab, _) => {
+            (Some(Action::Previous), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.up();
                 }
             }
-            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
+            (Some(Action::Next), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.down();
                 }
             }
-            (KeyCode::PageUp, _) | (KeyCode::Char('u'), true) => {
+            (Some(Action::PageUp), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.page_up(10);
                 }
             }
-            (KeyCode::PageDown, _) | (KeyCode::Char('d'), true) => {
+            (Some(Action::PageDown), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.page_down(10);
                 }
             }
-            (KeyCode::Home, _) => {
+            (Some(Action::First), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.first();
                 }
             }
-            (KeyCode::End, _) => {
+            (Some(Action::Last), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.last();
                 }
             }
             #[cfg(any(unix, windows))]
-            (KeyCode::Enter, _) => {
+            (Some(Action::Accept), _) => {
                 let inventory = self.session_navigation.inventory.as_ref().unwrap();
                 let selected = self
                     .list
@@ -2494,12 +2510,16 @@ impl App {
                     }
                 }
             }
-            (KeyCode::Backspace, _) => {
+            (Some(Action::Backspace), _) => {
                 if let Some(picker) = self.list.as_mut() {
                     picker.pop_filter();
                 }
             }
-            (KeyCode::Char(character), false) if !key.modifiers.contains(Modifiers::ALT) => {
+            (None, KeyCode::Char(character))
+                if !key
+                    .modifiers
+                    .intersects(Modifiers::CONTROL | Modifiers::ALT) =>
+            {
                 if let Some(picker) = self.list.as_mut()
                     && picker.purpose != super::ListPurpose::Report
                 {

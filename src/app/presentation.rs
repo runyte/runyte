@@ -902,6 +902,38 @@ impl App {
         .join("/")
     }
 
+    /// Direct session views own input before ordinary list bindings.
+    pub(crate) fn session_navigation_actions(&self) -> Option<Vec<crate::snapshot::OverlayAction>> {
+        use crate::{
+            keymap::ui::{Action, Owner},
+            snapshot::OverlayAction,
+        };
+        let owner = self.session_navigation_ui_owner()?;
+        let picker = self.list.as_ref()?;
+        let label = |action| self.keymap.ui().label(owner, action);
+        let mut actions = Vec::new();
+        if picker.purpose != crate::picker::ListPurpose::Report {
+            if let Some(action) = &picker.primary_action {
+                actions.push(OverlayAction::new(label(Action::Accept), action));
+            }
+            if owner == Owner::SessionDirectory {
+                actions.push(OverlayAction::new(
+                    label(Action::EnterDirectory),
+                    "browse directory",
+                ));
+            }
+        }
+        actions.push(OverlayAction::new(
+            label(Action::Cancel),
+            if owner == Owner::SessionInventory {
+                "back"
+            } else {
+                "cancel"
+            },
+        ));
+        Some(actions)
+    }
+
     /// The keys the open list's legend names, in the order it names them.
     ///
     /// Read from the same registry `handle_list_key` dispatches through, so
@@ -916,6 +948,29 @@ impl App {
         let Some(picker) = self.list.as_ref().filter(|list| list.has_key_legend()) else {
             return Vec::new();
         };
+        if let Some(owner) = self.session_navigation_ui_owner() {
+            use crate::keymap::ui::Action;
+            if picker.purpose == crate::picker::ListPurpose::Report {
+                return Vec::new();
+            }
+            return [
+                (Action::Next, Action::Previous, "move"),
+                (Action::PageDown, Action::PageUp, "page"),
+                (Action::First, Action::Last, "first/last"),
+            ]
+            .into_iter()
+            .map(|(first, second, label)| {
+                crate::snapshot::OverlayAction::new(
+                    format!(
+                        "{}/{}",
+                        self.keymap.ui().label(owner, first),
+                        self.keymap.ui().label(owner, second)
+                    ),
+                    label,
+                )
+            })
+            .collect();
+        }
         let scope = self.list_binding_scope();
         let capabilities = self.command_capabilities();
         let filtering = !picker.filter.is_empty();
@@ -2449,55 +2504,60 @@ impl App {
             } else {
                 OverlayLayout::Standard
             };
-            snapshot.actions.clear();
-            if picker.has_tags() {
-                snapshot.actions.push(OverlayAction::new(
-                    self.list_action_keys(EditorCommand::ListOpenActions),
-                    picker.tag_label(),
-                ));
-            }
-            if let Some(action) = &picker.primary_action {
-                snapshot.actions.push(OverlayAction::new(
-                    self.list_action_keys(EditorCommand::ListAccept),
-                    action,
-                ));
-            }
-            if let Some((key, action)) = &picker.secondary_action {
-                snapshot.actions.push(OverlayAction::new(
-                    if key == "Tab" {
-                        self.list_action_keys(EditorCommand::ListOpenActions)
-                    } else {
-                        key.clone()
-                    },
-                    action,
-                ));
-            }
-            if let Some(keys) = self.plugin_manager_return_keys() {
-                snapshot.actions.push(OverlayAction::new(keys, "back"));
-            }
-            if picker.purpose == ListPurpose::Report {
-                snapshot
-                    .actions
-                    .push(OverlayAction::new(self.list_scroll_keys(), "scroll"));
-                if let Some(keys) = self.list_close_keys() {
-                    snapshot.actions.push(OverlayAction::new(keys, "dismiss"));
-                }
-            } else if picker.has_key_legend() {
-                // Everything past the keys needed to use the list at all is
-                // the legend's to name.
-                if let Some(keys) = self.list_close_keys() {
-                    snapshot.actions.push(OverlayAction::new(keys, "close"));
-                }
+            if let Some(actions) = self.session_navigation_actions() {
+                snapshot.actions = actions;
                 snapshot.legend = self.list_legend();
             } else {
-                if picker.has_preview() {
+                snapshot.actions.clear();
+                if picker.has_tags() {
                     snapshot.actions.push(OverlayAction::new(
-                        self.list_action_keys(EditorCommand::ListTogglePreview),
-                        "toggle preview",
+                        self.list_action_keys(EditorCommand::ListOpenActions),
+                        picker.tag_label(),
                     ));
                 }
-                if let Some(keys) = self.list_close_keys() {
-                    snapshot.actions.push(OverlayAction::new(keys, "cancel"));
+                if let Some(action) = &picker.primary_action {
+                    snapshot.actions.push(OverlayAction::new(
+                        self.list_action_keys(EditorCommand::ListAccept),
+                        action,
+                    ));
+                }
+                if let Some((key, action)) = &picker.secondary_action {
+                    snapshot.actions.push(OverlayAction::new(
+                        if key == "Tab" {
+                            self.list_action_keys(EditorCommand::ListOpenActions)
+                        } else {
+                            key.clone()
+                        },
+                        action,
+                    ));
+                }
+                if let Some(keys) = self.plugin_manager_return_keys() {
+                    snapshot.actions.push(OverlayAction::new(keys, "back"));
+                }
+                if picker.purpose == ListPurpose::Report {
+                    snapshot
+                        .actions
+                        .push(OverlayAction::new(self.list_scroll_keys(), "scroll"));
+                    if let Some(keys) = self.list_close_keys() {
+                        snapshot.actions.push(OverlayAction::new(keys, "dismiss"));
+                    }
+                } else if picker.has_key_legend() {
+                    // Everything past the keys needed to use the list at all is
+                    // the legend's to name.
+                    if let Some(keys) = self.list_close_keys() {
+                        snapshot.actions.push(OverlayAction::new(keys, "close"));
+                    }
+                    snapshot.legend = self.list_legend();
+                } else {
+                    if picker.has_preview() {
+                        snapshot.actions.push(OverlayAction::new(
+                            self.list_action_keys(EditorCommand::ListTogglePreview),
+                            "toggle preview",
+                        ));
+                    }
+                    if let Some(keys) = self.list_close_keys() {
+                        snapshot.actions.push(OverlayAction::new(keys, "cancel"));
+                    }
                 }
             }
             if picker.has_preview() {
