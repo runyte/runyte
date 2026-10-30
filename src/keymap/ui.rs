@@ -57,10 +57,11 @@ pub enum Owner {
     PluginPathCompletion,
     MergeAcknowledgment,
     MergePrefix,
+    MacroReplay,
 }
 
 impl Owner {
-    const ALL: [Self; 33] = [
+    const ALL: [Self; 34] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -94,6 +95,7 @@ impl Owner {
         Self::PluginPathCompletion,
         Self::MergeAcknowledgment,
         Self::MergePrefix,
+        Self::MacroReplay,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -130,6 +132,7 @@ impl Owner {
             Self::PluginPathCompletion => "plugin-path-completion",
             Self::MergeAcknowledgment => "merge-acknowledgment",
             Self::MergePrefix => "merge-prefix",
+            Self::MacroReplay => "macro-replay",
         }
     }
     pub fn is_confirmation(self) -> bool {
@@ -177,7 +180,11 @@ impl Owner {
     fn inherits_leader(self) -> bool {
         !matches!(
             self,
-            Self::Completion | Self::ContextReview | Self::MergeAcknowledgment | Self::MergePrefix
+            Self::Completion
+                | Self::ContextReview
+                | Self::MergeAcknowledgment
+                | Self::MergePrefix
+                | Self::MacroReplay
         ) && !self.is_plugin_input()
             && !self.is_prompt()
             && !self.is_session_navigation()
@@ -202,6 +209,7 @@ impl Owner {
             Self::Path => &[OpenActions, Cancel],
             Self::MergeAcknowledgment => &[Backspace, Delete, MoveLeft, MoveRight],
             Self::MergePrefix => &[ResetAndContinue],
+            Self::MacroReplay => &[Cancel],
             Self::PluginConfirmation => &[Accept, Cancel],
             Self::PluginPicker => &[Accept, Cancel, Next, Previous, Backspace],
             Self::PluginForm => &[
@@ -249,7 +257,7 @@ impl Owner {
     }
     fn structural(self, key: KeyStroke) -> bool {
         match self {
-            Self::MergePrefix => false,
+            Self::MergePrefix | Self::MacroReplay => false,
             Self::MergeAcknowledgment => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control() || key.modifiers.is_empty())
             }
@@ -525,7 +533,7 @@ impl Bindings {
         let bindings = self.owner_bindings(owner, leader_active);
         let canonical = key.canonical_for_binding();
         let action = bindings.keys.get(&canonical).copied()?;
-        if (owner.is_provider() || owner.is_plugin_input())
+        if (owner.is_provider() || owner.is_plugin_input() || owner == Owner::MacroReplay)
             && !bindings.configured.contains(&action)
             && bindings.inherited_leader != Some(canonical)
         {
@@ -682,6 +690,9 @@ impl OwnerBindings {
 
 fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     use Action::*;
+    if owner == Owner::MacroReplay {
+        return (key.code == KeyCode::Escape || key == KeyStroke::ctrl('c')).then_some(Cancel);
+    }
     if matches!(owner, Owner::MergeAcknowledgment | Owner::MergePrefix) {
         return merge::legacy_action(owner, key);
     }
@@ -753,6 +764,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner == Owner::MacroReplay {
+        return &["Esc", "Ctrl-c"];
+    }
     if matches!(owner, Owner::MergeAcknowledgment | Owner::MergePrefix) {
         return merge::labels(action);
     }

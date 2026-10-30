@@ -355,3 +355,9 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   91 help-related tests (2 ignored), root Clippy, formatting and guide checks
   passed; new tests cover modifier masks, prefix ownership, key release,
   rollback, hint masking, reset reassignment and leader interactions.
+- Cooperative macro replay cancellation now resolves its shared UI action.
+  Escape retains all modifier aliases; Ctrl-c retains exact raw matching and
+  never inherits the leader. Other physical input remains ignored during replay.
+  Progress feedback names effective aliases. Astra found no blocker; all nine
+  macro-replay tests passed, including all modifier masks, replacement, removal,
+  leader independence and literal-event inertness. Guide validation passed.

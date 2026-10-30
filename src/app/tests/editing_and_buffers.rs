@@ -3848,3 +3848,59 @@ fn configured_leader_is_an_inherited_menu_cancel_without_rewriting_other_owners(
     key(&mut app, KeyCode::Function(12), Modifiers::NONE);
     assert!(app.context_action_menu.is_none());
 }
+
+#[test]
+fn macro_replay_cancel_preserves_raw_modifiers_and_ignores_other_input() {
+    for bits in 0..64 {
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        for code in [KeyCode::Escape, KeyCode::Char('c'), KeyCode::Char(' ')] {
+            let mut app = App::new(Config::default(), None).unwrap();
+            app.macros
+                .insert('a', vec![InputEvent::Key(KeyStroke::char('l'))]);
+            app.replay_macro('a', 999_999).unwrap();
+            let key = KeyStroke::new(code, modifiers);
+            app.handle_key(key).unwrap();
+            assert_eq!(
+                app.macro_replay_pending(),
+                !(code == KeyCode::Escape || key == KeyStroke::ctrl('c')),
+                "{key:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn macro_replay_cancel_remaps_removes_and_reports_effective_aliases() {
+    for aliases in ["[F8]", "[]"] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let source = format!("leader: F8\nui: {{macro-replay: {{cancel: {aliases}}}}}");
+        let result = crate::keymap::configured::compile(
+            &serde_yaml::from_str(&source).unwrap(),
+            crate::keymap::default_keymap(),
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        app.set_keymap(result.keymap);
+        app.macros
+            .insert('a', vec![InputEvent::Key(KeyStroke::char('l'))]);
+        app.replay_macro('a', 999_999).unwrap();
+        let label = if aliases == "[]" { "unbound" } else { "F8" };
+        assert!(
+            app.status.ends_with(&format!("{label} cancels")),
+            "{}",
+            app.status
+        );
+        for key in [
+            KeyStroke::plain(KeyCode::Escape),
+            KeyStroke::ctrl('c'),
+            KeyStroke::char(' '),
+        ] {
+            app.handle_key(key).unwrap();
+            assert!(app.macro_replay_pending());
+        }
+        app.handle_input(InputEvent::Text("F8".into())).unwrap();
+        assert!(app.macro_replay_pending());
+        app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+            .unwrap();
+        assert_eq!(app.macro_replay_pending(), aliases == "[]");
+    }
+}

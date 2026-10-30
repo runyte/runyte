@@ -1148,3 +1148,9 @@ with `{ command: name, argument: text }`.
 
 <!-- navigation -->
 [Contents](README.md) · [Previous: Configuration](configuration.md) · [Next: Themes](themes.md)
+
+`ui.macro-replay.cancel` stops cooperative macro replay. It defaults to Escape
+with any modifiers and exact Ctrl-c. While replay is running, other physical
+input remains ignored. Replacing this action removes both default aliases;
+`[]` disables keyboard cancellation. The leader does not add a cancellation
+alias. The progress message shows the effective keys.

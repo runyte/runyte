@@ -837,7 +837,10 @@ impl App {
             self.cancel_pointer_drag_preserving_pane_release();
         }
         if self.macro_replay.is_some() {
-            if is_macro_replay_cancel(&input) {
+            if matches!(&input, InputEvent::Key(key) if self.keymap.ui().lookup(
+                crate::keymap::ui::Owner::MacroReplay, *key,
+            ) == Some(crate::keymap::ui::Action::Cancel))
+            {
                 self.cancel_macro_replay();
             } else {
                 self.macro_replay_progress_status();
@@ -6970,16 +6973,6 @@ impl App {
         self.command_cursor = self.command.chars().count();
         self.command_selection = 0;
     }
-}
-
-fn is_macro_replay_cancel(input: &InputEvent) -> bool {
-    matches!(
-        input,
-        InputEvent::Key(KeyStroke {
-            code: KeyCode::Escape,
-            ..
-        })
-    ) || matches!(input, InputEvent::Key(key) if *key == KeyStroke::ctrl('c'))
 }
 
 /// Whether a key in a picker only edits its query.
