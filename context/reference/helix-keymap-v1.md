@@ -349,6 +349,16 @@ actions in the same registry. Their hit-region precedence is preserved; live
 terminal SGR reports stay raw. Config-only reload rejects old-frame presses and
 wheel events while captured drags retain their semantic action and button.
 
+Native media and document-preview pointer actions also resolve through
+`keys.pointer`: `media-pan`, `media-region`, `media-auto-select`,
+`media-toggle-zoom`, `media-zoom`, `media-horizontal`, `media-scroll`,
+`preview-select`, `preview-horizontal`, and `preview-scroll`. The native input-loss
+banner exposes `input-overflow-dismiss`. Their factory
+modifier precedence and content-dependent selection remain unchanged. Native
+wheel aliases use continuous `Wheel` deltas; host wheel directions remain
+separate actions. Native captures include pane/page/source identity, and inactive
+preview focus does not depend on the source editor's selection or link bindings.
+
 | Sequence | Helix command | Runyte command | Status | Notes |
 | --- | --- | --- | --- | --- |
 | `:file-picker-directory` | file picker at current working directory | `open-directory-file-picker` | Added · Primary | Recursively fuzzy-finds below the active file's parent or explorer root; a pathless/generated buffer falls back to the working directory. Ancestor ignore rules remain active down from the project root, while Git and Runyte runtime state cannot become scan roots. This deliberately follows buffer context rather than Helix's process working directory. It held `Space s F` and `Space F` until the `Space /` rewiring and now has no key. |
@@ -855,11 +865,12 @@ the caret fits; vertical scrolling is unchanged.
 
 ### MCP permission review
 
-The native MCP permission review keeps Up/Down and Tab/Shift-Tab for the
+By default, the native MCP permission review uses Up/Down and Tab/Shift-Tab for the
 Reject/Apply permissions choices regardless of content length. Its scrolling
 dispatch reads the active Normal-mode registry's page, half-page and
 file-start/end commands (`Ctrl-b/f`, `Ctrl-u/d`, `gg`/`ge` by default), without
 executing other editor commands or configured action chains. Home/End remain
 review aliases; pointer input neither scrolls nor approves. Enter applies the
 selected choice only through the existing native presentation checks; Escape
-closes without applying. The footer resolves its motion spellings through the same registry.
+closes without applying. `keys.ui.context-review` can replace these review actions;
+its footer and dispatch use the effective bindings and the same motion registry.

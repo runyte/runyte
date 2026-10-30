@@ -35,8 +35,17 @@ fn host_pointer_press(input: &NativeInput) -> bool {
     else {
         return false;
     };
-    runyte::keymap::pointer_actions::Action::ALL
+    (matches!(
+        input.pointer_target,
+        Some(super::pointer::Target::Preview(_))
+    ) && input.pointer_bindings.press(
+        runyte::keymap::pointer_actions::Action::PreviewSelect,
+        pointer,
+    )) || runyte::keymap::pointer_actions::Action::ALL
         .into_iter()
+        .filter(|action| {
+            (*action as usize) < runyte::keymap::pointer_actions::Action::MediaPan as usize
+        })
         .any(|action| input.pointer_bindings.press(action, pointer))
 }
 
@@ -255,7 +264,29 @@ impl super::NativeView {
         action: Action,
         cx: &mut super::Context<Self>,
     ) {
-        let input = self.bridge.capture(event);
+        let mut input = self.bridge.capture(event);
+        let position = match &action {
+            Action::Down(e) => Some(e.position),
+            Action::Up(e) => Some(e.position),
+            Action::Move(e) => Some(e.position),
+            Action::Scroll(e, _, _) => Some(e.position),
+            Action::Direct => None,
+        };
+        if let Some(position) = position {
+            input.pointer_target = self
+                .bridge
+                .painted_pointer_surfaces
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|surface| {
+                    surface.contains(
+                        f32::from(position.x) / self.metrics.width,
+                        f32::from(position.y) / self.metrics.height,
+                    )
+                })
+                .map(|surface| surface.target.clone());
+        }
         if !self.routing.push_coalesced(input, action, |previous, next| {
             matches!((previous, next), (Action::Move(a), Action::Move(b)) if a.pressed_button == b.pressed_button)
         }) {
@@ -268,6 +299,9 @@ impl super::NativeView {
         use self::Action as RoutingAction;
         use super::*;
         let attachment = self.bridge.attachment.load(Ordering::Acquire);
+        if super::pointer::reset_capture(&mut self.local_pointer, attachment, false) {
+            self.cancel_local_pointer();
+        }
         let serial = self
             .frame
             .as_ref()
@@ -292,13 +326,22 @@ impl super::NativeView {
                 );
             }
             let cancelled = matches!(input.event, Event::FocusLost);
-            if cancelled
-                || matches!(&action, RoutingAction::Move(event) if event.pressed_button != Some(MouseButton::Left))
-                || (!current && matches!(&action, RoutingAction::Up(_)))
-            {
-                self.previews.cancel_drag();
+            let host_owned = self.routing.editor_pane_gesture(&input);
+            if super::pointer::reset_capture(
+                &mut self.local_pointer,
+                input.attachment,
+                cancelled || matches!(action, RoutingAction::Down(_)),
+            ) {
+                self.cancel_local_pointer();
             }
-            if !self.routing.editor_pane_gesture(&input) && !cancelled {
+            if !host_owned && self.local_pointer_tail(&input, &action, cx) {
+                continue;
+            }
+            if cancelled {
+                self.cancel_local_pointer();
+                self.local_pointer = None;
+            }
+            if !host_owned && !cancelled {
                 match action {
                     RoutingAction::Direct => {
                         if let Event::Key(key) = input.event {
@@ -326,10 +369,8 @@ impl super::NativeView {
                         }
                     }
                     RoutingAction::Down(event) => {
-                        if current
-                            && ((event.button == MouseButton::Left
-                                && self.preview_pointer(event.position, 0, cx))
-                                || self.media_mouse_down(&event, cx))
+                        if input.pointer_target.is_some()
+                            && self.begin_local_pointer(&input, &event, cx)
                         {
                             continue;
                         }
@@ -368,9 +409,21 @@ impl super::NativeView {
                                 f32::from(event.position.y) / metrics.height,
                             )
                         });
+                        if !over_overlay && !current && input.pointer_target.is_some() {
+                            continue;
+                        }
+                        if !over_overlay
+                            && input
+                                .pointer_target
+                                .as_ref()
+                                .is_some_and(|target| !self.pointer_target_current(target))
+                        {
+                            continue;
+                        }
                         if current
                             && !over_overlay
-                            && (self.preview_scroll(&event, cx) || self.media_scroll(&event, cx))
+                            && (self.preview_scroll(&event, &input, cx)
+                                || self.media_scroll(&event, &input, cx))
                         {
                             continue;
                         }
@@ -389,7 +442,9 @@ impl super::NativeView {
                     }
                 }
             }
-            self.routing.capture_host_drag(&input);
+            if self.local_pointer.is_none() {
+                self.routing.capture_host_drag(&input);
+            }
             let barrier = self
                 .frame
                 .as_ref()

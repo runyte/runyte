@@ -125,3 +125,76 @@ fn malformed_bindings_and_wire_masks_are_rejected_atomically() {
     masks[Action::Extend as usize][Trigger::LeftDrag as usize] |= 1;
     assert!(Bindings::from_masks(masks).is_none());
 }
+
+#[test]
+fn native_pointer_defaults_preserve_modifier_precedence() {
+    let bindings = Bindings::default();
+    for bits in 0..64 {
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        let shift = modifiers.contains(Modifiers::SHIFT);
+        let alt = modifiers.contains(Modifiers::ALT);
+        let zoom = modifiers.contains(Modifiers::CONTROL) || modifiers.contains(Modifiers::SUPER);
+        for button in [
+            PointerButton::Left,
+            PointerButton::Middle,
+            PointerButton::Right,
+        ] {
+            let event = PointerEvent {
+                kind: PointerEventKind::Down(button),
+                column: 0,
+                row: 0,
+                modifiers,
+            };
+            let left = button == PointerButton::Left;
+            assert_eq!(bindings.press(Action::MediaPan, event), !left || alt);
+            assert_eq!(
+                bindings.press(Action::MediaRegion, event),
+                left && shift && !alt
+            );
+            assert_eq!(
+                bindings.press(Action::MediaAutoSelect, event),
+                left && !shift && !alt
+            );
+            assert_eq!(
+                bindings.press(Action::MediaToggleZoom, event),
+                left && !shift && !alt
+            );
+            assert_eq!(bindings.press(Action::PreviewSelect, event), left);
+        }
+        for (action, expected) in [
+            (Action::MediaZoom, zoom),
+            (Action::MediaHorizontal, shift && !zoom),
+            (Action::MediaScroll, !shift && !zoom),
+            (Action::PreviewHorizontal, shift),
+            (Action::PreviewScroll, !shift),
+        ] {
+            assert_eq!(
+                bindings.matches(action, Trigger::Wheel, modifiers),
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn native_pointer_owner_rollback_and_continuous_wheel_remaps() {
+    let (bindings, errors) = configured(
+        "media-pan: [Ctrl-MiddleDrag]\nmedia-region: [RightDrag]\nmedia-auto-select: [LeftDrag]\nmedia-toggle-zoom: [RightDoubleClick]\nmedia-zoom: [Alt-Wheel]\nmedia-horizontal: []\nmedia-scroll: [Wheel]\npreview-select: [MiddleDrag]\npreview-horizontal: []\npreview-scroll: [Shift-Wheel]",
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(bindings.matches(Action::MediaZoom, Trigger::Wheel, Modifiers::ALT));
+    assert!(!bindings.matches(Action::MediaZoom, Trigger::Wheel, Modifiers::CONTROL));
+    assert!(bindings.matches(Action::PreviewSelect, Trigger::MiddleDrag, Modifiers::NONE));
+    let (invalid, errors) =
+        configured("media-pan: [LeftDrag]\nmedia-region: [WheelUp]\npreview-select: [RightDrag]");
+    assert_eq!(errors.len(), 1);
+    for action in [
+        Action::MediaPan,
+        Action::MediaRegion,
+        Action::MediaAutoSelect,
+    ] {
+        assert!(invalid.is_default(action));
+    }
+    assert!(invalid.matches(Action::PreviewSelect, Trigger::RightDrag, Modifiers::NONE));
+    assert_eq!(Bindings::from_masks(*bindings.masks()), Some(bindings));
+}

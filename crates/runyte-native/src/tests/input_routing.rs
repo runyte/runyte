@@ -25,6 +25,7 @@ fn key(code: char, attachment: u64) -> NativeInput {
         event: Event::Key(key),
         presented: Some(runyte::protocol::FrameId::from_raw(42).into()),
         presentation_only: false,
+        pointer_target: None,
         pointer_bindings: Default::default(),
         window_bindings: Default::default(),
         preview_bindings: Default::default(),
@@ -161,6 +162,7 @@ fn consecutive_drags_coalesce_without_crossing_physical_input_boundaries() {
             modifiers: KeyModifiers::NONE,
         }),
         presentation_only: false,
+        pointer_target: None,
         pointer_bindings: Default::default(),
         window_bindings: Default::default(),
         preview_bindings: Default::default(),
@@ -749,4 +751,38 @@ fn remapped_copy_claims_its_tail_without_changing_factory_right_click_routing() 
     }
     assert!(queue.editor_pane_gesture(&input));
     assert!(queue.pane_gesture.is_none());
+}
+
+#[test]
+fn native_middle_gestures_are_admitted_only_for_their_captured_surface() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let mut input = key('x', 1);
+    input.event = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Middle),
+        column: 1,
+        row: 1,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(
+        !host_pointer_press(&input),
+        "factory media-pan must not claim terminal middle presses"
+    );
+    use runyte::keymap::pointer_actions::{Action, Bindings, Trigger};
+    let mut masks = *Bindings::default().masks();
+    masks[Action::Select as usize] = [0; 14];
+    masks[Action::PreviewSelect as usize] = [0; 14];
+    masks[Action::PreviewSelect as usize][Trigger::MiddleDrag as usize] = 1;
+    input.pointer_bindings = Bindings::from_masks(masks).unwrap();
+    assert!(!host_pointer_press(&input));
+    input.pointer_target = Some(super::super::pointer::Target::Preview(
+        super::super::preview::Target {
+            pane: 1,
+            source: 2,
+            generation: 3,
+        },
+    ));
+    assert!(
+        host_pointer_press(&input),
+        "inactive preview must be able to request focus"
+    );
 }

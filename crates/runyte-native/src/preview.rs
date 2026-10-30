@@ -566,6 +566,9 @@ enum PointerResult {
 }
 
 impl Views {
+    pub(super) fn pointer_visible(&self, pane: usize) -> bool {
+        self.states.get(&pane).is_some_and(|state| !state.hidden)
+    }
     pub(super) fn cancel_drag(&mut self) {
         for state in self.states.values_mut() {
             state.dragging = false;
@@ -998,6 +1001,7 @@ impl NativeView {
     pub(super) fn preview_scroll(
         &mut self,
         event: &ScrollWheelEvent,
+        input: &NativeInput,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(pane) = self.preview_at(event.position) else {
@@ -1006,9 +1010,23 @@ impl NativeView {
         if !self.frame.as_ref().is_some_and(|f| f.media_input) {
             return true;
         }
+        use runyte::keymap::pointer_actions::{Action, Trigger};
+        let Some(pointer) = super::pointer::event(input) else {
+            return true;
+        };
+        let Some(action) = [Action::PreviewHorizontal, Action::PreviewScroll]
+            .into_iter()
+            .find(|action| {
+                input
+                    .pointer_bindings
+                    .matches(*action, Trigger::Wheel, pointer.modifiers)
+            })
+        else {
+            return true;
+        };
         let delta = event.delta.pixel_delta(px(self.metrics.height));
         let state = self.previews.states.get_mut(&pane.pane).unwrap();
-        if event.modifiers.shift {
+        if action == Action::PreviewHorizontal {
             state.scroll[0] =
                 (state.scroll[0] - f64::from(f32::from(delta.y) / state.zoom)).max(0.0);
         } else {

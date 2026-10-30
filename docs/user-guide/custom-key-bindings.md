@@ -9,8 +9,8 @@ The `keys` section configures keyboard actions and pane gestures:
 | `keys.rebind` | Moves bindings Runyte already ships to other keys. |
 | `keys.bind` | Assigns named actions to keys, per mode. Also removes bindings. |
 | `keys.defaults` | `false` starts `bind` from an empty keyboard instead of Runyte's. See [Without the built-in keys](custom-key-bindings.md#without-the-built-in-keys). |
-| `keys.pointer` | Replaces pane move/extend drag gestures. |
-| `keys.ui` | Replaces completion, context-menu, and path-popup action bindings. |
+| `keys.pointer` | Replaces editor, pane, media, and preview pointer gestures. |
+| `keys.ui` | Replaces actions in prompts, menus, overlays, confirmations, and native controls. |
 | `keys.scopes` | Assigns or removes actions in individual editor views and result lists. |
 
 - `keys` is read from the configuration file and from
@@ -504,6 +504,12 @@ The same section exposes other editor-owned pointer actions:
 | `tree-select` | Button clicks | Left click selects the presented tree row |
 | `tree-open` | `LeftDoubleClick`, `MiddleDoubleClick`, `RightDoubleClick` | Two left clicks on the same presented row open it |
 | `session-activate` | Button clicks | Left click activates the presented session-strip entry |
+| `media-pan`, `media-region`, `media-auto-select` | Button drags | Middle/right or Alt-left pans; Shift-left selects a region; ordinary left selects PDF text, a wordless PDF region, or pans an image |
+| `media-toggle-zoom` | Button double clicks | Ordinary left double-click toggles image fit/zoom where automatic selection would pan |
+| `media-zoom`, `media-horizontal`, `media-scroll` | `Wheel` | Ctrl/Super zooms, otherwise Shift scrolls horizontally, otherwise pans or changes PDF pages at fit size |
+| `preview-select` | Button drags | Left selects text in a native document preview; an inactive preview first receives focus |
+| `preview-horizontal`, `preview-scroll` | `Wheel` | Shift scrolls horizontally; other modifiers retain ordinary two-axis scrolling |
+| `input-overflow-dismiss` | Button clicks | Left click dismisses the native input-loss banner |
 
 Drag bindings start on button-down and retain their button and target until
 release. Click bindings act on button-down. Prefix any gesture with the same
@@ -534,6 +540,30 @@ unconditional right-button selection, configure `select: [RightDrag]` together
 with `copy: []`. Live terminal SGR reports retain their original physical
 buttons, modifiers, and wheel directions. Native media and preview gestures
 have their own input ownership.
+
+Native wheel bindings use continuous `Wheel` input, preserving trackpad deltas
+and zoom pivots. They do not use the host's directional wheel steps. Media drag
+actions compete in one group, media wheel actions in another, and preview wheel
+actions in a third. For example:
+
+```yaml
+keys:
+  pointer:
+    media-pan: [MiddleDrag]
+    media-region: [RightDrag]
+    media-auto-select: [LeftDrag]
+    media-zoom: [Alt-Wheel]
+    media-horizontal: [Shift-Wheel]
+    media-scroll: [Wheel]
+    preview-select: [MiddleDrag]
+```
+
+Native surfaces consume removed gestures rather than passing them to hidden
+source text. The factory preview right-click retains source-selection copying;
+replacing or removing `preview-select` also suppresses that fallback. A captured drag stays with its pane, page and document source;
+replacement or dismissal cancels the action while consuming its trailing release.
+Pane gestures still take priority. Remapped native drags follow their initiating
+button; effective factory gestures retain their existing multi-button behavior.
 
 Old-frame presses and wheel events are rejected after configuration reload.
 A drag already in progress keeps its captured action. Contextual help displays

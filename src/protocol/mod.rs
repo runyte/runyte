@@ -215,7 +215,8 @@ use crate::workspace::{
 // Version 85 carries effective preview navigation and source identity.
 // Version 86 carries pane gesture masks for all three pointer buttons.
 // Version 87 carries the full pointer action registry.
-pub const VERSION: u32 = 87;
+// Version 88 adds native media, preview and overflow-dismiss pointer action masks.
+pub const VERSION: u32 = 88;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1574,7 +1575,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 87);
+        assert_eq!(VERSION, 88);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

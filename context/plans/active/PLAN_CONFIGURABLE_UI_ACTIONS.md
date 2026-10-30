@@ -69,16 +69,16 @@ separate reductions of the issue's acceptance criteria.
 
 1. [x] Inspect repository state, search existing issues, create tracking issue
    and implementation branch.
-2. [ ] Inventory input owners and formalize configuration/precedence contracts.
-3. [ ] Add typed configurable pointer actions, starting with pane move/extend;
+2. [x] Inventory input owners and formalize configuration/precedence contracts.
+3. [x] Add typed configurable pointer actions, starting with pane move/extend;
    retain border and active-drag ownership. Complete remaining pointer actions.
-4. [ ] Expose registry-backed special-view and list scopes with shared actions.
-5. [ ] Convert prompt, picker, completion and menu navigation/editing, preserving
+4. [x] Expose registry-backed special-view and list scopes with shared actions.
+5. [x] Convert prompt, picker, completion and menu navigation/editing, preserving
    structural option identifiers and literal paste/IME behavior.
-6. [ ] Convert reusable confirmation actions and approval classification together.
-7. [ ] Resolve terminal editor actions and native window/preview controls through
+6. [x] Convert reusable confirmation actions and approval classification together.
+7. [x] Resolve terminal editor actions and native window/preview controls through
    effective bindings, preserving PTY forwarding and frontend ownership.
-8. [ ] Convert action-owned grammar controls (cancel/back/context actions/hint
+8. [x] Convert action-owned grammar controls (cancel/back/context actions/hint
    navigation), retaining counts, operands and jump-label identifiers.
 9. [ ] Complete documentation and direct-input audit; run full validation and
    independent final review. Publish reviewable branch/PR linked to #46.
@@ -527,3 +527,69 @@ package tests, both required Clippy checks, formatting and guide checks passed.
 The earlier sandboxed library attempt was stopped because socket fixtures require
 local transport permissions; the complete run used those permissions. Native
 media/preview pointer actions and final full validation/coverage remain pending.
+
+
+### Native pointer completion and final audit
+
+Protocol 88 carries all 26 pointer actions, including native media pan, explicit
+region selection, automatic content selection, image double-click zoom,
+continuous media wheel actions, document-preview selection and scrolling.
+Native input captures the painted surface identity; drag ownership includes the
+attachment, pane, page and source version (or preview generation). A cancelled
+or replaced target consumes its remaining physical tail. New presses and
+attachment changes clear old local ownership before choosing the next owner.
+
+Default media modifier precedence, automatic text/region/pan selection, wheel
+zoom pivots and PDF paging remainders are retained. Effective factory maps retain
+their historical multi-button behavior; a remapped action uses its initiating
+button. Loading media can receive focus without selecting unseen content.
+Inactive preview focus is independent of source selection/link/copy bindings.
+Factory preview right-click still reaches source-selection copy; removing or
+reassigning preview selection makes unmatched gestures inert.
+
+Astra review identified loading-focus admission, inactive middle-button preview
+focus, new host presses clearing old local drags, per-action compatibility, and
+factory preview right-click copy. Each correction has regression coverage at
+its production policy or host behavior boundary, alongside the full modifier
+matrix and semantic viewport tests. Full final checks and coverage are pending.
+
+Direct-input audit found the remaining raw keys in these categories:
+
+- Frontend translation and PTY encoding preserve physical input; they do not
+  define editor actions.
+- Digits, menu option letters, literal prompt text, character operands, counts,
+  and jump labels are structural input.
+- Approval/repeat classification retains narrow factory-Enter provenance while
+  checking effective actions for remapped accept keys.
+- Conditional leader and hint-arrow compatibility consult the effective registry;
+  preferred hint spellings only appear when still reachable.
+- The alternate Vim grammar's literal motion table is test-only, behind
+  `cfg(test)`, and is not a production input owner.
+- Native button checks that remain implement capture/release compatibility and
+  physical admission; media and preview actions themselves use the shared map.
+
+No additional production compound action owner was found by this audit.
+
+The final independent audit also found the native input-overflow banner's
+left-click dismissal. `input-overflow-dismiss` now exposes that overlay action,
+retaining default modifier tolerance and bubbling unmatched clicks as before.
+Its effective label and queue dismissal share regression coverage for default,
+replacement and removal. Protocol 88 includes its bounded action mask.
+
+
+### Final validation
+
+Astra High cleared the final implementation and input audit with no remaining
+blockers. Formatting, the user-guide link/navigation checker, both required
+Clippy selections, the full `cargo test` suite, and all desktop package tests
+passed. The root library run had 4,245 passing tests and 16 intentional ignored
+fixtures; the final desktop selection had 135 native tests, 16 preview tests,
+and 5 executable/helper integration tests passing (3 native tests ignored).
+
+The final canonical root coverage run, including the last overflow action,
+passed at 92.47% line coverage against the 89% floor. Desktop coverage passed
+at 50.64% against its separate 40% floor. The coverage register records the
+commands and measured totals. These Linux runs do not replace native
+macOS/Windows CI or interactive GPU/window acceptance. Implementation and local
+validation are complete; publication of the draft PR is the remaining delivery
+step. The issue remains open until integration.

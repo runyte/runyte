@@ -22,9 +22,20 @@ pub enum Action {
     TreeSelect,
     TreeOpen,
     SessionActivate,
+    MediaPan,
+    MediaRegion,
+    MediaAutoSelect,
+    MediaToggleZoom,
+    MediaZoom,
+    MediaHorizontal,
+    MediaScroll,
+    PreviewSelect,
+    PreviewHorizontal,
+    PreviewScroll,
+    InputOverflowDismiss,
 }
 impl Action {
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 26] = [
         Self::PaneMove,
         Self::PaneExtend,
         Self::Resize,
@@ -40,6 +51,17 @@ impl Action {
         Self::TreeSelect,
         Self::TreeOpen,
         Self::SessionActivate,
+        Self::MediaPan,
+        Self::MediaRegion,
+        Self::MediaAutoSelect,
+        Self::MediaToggleZoom,
+        Self::MediaZoom,
+        Self::MediaHorizontal,
+        Self::MediaScroll,
+        Self::PreviewSelect,
+        Self::PreviewHorizontal,
+        Self::PreviewScroll,
+        Self::InputOverflowDismiss,
     ];
     pub fn name(self) -> &'static str {
         [
@@ -58,6 +80,17 @@ impl Action {
             "tree-select",
             "tree-open",
             "session-activate",
+            "media-pan",
+            "media-region",
+            "media-auto-select",
+            "media-toggle-zoom",
+            "media-zoom",
+            "media-horizontal",
+            "media-scroll",
+            "preview-select",
+            "preview-horizontal",
+            "preview-scroll",
+            "input-overflow-dismiss",
         ][self as usize]
     }
     fn owner(self) -> usize {
@@ -72,17 +105,30 @@ impl Action {
             Self::TreeSelect => 7,
             Self::TreeOpen => 8,
             Self::SessionActivate => 9,
+            Self::MediaPan | Self::MediaRegion | Self::MediaAutoSelect => 10,
+            Self::MediaToggleZoom => 11,
+            Self::MediaZoom | Self::MediaHorizontal | Self::MediaScroll => 12,
+            Self::PreviewSelect => 13,
+            Self::PreviewHorizontal | Self::PreviewScroll => 14,
+            Self::InputOverflowDismiss => 15,
         }
     }
     fn accepts(self, trigger: Trigger) -> bool {
         match self {
-            Self::OpenLink | Self::Copy | Self::TreeSelect | Self::SessionActivate => {
-                trigger.is_click()
-            }
-            Self::TreeOpen => trigger.is_double(),
+            Self::OpenLink
+            | Self::Copy
+            | Self::TreeSelect
+            | Self::SessionActivate
+            | Self::InputOverflowDismiss => trigger.is_click(),
+            Self::TreeOpen | Self::MediaToggleZoom => trigger.is_double(),
             Self::ScrollUp | Self::ScrollDown | Self::ScrollLeft | Self::ScrollRight => {
                 trigger.is_directional_wheel()
             }
+            Self::MediaZoom
+            | Self::MediaHorizontal
+            | Self::MediaScroll
+            | Self::PreviewHorizontal
+            | Self::PreviewScroll => trigger == Trigger::Wheel,
             _ => trigger.is_drag(),
         }
     }
@@ -163,12 +209,12 @@ impl Trigger {
     }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Bindings(Arc<[[u64; 14]; 15]>);
+pub struct Bindings(Arc<[[u64; 14]; 26]>);
 impl Default for Bindings {
     fn default() -> Self {
         use Action::*;
         use Trigger::*;
-        let mut masks = [[0; 14]; 15];
+        let mut masks = [[0; 14]; 26];
         for bits in 0..64 {
             let modifiers = Modifiers::from_bits(bits).unwrap();
             let shift = modifiers.contains(Modifiers::SHIFT);
@@ -201,11 +247,52 @@ impl Default for Bindings {
             set(TreeSelect, LeftClick);
             set(TreeOpen, LeftDoubleClick);
             set(SessionActivate, LeftClick);
+            set(InputOverflowDismiss, LeftClick);
+            let alt = modifiers.contains(Modifiers::ALT);
+            let zoom =
+                modifiers.contains(Modifiers::CONTROL) || modifiers.contains(Modifiers::SUPER);
+            set(MediaPan, RightDrag);
+            set(MediaPan, MiddleDrag);
+            set(
+                if alt {
+                    MediaPan
+                } else if shift {
+                    MediaRegion
+                } else {
+                    MediaAutoSelect
+                },
+                LeftDrag,
+            );
+            if !alt && !shift {
+                set(MediaToggleZoom, LeftDoubleClick);
+            }
+            set(
+                if zoom {
+                    MediaZoom
+                } else if shift {
+                    MediaHorizontal
+                } else {
+                    MediaScroll
+                },
+                Wheel,
+            );
+            set(PreviewSelect, LeftDrag);
+            set(
+                if shift {
+                    PreviewHorizontal
+                } else {
+                    PreviewScroll
+                },
+                Wheel,
+            );
         }
         Self(Arc::new(masks))
     }
 }
 impl Bindings {
+    pub fn same_action(&self, other: &Self, action: Action) -> bool {
+        self.0[action as usize] == other.0[action as usize]
+    }
     pub fn is_default(&self, action: Action) -> bool {
         static DEFAULTS: std::sync::OnceLock<Bindings> = std::sync::OnceLock::new();
         self.0[action as usize] == DEFAULTS.get_or_init(Self::default).0[action as usize]
@@ -231,8 +318,20 @@ impl Bindings {
                 Action::ScrollDown => "WheelDown (any modifiers)",
                 Action::ScrollLeft => "WheelLeft (any modifiers)",
                 Action::ScrollRight => "WheelRight (any modifiers)",
-                Action::TreeSelect | Action::SessionActivate => "LeftClick (any modifiers)",
+                Action::TreeSelect | Action::SessionActivate | Action::InputOverflowDismiss => {
+                    "LeftClick (any modifiers)"
+                }
                 Action::TreeOpen => "LeftDoubleClick (any modifiers)",
+                Action::MediaPan => "MiddleDrag / RightDrag / Alt-LeftDrag (any other modifiers)",
+                Action::MediaRegion => "Shift-LeftDrag (without Alt)",
+                Action::MediaAutoSelect => "LeftDrag (without Shift or Alt)",
+                Action::MediaToggleZoom => "LeftDoubleClick (without Shift or Alt)",
+                Action::MediaZoom => "Ctrl-Wheel / Super-Wheel (any other modifiers)",
+                Action::MediaHorizontal => "Shift-Wheel (without Ctrl or Super)",
+                Action::MediaScroll => "Wheel (without Shift, Ctrl or Super)",
+                Action::PreviewSelect => "LeftDrag (any modifiers)",
+                Action::PreviewHorizontal => "Shift-Wheel (any other modifiers)",
+                Action::PreviewScroll => "Wheel (without Shift)",
             }
             .into();
         }
@@ -313,10 +412,10 @@ impl Bindings {
             extend_pane: masks(Action::PaneExtend),
         }
     }
-    pub fn masks(&self) -> &[[u64; 14]; 15] {
+    pub fn masks(&self) -> &[[u64; 14]; 26] {
         &self.0
     }
-    pub fn from_masks(masks: [[u64; 14]; 15]) -> Option<Self> {
+    pub fn from_masks(masks: [[u64; 14]; 26]) -> Option<Self> {
         for action in Action::ALL {
             for trigger in Trigger::ALL {
                 let mask = masks[action as usize][trigger as usize];
@@ -356,7 +455,7 @@ pub(super) fn compile(section: Option<&Value>, errors: &mut Vec<String>) -> Bind
         return defaults;
     }
     let mut masks = *defaults.0;
-    for owner in 0..10 {
+    for owner in 0..16 {
         let result = (|| -> Result<(), String> {
             for action in Action::ALL
                 .into_iter()

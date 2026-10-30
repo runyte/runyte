@@ -18,6 +18,7 @@ mod input_routing;
 mod interactions;
 mod media;
 pub mod pdf;
+mod pointer;
 mod preview;
 mod viewport;
 
@@ -169,6 +170,7 @@ pub(crate) struct NativeInput {
     event: Event,
     presented: Option<runyte::workspace::FrameId>,
     presentation_only: bool,
+    pointer_target: Option<pointer::Target>,
     pointer_bindings: runyte::keymap::pointer_actions::Bindings,
     window_bindings: runyte::keymap::native_window::Bindings,
     preview_bindings: runyte::keymap::native_preview::Bindings,
@@ -214,6 +216,7 @@ struct Bridge {
     media: Mutex<Vec<MediaPane>>,
     previews: Mutex<Vec<preview::Pane>>,
     painted_media: Mutex<Vec<MediaPane>>,
+    painted_pointer_surfaces: Mutex<Vec<pointer::Surface>>,
     painted_pointer_bindings: Mutex<runyte::keymap::pointer_actions::Bindings>,
     painted_window_bindings: Mutex<runyte::keymap::native_window::Bindings>,
     painted_preview_bindings: Mutex<runyte::keymap::native_preview::Bindings>,
@@ -260,6 +263,7 @@ impl Bridge {
             event,
             presented: *self.presented.lock().unwrap(),
             presentation_only: false,
+            pointer_target: None,
             pointer_bindings: self.painted_pointer_bindings.lock().unwrap().clone(),
             window_bindings: self.painted_window_bindings.lock().unwrap().clone(),
             preview_bindings: self.painted_preview_bindings.lock().unwrap().clone(),
@@ -485,6 +489,7 @@ pub(crate) fn begin_attachment() {
     bridge.preview_dismissals.lock().unwrap().clear();
     bridge.media.lock().unwrap().clear();
     bridge.painted_media.lock().unwrap().clear();
+    bridge.painted_pointer_surfaces.lock().unwrap().clear();
     *bridge.presented.lock().unwrap() = None;
 }
 
@@ -771,6 +776,7 @@ pub(crate) fn launch(
         media: Mutex::new(Vec::new()),
         previews: Mutex::new(Vec::new()),
         painted_media: Mutex::new(Vec::new()),
+        painted_pointer_surfaces: Mutex::new(Vec::new()),
         painted_pointer_bindings: Mutex::new(Default::default()),
         painted_window_bindings: Mutex::new(Default::default()),
         painted_preview_bindings: Mutex::new(Default::default()),
@@ -878,6 +884,7 @@ struct NativeView {
     glyphs: std::rc::Rc<std::cell::RefCell<cells::GlyphCache>>,
     media: media::Loader,
     previews: preview::Views,
+    local_pointer: Option<pointer::Capture>,
     routing: input_routing::Queue<input_routing::Action>,
     preview_routing_ready: bool,
     composition: String,
@@ -960,6 +967,7 @@ impl NativeView {
             geometry_requests,
             media: media::Loader::new(bridge.clone()),
             previews: preview::Views::default(),
+            local_pointer: None,
             routing: input_routing::Queue::default(),
             preview_routing_ready: false,
             bridge,
@@ -1321,6 +1329,34 @@ impl Render for NativeView {
         }
         self.painted_images = painted_images;
         self.schedule_animation(animation_deadline, window, cx);
+        let pointer_surfaces: Vec<_> = frame.as_ref().map_or_else(Vec::new, |frame| {
+            let media = frame.media.iter().map(|pane| pointer::Surface {
+                body: pane.body,
+                target: pointer::Target::Media {
+                    pane: pane.pane,
+                    path: pane.path.clone(),
+                    page: pane.page,
+                    source: self
+                        .viewports
+                        .get(&(pane.pane, pane.path.clone()))
+                        .filter(|view| view.page == pane.page)
+                        .and_then(viewport::Viewport::source),
+                },
+            });
+            let previews = frame.previews.iter().map(|pane| pointer::Surface {
+                body: pane.body,
+                target: pointer::Target::Preview(preview::Target {
+                    pane: pane.pane,
+                    source: pane.document.source,
+                    generation: pane.document.generation,
+                }),
+            });
+            media.chain(previews).collect()
+        });
+        let bindings = frame
+            .as_ref()
+            .map(|frame| frame.pointer_bindings.clone())
+            .unwrap_or_default();
         let entity = cx.entity();
         let bridge = self.bridge.clone();
         let focus = self.focus.clone();
@@ -1361,6 +1397,7 @@ impl Render for NativeView {
                         } else {
                             Vec::new()
                         };
+                        *bridge.painted_pointer_surfaces.lock().unwrap() = pointer_surfaces.clone();
                         *bridge.painted_pointer_bindings.lock().unwrap() =
                             frame.pointer_bindings.clone();
                         *bridge.painted_window_bindings.lock().unwrap() =
@@ -1378,6 +1415,7 @@ impl Render for NativeView {
                                 event: Event::FocusGained,
                                 presented: frame.id,
                                 presentation_only: true,
+                                pointer_target: None,
                                 pointer_bindings: frame.pointer_bindings.clone(),
                                 window_bindings: frame.window_bindings.clone(),
                                 preview_bindings: frame.preview_bindings.clone(),
@@ -1392,24 +1430,35 @@ impl Render for NativeView {
             .size_full(),
         );
         if self.bridge.input.overflowed() {
-            surface = surface.child(
-                div()
-                    .absolute()
-                    .top(px(0.))
-                    .right(px(0.))
-                    .bg(rgb(0x8b1a1a))
-                    .text_color(rgb(0xffffff))
-                    .px_2()
-                    .child("Some input was lost. Click to dismiss.")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|view, _: &MouseDownEvent, _, cx| {
-                            view.bridge.input.dismiss_overflow();
+            let mut banner = div()
+                .absolute()
+                .top(px(0.))
+                .right(px(0.))
+                .bg(rgb(0x8b1a1a))
+                .text_color(rgb(0xffffff))
+                .px_2()
+                .child(pointer::overflow_hint(&bindings));
+            for button in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
+                let bindings = bindings.clone();
+                banner = banner.on_mouse_down(
+                    button,
+                    cx.listener(move |view, event: &MouseDownEvent, _, cx| {
+                        let physical = mouse_event(
+                            view.metrics,
+                            event.position,
+                            crossterm::event::MouseEventKind::Down(
+                                input_routing::native_pointer_button(event.button),
+                            ),
+                            event.modifiers,
+                        );
+                        if pointer::dismiss_overflow(&view.bridge.input, &bindings, physical) {
                             cx.stop_propagation();
                             cx.notify();
-                        }),
-                    ),
-            );
+                        }
+                    }),
+                );
+            }
+            surface = surface.child(banner);
         }
         surface
     }

@@ -1194,6 +1194,31 @@ impl App {
             self.status_error = false;
             return Ok(PointerOutcome::Changed);
         }
+        // A native preview owns its visible surface independently of source
+        // selection or link bindings. Its border still belongs to pane resizing.
+        if self.native_media
+            && press(PointerAction::PreviewSelect)
+            && !(press(PointerAction::Resize)
+                && pointer_resize_pair(view, event.column, event.row).is_some())
+            && let Some(pane_id) = pointer_pane(view, event.column, event.row)
+            && view.pane(pane_id).is_some_and(|pane| {
+                event.column >= pane.body.x
+                    && event.column < pane.body.x.saturating_add(pane.body.width)
+                    && event.row >= pane.body.y
+                    && event.row < pane.body.y.saturating_add(pane.body.height)
+            })
+            && self
+                .document_previews
+                .get(&pane_id)
+                .is_some_and(|preview| preview.source == self.panes[&pane_id].buffer)
+        {
+            self.invalidate_all_partial_guards();
+            self.grammar.reset();
+            self.jump = None;
+            self.activate_pane_from_pointer(pane_id);
+            self.pointer_drag = None;
+            return Ok(PointerOutcome::Changed);
+        }
         if self.native_media && press(PointerAction::OpenLink) {
             let PointerEventKind::Down(button) = event.kind else {
                 unreachable!("link press")

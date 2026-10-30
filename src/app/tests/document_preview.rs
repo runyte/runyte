@@ -376,3 +376,86 @@ fn preview_frames_publish_current_structural_input_ownership() {
     press(&mut host, 'x');
     assert!(!host.prepare_frame(geometry).editor.preview_structural);
 }
+
+#[test]
+fn remapped_preview_focus_is_independent_of_editor_selection_and_link_bindings() {
+    let root = TestRuntimeRoot::new("preview-remapped-focus").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    seed(&mut app, "https://example.com/preview\n");
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(1, 4)));
+    app.execute(parse_colon_command("preview").unwrap())
+        .unwrap();
+    let pane = app.active_pane;
+    let selection = app.active().selection.clone();
+    app.execute(parse_colon_command("vsplit").unwrap()).unwrap();
+    let section = serde_yaml::from_str("pointer: {preview-select: [MiddleDrag], select: [], extend: [], open-link: [MiddleClick], copy: [MiddleClick]}").unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+    let mut host = crate::workspace::WorkspaceHost::new(app);
+    let frame = host.prepare_frame(preview_test_geometry());
+    let body = frame
+        .editor
+        .panes
+        .iter()
+        .find(|p| p.pane_id == pane)
+        .unwrap()
+        .body;
+    host.execute(crate::workspace::HostCommand::Pointer {
+        event: PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Middle),
+            column: body.x + 6,
+            row: body.y,
+            modifiers: Modifiers::NONE,
+        },
+        frame: frame.id,
+        repetitions: 1,
+    })
+    .unwrap();
+    assert_eq!(host.active_pane, pane);
+    assert_eq!(host.active().selection, selection);
+    assert!(host.pointer_drag.is_none());
+    assert!(host.pointer_link_pressed.is_none());
+}
+
+#[test]
+fn factory_preview_right_click_retains_source_selection_copy() {
+    let root = TestRuntimeRoot::new("preview-copy").unwrap();
+    let mut config = Config::default();
+    config.editor.line_numbers = false;
+    let mut app = App::new_in_project(config, None, &*root).unwrap();
+    let clipboard = Arc::new(Mutex::new(String::new()));
+    app.set_system_clipboard(Box::new(super::editing_and_buffers::MemoryClipboard(
+        clipboard.clone(),
+    )));
+    app.native_media = true;
+    seed(&mut app, "alpha beta");
+    let selection = Selection::single(Range::new(0, 4));
+    app.active_mut().replace_selection(selection.clone());
+    app.execute(parse_colon_command("preview").unwrap())
+        .unwrap();
+    let mut host = crate::workspace::WorkspaceHost::new(app);
+    let frame = host.prepare_frame(preview_test_geometry());
+    let body = frame
+        .editor
+        .panes
+        .iter()
+        .find(|p| p.pane_id == host.active_pane)
+        .unwrap()
+        .body;
+    host.execute(crate::workspace::HostCommand::Pointer {
+        event: PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Right),
+            column: body.x + 2,
+            row: body.y,
+            modifiers: Modifiers::NONE,
+        },
+        frame: frame.id,
+        repetitions: 1,
+    })
+    .unwrap();
+    assert_eq!(&*clipboard.lock().unwrap(), "alpha");
+    assert_eq!(host.active().selection, selection);
+}

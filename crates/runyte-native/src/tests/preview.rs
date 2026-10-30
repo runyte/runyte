@@ -771,6 +771,7 @@ fn preview_queue_combines_captured_maps_prefixes_handoff_and_host_acknowledgemen
         event: Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
         presented: Some(runyte::protocol::FrameId::from_raw(42).into()),
         presentation_only: false,
+        pointer_target: None,
         pointer_bindings: Default::default(),
         window_bindings: Default::default(),
         preview_bindings: map.clone(),
