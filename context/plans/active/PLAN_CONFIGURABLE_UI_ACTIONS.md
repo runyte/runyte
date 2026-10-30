@@ -340,3 +340,18 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   use effective actions. Astra cleared the final source; all 178 plugin-related
   tests, root Clippy, formatting and guide checks passed. UI owner input remains
   bounded (64 owners, 32 aliases per action).
+- Full root validation after native approval migrations passed (4,179 active
+  library tests, 16 ignored, all integration/doc suites), followed by desktop
+  Clippy and desktop/native/preview tests.
+- Merge acknowledgment editing and prefix reset now have shared UI owners.
+  Literal text and editing retain pending scoped sequences; cursor stepping
+  retains its legacy scalar semantics. Escape's reset-and-continue behavior is
+  independently configurable without turning other inherited cancel aliases
+  into interrupts. UI compilation precedes scope validation so released keys
+  and disabled reset suffixes are assignable, while rollback restores effective
+  reservations. Dispatch, presented admission and discovery share typed routing;
+  hints hide controls masked by editing or literal input and preserve conditional
+  leader aliasing. Astra cleared the final changes. All 40 merge-related tests,
+  91 help-related tests (2 ignored), root Clippy, formatting and guide checks
+  passed; new tests cover modifier masks, prefix ownership, key release,
+  rollback, hint masking, reset reassignment and leader interactions.

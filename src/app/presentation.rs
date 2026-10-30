@@ -1641,7 +1641,7 @@ impl App {
     /// moving its selection remain queueable while an asynchronous frontend
     /// catches up; accepting the decision requires its current painted frame.
     pub fn input_requires_presented_approval(&self, input: &crate::input::InputEvent) -> bool {
-        use crate::input::{InputEvent, KeyCode, Modifiers};
+        use crate::input::{InputEvent, KeyCode};
 
         let pending = self.context_overlay_active()
             || self.plugins.input.is_some()
@@ -1680,17 +1680,11 @@ impl App {
             return self.macro_replay.is_none()
                 && self.plugin_input_requires_presented_approval(*key);
         }
-        if let Some(review) = &self.merge_ui.review {
-            // Merge approval uses configured bindings. Only the editing keys
-            // consumed before that registry lookup can bypass presentation.
-            return !(review.input_focused()
-                && match key.code {
-                    KeyCode::Char(_) => {
-                        key.modifiers.is_empty() || key.modifiers == Modifiers::SHIFT
-                    }
-                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Left | KeyCode::Right => true,
-                    _ => false,
-                });
+        if self.merge_ui.review.is_some() {
+            return matches!(
+                self.merge_input_route(*key),
+                crate::keymap::ui::MergeInput::Scoped { .. }
+            );
         }
         if self.list_layer_input_active()
             && self.list_input_action(*key)

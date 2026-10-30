@@ -7,7 +7,9 @@ mod context_review;
 mod plugin_input;
 mod provider;
 pub(crate) use context_review::Route as ContextReviewRoute;
+mod merge;
 mod picker;
+pub(crate) use merge::Input as MergeInput;
 mod prompt;
 mod session_navigation;
 
@@ -53,10 +55,12 @@ pub enum Owner {
     PluginForm,
     PluginChoice,
     PluginPathCompletion,
+    MergeAcknowledgment,
+    MergePrefix,
 }
 
 impl Owner {
-    const ALL: [Self; 31] = [
+    const ALL: [Self; 33] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -88,6 +92,8 @@ impl Owner {
         Self::PluginForm,
         Self::PluginChoice,
         Self::PluginPathCompletion,
+        Self::MergeAcknowledgment,
+        Self::MergePrefix,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -122,6 +128,8 @@ impl Owner {
             Self::PluginForm => "plugin-form",
             Self::PluginChoice => "plugin-choice",
             Self::PluginPathCompletion => "plugin-path-completion",
+            Self::MergeAcknowledgment => "merge-acknowledgment",
+            Self::MergePrefix => "merge-prefix",
         }
     }
     pub fn is_confirmation(self) -> bool {
@@ -167,8 +175,10 @@ impl Owner {
         )
     }
     fn inherits_leader(self) -> bool {
-        !matches!(self, Self::Completion | Self::ContextReview)
-            && !self.is_plugin_input()
+        !matches!(
+            self,
+            Self::Completion | Self::ContextReview | Self::MergeAcknowledgment | Self::MergePrefix
+        ) && !self.is_plugin_input()
             && !self.is_prompt()
             && !self.is_session_navigation()
     }
@@ -190,6 +200,8 @@ impl Owner {
                 &[Next, Previous, Accept, Back, Cancel]
             }
             Self::Path => &[OpenActions, Cancel],
+            Self::MergeAcknowledgment => &[Backspace, Delete, MoveLeft, MoveRight],
+            Self::MergePrefix => &[ResetAndContinue],
             Self::PluginConfirmation => &[Accept, Cancel],
             Self::PluginPicker => &[Accept, Cancel, Next, Previous, Backspace],
             Self::PluginForm => &[
@@ -237,6 +249,10 @@ impl Owner {
     }
     fn structural(self, key: KeyStroke) -> bool {
         match self {
+            Self::MergePrefix => false,
+            Self::MergeAcknowledgment => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control() || key.modifiers.is_empty())
+            }
             Self::ProviderReload | Self::ProviderOverwrite | Self::PluginConfirmation => false,
             Self::PluginChoice => false,
             Self::PluginPicker | Self::PluginForm | Self::PluginPathCompletion => {
@@ -303,6 +319,7 @@ impl Owner {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Action {
+    ResetAndContinue,
     Next,
     Previous,
     Accept,
@@ -344,6 +361,7 @@ pub enum Action {
 impl Action {
     pub fn name(self) -> &'static str {
         match self {
+            Self::ResetAndContinue => "reset-and-continue",
             Self::Next => "next",
             Self::Previous => "previous",
             Self::Accept => "accept",
@@ -664,6 +682,9 @@ impl OwnerBindings {
 
 fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     use Action::*;
+    if matches!(owner, Owner::MergeAcknowledgment | Owner::MergePrefix) {
+        return merge::legacy_action(owner, key);
+    }
     if owner.is_plugin_input() {
         return plugin_input::legacy_action(owner, key);
     }
@@ -732,6 +753,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if matches!(owner, Owner::MergeAcknowledgment | Owner::MergePrefix) {
+        return merge::labels(action);
+    }
     if owner.is_plugin_input() {
         return plugin_input::labels(owner, action);
     }

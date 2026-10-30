@@ -291,9 +291,9 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
         Some(complete) => super::actions::name_scoped_prefixes(keymap, &complete.namespaces),
         None => keymap,
     };
-    keymap = super::scopes::apply(section.get("scopes"), keymap, &mut errors);
     keymap.pane_gestures = super::pointer::compile(section.get("pointer"), &mut errors);
     keymap.ui = super::ui::compile(section.get("ui"), keymap.leader(), &mut errors);
+    keymap = super::scopes::apply(section.get("scopes"), keymap, &mut errors);
     CompiledKeymap {
         keymap: Arc::new(keymap),
         errors,

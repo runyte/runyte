@@ -312,6 +312,23 @@ accept Shift/Meta/Hyper but ignore Control/Alt/Super; configured cancellation
 matches its exact authored modifiers. Neither tree owner adds a Ctrl-c alias.
 Both preserve conditional leader cancellation and captured targets.
 
+Merge-review controls use `keys.scopes.git-merge-review`, `git-merge-detail`,
+and `git-merge-input`. Acknowledgment editing uses `ui.merge-acknowledgment`
+with `backspace`, `delete`, `move-left`, and `move-right`. Literal text remains
+structural. Editing preserves the pending scoped key sequence and the existing
+cursor behavior. Removing an editing alias permits that key to be assigned in
+`git-merge-input`; configurations cannot advertise a scoped action hidden by
+an active editing binding.
+
+`ui.merge-prefix.reset-and-continue` defaults to Escape with any modifiers.
+It clears the pending review sequence, then resolves the same input through
+the scoped keymap. Other default cancellation aliases do not interrupt an
+unfinished sequence. Replacing or removing this action permits Escape inside
+configured review sequences. A reset key owned by the scoped input layer cannot be used after the
+first stroke of a sequence. Literal text and acknowledgment editing take precedence
+over prefix reset. Outside acknowledgment editing, the leader keeps
+its existing alias to the scoped Escape binding.
+
 Plugin input uses separate owners for each interaction:
 
 | Owner | Actions |

@@ -788,3 +788,118 @@ fn merge_ui_conflict_refresh_preserves_selected_row_over_the_last_opened_file() 
         PathBuf::from("second")
     );
 }
+
+fn configure_merge_actions(app: &mut App, source: &str) {
+    let compiled =
+        crate::keymap::configured::compile(&serde_yaml::from_str(source).unwrap(), &app.keymap);
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+}
+
+#[test]
+fn merge_acknowledgment_actions_preserve_cursor_semantics_and_pending_sequences() {
+    let fixture = MergeFixture::new(true, false);
+    let (mut app, operations) = fixture.app();
+    fixture.review(&mut app, &operations);
+    configure_merge_actions(
+        &mut app,
+        "ui: {merge-acknowledgment: {move-left: [F2, Enter], move-right: [F3], backspace: [F4], delete: [F5]}}\nscopes: {git-merge-input: {normal: {'F6 F7': git-review-enter, Left: git-review-next}}}",
+    );
+    let review = app.merge_ui.review.as_mut().unwrap();
+    review.requires_ack = true;
+    review.focus = review.rows.len();
+    review.acknowledgment = "a\u{301}bc".into();
+    review.cursor = 4;
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    key(&mut app, KeyCode::Function(2), Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(app.merge_ui.review.as_ref().unwrap().cursor, 2);
+    key(&mut app, KeyCode::Function(2), Modifiers::NONE);
+    assert_eq!(
+        app.merge_ui.review.as_ref().unwrap().cursor,
+        1,
+        "legacy cursor stepping counts scalar characters"
+    );
+    key(&mut app, KeyCode::Function(3), Modifiers::NONE);
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(
+        app.merge_ui.review.as_ref().unwrap().acknowledgment,
+        "a\u{301}c"
+    );
+    key(&mut app, KeyCode::Function(4), Modifiers::NONE);
+    assert_eq!(app.merge_ui.review.as_ref().unwrap().acknowledgment, "c");
+    assert_eq!(
+        app.merge_ui.keys.len(),
+        1,
+        "editing leaves the pending scoped sequence intact"
+    );
+    let help = crate::help::render(
+        crate::help::HelpTopic::GitMergeReview,
+        crate::command::GrammarKind::Runyte,
+        BindingScope::GitMergeInput,
+        &app.keymap,
+        false,
+    );
+    assert!(help.contains("F2/Enter"));
+    assert!(
+        !help
+            .lines()
+            .any(|line| line.trim_start().starts_with("Enter ") && line.contains("Inspect"))
+    );
+    let snapshot = app.merge_review_snapshot().unwrap();
+    assert_eq!(
+        snapshot.actions[0].key_hint, "F6 F7",
+        "UI-owned Enter is hidden from scoped discovery"
+    );
+    assert!(
+        !app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+    );
+    assert!(
+        app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(KeyCode::Left)))
+    );
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(!app.merge_ui.review.as_ref().unwrap().input_focused());
+    assert!(operations.try_recv().is_err());
+    let review = app.merge_ui.review.as_mut().unwrap();
+    review.focus = review.rows.len();
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    assert!(
+        !app.merge_ui.review.as_ref().unwrap().input_focused(),
+        "released UI key reaches the scoped action"
+    );
+}
+
+#[test]
+fn merge_prefix_reset_preserves_default_alias_policy_and_can_be_reassigned() {
+    let fixture = MergeFixture::new(true, false);
+    let (mut app, operations) = fixture.app();
+    fixture.review(&mut app, &operations);
+    configure_merge_actions(
+        &mut app,
+        "scopes: {git-merge-review: {normal: {'F6 F7': git-review-next}}}",
+    );
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    key(&mut app, KeyCode::Char('c'), Modifiers::CONTROL);
+    assert!(
+        app.merge_ui.review.is_some(),
+        "inherited Ctrl-c does not interrupt a pending prefix"
+    );
+    assert!(app.merge_ui.keys.is_empty());
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    key(&mut app, KeyCode::Escape, Modifiers::ALT);
+    assert!(app.merge_ui.review.is_some());
+    assert!(app.merge_ui.keys.is_empty());
+    configure_merge_actions(
+        &mut app,
+        "ui: {merge-prefix: {reset-and-continue: [F8]}}\nscopes: {git-merge-review: {normal: {'F6 Esc': git-review-next, F8: git-review-cancel}}}",
+    );
+    app.merge_ui.review.as_mut().unwrap().focus = 0;
+    let focus = app.merge_ui.review.as_ref().unwrap().focus;
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.merge_ui.review.as_ref().unwrap().focus, focus + 1);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.merge_ui.review.is_none());
+    assert!(operations.try_recv().is_err());
+}

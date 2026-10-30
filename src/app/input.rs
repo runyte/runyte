@@ -1989,7 +1989,7 @@ impl App {
             key
         };
         if self.merge_ui.review.is_some() {
-            return self.handle_merge_review_key(legacy_key);
+            return self.handle_merge_review_key(key);
         }
         if self.directory_tree_delete.is_some() {
             self.handle_tree_delete_key(key);

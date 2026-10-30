@@ -147,13 +147,18 @@ fn compile(section: &Value, base: &Keymap) -> Result<Keymap, String> {
                     return Err("leading counts remain structural input".into());
                 }
 
-                if ((mode == Mode::List || scope.is_merge_review())
+                if ((mode == Mode::List
+                    || (scope.is_merge_review() && scope != BindingScope::GitMergeInput))
                     && sequence.as_slice().contains(&base.leader()))
-                    || sequence
-                        .as_slice()
-                        .iter()
-                        .skip(1)
-                        .any(|key| matches!(key.code, KeyCode::Escape | KeyCode::Backspace))
+                    || sequence.as_slice().iter().skip(1).any(|key| {
+                        if scope.is_merge_review() {
+                            base.ui()
+                                .lookup(super::ui::Owner::MergePrefix, *key)
+                                .is_some()
+                        } else {
+                            matches!(key.code, KeyCode::Escape | KeyCode::Backspace)
+                        }
+                    })
                 {
                     return Err("key is owned by overlay dismissal or prefix cancellation".into());
                 }
@@ -170,14 +175,8 @@ fn compile(section: &Value, base: &Keymap) -> Result<Keymap, String> {
                         && first.modifiers.is_empty())
                     || (scope == BindingScope::GitMergeInput
                         && sequence.as_slice().iter().any(|key| {
-                            matches!(
-                                key.code,
-                                KeyCode::Backspace
-                                    | KeyCode::Delete
-                                    | KeyCode::Left
-                                    | KeyCode::Right
-                            ) || (matches!(key.code, KeyCode::Char(_))
-                                && (key.modifiers.is_empty() || key.modifiers == Modifiers::SHIFT))
+                            base.ui().lookup(super::ui::Owner::MergeAcknowledgment, *key).is_some()
+                                || matches!(key.code, KeyCode::Char(c) if c.is_control() || key.modifiers.is_empty() || key.modifiers == Modifiers::SHIFT)
                         }))
                 {
                     return Err(

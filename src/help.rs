@@ -533,7 +533,43 @@ pub(crate) fn render_document_with_descriptions(
     }
 
     let _ = writeln!(out, "Normal and Select\n");
-    let scoped = keymap.scoped_bindings(mode, scope).collect::<Vec<_>>();
+    let scoped = keymap
+        .scoped_bindings(mode, scope)
+        .filter(|binding| {
+            keymap.merge_binding_reachable(
+                scope,
+                binding,
+                (scope != BindingScope::GitMergeInput).then_some(keymap.leader()),
+            )
+        })
+        .collect::<Vec<_>>();
+    if scope.is_merge_review() {
+        use crate::keymap::ui::{Action, Owner};
+        key_cells.push(row(
+            &mut out,
+            &keymap.ui().merge_reset_label(
+                scope,
+                (scope != BindingScope::GitMergeInput).then_some(keymap.leader()),
+            ),
+            "Reset the pending review sequence and continue",
+        ));
+        out.push('\n');
+        if scope == BindingScope::GitMergeInput {
+            for (action, description) in [
+                (Action::Backspace, "Delete before the acknowledgment cursor"),
+                (Action::Delete, "Delete at the acknowledgment cursor"),
+                (Action::MoveLeft, "Move the acknowledgment cursor left"),
+                (Action::MoveRight, "Move the acknowledgment cursor right"),
+            ] {
+                key_cells.push(row(
+                    &mut out,
+                    &keymap.ui().label(Owner::MergeAcknowledgment, action),
+                    description,
+                ));
+            }
+            out.push('\n');
+        }
+    }
     let actions = keymap.context_actions(scope).collect::<Vec<_>>();
     if !scoped.is_empty() || !actions.is_empty() {
         let _ = writeln!(out, "Buffer keys");
@@ -1085,7 +1121,7 @@ const GIT_CONFLICT_FILE_OVERVIEW: &[&str] = &[
     "`Tab r` reviews staging the entire saved file or deletion. Remaining markers are refused; `Tab R` is an explicit reviewed override for intentional literal marker text. `Tab l` returns to the conflict list. Undo after staging changes the working file without undoing the staged resolution.",
 ];
 const GIT_MERGE_REVIEW_OVERVIEW: &[&str] = &[
-    "The review names Other into Current and predicts already contained, fast-forward, clean pending merge, or conflict resolution. Cancel is selected initially; arrows move, Enter inspects a file or activates the selected footer action, and the footer stays visible while the body scrolls.",
+    "The review names Other into Current and predicts already contained, fast-forward, clean pending merge, or conflict resolution. Cancel is selected initially. Navigation moves focus; activation inspects a file or activates the selected footer action. The footer stays visible while the body scrolls.",
     "Approve and Cancel shortcuts belong only to the root. Details show a patch or labelled Base, Current, Other and provisional Result where available, with Back preserving root focus and scroll. No approval shortcut applies inside details.",
     "Live terminal sessions require the exact destination branch acknowledgment. While its input has focus, letters are text. Any relevant file edit, stale repository observation, abandoned origin or attachment invalidates the captured mutation authority.",
 ];
