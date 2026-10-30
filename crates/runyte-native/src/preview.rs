@@ -366,12 +366,12 @@ impl InputOwnership {
             if captured != Some(focus.origin) {
                 self.focus = None;
             } else if let Some(destination) = focus.destination {
-                return if focus_source(source, terminal) == Some(destination) {
-                    InputRoute::Host
-                } else {
-                    self.focus = None;
-                    InputRoute::Discard
-                };
+                if focus_source(source, terminal) == Some(destination) {
+                    return InputRoute::Host;
+                }
+                // Closing the destination can return to the original preview.
+                // Retire the exception, then apply ordinary target validation.
+                self.focus = None;
             }
         }
         let route = input_route(captured, current, source, eligible, self.handoff);

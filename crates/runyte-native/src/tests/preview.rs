@@ -928,6 +928,35 @@ fn acknowledged_focus_preserves_old_painted_input_only_for_the_pinned_destinatio
         ownership.route(Some(origin), None, Some(destination), true, false),
         InputRoute::Discard
     );
+    let mut returned = armed();
+    returned.acknowledge_focus(7, Some(destination));
+    assert_eq!(
+        returned.route(
+            Some(origin),
+            Some(origin),
+            Some((origin.pane, origin.source)),
+            true,
+            false
+        ),
+        InputRoute::Local
+    );
+    assert!(returned.focus.is_none());
+    let mut replaced = armed();
+    replaced.acknowledge_focus(7, Some(destination));
+    assert_eq!(
+        replaced.route(
+            Some(origin),
+            Some(super::Target {
+                generation: origin.generation + 1,
+                ..origin
+            }),
+            Some((origin.pane, origin.source)),
+            true,
+            false
+        ),
+        InputRoute::Discard
+    );
+    assert!(replaced.focus.is_none());
     let mut unsuccessful = armed();
     unsuccessful.acknowledge_focus(7, Some((origin.pane, origin.source)));
     assert!(unsuccessful.focus.is_none());

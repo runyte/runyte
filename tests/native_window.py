@@ -149,6 +149,7 @@ existing=set(children(x.XDefaultRootWindow(d)))
 env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None)
 # A harness started from a Runyte terminal must not hand its parent context to the fixture.
 for inherited in [key for key in env if key.startswith('RUNYTE_') and key != 'RUNYTE_NATIVE_PAINT_TIMING']:env.pop(inherited)
+env['RUNYTE_INPUT_TRACE']=str(storage/'input.log')
 env['XDG_CONFIG_HOME']=str(storage/'config');env['XDG_RUNTIME_DIR']=str(storage/'runtime');env['SHELL']='/bin/sh';env['XDG_CACHE_HOME']=str(storage/'cache');env['RUNYTE_ALL_HOSTS_DIR']=str(storage/'all-hosts')
 if args.paint_styles:
     # Leave the cursor in a blank cell beside an italic icon, without a shell prompt.
@@ -173,7 +174,11 @@ if not args.mux:launch.append(str(root/'notes.txt'))
 p=subprocess.Popen(launch,cwd=root,env=env,stdout=log,stderr=log)
 try:
     win=None
-    for _ in range(100):
+    # Software Vulkan initialization on a cold CI runner can outlast ten
+    # seconds. Use the same bounded readiness budget as window mapping below.
+    window_started = time.monotonic()
+    window_deadline = window_started + 30
+    while time.monotonic() < window_deadline:
         if p.poll() is not None:raise RuntimeError('editor exited '+str(p.returncode)+' '+(root/'window.log').read_text()[-3000:])
         for w in children(x.XDefaultRootWindow(d)):
             if w not in existing and name(w)==b'Runyte':
@@ -182,7 +187,7 @@ try:
                 if ww.value>100 and hh.value>100:win=w;break
         if win:break
         time.sleep(.1)
-    assert win,'no window found'
+    assert win, f'no window found after {time.monotonic() - window_started:.1f}s'
     for attempt in range(300):
         if p.poll() is not None:
             raise RuntimeError((root/'window.log').read_text())
