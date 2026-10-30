@@ -21,6 +21,7 @@ pub enum Owner {
     Path,
     PathActions,
     ProgramActions,
+    PluginManagerActions,
     BufferActions,
     TerminalActions,
     SessionActions,
@@ -33,12 +34,13 @@ pub enum Owner {
 }
 
 impl Owner {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 15] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
         Self::PathActions,
         Self::ProgramActions,
+        Self::PluginManagerActions,
         Self::BufferActions,
         Self::TerminalActions,
         Self::SessionActions,
@@ -56,6 +58,7 @@ impl Owner {
             Self::Path => "path",
             Self::PathActions => "path-actions",
             Self::ProgramActions => "program-actions",
+            Self::PluginManagerActions => "plugin-manager-actions",
             Self::BufferActions => "buffer-actions",
             Self::TerminalActions => "terminal-actions",
             Self::SessionActions => "session-actions",
@@ -103,6 +106,7 @@ impl Owner {
                 &[Next, Previous, Accept, Back, Cancel]
             }
             Self::Path => &[OpenActions, Cancel],
+            Self::PluginManagerActions => &[Cancel],
             Self::FilePicker | Self::Finder => picker::actions(self),
             Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
                 prompt::actions(self)
@@ -124,7 +128,7 @@ impl Owner {
             | Self::BufferActions
             | Self::TerminalActions => false,
             Self::SessionActions => matches!(key.code, KeyCode::Char(c) if c.is_control()),
-            Self::FilePicker | Self::Finder => {
+            Self::FilePicker | Self::Finder | Self::PluginManagerActions => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control())
                     || matches!(key.code, KeyCode::Char(_))
                         && !key
@@ -451,6 +455,12 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
             _ => None,
         };
     }
+    if owner == Owner::PluginManagerActions {
+        return match (key.code, control) {
+            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => Some(Cancel),
+            _ => None,
+        };
+    }
     if owner == Owner::Path {
         return match (key.code, control) {
             (KeyCode::Tab, _) => Some(OpenActions),
@@ -497,7 +507,7 @@ fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
         (_, Next) => &["Down", "j"],
         (_, Previous) => &["Up", "k", "BackTab"],
         (_, Accept) => &["Enter"],
-        (Owner::Path, Cancel) => &["Esc", "Ctrl-c"],
+        (Owner::Path | Owner::PluginManagerActions, Cancel) => &["Esc", "Ctrl-c"],
         (_, Cancel) => &["Tab", "Esc", "Ctrl-c"],
         (_, OpenActions) => &["Tab"],
         _ => &[],

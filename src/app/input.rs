@@ -725,23 +725,20 @@ impl App {
         };
         let plain_enter = key.code == KeyCode::Enter && key.modifiers.is_empty();
         if self.list_input_active() {
-            let resolved = self.list_registry_key(*key);
-            if self.plugin_manager_actions_open()
-                && (resolved.code == KeyCode::Escape
-                    || (resolved.code == KeyCode::Char('c')
-                        && resolved.modifiers.contains(Modifiers::CONTROL)))
-            {
-                return false;
-            }
-            return self.list_binding_for(*key)
-                == Some(crate::keymap::BindingTarget::Editor(
-                    EditorCommand::ListAccept,
-                ))
-                && (plain_enter
-                    || self
-                        .keymap
-                        .list_key_is_configured(self.list_binding_scope(), resolved));
+            return match self.list_input_action(*key) {
+                Some(super::language_workflows::ListInputAction::Target {
+                    target: crate::keymap::BindingTarget::Editor(EditorCommand::ListAccept),
+                    registry_key,
+                }) => {
+                    plain_enter
+                        || self
+                            .keymap
+                            .list_key_is_configured(self.list_binding_scope(), registry_key)
+                }
+                _ => false,
+            };
         }
+
         if self.mode == Mode::Command
             && !self.has_input_overlay()
             && !self.context_overlay_active()

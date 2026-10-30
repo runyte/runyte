@@ -4347,13 +4347,18 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     if picker.purpose == crate::picker::ListPurpose::Report {
         hints.push(format!("{} scroll", app.list_scroll_keys()));
     }
-    hints.push(if picker.purpose == crate::picker::ListPurpose::Report {
-        format!("{} dismiss", keys(EditorCommand::ListClose))
-    } else if picker.has_key_legend() {
-        format!("{} close", keys(EditorCommand::ListClose))
-    } else {
-        format!("{} cancel", keys(EditorCommand::ListClose))
-    });
+    if let Some(keys) = app.plugin_manager_return_keys() {
+        hints.push(format!("{keys} back"));
+    }
+    if let Some(close) = app.list_close_keys() {
+        hints.push(if picker.purpose == crate::picker::ListPurpose::Report {
+            format!("{close} dismiss")
+        } else if picker.has_key_legend() {
+            format!("{close} close")
+        } else {
+            format!("{close} cancel")
+        });
+    }
     let title = format!(" {} · {} ", picker.title, hints.join(" · "));
     let block = Block::default()
         .borders(Borders::ALL)

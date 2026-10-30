@@ -623,3 +623,41 @@ fn session_menu_rejects_intercepted_control_text_and_dismissal_uses_surviving_ac
         }
     }
 }
+
+#[test]
+fn plugin_manager_return_defaults_and_filter_reservations_match_transparent_ownership() {
+    let map = Bindings::default();
+    for bits in 0..64 {
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        for (code, action) in [
+            (KeyCode::Escape, Some(Action::Cancel)),
+            (
+                KeyCode::Char('c'),
+                modifiers
+                    .contains(Modifiers::CONTROL)
+                    .then_some(Action::Cancel),
+            ),
+            (KeyCode::Enter, None),
+            (KeyCode::Tab, None),
+        ] {
+            assert_eq!(
+                map.lookup(Owner::PluginManagerActions, KeyStroke::new(code, modifiers)),
+                action
+            );
+        }
+    }
+    assert_eq!(
+        map.lookup_with_leader(Owner::PluginManagerActions, KeyStroke::char(' '), true),
+        Some(Action::Cancel)
+    );
+    assert_eq!(
+        map.lookup_with_leader(Owner::PluginManagerActions, KeyStroke::char(' '), false),
+        None
+    );
+    for spelling in ["a", "Meta-a", "\\u0001"] {
+        let (_, errors) = configured(&format!(
+            "plugin-manager-actions: {{cancel: [\"{spelling}\"]}}"
+        ));
+        assert_eq!(errors.len(), 1, "{spelling}");
+    }
+}

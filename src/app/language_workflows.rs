@@ -27,6 +27,27 @@ use crate::command::ColonCommand;
 use crate::command::EditorCommand;
 use crate::keymap::{BindingScope, BindingTarget};
 
+/// Resolved list ownership, including transparent return handlers. Carry the
+/// actual registry key so authority and execution share leader provenance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ListInputAction {
+    ReturnToManager,
+    Target {
+        target: BindingTarget,
+        registry_key: KeyStroke,
+    },
+    ConsumedLeader,
+}
+
+impl ListInputAction {
+    fn target(self) -> Option<BindingTarget> {
+        match self {
+            Self::Target { target, .. } => Some(target),
+            _ => None,
+        }
+    }
+}
+
 /// Whether a list binding only moves the selection.
 #[cfg(windows)]
 fn is_list_movement(target: BindingTarget) -> bool {
@@ -2629,15 +2650,12 @@ impl App {
 
     /// Handles a key while a result picker is open.
     pub(super) fn handle_list_key(&mut self, key: KeyStroke) -> Result<()> {
-        let bound = self.list_binding_for(key);
-        let leader = self.list_leader_active(key);
-        // The plugin manager's transparent return handler still owns legacy
-        // cancellation ahead of the list and its nested action menus.
-        let nested_key = if leader {
-            KeyStroke::plain(KeyCode::Escape)
-        } else {
-            key
-        };
+        let resolved = self.list_input_action(key);
+        if resolved == Some(ListInputAction::ReturnToManager) {
+            self.return_to_plugin_manager();
+            return Ok(());
+        }
+        let bound = resolved.and_then(ListInputAction::target);
         let activating = if let Some(owner) = self.list_menu_ui_owner() {
             matches!(
                 self.keymap.ui().lookup(owner, key),
@@ -2651,14 +2669,6 @@ impl App {
                 ))
             )
         };
-        if self.plugin_manager_actions_open()
-            && (nested_key.code == KeyCode::Escape
-                || (nested_key.code == KeyCode::Char('c')
-                    && nested_key.modifiers.contains(Modifiers::CONTROL)))
-        {
-            self.return_to_plugin_manager();
-            return Ok(());
-        }
         if self.navigator_open() && self.navigator_selection_lost {
             if activating {
                 self.action_failed("selected destination closed; select a destination again");
@@ -2689,8 +2699,8 @@ impl App {
         if let Some(target) = bound {
             return self.run_list_binding(target);
         }
-        if leader {
-            // A removed Escape still consumes the empty-filter leader.
+        if resolved == Some(ListInputAction::ConsumedLeader) {
+            // A removed Escape still consumes the generic empty-filter leader.
             return Ok(());
         }
         let report = self
@@ -2814,18 +2824,50 @@ impl App {
     /// What `key` does in the open list, from the same registry that draws
     /// the list's key legend.
     pub(super) fn list_binding_for(&self, key: KeyStroke) -> Option<BindingTarget> {
-        let key = self.list_registry_key(key);
-        self.keymap
-            .list_binding(self.list_binding_scope(), key)
-            .map(|binding| binding.target)
+        self.list_input_action(key)
+            .and_then(ListInputAction::target)
     }
 
-    pub(super) fn list_registry_key(&self, key: KeyStroke) -> KeyStroke {
-        if self.list_leader_active(key) {
+    pub(super) fn list_input_action(&self, key: KeyStroke) -> Option<ListInputAction> {
+        use crate::keymap::ui::{Action, Owner};
+        let manager = self.plugin_manager_actions_open();
+        let leader_active = self.space_dismisses_input_overlay();
+        if manager
+            && self
+                .keymap
+                .ui()
+                .lookup_with_leader(Owner::PluginManagerActions, key, leader_active)
+                == Some(Action::Cancel)
+        {
+            return Some(ListInputAction::ReturnToManager);
+        }
+        // A transparent return owner controls its own conditional leader. If
+        // removed, fall through using the original key, never resurrect Escape.
+        let alias = !manager && self.list_leader_active(key);
+        let registry_key = if alias {
             KeyStroke::plain(KeyCode::Escape)
         } else {
             key
-        }
+        };
+        self.keymap
+            .list_binding(self.list_binding_scope(), registry_key)
+            .map(|binding| ListInputAction::Target {
+                target: binding.target,
+                registry_key,
+            })
+            .or_else(|| alias.then_some(ListInputAction::ConsumedLeader))
+    }
+
+    pub(crate) fn plugin_manager_return_keys(&self) -> Option<String> {
+        self.plugin_manager_actions_open()
+            .then(|| {
+                self.keymap.ui().label_with_leader(
+                    crate::keymap::ui::Owner::PluginManagerActions,
+                    crate::keymap::ui::Action::Cancel,
+                    self.space_dismisses_input_overlay(),
+                )
+            })
+            .filter(|keys| keys != "unbound")
     }
 
     fn run_list_binding(&mut self, target: BindingTarget) -> Result<()> {

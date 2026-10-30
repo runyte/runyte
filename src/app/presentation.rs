@@ -875,6 +875,11 @@ impl App {
         }
     }
 
+    pub(crate) fn list_close_keys(&self) -> Option<String> {
+        let keys = self.list_action_keys(crate::command::EditorCommand::ListClose);
+        (!self.plugin_manager_actions_open() || keys != "unbound").then_some(keys)
+    }
+
     pub(crate) fn list_scroll_keys(&self) -> String {
         use crate::{
             command::EditorCommand,
@@ -1621,6 +1626,12 @@ impl App {
                     KeyCode::Backspace | KeyCode::Delete | KeyCode::Left | KeyCode::Right => true,
                     _ => false,
                 });
+        }
+        if self.list_layer_input_active()
+            && self.list_input_action(*key)
+                == Some(super::language_workflows::ListInputAction::ReturnToManager)
+        {
+            return false;
         }
         if self.list_layer_input_active()
             && let Some(owner) = self.list_menu_ui_owner()
@@ -2461,21 +2472,22 @@ impl App {
                     action,
                 ));
             }
+            if let Some(keys) = self.plugin_manager_return_keys() {
+                snapshot.actions.push(OverlayAction::new(keys, "back"));
+            }
             if picker.purpose == ListPurpose::Report {
                 snapshot
                     .actions
                     .push(OverlayAction::new(self.list_scroll_keys(), "scroll"));
-                snapshot.actions.push(OverlayAction::new(
-                    self.list_action_keys(EditorCommand::ListClose),
-                    "dismiss",
-                ));
+                if let Some(keys) = self.list_close_keys() {
+                    snapshot.actions.push(OverlayAction::new(keys, "dismiss"));
+                }
             } else if picker.has_key_legend() {
                 // Everything past the keys needed to use the list at all is
                 // the legend's to name.
-                snapshot.actions.push(OverlayAction::new(
-                    self.list_action_keys(EditorCommand::ListClose),
-                    "close",
-                ));
+                if let Some(keys) = self.list_close_keys() {
+                    snapshot.actions.push(OverlayAction::new(keys, "close"));
+                }
                 snapshot.legend = self.list_legend();
             } else {
                 if picker.has_preview() {
@@ -2484,10 +2496,9 @@ impl App {
                         "toggle preview",
                     ));
                 }
-                snapshot.actions.push(OverlayAction::new(
-                    self.list_action_keys(EditorCommand::ListClose),
-                    "cancel",
-                ));
+                if let Some(keys) = self.list_close_keys() {
+                    snapshot.actions.push(OverlayAction::new(keys, "cancel"));
+                }
             }
             if picker.has_preview() {
                 snapshot.show_preview = picker.show_preview;

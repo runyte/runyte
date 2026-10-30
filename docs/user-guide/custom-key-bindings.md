@@ -268,6 +268,16 @@ accept key both arms and confirms. Navigation disarms the confirmation; an
 unbound key does not. Acceptance still revalidates the captured target and
 requires the current presented frame where that gate applies.
 
+The `plugin-manager-actions` owner provides a transparent `cancel` action that
+returns from the plugin action list to the manager, preserving its filter and
+selection. Escape, Ctrl-c, and the empty-filter leader are its defaults. Other
+input continues through `global.list`. This return action takes precedence over
+scoped bindings in that list; hints and acceptance authority use the same order.
+Replacing or removing return bindings exposes any underlying scoped action:
+for example, removing this owner's cancel makes Escape perform `list-close`
+unless you also change Escape in `global.list`. Removing its inherited leader
+restores literal filter input without an implicit Escape translation.
+
 ```yaml
 keys:
   ui:

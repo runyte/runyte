@@ -252,3 +252,11 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   defaults, remap/removal, stale rows, arming/disarming, covering confirmations,
   hidden-live terminal closure and effective dismissal text. Plugin-manager
   return remains a separate transparent prehandler for the next checkpoint.
+- Plugin-manager return now has a configurable transparent UI owner. A typed
+  list resolution retains return-versus-binding ownership and the exact registry
+  key used for authority. Removing return exposes scoped physical-key behavior;
+  removing its conditional leader restores text without reviving an Escape
+  alias. Dispatch, acceptance classification, snapshots and standalone hints
+  share that resolution. Astra cleared the change; all 11 plugin-manager tests,
+  root Clippy, formatting and guide validation passed. A complete root suite is
+  running across the accumulated list/menu checkpoints.
