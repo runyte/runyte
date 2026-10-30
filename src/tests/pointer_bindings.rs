@@ -12,7 +12,7 @@ fn invalid_owner_rolls_back_atomically_and_does_not_affect_keyboard() {
     for source in [
         "{pane-move: [Alt-LeftDrag], pane-extend: [Alt-LeftDrag]}",
         "{pane-move: [Shift-Alt-LeftDrag]}",
-        "{pane-move: [Ctrl-LeftDrag], pane-extend: [RightDrag]}",
+        "{pane-move: [Ctrl-LeftDrag], pane-extend: [RightClick]}",
         "{pane-move: [Ctrl-LeftDrag, Ctrl-LeftDrag]}",
         "{pane-move: null}",
         "{pane-move: LeftDrag}",
@@ -97,4 +97,40 @@ fn pointer_diagnostics_and_help_are_bounded_and_use_effective_bindings() {
     );
     assert!(help.contains("unbound rearranges panes; Ctrl-Alt-LeftDrag extends"));
     assert!(!help.contains("Shift-Alt-LeftDrag"));
+}
+
+#[test]
+fn every_button_has_independent_exact_modifiers_and_wire_validation() {
+    let (gestures, errors) =
+        compiled("{pane-move: [Alt-RightDrag, Ctrl-MiddleDrag], pane-extend: [Shift-RightDrag]}");
+    assert!(errors.is_empty());
+    for (button, mask, action) in [
+        (PointerButton::Right, Modifiers::ALT, PaneAction::Move),
+        (PointerButton::Middle, Modifiers::CONTROL, PaneAction::Move),
+        (PointerButton::Right, Modifiers::SHIFT, PaneAction::Extend),
+    ] {
+        assert_eq!(
+            gestures.action(PointerEvent {
+                kind: PointerEventKind::Down(button),
+                column: 0,
+                row: 0,
+                modifiers: mask
+            }),
+            Some(action)
+        );
+    }
+    assert_eq!(
+        gestures.labels(PaneAction::Move),
+        "Ctrl-MiddleDrag / Alt-RightDrag"
+    );
+    assert_eq!(PaneGestures::from_masks(gestures.masks()), Some(gestures));
+    for button in 0..3 {
+        let mut masks = [0; 6];
+        masks[2 * button] = 1 << 63;
+        masks[2 * button + 1] = 1 << 63;
+        assert!(PaneGestures::from_masks(masks).is_none());
+    }
+    let (rolled_back, errors) = compiled("{pane-move: [RightDrag], pane-extend: [RightDrag]}");
+    assert_eq!(rolled_back, PaneGestures::default());
+    assert_eq!(errors.len(), 1);
 }

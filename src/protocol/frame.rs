@@ -596,7 +596,7 @@ pub struct EditorSnapshot {
     pub directory_tree: Option<DirectoryTreeSnapshot>,
     pub panes: Vec<PaneSnapshot>,
     pub pane_drop: Option<Rect>,
-    pub pane_gestures: [u64; 2],
+    pub pane_gestures: [u64; 6],
     pub window_bindings: Vec<WindowBinding>,
     pub window_authored: u8,
     pub window_guard: u8,
@@ -676,10 +676,7 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
             directory_tree: value.directory_tree.map(Into::into),
             panes: value.panes.into_iter().map(Into::into).collect(),
             pane_drop: value.pane_drop.map(Into::into),
-            pane_gestures: [
-                value.pane_gestures.move_pane,
-                value.pane_gestures.extend_pane,
-            ],
+            pane_gestures: value.pane_gestures.masks(),
             preview_bindings: value
                 .preview_bindings
                 .entries()
@@ -760,7 +757,7 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
         }
         let mut preview_bindings = Preview::from_entries(entries, fallback)?;
         preview_bindings.unavailable = value.preview_unavailable;
-        if value.pane_gestures[0] & value.pane_gestures[1] != 0 {
+        if crate::keymap::pointer::PaneGestures::from_masks(value.pane_gestures).is_none() {
             return Err("overlapping pane gestures".into());
         }
         if value.window_bindings.len() > crate::keymap::native_window::Bindings::MAX_ENTRIES {
@@ -810,10 +807,8 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
                 .map(TryInto::try_into)
                 .collect::<Result<_, _>>()?,
             pane_drop: value.pane_drop.map(Into::into),
-            pane_gestures: crate::keymap::pointer::PaneGestures {
-                move_pane: value.pane_gestures[0],
-                extend_pane: value.pane_gestures[1],
-            },
+            pane_gestures: crate::keymap::pointer::PaneGestures::from_masks(value.pane_gestures)
+                .expect("validated gesture masks"),
             status: value.status.into(),
             session_strip: value.session_strip.map(TryInto::try_into).transpose()?,
         })
@@ -1209,7 +1204,7 @@ mod tests {
                 directory_tree: None,
                 session_strip: None,
                 pane_drop: None,
-                pane_gestures: [1 << 4, 1 << 5],
+                pane_gestures: [1 << 4, 1 << 5, 0, 0, 0, 0],
                 window_bindings: Vec::new(),
                 window_authored: 0,
                 window_guard: 0,
@@ -1466,15 +1461,15 @@ mod tests {
         let base = terminal_frame(1, 1, 'x');
         let mut next = base.clone();
         next.id = FrameId::from_raw(2);
-        next.editor.pane_gestures = [0, 1 << 6];
+        next.editor.pane_gestures = [0, 1 << 6, 1, 0, 0, 1 << 7];
         assert!(TerminalDamageFrame::between(&base, &next).is_none());
         assert!(EditorDamageFrame::between(&base, &next).is_none());
         let wire = serde_json::to_vec(&next).unwrap();
         let decoded: HostFrame = serde_json::from_slice(&wire).unwrap();
         let editor: core::EditorSnapshot = decoded.editor.try_into().unwrap();
-        assert_eq!(editor.pane_gestures.move_pane, 0);
-        assert_eq!(editor.pane_gestures.extend_pane, 1 << 6);
-        next.editor.pane_gestures = [1 << 6, 1 << 6];
+        assert_eq!(editor.pane_gestures.move_pane, [0, 1, 0]);
+        assert_eq!(editor.pane_gestures.extend_pane, [1 << 6, 0, 1 << 7]);
+        next.editor.pane_gestures = [1 << 6, 1 << 6, 0, 0, 0, 0];
         assert!(core::EditorSnapshot::try_from(next.editor).is_err());
     }
 

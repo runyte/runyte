@@ -557,7 +557,7 @@ fn refused_and_cancelled_pane_gestures_never_report_an_unmatched_terminal_releas
             let (column, row) = (body.x + 3, body.y + 3);
             let generation = app.terminals.get(terminal).unwrap().input_generation();
             if state == "stale" {
-                app.discard_pointer_gesture();
+                app.discard_pointer_gesture(PointerButton::Left);
             } else {
                 pointer(
                     &mut app,
@@ -873,4 +873,113 @@ fn dragging_either_segment_of_a_grid_preserves_the_other_pair() {
             }
         }
     }
+}
+
+#[test]
+fn remapped_buttons_capture_pane_action_and_only_matching_motion_moves_it() {
+    for (button, spelling) in [
+        (PointerButton::Middle, "MiddleDrag"),
+        (PointerButton::Right, "RightDrag"),
+    ] {
+        let mut app = wide_top_over_two_columns();
+        configure_pointer(
+            &mut app,
+            &format!("pointer: {{pane-extend: [Ctrl-{spelling}]}}"),
+        );
+        pointer(
+            &mut app,
+            PointerEventKind::Down(button),
+            60,
+            22,
+            Modifiers::CONTROL,
+        );
+        assert!(app.pointer_pane_drag_active());
+        configure_pointer(&mut app, "pointer: {pane-extend: []}");
+        pointer(
+            &mut app,
+            PointerEventKind::Drag(PointerButton::Left),
+            60,
+            5,
+            Modifiers::NONE,
+        );
+        assert_eq!(drop_preview(&mut app), None);
+        pointer(
+            &mut app,
+            PointerEventKind::Drag(button),
+            60,
+            5,
+            Modifiers::NONE,
+        );
+        assert_eq!(drop_preview(&mut app), Some(full(40, 0, 40, 30)));
+        pointer(
+            &mut app,
+            PointerEventKind::Up(button),
+            60,
+            5,
+            Modifiers::NONE,
+        );
+        assert_eq!(area(&mut app, 2), full(40, 0, 40, 30));
+        assert!(app.pointer_drag.is_none());
+    }
+}
+
+#[test]
+fn unmatched_release_cancels_remapped_button_without_committing_drop() {
+    let mut app = wide_top_over_two_columns();
+    configure_pointer(&mut app, "pointer: {pane-extend: [RightDrag]}");
+    pointer(
+        &mut app,
+        PointerEventKind::Down(PointerButton::Right),
+        60,
+        22,
+        Modifiers::NONE,
+    );
+    pointer(
+        &mut app,
+        PointerEventKind::Up(PointerButton::Left),
+        60,
+        5,
+        Modifiers::NONE,
+    );
+    assert_eq!(area(&mut app, 2), full(40, 15, 40, 15));
+    assert!(app.pointer_drag.is_none());
+    assert!(app.pane_pointer_owned);
+    pointer(
+        &mut app,
+        PointerEventKind::Up(PointerButton::Right),
+        60,
+        5,
+        Modifiers::NONE,
+    );
+    assert!(!app.pane_pointer_owned);
+}
+
+#[test]
+fn cancelled_nonleft_pane_tails_never_reach_live_terminal_mouse_reporting() {
+    let mut app = wide_top_over_two_columns();
+    configure_pointer(&mut app, "pointer: {pane-extend: [RightDrag]}");
+    let terminal = app.terminals.insert_test_session(78, 28);
+    app.panes.get_mut(&1).unwrap().terminal = Some(terminal);
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b[?1003h\x1b[?1006h".to_vec(),
+    });
+    let body = app.prepare_view(geometry()).pane(1).unwrap().body;
+    let (column, row) = (body.x + 3, body.y + 3);
+    let generation = app.terminals.get(terminal).unwrap().input_generation();
+    for kind in [
+        PointerEventKind::Down(PointerButton::Right),
+        PointerEventKind::Up(PointerButton::Left),
+        PointerEventKind::Drag(PointerButton::Right),
+        PointerEventKind::Moved,
+        PointerEventKind::Up(PointerButton::Right),
+    ] {
+        pointer(&mut app, kind, column, row, Modifiers::NONE);
+    }
+    assert_eq!(
+        app.terminals.get(terminal).unwrap().input_generation(),
+        generation
+    );
+    assert!(app.pointer_drag.is_none());
+    assert!(!app.pane_pointer_owned);
 }

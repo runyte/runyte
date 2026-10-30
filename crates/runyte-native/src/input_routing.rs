@@ -3,6 +3,32 @@
 use super::NativeInput;
 use std::collections::VecDeque;
 
+pub(super) fn native_pointer_button(button: super::MouseButton) -> crossterm::event::MouseButton {
+    match button {
+        super::MouseButton::Left => crossterm::event::MouseButton::Left,
+        super::MouseButton::Middle => crossterm::event::MouseButton::Middle,
+        _ => crossterm::event::MouseButton::Right,
+    }
+}
+
+pub(super) fn pointer_motion(
+    button: Option<super::MouseButton>,
+) -> crossterm::event::MouseEventKind {
+    button.map_or(crossterm::event::MouseEventKind::Moved, |button| {
+        crossterm::event::MouseEventKind::Drag(native_pointer_button(button))
+    })
+}
+
+// Passive movement remains local, but must coalesce while routing waits just
+// like a drag. Never cross attachment, painted geometry or modifier boundaries.
+fn same_passive_motion(previous: &NativeInput, next: &NativeInput) -> bool {
+    use crossterm::event::{Event, MouseEventKind};
+    previous.attachment == next.attachment
+        && previous.presented == next.presented
+        && matches!((&previous.event, &next.event), (Event::Mouse(a), Event::Mouse(b))
+            if a.kind == MouseEventKind::Moved && b.kind == MouseEventKind::Moved && a.modifiers == b.modifiers)
+}
+
 /// Overlay cells own wheel input even when native media lies underneath.
 fn overlay_owns_scroll(overlays: &[runyte::layout::Rect], column: f32, row: f32) -> bool {
     overlays.iter().any(|area| {
@@ -19,7 +45,7 @@ pub(super) struct Queue<T = ()> {
     bytes: usize,
     pending: Option<(u64, u64)>,
     serial: u64,
-    pane_gesture: Option<u64>,
+    pane_gesture: Option<(u64, crossterm::event::MouseButton)>,
 }
 
 #[cfg(test)]
@@ -37,17 +63,28 @@ impl<T> Queue<T> {
     /// document selection, including when Alt is released before the button.
     fn editor_pane_gesture(&mut self, input: &NativeInput) -> bool {
         use crossterm::event::{Event, MouseEventKind};
-        if self.pane_gesture != Some(input.attachment) {
+        if self
+            .pane_gesture
+            .is_some_and(|(attachment, _)| attachment != input.attachment)
+        {
             self.pane_gesture = None;
         }
         match &input.event {
             Event::Mouse(event) => match event.kind {
-                MouseEventKind::Down(_) => {
+                MouseEventKind::Down(button) => {
                     let claimed = matches!(runyte::tui::input::convert_event(input.event.clone()), Ok(Some(runyte::input::InputEvent::Pointer(pointer))) if input.pane_gestures.action(pointer).is_some());
-                    self.pane_gesture = claimed.then_some(input.attachment);
+                    self.pane_gesture = claimed.then_some((input.attachment, button));
                     self.pane_gesture.is_some()
                 }
-                MouseEventKind::Up(_) => self.pane_gesture.take().is_some(),
+                MouseEventKind::Up(button) => {
+                    let owned = self.pane_gesture.is_some();
+                    if self.pane_gesture.is_some_and(|(_, captured)| {
+                        captured == crossterm::event::MouseButton::Left || captured == button
+                    }) {
+                        self.pane_gesture = None;
+                    }
+                    owned
+                }
                 _ => self.pane_gesture.is_some(),
             },
             Event::FocusLost => {
@@ -62,8 +99,14 @@ impl<T> Queue<T> {
     /// A release outside the window may never reach GPUI's mouse-up handler.
     /// Cancel on the first buttonless motion instead of turning hover into a
     /// synthetic left drag (or committing an unseen drop with a synthetic up).
-    fn cancel_lost_pane_button(&mut self, input: &mut NativeInput, left_pressed: bool) {
-        if !left_pressed && self.pane_gesture == Some(input.attachment) {
+    fn cancel_lost_pane_button(
+        &mut self,
+        input: &mut NativeInput,
+        pressed: Option<crossterm::event::MouseButton>,
+    ) {
+        if self.pane_gesture.is_some_and(|(attachment, button)| {
+            attachment == input.attachment && pressed != Some(button)
+        }) {
             self.pane_gesture = None;
             input.event = crossterm::event::Event::FocusLost;
         }
@@ -79,7 +122,8 @@ impl<T> Queue<T> {
         compatible: impl FnOnce(&T, &T) -> bool,
     ) -> bool {
         if let Some((previous, prior_action)) = self.inputs.back_mut()
-            && super::input_queue::same_drag(previous, &input)
+            && (super::input_queue::same_drag(previous, &input)
+                || same_passive_motion(previous, &input))
             && compatible(prior_action, &action)
         {
             *previous = input;
@@ -196,7 +240,7 @@ impl super::NativeView {
             if let RoutingAction::Move(event) = &action {
                 self.routing.cancel_lost_pane_button(
                     &mut input,
-                    event.pressed_button == Some(MouseButton::Left),
+                    event.pressed_button.map(native_pointer_button),
                 );
             }
             let cancelled = matches!(input.event, Event::FocusLost);

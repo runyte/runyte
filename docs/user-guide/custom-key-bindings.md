@@ -483,8 +483,8 @@ keys:
 
 Each list replaces all gestures for that action; `[]` disables the action's
 pointer bindings. Omitted actions retain their defaults, including with
-`keys.defaults: false`. Modifiers match exactly. Pane gestures currently accept
-`LeftDrag`, with optional `Ctrl-`, `Alt-`, `Shift-`, `Super-`, `Hyper-`, or
+`keys.defaults: false`. Modifiers match exactly. Pane gestures accept
+`LeftDrag`, `MiddleDrag`, and `RightDrag`, with optional `Ctrl-`, `Alt-`, `Shift-`, `Super-`, `Hyper-`, or
 `Meta-` modifiers. Shared pane borders retain resizing priority. The action is
 captured when the button is pressed and lasts through release, even when the
 modifiers or configuration change. Conflicting or invalid pointer bindings

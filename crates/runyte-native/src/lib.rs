@@ -1102,7 +1102,7 @@ impl Render for NativeView {
                 let input = mouse_event(
                     view.metrics,
                     event.position,
-                    crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+                    input_routing::pointer_motion(event.pressed_button),
                     event.modifiers,
                 );
                 view.queue_input(input, input_routing::Action::Move(event.clone()), cx);

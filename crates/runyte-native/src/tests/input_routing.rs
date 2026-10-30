@@ -303,9 +303,9 @@ fn lost_pane_button_cancels_without_synthesizing_a_drop() {
         row: 8,
         modifiers: KeyModifiers::NONE,
     });
-    queue.cancel_lost_pane_button(&mut input, true);
+    queue.cancel_lost_pane_button(&mut input, Some(MouseButton::Left));
     assert!(matches!(input.event, Event::Mouse(_)));
-    queue.cancel_lost_pane_button(&mut input, false);
+    queue.cancel_lost_pane_button(&mut input, None);
     assert!(matches!(input.event, Event::FocusLost));
     assert!(queue.pane_gesture.is_none());
     assert!(!default_pane_gesture(&mut queue, &key('x', 1)));
@@ -314,7 +314,7 @@ fn lost_pane_button_cancels_without_synthesizing_a_drop() {
 #[test]
 fn focus_loss_clears_native_pane_capture() {
     let mut queue: Queue = Queue {
-        pane_gesture: Some(1),
+        pane_gesture: Some((1, crossterm::event::MouseButton::Left)),
         ..Queue::default()
     };
     let mut input = key('x', 1);
@@ -368,12 +368,12 @@ fn default_pane_gesture(queue: &mut Queue, input: &NativeInput) -> bool {
 fn configured_pane_gesture_owns_native_routing_until_release() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let gestures = runyte::keymap::pointer::PaneGestures {
-        move_pane: 0,
-        extend_pane: 1 << 6,
+        move_pane: [0; 3],
+        extend_pane: [1 << 6, 0, 0],
     };
     let disabled = runyte::keymap::pointer::PaneGestures {
-        move_pane: 0,
-        extend_pane: 0,
+        move_pane: [0; 3],
+        extend_pane: [0; 3],
     };
     let mut queue: Queue = Queue::default();
     let mut input = key('x', 1);
@@ -411,8 +411,8 @@ fn queued_pane_press_keeps_the_painted_configuration() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let enabled = runyte::keymap::pointer::PaneGestures::default();
     let disabled = runyte::keymap::pointer::PaneGestures {
-        move_pane: 0,
-        extend_pane: 0,
+        move_pane: [0; 3],
+        extend_pane: [0; 3],
     };
     for (captured, later, expected) in [(enabled, disabled, true), (disabled, enabled, false)] {
         let mut queue: Queue = Queue::default();
@@ -553,4 +553,92 @@ fn queued_preview_navigation_keeps_painted_map_and_document_identity() {
     );
     assert_eq!(first.preview_target.unwrap().generation, 11);
     assert_eq!(later.preview_target.unwrap().generation, 12);
+}
+
+#[test]
+fn physical_pointer_motion_and_remapped_capture_retain_button_identity() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    assert_eq!(pointer_motion(None), MouseEventKind::Moved);
+    for (native, button, index) in [
+        (super::super::MouseButton::Left, MouseButton::Left, 0),
+        (super::super::MouseButton::Middle, MouseButton::Middle, 1),
+        (super::super::MouseButton::Right, MouseButton::Right, 2),
+    ] {
+        assert_eq!(pointer_motion(Some(native)), MouseEventKind::Drag(button));
+        let mut queue: Queue = Queue::default();
+        let mut input = key('x', 1);
+        input.pane_gestures.move_pane = [0; 3];
+        input.pane_gestures.extend_pane = [0; 3];
+        input.pane_gestures.extend_pane[index] = 1 << KeyModifiers::CONTROL.bits();
+        input.event = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(button),
+            column: 5,
+            row: 5,
+            modifiers: KeyModifiers::CONTROL,
+        });
+        assert!(queue.editor_pane_gesture(&input));
+        input.pane_gestures.extend_pane = [0; 3];
+        input.event = Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Drag(button),
+            column: 8,
+            row: 8,
+            modifiers: KeyModifiers::NONE,
+        });
+        queue.cancel_lost_pane_button(&mut input, Some(button));
+        assert!(queue.editor_pane_gesture(&input));
+        queue.cancel_lost_pane_button(&mut input, None);
+        assert!(matches!(input.event, Event::FocusLost));
+        assert!(queue.pane_gesture.is_none());
+    }
+}
+
+#[test]
+fn unmatched_pane_release_keeps_the_initiating_buttons_tail_owned() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    let mut queue: Queue = Queue::default();
+    let mut input = key('x', 1);
+    input.pane_gestures.extend_pane = [0, 0, 1];
+    for kind in [
+        MouseEventKind::Down(MouseButton::Right),
+        MouseEventKind::Up(MouseButton::Left),
+        MouseEventKind::Drag(MouseButton::Right),
+        MouseEventKind::Up(MouseButton::Right),
+    ] {
+        input.event = Event::Mouse(MouseEvent {
+            kind,
+            column: 5,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(queue.editor_pane_gesture(&input));
+    }
+    assert!(queue.pane_gesture.is_none());
+}
+
+#[test]
+fn passive_motion_coalesces_without_consuming_room_for_real_input() {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+    let mut queue: Queue<u8> = Queue::default();
+    let mut input = key('x', 1);
+    input.event = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: 5,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    });
+    for _ in 0..1000 {
+        assert!(queue.push_coalesced(input.clone(), 0, |a, b| a == b));
+    }
+    assert_eq!(queue.inputs.len(), 1);
+    assert!(queue.push_coalesced(input.clone(), 1, |a, b| a == b));
+    input.presented = Some(runyte::protocol::FrameId::from_raw(999).into());
+    assert!(queue.push_coalesced(input.clone(), 1, |a, b| a == b));
+    input.attachment += 1;
+    assert!(queue.push_coalesced(input.clone(), 1, |a, b| a == b));
+    if let Event::Mouse(event) = &mut input.event {
+        event.modifiers = KeyModifiers::ALT;
+    }
+    assert!(queue.push_coalesced(input, 1, |a, b| a == b));
+    assert!(queue.push(key('x', 2), 1));
+    assert_eq!(queue.inputs.len(), 6);
 }

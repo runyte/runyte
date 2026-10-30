@@ -340,6 +340,9 @@ neighbours close like `:wc`; remaining neighbours resize to fill the editor.
 The drop outline previews the final rectangle, and Escape cancels either gesture.
 Shared borders retain ordinary resizing. Both gestures belong to the editor
 even over a terminal requesting mouse reports or a native document preview.
+`keys.pointer.pane-move` and `pane-extend` replace their exact modifier aliases;
+left, middle and right drags are supported. The initiating button and action
+remain captured across configuration reloads and modifier changes.
 
 | Sequence | Helix command | Runyte command | Status | Notes |
 | --- | --- | --- | --- | --- |

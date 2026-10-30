@@ -42,9 +42,19 @@ pub(super) enum PaneDrop {
 impl App {
     /// A stale configuration must not reinterpret a new press or deliver its
     /// orphaned motion/release to terminal content beneath it.
-    pub(crate) fn discard_pointer_gesture(&mut self) {
+    pub(crate) fn discard_pointer_gesture(&mut self, button: PointerButton) {
         self.cancel_pointer_drag();
         self.pane_pointer_owned = true;
+        self.pane_pointer_button = Some(button);
+    }
+
+    /// A stale drop cannot commit geometry, but an unrelated button release
+    /// must still leave the initiating button's remaining events captured.
+    pub(crate) fn cancel_pane_drop(&mut self, event: PointerEvent) {
+        let retain = matches!(self.pointer_drag, Some(PointerDrag::MovePane { button, .. })
+            if button != PointerButton::Left && event.kind != PointerEventKind::Up(button));
+        self.cancel_pointer_drag();
+        self.pane_pointer_owned = retain;
     }
 
     /// Whether a release needs to resolve a pane drop against its visible frame.
@@ -60,7 +70,7 @@ impl App {
         self.pane_pointer_owned = owned;
     }
 
-    pub(super) fn consume_cancelled_pane_pointer(&mut self, event: PointerEvent) -> bool {
+    pub(crate) fn consume_cancelled_pane_pointer(&mut self, event: PointerEvent) -> bool {
         if !self.pane_pointer_owned || self.pointer_pane_drag_active() {
             return false;
         }
@@ -69,8 +79,13 @@ impl App {
                 self.pane_pointer_owned = false;
                 false
             }
-            PointerEventKind::Up(_) => {
-                self.pane_pointer_owned = false;
+            PointerEventKind::Up(button) => {
+                if self
+                    .pane_pointer_button
+                    .is_none_or(|captured| captured == PointerButton::Left || captured == button)
+                {
+                    self.pane_pointer_owned = false;
+                }
                 true
             }
             _ => true,
@@ -82,17 +97,35 @@ impl App {
     /// Returns whether the event belonged to one, in which case nothing else
     /// may interpret it: not even a terminal child that asked for the mouse.
     pub(super) fn handle_pane_drag(&mut self, event: PointerEvent, view: &PreparedView) -> bool {
-        if let Some(PointerDrag::MovePane { pane, expand, .. }) = self.pointer_drag {
+        if let Some(PointerDrag::MovePane {
+            pane,
+            expand,
+            button,
+            ..
+        }) = self.pointer_drag
+        {
             match event.kind {
-                PointerEventKind::Drag(PointerButton::Left) => {
+                PointerEventKind::Drag(pressed) if pressed == button => {
                     let drop = self.pane_drop_at(view, pane, expand, event.column, event.row);
-                    self.pointer_drag = Some(PointerDrag::MovePane { pane, expand, drop });
+                    self.pointer_drag = Some(PointerDrag::MovePane {
+                        pane,
+                        expand,
+                        drop,
+                        button,
+                    });
                     self.describe_pane_drop(drop);
                 }
                 PointerEventKind::Up(_) => {
-                    self.pane_pointer_owned = false;
+                    self.pane_pointer_owned =
+                        button != PointerButton::Left && event.kind != PointerEventKind::Up(button);
                     self.pointer_drag = None;
-                    let drop = self.pane_drop_at(view, pane, expand, event.column, event.row);
+                    let drop = if button == PointerButton::Left
+                        || event.kind == PointerEventKind::Up(button)
+                    {
+                        self.pane_drop_at(view, pane, expand, event.column, event.row)
+                    } else {
+                        None
+                    };
                     self.drop_pane(pane, drop, view.layout_area());
                 }
                 _ => {}
@@ -109,6 +142,10 @@ impl App {
             return false;
         };
         self.pane_pointer_owned = true;
+        let PointerEventKind::Down(button) = event.kind else {
+            unreachable!("pane action requires button down")
+        };
+        self.pane_pointer_button = Some(button);
         self.grammar.reset();
         self.jump = None;
         if let Some(maximized) = self.maximized {
@@ -126,6 +163,7 @@ impl App {
         self.dismiss_popups();
         let expand = action == crate::keymap::pointer::PaneAction::Extend;
         self.pointer_drag = Some(PointerDrag::MovePane {
+            button,
             pane,
             expand,
             drop: None,

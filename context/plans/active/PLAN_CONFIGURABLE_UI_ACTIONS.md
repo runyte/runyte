@@ -497,3 +497,14 @@ tests, both required Clippy invocations, formatting and user-guide checks pass.
 Protocol 85 validates the bounded preview projection and forces full publication
 when its bindings, source or structural ownership change. Remaining pointer work
 and final coverage validation are still pending.
+
+Pane-button checkpoint: pane-move and pane-extend now accept exact left, middle
+and right drag aliases. Protocol 86 carries all button masks. Physical native
+motion retains its button, and captured actions retain their initiating button
+across modifiers and reloads. Legacy left-release behavior is preserved.
+Astra identified cancelled non-left tails and passive-motion queue growth;
+regressions now cover repeated unmatched releases through the host boundary,
+stale/missing frames, live SGR non-delivery, native capture and bounded passive
+coalescing. Focused root pointer/pane/protocol tests, 20 native routing tests,
+both required Clippy invocations, formatting and guide checks passed. Astra's
+final review has no remaining blockers. Remaining pointer owners are next.

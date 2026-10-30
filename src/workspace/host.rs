@@ -1585,6 +1585,11 @@ impl WorkspaceHost {
                 frame,
                 repetitions,
             } => {
+                if matches!(event.kind, crate::input::PointerEventKind::Up(_))
+                    && self.app.consume_cancelled_pane_pointer(event)
+                {
+                    return Ok(HostInputOutcome::AppliedWithoutVisualChange);
+                }
                 let pane_release = matches!(event.kind, crate::input::PointerEventKind::Up(_))
                     && self.app.pointer_pane_drag_active();
                 // Selection/resize release needs no coordinates. A pane drop
@@ -1597,16 +1602,16 @@ impl WorkspaceHost {
                 }
                 let Some(prepared) = self.prepared.as_ref() else {
                     if pane_release {
-                        self.app.cancel_pointer_drag();
+                        self.app.cancel_pane_drop(event);
                         return Ok(HostInputOutcome::Applied);
                     }
                     return Ok(HostInputOutcome::IgnoredStaleFrame);
                 };
-                if matches!(event.kind, crate::input::PointerEventKind::Down(_))
+                if let crate::input::PointerEventKind::Down(button) = event.kind
                     && (frame < prepared.gesture_compatible_since
                         || prepared.pane_gestures != self.app.keymap().pane_gestures())
                 {
-                    self.app.discard_pointer_gesture();
+                    self.app.discard_pointer_gesture(button);
                     return Ok(HostInputOutcome::IgnoredStaleFrame);
                 }
                 let continued_selection = self.app.pointer_selection_drag_active()
@@ -1618,7 +1623,7 @@ impl WorkspaceHost {
                     || frame > prepared.id
                 {
                     if pane_release {
-                        self.app.cancel_pointer_drag();
+                        self.app.cancel_pane_drop(event);
                         return Ok(HostInputOutcome::Applied);
                     }
                     return Ok(HostInputOutcome::IgnoredStaleFrame);
@@ -2507,6 +2512,83 @@ mod tests {
             HostInputOutcome::IgnoredStaleFrame
         );
         assert_eq!(&host.app().active().selection, &after_compatible_input);
+    }
+
+    #[test]
+    fn nonleft_cancelled_and_stale_press_tails_remain_owned_at_host_boundary() {
+        for (stale, release_case) in [(false, 0), (true, 0), (false, 1), (false, 2)] {
+            let mut host = host();
+            host.app_mut()
+                .execute(
+                    CommandInvocation::editor(
+                        EditorCommand::SplitVertical,
+                        CommandExecutionContext::default(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let section = serde_yaml::from_str("pointer: {pane-move: [RightDrag]}").unwrap();
+            let configured =
+                crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+            assert!(configured.errors.is_empty());
+            host.app_mut().set_keymap(configured.keymap);
+            let pane = host.app().active_pane;
+            let terminal = host.app.terminals.insert_test_session(80, 24);
+            host.app.panes.get_mut(&pane).unwrap().terminal = Some(terminal);
+            host.app
+                .apply_terminal_output(crate::terminal::TerminalOutput::Bytes {
+                    id: terminal,
+                    bytes: b"\x1b[?1003h\x1b[?1006h".to_vec(),
+                });
+            let first = host.prepare_frame(geometry());
+            let source = first.editor.pane(pane).unwrap().area;
+            let event = PointerEvent {
+                kind: PointerEventKind::Down(PointerButton::Right),
+                column: source.x + source.width / 2,
+                row: source.y + source.height / 2,
+                modifiers: Modifiers::NONE,
+            };
+            if stale {
+                host.app_mut()
+                    .set_keymap(std::sync::Arc::new(crate::keymap::default_keymap().clone()));
+                host.prepare_frame(geometry());
+            }
+            let generation = host.app.terminals.get(terminal).unwrap().input_generation();
+            host.execute(HostCommand::Pointer {
+                event,
+                frame: first.id,
+                repetitions: 1,
+            })
+            .unwrap();
+            for kind in [
+                PointerEventKind::Up(PointerButton::Left),
+                PointerEventKind::Up(PointerButton::Middle),
+                PointerEventKind::Drag(PointerButton::Right),
+                PointerEventKind::Up(PointerButton::Right),
+            ] {
+                let mut frame = host.prepare_frame(geometry()).id;
+                if kind == PointerEventKind::Up(PointerButton::Left) {
+                    if release_case == 1 {
+                        frame = FrameId::from_raw(frame.get() + 1);
+                    }
+                    if release_case == 2 {
+                        host.prepared = None;
+                    }
+                }
+                host.execute(HostCommand::Pointer {
+                    event: PointerEvent { kind, ..event },
+                    frame,
+                    repetitions: 1,
+                })
+                .unwrap();
+            }
+            assert_eq!(
+                host.app.terminals.get(terminal).unwrap().input_generation(),
+                generation,
+                "stale={stale}, release_case={release_case}"
+            );
+            assert!(!host.app().pointer_pane_drag_active());
+        }
     }
 
     #[test]

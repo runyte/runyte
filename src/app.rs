@@ -1880,6 +1880,7 @@ enum PointerDrag {
     },
     /// An Alt-drag carrying `pane` to wherever it is released.
     MovePane {
+        button: PointerButton,
         pane: usize,
         expand: bool,
         drop: Option<pane_drag::PaneDrop>,
@@ -3322,6 +3323,7 @@ pub struct App {
     pointer_drag: Option<PointerDrag>,
     /// A consumed Alt-left press owns its trailing reports even after cancellation.
     pane_pointer_owned: bool,
+    pane_pointer_button: Option<PointerButton>,
     /// The release and drags of a link click remain editor-owned even when
     /// navigation opens a popup or changes the pane underneath the pointer.
     pointer_link_pressed: bool,
@@ -3916,6 +3918,7 @@ impl App {
             settings_origin_buffer: None,
             pointer_drag: None,
             pane_pointer_owned: false,
+            pane_pointer_button: None,
             pointer_link_pressed: false,
             pointer_autoscroll: None,
             lsp_actions: Vec::new(),
