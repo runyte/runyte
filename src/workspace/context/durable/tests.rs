@@ -2,6 +2,16 @@
 use super::*;
 use crate::test_support::TestRuntimeRoot;
 
+// Windows always uses explicitly owned sidecars. Unix also exercises that
+// bootstrap path so its ordering and recovery have cross-platform coverage.
+fn storage_policies() -> &'static [bool] {
+    if cfg!(windows) {
+        &[true]
+    } else {
+        &[false, true]
+    }
+}
+
 fn route(workspace: &str, identity: &str) -> Route {
     Route {
         workspace: workspace.into(),
@@ -349,7 +359,7 @@ fn refusal_preserves_unknown_corrupt_and_future_databases() {
             }
         }
         let before = std::fs::read(root.path().join(FILE)).unwrap();
-        for private in [false, true] {
+        for &private in storage_policies() {
             assert!(Store::open_with_private_sidecars(root.path(), private).is_err());
             assert_eq!(before, std::fs::read(root.path().join(FILE)).unwrap());
         }
@@ -521,7 +531,7 @@ fn bounded_expiry_progress_survives_quota_refusal_and_renews_matching_receipt() 
 
 #[test]
 fn simultaneous_first_open_and_send_are_transactional() {
-    for private in [false, true] {
+    for &private in storage_policies() {
         let root = root();
         let child = root.join("new-store");
         let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));

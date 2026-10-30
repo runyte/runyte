@@ -927,8 +927,9 @@ except Exception:
         try:
             with diagnostic.open('rb') as stream:
                 stream.seek(0, os.SEEK_END)
-                stream.seek(max(0, stream.tell() - 32768))
-                tail = stream.read(32768).decode(errors='replace')
+                limit = 131072 if diagnostic.name == 'input.log' else 32768
+                stream.seek(max(0, stream.tell() - limit))
+                tail = stream.read(limit).decode(errors='replace')
             print('Fixture log:', diagnostic.relative_to(storage), '\n' + tail, flush=True)
         except OSError as error:
             print('Could not read fixture log:', error, flush=True)
