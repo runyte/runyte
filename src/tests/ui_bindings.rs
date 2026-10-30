@@ -878,3 +878,75 @@ fn text_confirmation_defaults_keep_wildcard_named_keys_and_no_prompt_aliases() {
     assert_eq!(bindings.lookup(owner, KeyStroke::ctrl('c')), None);
     assert_eq!(bindings.lookup(owner, KeyStroke::char(' ')), None);
 }
+
+#[test]
+fn filesystem_and_tree_defaults_preserve_named_modifier_policies_and_structural_keys() {
+    let bindings = Bindings::default();
+    for bits in 0..64 {
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        let control = modifiers.contains(Modifiers::CONTROL);
+        for (code, expected) in [
+            (KeyCode::Enter, Some(Action::Accept)),
+            (KeyCode::Escape, Some(Action::Cancel)),
+            (KeyCode::Down, Some(Action::Next)),
+            (KeyCode::Up, Some(Action::Previous)),
+            (KeyCode::PageDown, Some(Action::PageDown)),
+            (KeyCode::PageUp, Some(Action::PageUp)),
+            (KeyCode::Home, Some(Action::First)),
+            (KeyCode::End, Some(Action::Last)),
+            (KeyCode::BackTab, None),
+            (KeyCode::Char('n'), control.then_some(Action::Next)),
+            (KeyCode::Char('p'), control.then_some(Action::Previous)),
+            (KeyCode::Char('d'), control.then_some(Action::PageDown)),
+            (KeyCode::Char('u'), control.then_some(Action::PageUp)),
+            (KeyCode::Char('c'), control.then_some(Action::Cancel)),
+        ] {
+            assert_eq!(
+                bindings.lookup(
+                    Owner::FilesystemConfirmation,
+                    KeyStroke::new(code, modifiers)
+                ),
+                expected
+            );
+        }
+        for (code, expected) in [
+            (KeyCode::Enter, Some(Action::Accept)),
+            (KeyCode::Escape, Some(Action::Cancel)),
+            (KeyCode::Backspace, Some(Action::Backspace)),
+            (KeyCode::Char('c'), None),
+        ] {
+            assert_eq!(
+                bindings.lookup(Owner::TreeDestination, KeyStroke::new(code, modifiers)),
+                expected
+            );
+        }
+        for code in [KeyCode::Enter, KeyCode::Escape] {
+            let expected = (!modifiers
+                .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER))
+            .then_some(Action::Cancel);
+            assert_eq!(
+                bindings.lookup(Owner::TreeDelete, KeyStroke::new(code, modifiers)),
+                expected
+            );
+        }
+    }
+    for (owner, reserved) in [
+        (Owner::FilesystemConfirmation, "P"),
+        (Owner::TreeDestination, "1"),
+        (Owner::TreeDelete, "y"),
+        (Owner::TreeDelete, "N"),
+    ] {
+        let (_, errors) = configured(&format!("{}: {{cancel: [{reserved}]}}", owner.name()));
+        assert_eq!(errors.len(), 1);
+    }
+    let (bindings, errors) = configured("tree-delete: {cancel: [Ctrl-F10]}");
+    assert!(errors.is_empty());
+    assert_eq!(
+        bindings.lookup(Owner::TreeDelete, KeyStroke::plain(KeyCode::Enter)),
+        None
+    );
+    assert_eq!(
+        bindings.lookup(Owner::TreeDelete, KeyStroke::parse("Ctrl-F10").unwrap()),
+        Some(Action::Cancel)
+    );
+}

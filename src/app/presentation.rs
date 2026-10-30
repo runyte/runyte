@@ -1718,16 +1718,22 @@ impl App {
                     crate::command::EditorCommand::ListAccept,
                 ));
         }
-        if self.confirmation_ui_owner().is_some() {
-            return self.confirmation_action(*key) == Some(crate::keymap::ui::Action::Accept);
+        if let Some(owner) = self.confirmation_ui_owner() {
+            use crate::keymap::ui::{Action, Owner};
+            return match owner {
+                Owner::TreeDestination => false,
+                Owner::TreeDelete => self.tree_delete_choice(*key) == Some(true),
+                Owner::FilesystemConfirmation => {
+                    self.confirmation_action(*key) == Some(Action::Accept)
+                        || self.filesystem_permanent_choice(*key)
+                }
+                _ => self.confirmation_action(*key) == Some(Action::Accept),
+            };
         }
         if key.code == KeyCode::Escape {
             return false;
         }
         key.code == KeyCode::Enter
-            || (self.directory_tree_delete.is_some()
-                && matches!(key.code, KeyCode::Char('y' | 'Y')))
-            || (self.fs_confirmation.is_some() && key.code == KeyCode::Char('P'))
             || (self.context_overlay_active() && key.code == KeyCode::Char('x'))
     }
 
@@ -1760,6 +1766,39 @@ impl App {
 
     pub(crate) fn setting_choices_open(&self) -> bool {
         self.settings_view.is_some()
+    }
+
+    pub(crate) fn filesystem_confirmation_actions(&self) -> Vec<crate::snapshot::OverlayAction> {
+        use crate::keymap::ui::{Action, Owner};
+        use crate::snapshot::OverlayAction;
+        if self.confirmation_ui_owner() != Some(Owner::FilesystemConfirmation) {
+            return vec![];
+        }
+        let label = |action| {
+            self.keymap.ui().compact_label_with_leader(
+                Owner::FilesystemConfirmation,
+                action,
+                1,
+                self.space_dismisses_input_overlay(),
+            )
+        };
+        let previous = label(Action::Previous);
+        let next = label(Action::Next);
+        let navigation = if previous == "Up" && next == "Down" {
+            "↑/↓".into()
+        } else {
+            format!("{previous}/{next}")
+        };
+        let mut actions = vec![OverlayAction::new(
+            label(Action::Accept),
+            "apply with trash",
+        )];
+        if self.filesystem_permanent_choice(crate::input::KeyStroke::char('P')) {
+            actions.push(OverlayAction::new("P", "apply with permanent deletion"));
+        }
+        actions.push(OverlayAction::new(navigation, "review operations"));
+        actions.push(OverlayAction::new(label(Action::Cancel), "cancel"));
+        actions
     }
 
     pub(super) fn status_confirmation(&mut self) {
@@ -1807,6 +1846,18 @@ impl App {
                 message: confirmation.message(),
                 input: None,
             });
+        }
+        if self.context_overlay_active()
+            || self.plugins.input.is_some()
+            || self.plugins.provider_reload.is_some()
+            || self.session_inventory_open()
+            || self.session_directory_chooser_open()
+            || self.merge_ui.review.is_some()
+            || self.directory_tree_delete.is_some()
+            || self.directory_tree_destination.is_some()
+            || self.fs_confirmation.is_some()
+        {
+            return None;
         }
         if let Some(confirmation) = &self.directory_reload_confirmation {
             return Some(ConfirmationOverlay {
@@ -1905,6 +1956,8 @@ impl App {
             });
         }
         if let Some(menu) = &self.terminal_action_menu
+            && self.list_layer_input_active()
+            && self.list_menu_ui_owner() == Some(crate::keymap::ui::Owner::TerminalActions)
             && menu.close_armed
             && menu.selected_action() == Some(super::TerminalAction::ForceKill)
             && let Some(session) = self.terminals.get(menu.id).filter(|session| session.live())
@@ -2219,8 +2272,11 @@ impl App {
             ];
             overlays.push(overlay);
         }
-        if let Some(confirmation) = &self.fs_confirmation {
-            overlays.push(bounded(
+        if let Some(confirmation) = &self.fs_confirmation
+            && self.confirmation_ui_owner()
+                == Some(crate::keymap::ui::Owner::FilesystemConfirmation)
+        {
+            let mut overlay = bounded(
                 OverlayKind::FilesystemConfirmation,
                 format!(
                     "Filesystem plan{} · {}",
@@ -2240,8 +2296,29 @@ impl App {
                     .map(|(index, line)| row(index, line, ""))
                     .collect(),
                 Some(confirmation.selected),
-                Some("Enter apply · P permanently delete · Esc cancel".to_owned()),
-            ));
+                None,
+            );
+            overlay.actions = self.filesystem_confirmation_actions();
+            overlay.message = Some(
+                overlay
+                    .actions
+                    .iter()
+                    .filter(|a| a.label != "review operations")
+                    .map(|a| {
+                        format!(
+                            "{} {}",
+                            a.key_hint,
+                            match a.label.as_str() {
+                                "apply with trash" => "apply",
+                                "apply with permanent deletion" => "permanently delete",
+                                _ => "cancel",
+                            }
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · "),
+            );
+            overlays.push(overlay);
         }
         if let Some(picker) = &self.picker {
             use crate::keymap::ui::Action;

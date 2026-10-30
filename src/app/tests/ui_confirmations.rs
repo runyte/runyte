@@ -550,3 +550,186 @@ fn configured_text_confirmation_accept_keeps_deletion_authorization_and_captured
         }
     }
 }
+
+#[test]
+fn configured_filesystem_confirmation_reviews_and_applies_captured_operations() {
+    let root = temporary("configured-fs-review");
+    fs::create_dir_all(&root).unwrap();
+    let snapshot = crate::fs_plan::DirectorySnapshot::read(&root).unwrap();
+    let desired = (0..25)
+        .map(|index| {
+            crate::fs_plan::DesiredEntry::create(format!("file-{index:02}"), EntryKind::File)
+        })
+        .collect();
+    let plan = FsPlan::build(root.clone(), snapshot, desired).unwrap();
+    let mut app = App::new(Config::default(), None).unwrap();
+    let source = serde_yaml::from_str("ui: {filesystem-confirmation: {accept: [F8], cancel: [F10], next: [F6], previous: [F5], page-down: [F4], page-up: [F3], first: [F1], last: [F2]}}").unwrap();
+    let compiled = crate::keymap::configured::compile(&source, &app.keymap);
+    assert!(compiled.errors.is_empty());
+    app.keymap = compiled.keymap;
+    app.fs_confirmation = Some(FsConfirmation {
+        origin: super::FsConfirmationOrigin::Explorer {
+            buffer: app.active().buffer,
+        },
+        plan,
+        selected: 0,
+    });
+    for old in [
+        KeyCode::Down,
+        KeyCode::PageDown,
+        KeyCode::End,
+        KeyCode::Enter,
+        KeyCode::Escape,
+    ] {
+        key(&mut app, old, Modifiers::NONE);
+        assert_eq!(app.fs_confirmation.as_ref().unwrap().selected, 0);
+    }
+    for (function, expected) in [(6, 1), (4, 11), (2, 24), (6, 24), (5, 23), (3, 13), (1, 0)] {
+        key(&mut app, KeyCode::Function(function), Modifiers::NONE);
+        assert_eq!(app.fs_confirmation.as_ref().unwrap().selected, expected);
+    }
+    app.buffer_discard_confirmation = Some(app.active().buffer);
+    let overlays = app.overlay_snapshots();
+    assert!(
+        !overlays
+            .iter()
+            .any(|s| s.kind == crate::snapshot::OverlayKind::Confirmation)
+    );
+    let snapshot = overlays
+        .iter()
+        .find(|s| s.kind == crate::snapshot::OverlayKind::FilesystemConfirmation)
+        .unwrap();
+    assert_eq!(snapshot.actions[0].key_hint, "F8");
+    assert!(snapshot.actions.iter().any(|a| a.key_hint == "F5/F6"));
+    assert!(
+        !app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+    );
+    assert!(
+        app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(
+            KeyCode::Function(8)
+        )))
+    );
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.fs_confirmation.is_none());
+    for index in 0..25 {
+        assert!(root.join(format!("file-{index:02}")).is_file());
+    }
+    assert!(app.buffer_discard_confirmation.is_some());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn filesystem_permanent_choice_preserves_raw_modifiers_and_leader_precedence() {
+    let root = temporary("configured-fs-permanent");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("delete-me");
+    fs::write(&path, "captured").unwrap();
+    let make_plan = || {
+        FsPlan::build(
+            root.clone(),
+            crate::fs_plan::DirectorySnapshot::read(&root).unwrap(),
+            vec![],
+        )
+        .unwrap()
+    };
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.fs_confirmation = Some(FsConfirmation {
+        origin: super::FsConfirmationOrigin::Explorer {
+            buffer: app.active().buffer,
+        },
+        plan: make_plan(),
+        selected: 0,
+    });
+    for bits in 1..64 {
+        let input = InputEvent::Key(KeyStroke::new(
+            KeyCode::Char('P'),
+            Modifiers::from_bits(bits).unwrap(),
+        ));
+        assert!(!app.input_requires_presented_approval(&input));
+        app.handle_input(input).unwrap();
+        assert!(path.exists() && app.fs_confirmation.is_some());
+    }
+    // The factory editor owns P; a minimal editor map leaves it available
+    // as a leader so the UI precedence can be exercised independently.
+    app.keymap = Arc::new(crate::keymap::Keymap::new(vec![]).unwrap());
+    let compiled = crate::keymap::configured::compile(
+        &serde_yaml::from_str("leader: P").unwrap(),
+        &app.keymap,
+    );
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.keymap = compiled.keymap;
+    assert!(
+        !app.filesystem_confirmation_actions()
+            .iter()
+            .any(|a| a.key_hint == "P" && a.label.contains("permanent"))
+    );
+    assert!(!app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::char('P'))));
+    press(&mut app, 'P');
+    assert!(path.exists() && app.fs_confirmation.is_none());
+    let compiled = crate::keymap::configured::compile(
+        &serde_yaml::from_str("leader: P\nui: {filesystem-confirmation: {cancel: []}}").unwrap(),
+        &app.keymap,
+    );
+    assert!(compiled.errors.is_empty());
+    app.keymap = compiled.keymap;
+    app.fs_confirmation = Some(FsConfirmation {
+        origin: super::FsConfirmationOrigin::Explorer {
+            buffer: app.active().buffer,
+        },
+        plan: make_plan(),
+        selected: 0,
+    });
+    assert!(
+        app.filesystem_confirmation_actions()
+            .iter()
+            .any(|a| a.key_hint == "P" && a.label.contains("permanent"))
+    );
+    assert!(app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::char('P'))));
+    press(&mut app, 'P');
+    assert!(!path.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn configured_plugin_filesystem_confirmation_retains_owner_and_acceptance_mode() {
+    let root = temporary("configured-plugin-fs");
+    fs::create_dir_all(&root).unwrap();
+    let make_plan = || {
+        FsPlan::build(
+            root.clone(),
+            crate::fs_plan::DirectorySnapshot::read(&root).unwrap(),
+            vec![crate::fs_plan::DesiredEntry::create(
+                "created",
+                EntryKind::File,
+            )],
+        )
+        .unwrap()
+    };
+    for (accept, expected) in [("F8", DeletionMode::Trash), ("P", DeletionMode::Permanent)] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        configure(&mut app, "filesystem-confirmation", "F8");
+        app.plugins.frontend_attached = true;
+        app.present_plugin_filesystem(7, "captured-plan".into(), make_plan());
+        let captured = app.plugins.filesystem_confirmation.clone();
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert!(app.plugins.filesystem_accepted.is_none());
+        app.plugins.filesystem_applying = true;
+        app.handle_input(InputEvent::Key(KeyStroke::parse(accept).unwrap()))
+            .unwrap();
+        assert!(
+            app.plugins.filesystem_accepted.is_none(),
+            "in-flight writes retain the readiness refusal"
+        );
+        app.plugins.filesystem_applying = false;
+        app.handle_input(InputEvent::Key(KeyStroke::parse(accept).unwrap()))
+            .unwrap();
+        assert_eq!(app.plugins.filesystem_accepted, Some(expected));
+        assert_eq!(app.plugins.filesystem_confirmation, captured);
+        assert!(app.fs_confirmation.is_some());
+        assert!(
+            !root.join("created").exists(),
+            "plugin jobs execute only through host reconciliation"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}

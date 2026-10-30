@@ -296,6 +296,22 @@ does not bypass an exact-name requirement or change the authorization required
 by the captured operation. Untyped branch/worktree decisions use the same owner,
 but their editing actions remain inactive.
 
+The `filesystem-confirmation` owner supports `accept`, `cancel`, `next`,
+`previous`, `page-up`, `page-down`, `first`, and `last`. Enter applies the reviewed
+plan with trash deletion; Esc/Ctrl-c cancel. Navigation defaults are Down/Ctrl-n,
+Up/Ctrl-p, PageDown/Ctrl-d, PageUp/Ctrl-u, Home, and End. Plain `P` remains the
+structural permanent-deletion choice; Shift-P does not confirm it. An inherited
+leader takes precedence over that choice, and the hint reflects that precedence.
+Plugin-owned plans retain their host execution and captured approval checks.
+
+The `tree-destination` owner supports `accept` (Enter), `cancel` (Esc), and
+`backspace`. Plain pane digits remain structural and still select immediately
+when they identify one captured pane. `tree-delete` supports `cancel` (Enter or
+Esc); y/Y and n/N remain structural yes/no choices. Default tree-delete keys
+accept Shift/Meta/Hyper but ignore Control/Alt/Super; configured cancellation
+matches its exact authored modifiers. Neither tree owner adds a Ctrl-c alias.
+Both preserve conditional leader cancellation and captured targets.
+
 The `session-directory` and `session-inventory` owners handle direct session
 navigation independently of `global.list`. They support `next`, `previous`,
 `page-up`, `page-down`, `first`, `last`, `accept`, `cancel`, and `backspace`.

@@ -292,3 +292,16 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   formatting and guide validation passed. New regressions exercise grapheme
   edits in all three forms, exact-name refusal, remapped checkout and captured
   branch/worktree mutation requests with both authorization requirements.
+- Filesystem review and tree destination/delete dialogs now resolve shared UI
+  actions while preserving raw structural choices. Plain P alone requests
+  permanent deletion; tree digits retain captured pane order and unique-digit
+  auto-selection; y/Y/n/N retain their original modifier policy. Configured
+  cancellation can use compound keys. Effective leader cancellation precedes
+  structural choices in dispatch, approval gates and hints. Active destination
+  input is not an approval; covered generic dialogs no longer obscure tree/FS
+  decisions. Plugin-owned plans still record their captured Trash/Permanent
+  decision for host execution. Astra found no production blocker. All 36
+  filesystem and 84 tree-related tests passed, along with root Clippy, formatting
+  and guide validation. Regressions cover default modifier masks, remaps, captured
+  targets, actual operations, masked-choice hints, plugin ownership/readiness and
+  stacked decisions.

@@ -38,10 +38,13 @@ pub enum Owner {
     Confirmation,
     StashConfirmation,
     TextConfirmation,
+    FilesystemConfirmation,
+    TreeDestination,
+    TreeDelete,
 }
 
 impl Owner {
-    const ALL: [Self; 20] = [
+    const ALL: [Self; 23] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -62,6 +65,9 @@ impl Owner {
         Self::Confirmation,
         Self::StashConfirmation,
         Self::TextConfirmation,
+        Self::FilesystemConfirmation,
+        Self::TreeDestination,
+        Self::TreeDelete,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -85,12 +91,20 @@ impl Owner {
             Self::Confirmation => "confirmation",
             Self::StashConfirmation => "stash-confirmation",
             Self::TextConfirmation => "text-confirmation",
+            Self::FilesystemConfirmation => "filesystem-confirmation",
+            Self::TreeDestination => "tree-destination",
+            Self::TreeDelete => "tree-delete",
         }
     }
     pub fn is_confirmation(self) -> bool {
         matches!(
             self,
-            Self::Confirmation | Self::StashConfirmation | Self::TextConfirmation
+            Self::Confirmation
+                | Self::StashConfirmation
+                | Self::TextConfirmation
+                | Self::FilesystemConfirmation
+                | Self::TreeDestination
+                | Self::TreeDelete
         )
     }
     pub fn is_session_navigation(self) -> bool {
@@ -133,9 +147,12 @@ impl Owner {
             }
             Self::Path => &[OpenActions, Cancel],
             Self::PluginManagerActions => &[Cancel],
-            Self::Confirmation | Self::StashConfirmation | Self::TextConfirmation => {
-                confirmation::actions(self)
-            }
+            Self::Confirmation
+            | Self::StashConfirmation
+            | Self::TextConfirmation
+            | Self::FilesystemConfirmation
+            | Self::TreeDestination
+            | Self::TreeDelete => confirmation::actions(self),
             Self::FilePicker | Self::Finder => picker::actions(self),
             Self::SessionDirectory | Self::SessionInventory => session_navigation::actions(self),
             Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
@@ -157,6 +174,21 @@ impl Owner {
             | Self::ProgramActions
             | Self::BufferActions
             | Self::TerminalActions => false,
+            Self::FilesystemConfirmation => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+                    || key.code == KeyCode::Char('P') && key.modifiers.is_empty()
+            }
+            Self::TreeDestination => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+                    || matches!(key.code, KeyCode::Char('0'..='9')) && key.modifiers.is_empty()
+            }
+            Self::TreeDelete => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+                    || matches!(key.code, KeyCode::Char('y' | 'Y' | 'n' | 'N'))
+                        && !key
+                            .modifiers
+                            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
+            }
             Self::Confirmation | Self::StashConfirmation => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control())
             }

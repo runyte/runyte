@@ -364,20 +364,22 @@ impl App {
     }
 
     pub(super) fn handle_tree_destination_key(&mut self, key: KeyStroke) -> Result<()> {
+        use crate::keymap::ui::Action;
+        let action = self.confirmation_action(key);
         let Some(destination) = self.directory_tree_destination.as_mut() else {
             return Ok(());
         };
-        let accept = match key.code {
-            KeyCode::Escape => {
+        let accept = match (action, key.code) {
+            (Some(Action::Cancel), _) => {
                 self.directory_tree_destination = None;
                 self.status("pane selection cancelled");
                 return Ok(());
             }
-            KeyCode::Backspace => {
+            (Some(Action::Backspace), _) => {
                 destination.digits.pop();
                 false
             }
-            KeyCode::Char(digit @ '0'..='9') if key.modifiers.is_empty() => {
+            (None, KeyCode::Char(digit @ '0'..='9')) if key.modifiers.is_empty() => {
                 let candidate = format!("{}{digit}", destination.digits);
                 if (1..=destination.panes.len()).any(|n| n.to_string().starts_with(&candidate)) {
                     destination.digits = candidate;
@@ -387,7 +389,7 @@ impl App {
                     .count();
                 !destination.digits.is_empty() && matches == 1
             }
-            KeyCode::Enter => !destination.digits.is_empty(),
+            (Some(Action::Accept), _) => !destination.digits.is_empty(),
             _ => false,
         };
         if accept {
@@ -404,26 +406,40 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn handle_tree_delete_key(&mut self, key: KeyStroke) {
-        if key
-            .modifiers
-            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
-        {
-            return;
+    pub(super) fn tree_delete_choice(&self, key: KeyStroke) -> Option<bool> {
+        if self.confirmation_ui_owner() != Some(crate::keymap::ui::Owner::TreeDelete) {
+            return None;
         }
-        match key.code {
-            KeyCode::Char('y' | 'Y') => {
+        match self.confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => Some(false),
+            None if !key
+                .modifiers
+                .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER) =>
+            {
+                match key.code {
+                    KeyCode::Char('y' | 'Y') => Some(true),
+                    KeyCode::Char('n' | 'N') => Some(false),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn handle_tree_delete_key(&mut self, key: KeyStroke) {
+        match self.tree_delete_choice(key) {
+            Some(true) => {
                 if self.tree_filesystem_ready()
                     && let Some(plan) = self.directory_tree_delete.take()
                 {
                     self.apply_native_filesystem_plan(plan, None, super::DeletionMode::Trash);
                 }
             }
-            KeyCode::Char('n' | 'N') | KeyCode::Enter | KeyCode::Escape => {
+            Some(false) => {
                 self.directory_tree_delete = None;
                 self.status("deletion cancelled");
             }
-            _ => {}
+            None => {}
         }
     }
 
@@ -433,17 +449,39 @@ impl App {
                 FsOperation::Delete { path, .. } => path,
                 _ => return None,
             };
-            return Some(format!("Delete {}? [y/N]", path.display()));
+            let yes = ['y', 'Y']
+                .into_iter()
+                .find(|c| self.tree_delete_choice(KeyStroke::char(*c)) == Some(true));
+            let no = ['N', 'n']
+                .into_iter()
+                .find(|c| self.tree_delete_choice(KeyStroke::char(*c)) == Some(false));
+            let choices = yes
+                .into_iter()
+                .chain(no)
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>()
+                .join("/");
+            let cancel = self.keymap.ui().compact_label_with_leader(
+                crate::keymap::ui::Owner::TreeDelete,
+                crate::keymap::ui::Action::Cancel,
+                1,
+                self.space_dismisses_input_overlay(),
+            );
+            return Some(format!(
+                "Delete {}? [{choices}] · {cancel} cancel",
+                path.display()
+            ));
         }
         self.directory_tree_destination.as_ref().map(|destination| {
             format!(
-                "{} pane (1–{}, Escape cancels): {}",
+                "{} pane (1–{}, {} cancels): {}",
                 if destination.split.is_some() {
                     "Split"
                 } else {
                     "Open in"
                 },
                 destination.panes.len(),
+                self.confirmation_keys().1,
                 destination.digits,
             )
         })

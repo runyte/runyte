@@ -497,7 +497,10 @@ fn tree_delete_uses_interaction_line_defaults_to_no_and_rechecks_captured_plan()
         key(&mut app, KeyCode::Char('d'), Modifiers::NONE);
         let view = app.prepare_view(geometry(100, 20));
         let snapshot = app.snapshot(&view);
-        assert_eq!(snapshot.status.interaction_line, "Delete file.txt? [y/N]");
+        assert_eq!(
+            snapshot.status.interaction_line,
+            "Delete file.txt? [y/N] · Enter cancel"
+        );
         assert!(app.fs_confirmation.is_none());
         assert!(app.has_input_overlay());
         assert!(file.exists());
@@ -1542,5 +1545,149 @@ fn focus_tree_resolves_parent_symlinks_but_selects_a_final_symlink_entry() {
     let path = root.join("nested/link.txt");
     assert_eq!(app.directory_tree.selected, path);
     assert!(tree.rows.iter().any(|row| row.path == path && row.selected));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn configured_tree_destination_edits_and_accepts_the_captured_pane() {
+    let (mut app, root) = isolated("configured-tree-destination");
+    let path = root.join("captured.txt");
+    fs::write(&path, "captured file").unwrap();
+    let first = app.active_pane;
+    app.split(Axis::Horizontal, None).unwrap();
+    let second = app.active_pane;
+    let source = serde_yaml::from_str(
+        "ui: {tree-destination: {accept: [F8], cancel: [Ctrl-F10], backspace: [F7]}}",
+    )
+    .unwrap();
+    let compiled = crate::keymap::configured::compile(&source, &app.keymap);
+    assert!(compiled.errors.is_empty());
+    app.keymap = compiled.keymap;
+    let destination = || super::super::directory_tree::TreeDestination {
+        path: path.clone(),
+        panes: vec![second, first],
+        digits: "2".into(),
+        split: None,
+    };
+    app.directory_tree_destination = Some(destination());
+    app.buffer_discard_confirmation = Some(app.active().buffer);
+    for code in [KeyCode::Enter, KeyCode::Escape, KeyCode::Backspace] {
+        assert!(!app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(code))));
+        key(&mut app, code, Modifiers::NONE);
+        assert_eq!(app.directory_tree_destination.as_ref().unwrap().digits, "2");
+    }
+    assert!(
+        !app.overlay_snapshots()
+            .iter()
+            .any(|s| s.kind == crate::snapshot::OverlayKind::Confirmation)
+    );
+    assert!(app.tree_interaction().unwrap().contains("Ctrl-F10 cancels"));
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(
+        app.directory_tree_destination
+            .as_ref()
+            .unwrap()
+            .digits
+            .is_empty()
+    );
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(
+        app.directory_tree_destination.is_some(),
+        "empty digits cannot select a target"
+    );
+    app.directory_tree_destination.as_mut().unwrap().digits = "2".into();
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(
+        app.active_pane, first,
+        "captured ordering survives current pane layout order"
+    );
+    assert_eq!(app.active_buffer().path.as_deref(), Some(path.as_path()));
+    app.directory_tree_destination = Some(destination());
+    key(&mut app, KeyCode::Function(10), Modifiers::CONTROL);
+    assert!(app.directory_tree_destination.is_none());
+    app.directory_tree_destination = Some(destination());
+    app.directory_tree_destination
+        .as_mut()
+        .unwrap()
+        .digits
+        .clear();
+    press(&mut app, '1');
+    assert!(
+        app.directory_tree_destination.is_none(),
+        "unique structural digits still auto-accept"
+    );
+    assert_eq!(app.active_pane, second);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn configured_tree_delete_cancel_keeps_structural_choices_and_default_modifier_rules() {
+    let (mut app, root) = isolated("configured-tree-delete");
+    let file = root.join("file.txt");
+    fs::write(&file, "original").unwrap();
+    app.set_trash_backend(Box::new(TreeTestTrash(root.join("trashed.txt"))));
+    app.open_file(file.clone()).unwrap();
+    chord(&mut app, 'd');
+    let source = serde_yaml::from_str("ui: {tree-delete: {cancel: [Ctrl-F10]}}").unwrap();
+    let compiled = crate::keymap::configured::compile(&source, &app.keymap);
+    assert!(compiled.errors.is_empty());
+    app.keymap = compiled.keymap;
+    press(&mut app, 'd');
+    for code in [KeyCode::Enter, KeyCode::Escape] {
+        key(&mut app, code, Modifiers::NONE);
+        assert!(app.directory_tree_delete.is_some());
+    }
+    key(&mut app, KeyCode::Char('y'), Modifiers::CONTROL);
+    assert!(file.exists());
+    assert!(app.tree_interaction().unwrap().contains("Ctrl-F10 cancel"));
+    key(&mut app, KeyCode::Function(10), Modifiers::CONTROL);
+    assert!(app.directory_tree_delete.is_none() && file.exists());
+    press(&mut app, 'd');
+    assert!(!app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::ctrl('y'))));
+    assert!(app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::char('y'))));
+    press(&mut app, 'n');
+    assert!(app.directory_tree_delete.is_none());
+    press(&mut app, 'd');
+    press(&mut app, 'y');
+    assert!(!file.exists());
+    assert_eq!(
+        fs::read_to_string(root.join("trashed.txt")).unwrap(),
+        "original"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tree_delete_structural_masks_and_inherited_leader_match_the_presented_hint() {
+    let (mut app, root) = isolated("tree-delete-masks");
+    let file = root.join("file.txt");
+    fs::write(&file, "original").unwrap();
+    app.open_file(file).unwrap();
+    chord(&mut app, 'd');
+    press(&mut app, 'd');
+    for bits in 0..64 {
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        let allowed = !modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER);
+        for character in ['y', 'Y', 'n', 'N'] {
+            let key = KeyStroke::new(KeyCode::Char(character), modifiers);
+            let expected = allowed.then_some(matches!(character, 'y' | 'Y'));
+            assert_eq!(app.tree_delete_choice(key), expected);
+            assert_eq!(
+                app.input_requires_presented_approval(&InputEvent::Key(key)),
+                expected == Some(true)
+            );
+        }
+    }
+    app.keymap = Arc::new(crate::keymap::Keymap::new(vec![]).unwrap());
+    let source = serde_yaml::from_str("leader: y").unwrap();
+    let compiled = crate::keymap::configured::compile(&source, &app.keymap);
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.keymap = compiled.keymap;
+    assert_eq!(app.tree_delete_choice(KeyStroke::char('y')), Some(false));
+    assert!(!app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::char('y'))));
+    assert!(app.tree_interaction().unwrap().contains("[Y/N]"));
+    press(&mut app, 'y');
+    assert!(app.directory_tree_delete.is_none());
+    assert!(root.join("file.txt").exists());
     fs::remove_dir_all(root).unwrap();
 }

@@ -2268,6 +2268,10 @@ fn draw_fs_confirmation(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
     let Some(confirmation) = &app.fs_confirmation else {
         return;
     };
+    let actions = app.filesystem_confirmation_actions();
+    if actions.is_empty() {
+        return;
+    }
     let area = to_tui_rect(centered(editor_area, 88, 80, 30, 8));
     if area.width < 3 || area.height < 3 {
         return;
@@ -2334,7 +2338,28 @@ fn draw_fs_confirmation(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
     if footer_height > 0 {
         frame.render_widget(
             Paragraph::new(
-                "↑/↓ review · Enter apply (trash deletes) · P permanently delete · Esc cancel",
+                [
+                    "review operations",
+                    "apply with trash",
+                    "apply with permanent deletion",
+                    "cancel",
+                ]
+                .iter()
+                .filter_map(|label| actions.iter().find(|a| a.label == *label))
+                .map(|a| {
+                    format!(
+                        "{} {}",
+                        a.key_hint,
+                        match a.label.as_str() {
+                            "review operations" => "review",
+                            "apply with trash" => "apply (trash deletes)",
+                            "apply with permanent deletion" => "permanently delete",
+                            _ => "cancel",
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" · "),
             )
             .style(Style::default().fg(app.theme.muted)),
             footer,

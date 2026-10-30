@@ -1961,14 +1961,14 @@ impl App {
             return self.handle_merge_review_key(legacy_key);
         }
         if self.directory_tree_delete.is_some() {
-            self.handle_tree_delete_key(legacy_key);
+            self.handle_tree_delete_key(key);
             return Ok(());
         }
         if self.directory_tree_destination.is_some() {
-            return self.handle_tree_destination_key(legacy_key);
+            return self.handle_tree_destination_key(key);
         }
         if self.fs_confirmation.is_some() {
-            return self.handle_fs_confirmation(legacy_key);
+            return self.handle_fs_confirmation(key);
         }
         if self.directory_reload_confirmation.is_some() {
             return self.handle_directory_reload_confirmation(key);
@@ -3287,11 +3287,17 @@ impl App {
             || self.session_inventory_open()
             || self.session_directory_chooser_open()
             || self.merge_ui.review.is_some()
-            || self.directory_tree_delete.is_some()
-            || self.directory_tree_destination.is_some()
-            || self.fs_confirmation.is_some()
         {
             return None;
+        }
+        if self.directory_tree_delete.is_some() {
+            return Some(Owner::TreeDelete);
+        }
+        if self.directory_tree_destination.is_some() {
+            return Some(Owner::TreeDestination);
+        }
+        if self.fs_confirmation.is_some() {
+            return Some(Owner::FilesystemConfirmation);
         }
         if self.directory_reload_confirmation.is_some()
             || self.file_reload_confirmation.is_some()
@@ -3323,61 +3329,43 @@ impl App {
         )
     }
 
+    pub(super) fn filesystem_permanent_choice(&self, key: KeyStroke) -> bool {
+        self.confirmation_ui_owner() == Some(crate::keymap::ui::Owner::FilesystemConfirmation)
+            && self.confirmation_action(key).is_none()
+            && key.code == KeyCode::Char('P')
+            && key.modifiers.is_empty()
+    }
+
     fn handle_fs_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        use crate::keymap::ui::Action;
+        match self.confirmation_action(key) {
+            Some(Action::Cancel) => {
                 self.fs_confirmation = None;
                 self.status("filesystem plan cancelled");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.fs_confirmation = None;
-                self.status("filesystem plan cancelled");
-            }
-            (KeyCode::Enter, _) => self.apply_fs_confirmation(DeletionMode::Trash),
-            (KeyCode::Char('P'), modifiers) if modifiers.is_empty() => {
-                self.apply_fs_confirmation(DeletionMode::Permanent);
-            }
-            (KeyCode::Down, _) => {
+            Some(Action::Accept) => self.apply_fs_confirmation(DeletionMode::Trash),
+            Some(
+                action @ (Action::Next
+                | Action::Previous
+                | Action::PageDown
+                | Action::PageUp
+                | Action::First
+                | Action::Last),
+            ) => {
                 let confirmation = self.fs_confirmation.as_mut().unwrap();
                 let last = confirmation.plan.operations().len().saturating_sub(1);
-                confirmation.selected = confirmation.selected.saturating_add(1).min(last);
+                confirmation.selected = match action {
+                    Action::Next => confirmation.selected.saturating_add(1).min(last),
+                    Action::Previous => confirmation.selected.saturating_sub(1),
+                    Action::PageDown => confirmation.selected.saturating_add(10).min(last),
+                    Action::PageUp => confirmation.selected.saturating_sub(10),
+                    Action::First => 0,
+                    Action::Last => last,
+                    _ => unreachable!(),
+                };
             }
-            (KeyCode::Char('n'), _) if control => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                let last = confirmation.plan.operations().len().saturating_sub(1);
-                confirmation.selected = confirmation.selected.saturating_add(1).min(last);
-            }
-            (KeyCode::Up, _) => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                confirmation.selected = confirmation.selected.saturating_sub(1);
-            }
-            (KeyCode::Char('p'), _) if control => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                confirmation.selected = confirmation.selected.saturating_sub(1);
-            }
-            (KeyCode::PageDown, _) => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                let last = confirmation.plan.operations().len().saturating_sub(1);
-                confirmation.selected = confirmation.selected.saturating_add(10).min(last);
-            }
-            (KeyCode::Char('d'), _) if control => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                let last = confirmation.plan.operations().len().saturating_sub(1);
-                confirmation.selected = confirmation.selected.saturating_add(10).min(last);
-            }
-            (KeyCode::PageUp, _) => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                confirmation.selected = confirmation.selected.saturating_sub(10);
-            }
-            (KeyCode::Char('u'), _) if control => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                confirmation.selected = confirmation.selected.saturating_sub(10);
-            }
-            (KeyCode::Home, _) => self.fs_confirmation.as_mut().unwrap().selected = 0,
-            (KeyCode::End, _) => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                confirmation.selected = confirmation.plan.operations().len().saturating_sub(1);
+            None if self.filesystem_permanent_choice(key) => {
+                self.apply_fs_confirmation(DeletionMode::Permanent)
             }
             _ => {}
         }
