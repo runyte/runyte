@@ -184,7 +184,8 @@ fn compile(section: &Value, base: &Keymap, defer_policy: bool) -> Result<Keymap,
                         && !scope.is_merge_review()
                         && scope != BindingScope::DirectoryTree
                         && first.code == KeyCode::Tab
-                        && first.modifiers.is_empty())
+                        && first.modifiers.is_empty()
+                        && base.ui().lookup(super::ui::Owner::ContextLauncher, first).is_some())
                     || (scope == BindingScope::GitMergeInput
                         && sequence.as_slice().iter().any(|key| {
                             base.ui().lookup(super::ui::Owner::MergeAcknowledgment, *key).is_some()

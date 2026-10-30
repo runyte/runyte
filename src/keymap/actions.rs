@@ -592,7 +592,12 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
         (index == 0
             && matches!(mode, Mode::Normal | Mode::Select)
             && key.modifiers.is_empty()
-            && matches!(key.code, KeyCode::Char('1'..='9') | KeyCode::Tab))
+            && (matches!(key.code, KeyCode::Char('1'..='9'))
+                || (key.code == KeyCode::Tab
+                    && base
+                        .ui()
+                        .lookup(super::ui::Owner::ContextLauncher, *key)
+                        .is_some())))
             || (!value.is_null()
                 && index > 0
                 && if matches!(mode, Mode::Normal | Mode::Select) {

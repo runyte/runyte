@@ -4062,3 +4062,100 @@ fn replayed_hover_acceptance_preserves_legacy_opening_without_advertising_physic
         assert_eq!(app.active_buffer().display_name(), "[documentation]");
     }
 }
+
+fn launcher_map(source: &str) -> std::sync::Arc<crate::keymap::Keymap> {
+    let result = crate::keymap::configured::compile(
+        &serde_yaml::from_str(source).unwrap(),
+        crate::keymap::default_keymap(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    result.keymap
+}
+
+#[test]
+fn context_launcher_remaps_releases_tab_and_keeps_native_choices() {
+    use crate::keymap::ContextAction;
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "abc");
+    let map = launcher_map(
+        "ui: {context-launcher: {open-actions: [F8]}}\nbind: {normal: {Tab: move-right}}",
+    );
+    let map = (*map)
+        .clone()
+        .with_context_actions(vec![ContextAction::buffer(
+            app.key_binding_scope(),
+            KeyStroke::char('a'),
+            "left",
+            EditorCommand::MoveLeft,
+        )]);
+    app.set_keymap(std::sync::Arc::new(map));
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, 1);
+    assert!(app.context_action_menu.is_none());
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.context_action_menu.is_some());
+    press(&mut app, 'a');
+    assert!(app.context_action_menu.is_none());
+    assert_eq!(app.active().selection.primary().head, 0);
+}
+
+#[test]
+fn context_launcher_preserves_actual_key_fallback_and_count_with_a_server() {
+    let (mut app, _, _queue) = super::language::rust_app("abcde");
+    super::language::ready_language(&mut app, "rust", crate::lsp::Encoding::Utf16);
+    app.set_keymap(launcher_map(
+        "ui: {context-launcher: {open-actions: [F8]}}\nbind: {normal: {F8: move-right}}",
+    ));
+    assert!(app.has_language_server());
+    press(&mut app, '2');
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, 2);
+    assert!(app.context_action_menu.is_none());
+    assert!(app.pending_count().is_none());
+}
+
+#[test]
+fn context_launcher_removal_and_operand_ownership_do_not_invent_fallback_keys() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_keymap(launcher_map(
+        "ui: {context-launcher: {open-actions: [F8]}}\nbind: {normal: {F8: move-right}}",
+    ));
+    seed(&mut app, "abc");
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.status, "No actions available for this selection");
+    assert_eq!(app.active().selection.primary().head, 0);
+    press(&mut app, 'f');
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.status, "expected a character");
+    assert!(app.awaiting_character_command().is_none());
+    app.set_keymap(launcher_map(
+        "ui: {context-launcher: {open-actions: []}}\nbind: {normal: {Tab: move-right}}",
+    ));
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, 1);
+}
+
+#[test]
+fn context_launcher_defaults_keep_exact_tab_modifiers_and_counts_structural() {
+    use crate::keymap::ui::{Action, Bindings, Owner};
+    let map = Bindings::default();
+    for bits in 0..64 {
+        let key = KeyStroke::new(KeyCode::Tab, Modifiers::from_bits(bits).unwrap());
+        assert_eq!(
+            map.lookup(Owner::ContextLauncher, key),
+            (bits == 0).then_some(Action::OpenActions)
+        );
+    }
+    let result = crate::keymap::configured::compile(
+        &serde_yaml::from_str("ui: {context-launcher: {open-actions: ['2']}}").unwrap(),
+        crate::keymap::default_keymap(),
+    );
+    assert_eq!(result.errors.len(), 1);
+    assert_eq!(
+        result
+            .keymap
+            .ui()
+            .label(Owner::ContextLauncher, Action::OpenActions),
+        "Tab"
+    );
+}

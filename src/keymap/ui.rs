@@ -61,12 +61,13 @@ pub enum Owner {
     MacroReplay,
     Hover,
     CharacterInput,
+    ContextLauncher,
     GrammarPrefix,
     KeyHints,
 }
 
 impl Owner {
-    const ALL: [Self; 38] = [
+    const ALL: [Self; 39] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -103,6 +104,7 @@ impl Owner {
         Self::MacroReplay,
         Self::Hover,
         Self::CharacterInput,
+        Self::ContextLauncher,
         Self::GrammarPrefix,
         Self::KeyHints,
     ];
@@ -144,6 +146,7 @@ impl Owner {
             Self::MacroReplay => "macro-replay",
             Self::Hover => "hover",
             Self::CharacterInput => "character-input",
+            Self::ContextLauncher => "context-launcher",
             Self::GrammarPrefix => "grammar-prefix",
             Self::KeyHints => "key-hints",
         }
@@ -200,6 +203,7 @@ impl Owner {
                 | Self::MacroReplay
                 | Self::Hover
                 | Self::CharacterInput
+                | Self::ContextLauncher
                 | Self::GrammarPrefix
                 | Self::KeyHints
         ) && !self.is_plugin_input()
@@ -228,6 +232,7 @@ impl Owner {
             Self::MergePrefix => &[ResetAndContinue],
             Self::MacroReplay | Self::CharacterInput => &[Cancel],
             Self::Hover => &[Accept],
+            Self::ContextLauncher => &[OpenActions],
             Self::GrammarPrefix => &[Cancel, Back],
             Self::KeyHints => &[Next, Previous],
             Self::PluginConfirmation => &[Accept, Cancel],
@@ -279,7 +284,7 @@ impl Owner {
         match self {
             Self::MergePrefix | Self::MacroReplay | Self::GrammarPrefix | Self::KeyHints => false,
             Self::CharacterInput => matches!(key.code, KeyCode::Char(_)),
-            Self::Hover => {
+            Self::Hover | Self::ContextLauncher => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control() || (c.is_ascii_digit() && key.modifiers.is_empty()))
             }
             Self::MergeAcknowledgment => {
@@ -567,6 +572,21 @@ impl Bindings {
         }
         Some(action)
     }
+    pub(crate) fn named_label(&self, source: &str) -> Result<String, String> {
+        let (owner, action) = source.split_once('.').ok_or("expected UI owner.action")?;
+        let owner = Owner::ALL
+            .into_iter()
+            .find(|candidate| candidate.name() == owner)
+            .ok_or_else(|| format!("unknown UI owner {owner:?}"))?;
+        let action = owner
+            .actions()
+            .iter()
+            .copied()
+            .find(|candidate| candidate.name() == action)
+            .ok_or_else(|| format!("unknown UI action {action:?}"))?;
+        Ok(self.label(owner, action))
+    }
+
     pub fn label(&self, owner: Owner, action: Action) -> String {
         self.label_with_leader(owner, action, true)
     }
@@ -719,6 +739,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     if matches!(owner, Owner::GrammarPrefix | Owner::KeyHints) {
         return grammar::legacy_action(owner, key);
     }
+    if owner == Owner::ContextLauncher {
+        return (key == KeyStroke::plain(KeyCode::Tab)).then_some(OpenActions);
+    }
     if owner == Owner::CharacterInput {
         return (key.code == KeyCode::Escape).then_some(Cancel);
     }
@@ -799,6 +822,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner == Owner::ContextLauncher {
+        return &["Tab"];
+    }
     if matches!(owner, Owner::GrammarPrefix | Owner::KeyHints) {
         return grammar::labels(owner, action);
     }

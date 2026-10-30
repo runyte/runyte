@@ -1187,3 +1187,15 @@ collision, both of these UI owners return to defaults and binding edits are
 compiled again against that policy. Other UI owners keep their configuration.
 A key cannot belong to both prefix control and hint scrolling. Merge reviews
 retain their separate scoped controls and do not pass through hint scrolling.
+
+`ui.context-launcher.open-actions` replaces the Normal/Select action-menu shortcut
+(default: plain Tab). Pending key sequences, character operands and the directory
+tree retain precedence; plain count digits remain structural. Replacing or
+removing the shortcut releases Tab for `keys.bind` and scoped assignments.
+Menu mnemonic letters retain their existing structural role.
+
+When no native action is available, the launcher keeps its existing fallback:
+without a ready language server it reports that no actions are available; with
+one it passes the actual pressed key to the editor keymap, retaining the count.
+For a remapped launcher, assign the desired editor fallback to that same key.
+It does not synthesize Tab. Help prose and action tables show the effective key.

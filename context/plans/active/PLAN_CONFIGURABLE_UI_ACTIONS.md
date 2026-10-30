@@ -408,3 +408,14 @@ constraints were reviewed with Astra before implementation.
   active library tests, 16 ignored, plus all integration/doc suites); nine new
   policy tests cover modifiers, counts, releases, plugins, root controls, scoped
   nulls, rollback, merge isolation and arrow precedence. Guide validation passed.
+- The Normal/Select context-action launcher now resolves a shared UI action.
+  Replacing/removing it releases Tab for global and scoped assignments without
+  changing legacy defaults stripping. Native menus still capture their choices;
+  absent native actions, no-server status consumption and ready-server fallback
+  preserve the actual key and count. Directory-tree, pending-sequence and operand
+  ownership remain intact. Effective UI spelling markers now drive contextual
+  help prose and tables while external text is escaped literally. Astra found
+  no blocker. Five launcher/help tests, eight spelling tests, 92 help-related
+  tests (2 ignored), 132 keymap-related tests, root Clippy, formatting and guide
+  checks passed. Coverage includes modifier masks, removal, native choices,
+  actual-key fallback, structural counts/operands and literal marker boundaries.

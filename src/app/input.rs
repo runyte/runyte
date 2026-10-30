@@ -2084,9 +2084,12 @@ impl App {
             return self.handle_terminal_key(id, key);
         }
 
-        if key.code == KeyCode::Tab
+        if self
+            .keymap
+            .ui()
+            .lookup(crate::keymap::ui::Owner::ContextLauncher, key)
+            == Some(crate::keymap::ui::Action::OpenActions)
             && !self.directory_tree.focused
-            && key.modifiers.is_empty()
             && matches!(self.mode, Mode::Normal | Mode::Select)
             && self.grammar.pending_sequence().is_empty()
             && self.grammar.awaiting_character().is_none()

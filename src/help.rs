@@ -195,13 +195,13 @@ impl HelpTopic {
             ],
             Self::Explorer => &[
                 "The explorer is an editable directory listing. Move and edit here just as you do in a text buffer.",
-                "Tab t opens an integrated terminal in this pane, starting in the directory this explorer shows. The explorer stays available behind the terminal.",
-                "Tab f opens the Finder rooted at the directory this explorer shows rather than at the project root, and lists dotfiles exactly when this listing does.",
-                "Tab e opens the directory this explorer shows in the system file manager, preserving unapplied edits in Runyte.",
+                "{ui:context-launcher.open-actions} t opens an integrated terminal in this pane, starting in the directory this explorer shows. The explorer stays available behind the terminal.",
+                "{ui:context-launcher.open-actions} f opens the Finder rooted at the directory this explorer shows rather than at the project root, and lists dotfiles exactly when this listing does.",
+                "{ui:context-launcher.open-actions} e opens the directory this explorer shows in the system file manager, preserving unapplied edits in Runyte.",
                 "Edits do not touch the filesystem until you review and confirm the write plan.",
                 "A symlink carries a muted → target hint that is not part of the text. Enter opens what the link points at; renaming and deleting stay with the link.",
                 "An explorer whose directory changed outside Runyte gains [STALE] and keeps its rows, selections, and unsaved edits. {binding:Space r} re-reads the directory and clears it.",
-                "{binding:Tab} offers what the explorer can be asked to show: dotfiles, file details, and the order rows are listed in. Each is a setting, so a choice is saved and every open explorer follows it. {binding:.} and {binding:?} toggle the first two directly.",
+                "{ui:context-launcher.open-actions} offers what the explorer can be asked to show: dotfiles, file details, and the order rows are listed in. Each is a setting, so a choice is saved and every open explorer follows it. {binding:.} and {binding:?} toggle the first two directly.",
             ],
             Self::DirectoryTree => &[
                 "The [dir tree] sidebar owns {binding:j}/{binding:k} navigation and {binding:h}/{binding:l} expansion. {binding:Enter} opens a file; with multiple panes, choose its numbered destination. {binding:v} opens in a vertical split and {binding:s} in a horizontal split, choosing which pane to split the same way. Direct keys {binding:1} through {binding:9} open in that pane.",
@@ -215,7 +215,7 @@ impl HelpTopic {
                 "{binding:Space d t} toggles it. {binding:Space d d} refreshes and expands the active file's ancestors, selects the file, and focuses the tree. Files outside the workspace select its root. {binding:Esc} returns focus to the pane.",
             ],
             Self::Config => &[
-                "The config page is a read-only view of the setting registry. Search, select, split, and move through it like any other text buffer; Enter changes the setting on the current row. Tab on tab width or indent style offers language and file-pattern overrides; saved overrides appear beneath the setting, with Enter to edit and Tab to remove.",
+                "The config page is a read-only view of the setting registry. Search, select, split, and move through it like any other text buffer; Enter changes the setting on the current row. {ui:context-launcher.open-actions} on tab width or indent style offers language and file-pattern overrides; saved overrides appear beneath the setting, with Enter to edit and {ui:context-launcher.open-actions} to remove.",
                 "Edits made to the configuration file outside this page reach the running editor through :config-reload. Nothing is watched, an unusable file leaves the running configuration alone, and a setting read at startup is named as needing a restart rather than shown as already in effect.",
             ],
             Self::Notifications => &[
@@ -305,7 +305,7 @@ its sections. This contextual page remains available through {binding:Space ?}.\
 const DIFF_OVERVIEW: &[&str] = &[
     "A unified diff, rendered read-only. Leading `+` and `-` belong to the patch rather than to the text, so nothing here can be edited into a different change.",
     "The staged view shows what a commit would take; the unstaged view shows what staging would add to it.",
-    "In a per-file diff, `Tab s` stages the exact hunk and `Tab u` unstages it. Stale or unsupported patches are refused; use Lazygit for finer patch surgery.",
+    "In a per-file diff, `{ui:context-launcher.open-actions} s` stages the exact hunk and `{ui:context-launcher.open-actions} u` unstages it. Stale or unsupported patches are refused; use Lazygit for finer patch surgery.",
 ];
 
 /// The menu of this view covers only the actions that take a row, so help that
@@ -314,7 +314,7 @@ const DIFF_OVERVIEW: &[&str] = &[
 /// it.
 const GIT_STASH_OVERVIEW: &[&str] = &[
     "Stashes are listed by stable object identity. Applying keeps the stash; dropping is a separate confirmed action.",
-    "Every stash action is a colon command first, and this view's Tab menu offers the ones that take a row. `:git-stashes` opens or refreshes the list, and `:git-stash-apply` and `:git-stash-drop` act on the stash under the cursor — invoked from any other buffer they are refused, because there is no row to mean.",
+    "Every stash action is a colon command first, and this view's {ui:context-launcher.open-actions} menu offers the ones that take a row. `:git-stashes` opens or refreshes the list, and `:git-stash-apply` and `:git-stash-drop` act on the stash under the cursor — invoked from any other buffer they are refused, because there is no row to mean.",
     "Creating a stash has no key at all: the three commands below are the only way. Each takes a required name, asks for confirmation, and is refused while a file buffer in this repository has unsaved changes. An apply that conflicts keeps the stash. {binding:Space g c} opens its unmerged index stages for supported file resolutions; unsupported cases can use an external Git tool.",
 ];
 
@@ -486,13 +486,17 @@ pub(crate) fn render_document_with_descriptions(
     // the authored lists further down, because a key's raw text is an
     // ordinary English word far more often than it is a key mention.
     let mut key_cells: Vec<Range<usize>> = Vec::new();
+    let menu_key = keymap.ui().label(
+        crate::keymap::ui::Owner::ContextLauncher,
+        crate::keymap::ui::Action::OpenActions,
+    );
 
     if let Some(plugin) = plugin.filter(|plugin| !plugin.actions.is_empty()) {
         let _ = writeln!(out, "Application actions");
         let _ = writeln!(
             out,
             "  {} opens the menu of these, as they were offered for the selection\n  help was opened from.\n",
-            ACTION_MENU_KEY
+            menu_key
         );
         // Sections follow their first action, as they do in the menu.
         let mut groups: Vec<Option<&str>> = Vec::new();
@@ -605,12 +609,12 @@ pub(crate) fn render_document_with_descriptions(
             }
             let _ = writeln!(
                 out,
-                "  Tab opens the action menu. Its mnemonic keys are active only while\n  that menu is open.\n"
+                "  {menu_key} opens the action menu. Its mnemonic keys are active only while\n  that menu is open.\n"
             );
             for action in actions {
                 key_cells.push(row(
                     &mut out,
-                    &format!("Tab {}", action.mnemonic.label()),
+                    &format!("{menu_key} {}", action.mnemonic.label()),
                     &platform_description(action.target, action.description),
                 ));
             }
@@ -833,7 +837,7 @@ pub(crate) fn render_document_with_descriptions(
     for action in keymap.context_actions(scope) {
         document.mark_token_since(
             0,
-            &format!("Tab {}", action.mnemonic.label()),
+            &format!("{menu_key} {}", action.mnemonic.label()),
             HelpRole::KeyBinding,
         );
     }
@@ -943,10 +947,6 @@ pub(crate) fn render_document_with_descriptions(
 
     document.finish()
 }
-
-/// Opens a plugin view's action menu. Named here because the actions section
-/// cites it, and the key table it sits beside is generated.
-const ACTION_MENU_KEY: &str = "{literal-key:Tab}";
 
 fn platform_description(target: BindingTarget, description: &str) -> std::borrow::Cow<'_, str> {
     match target.id().platform_unavailable() {
@@ -1095,30 +1095,30 @@ fn row(out: &mut String, keys: &str, description: &str) -> Range<usize> {
 /// so neither grammar has anything of its own to say about it.
 const GIT_COMPARISON_OVERVIEW: &[&str] = &[
     "Compare committed contents at two tips. The current tip is on the left; the selected branch or worktree is on the right. Local edits are excluded.",
-    "Enter opens the file's patch; `Tab d` opens a split diff. Closing either split side or :diff-off restores this list at the same file. {binding:Space g r} captures fresh tips while preserving the selected file.",
+    "Enter opens the file's patch; `{ui:context-launcher.open-actions} d` opens a split diff. Closing either split side or :diff-off restores this list at the same file. {binding:Space g r} captures fresh tips while preserving the selected file.",
     "Paths on both sides show renames and absent files. Narrow panes combine the paths. Counts show added and removed lines; binary and metadata changes are labelled.",
 ];
 
 const GIT_STATUS_OVERVIEW: &[&str] = &[
-    "Enter opens the selected row's patch; `Tab d` opens its complete versions in a temporary split.",
+    "Enter opens the selected row's patch; `{ui:context-launcher.open-actions} d` opens its complete versions in a temporary split.",
     "The changed-file list groups every file by whether a commit would take it. Rows are files: select several and one key acts on all of them.",
-    "`Tab s` stages the selected rows; `Tab S` stages every unstaged or untracked row. Staging records files as written on disk and moves the base that the gutter marks are measured against.",
+    "`{ui:context-launcher.open-actions} s` stages the selected rows; `{ui:context-launcher.open-actions} S` stages every unstaged or untracked row. Staging records files as written on disk and moves the base that the gutter marks are measured against.",
     "Committing takes the index — exactly what the Staged section shows. Write the message buffer to commit, or close it with `:c` / `:c!` to abandon it.",
     "Discarding is the one action here that cannot be undone: the thrown-away content was never a commit, so nothing in Git will produce it again.",
-    "`Tab p` and `Tab P` pull and push the branch this working tree is on. Both run in the background until the remote answers or two minutes pass; the push never forces.",
-    "`Tab p` fast-forwards silently. When the branch and its upstream have both moved on there is no fast-forward, so it says how far apart they are and offers to replay your commits on top; Enter does it, Escape leaves the branch alone. A replay that hits a conflict undoes itself and changes nothing, and neither the pull nor the replay stashes uncommitted changes: a dirty worktree is refused up front.",
+    "`{ui:context-launcher.open-actions} p` and `{ui:context-launcher.open-actions} P` pull and push the branch this working tree is on. Both run in the background until the remote answers or two minutes pass; the push never forces.",
+    "`{ui:context-launcher.open-actions} p` fast-forwards silently. When the branch and its upstream have both moved on there is no fast-forward, so it says how far apart they are and offers to replay your commits on top; Enter does it, Escape leaves the branch alone. A replay that hits a conflict undoes itself and changes nothing, and neither the pull nor the replay stashes uncommitted changes: a dirty worktree is refused up front.",
 ];
 
 const GIT_CONFLICTS_OVERVIEW: &[&str] = &[
     "The unresolved list comes from Git's index stages, including merges started with the CLI. Its header names the active operation and captured sides. Empty state distinguishes no conflicts from a merge awaiting its explicit commit.",
-    "Enter opens the ordinary working file at its first recognized region. `Tab d` inspects captured sides, including absent or binary files. Structural conflicts show every related path; edit and save each path or deletion, then review it with `Tab r`.",
-    "`Tab c` reviews Continue; all unmerged index entries must be resolved first. Approval opens the merge-message buffer, whose explicit save creates the merge commit. `Tab A` separately reviews Abort with Cancel selected. Other Git operations require external continue/abort.",
+    "Enter opens the ordinary working file at its first recognized region. `{ui:context-launcher.open-actions} d` inspects captured sides, including absent or binary files. Structural conflicts show every related path; edit and save each path or deletion, then review it with `{ui:context-launcher.open-actions} r`.",
+    "`{ui:context-launcher.open-actions} c` reviews Continue; all unmerged index entries must be resolved first. Approval opens the merge-message buffer, whose explicit save creates the merge commit. `{ui:context-launcher.open-actions} A` separately reviews Abort with Cancel selected. Other Git operations require external continue/abort.",
 ];
 const GIT_CONFLICT_FILE_OVERVIEW: &[&str] = &[
-    "This is an ordinary editable file with its usual undo, redo, save, search, splits and language tools. Only the contextual Tab actions change while the index still lists this path as unresolved.",
-    "`Tab n` / `Tab p` visit recognized regions and then unresolved files. `Tab o` / `Tab t` replace one region transactionally with captured Current / Other marker contents; saving preserves manual edits but does not stage the resolution.",
-    "`Tab d` inspects index sides. `Tab O` / `Tab T` review replacing the whole file or deleting it when that side is absent. Structural groups and submodules refuse unsafe whole-side choices.",
-    "`Tab r` reviews staging the entire saved file or deletion. Remaining markers are refused; `Tab R` is an explicit reviewed override for intentional literal marker text. `Tab l` returns to the conflict list. Undo after staging changes the working file without undoing the staged resolution.",
+    "This is an ordinary editable file with its usual undo, redo, save, search, splits and language tools. Only the contextual {ui:context-launcher.open-actions} actions change while the index still lists this path as unresolved.",
+    "`{ui:context-launcher.open-actions} n` / `{ui:context-launcher.open-actions} p` visit recognized regions and then unresolved files. `{ui:context-launcher.open-actions} o` / `{ui:context-launcher.open-actions} t` replace one region transactionally with captured Current / Other marker contents; saving preserves manual edits but does not stage the resolution.",
+    "`{ui:context-launcher.open-actions} d` inspects index sides. `{ui:context-launcher.open-actions} O` / `{ui:context-launcher.open-actions} T` review replacing the whole file or deleting it when that side is absent. Structural groups and submodules refuse unsafe whole-side choices.",
+    "`{ui:context-launcher.open-actions} r` reviews staging the entire saved file or deletion. Remaining markers are refused; `{ui:context-launcher.open-actions} R` is an explicit reviewed override for intentional literal marker text. `{ui:context-launcher.open-actions} l` returns to the conflict list. Undo after staging changes the working file without undoing the staged resolution.",
 ];
 const GIT_MERGE_REVIEW_OVERVIEW: &[&str] = &[
     "The review names Other into Current and predicts already contained, fast-forward, clean pending merge, or conflict resolution. Cancel is selected initially. Navigation moves focus; activation inspects a file or activates the selected footer action. The footer stays visible while the body scrolls.",
@@ -1127,29 +1127,29 @@ const GIT_MERGE_REVIEW_OVERVIEW: &[&str] = &[
 ];
 
 const GIT_BRANCHES_OVERVIEW: &[&str] = &[
-    "`Tab m` reviews merging this local or cached remote branch into the current branch. Cancel is selected initially; approval only applies the merge, and creating a merge commit requires a separate reviewed Continue and explicit message save. No remote access occurs.",
-    "`Tab d` compares the current committed tip with this local or cached remote branch. The comparison opens a file list with patch and split diff actions.",
+    "`{ui:context-launcher.open-actions} m` reviews merging this local or cached remote branch into the current branch. Cancel is selected initially; approval only applies the merge, and creating a merge commit requires a separate reviewed Continue and explicit message save. No remote access occurs.",
+    "`{ui:context-launcher.open-actions} d` compares the current committed tip with this local or cached remote branch. The comparison opens a file list with patch and split diff actions.",
     "The Local section comes first and marks the current branch with an asterisk. A `[worktree: /local/path]` note identifies every registered checkout. The Remote section lists locally cached remote-tracking refs; opening or refreshing this view does not fetch.",
     "A local branch that tracks a remote one carries its drift in brackets: `[↑2 ↓1]` is two commits it has that the upstream does not and one the upstream has that it does not, `[=]` is in step, and `[gone]` is an upstream that no longer exists. Each remote row names every local branch configured to track it, or says `[not tracked locally]`.",
     "Enter on a local row checks it out. On a remote row it checks out the one local branch tracking it, asks when several do, or creates a same-named local tracking branch when none does. A conflicting local name is presented for editing rather than silently reused.",
     "Checking out a branch is refused while the working tree, index, or an open file buffer has uncommitted changes. When any terminal session is still running, type the exact target branch name to acknowledge that its job will keep using the working directory while Git replaces files.",
-    "`Tab n` starts a new branch at the selected local or remote row and switches to it. `Tab w` creates a worktree for the selected branch and attaches to it in persistent mode; an already checked-out local branch points to its existing worktree instead of being forced into a second one.",
-    "`Tab D` reviews a selected local branch: Enter is enough when an upstream or another local branch retains its tip; otherwise type the exact branch name. Cached upstream state reflects the last fetch.",
+    "`{ui:context-launcher.open-actions} n` starts a new branch at the selected local or remote row and switches to it. `{ui:context-launcher.open-actions} w` creates a worktree for the selected branch and attaches to it in persistent mode; an already checked-out local branch points to its existing worktree instead of being forced into a second one.",
+    "`{ui:context-launcher.open-actions} D` reviews a selected local branch: Enter is enough when an upstream or another local branch retains its tip; otherwise type the exact branch name. Cached upstream state reflects the last fetch.",
     "A branch checked out in a registered worktree takes that worktree, and the persistent session on it, with it. One confirmation names all three levels and always asks for the exact branch name; accepting stops the session, removes the worktree, then deletes the branch, and a failure at any level stops there. More than one checkout, or a checkout at this Runyte root, is still refused.",
-    "`Tab p` fast-forwards the current branch onto what it tracks. When the two have both moved on it offers instead to replay the local commits on top of the upstream's: Enter rebases, Escape leaves the branch as it is, and a conflict undoes the replay rather than leaving a tree to resolve here. In the branch list it refuses a row that is not the current branch. `Tab P` publishes the selected branch, setting an upstream the first time; it never forces.",
-    "`Tab f` fetches just this cached remote branch or this local branch's configured remote upstream. It updates one remote-tracking ref, including a force-pushed tip, while preserving local branches, working files, other cached refs, and tags. Configure an upstream first when the local branch has none; a local `.` upstream cannot be fetched.",
+    "`{ui:context-launcher.open-actions} p` fast-forwards the current branch onto what it tracks. When the two have both moved on it offers instead to replay the local commits on top of the upstream's: Enter rebases, Escape leaves the branch as it is, and a conflict undoes the replay rather than leaving a tree to resolve here. In the branch list it refuses a row that is not the current branch. `{ui:context-launcher.open-actions} P` publishes the selected branch, setting an upstream the first time; it never forces.",
+    "`{ui:context-launcher.open-actions} f` fetches just this cached remote branch or this local branch's configured remote upstream. It updates one remote-tracking ref, including a force-pushed tip, while preserving local branches, working files, other cached refs, and tags. Configure an upstream first when the local branch has none; a local `.` upstream cannot be fetched.",
     "Fetch, pull, and push run in the background with a two-minute deadline, progress, and cancellation through `:git-cancel`. Nothing can prompt for a password while they run, so authentication that needs one fails instead of hanging.",
 ];
 
 const GIT_WORKTREES_OVERVIEW: &[&str] = &[
-    "`Tab d` compares the current committed tip with the selected checkout's HEAD, including detached checkouts. Local edits in either worktree are excluded.",
+    "`{ui:context-launcher.open-actions} d` compares the current committed tip with the selected checkout's HEAD, including detached checkouts. Local edits in either worktree are excluded.",
     "The worktree list shows every checkout registered with this repository. Paths are identities even when their display needs replacement characters.",
     "`detached` means HEAD points directly at a commit instead of a local branch. The checkout still works, but new commits do not advance a branch unless you create or switch to one.",
     "`missing` means Git still has this worktree registered, but its directory is absent from the filesystem.",
     "`prunable` means Git considers the registration stale and eligible for `git worktree prune`, usually because its administrative metadata or checkout path is gone. A row can be both missing and prunable.",
     "Enter opens the selected root as a separate workspace; it never retargets this workspace's buffers or language servers in place. Unsaved buffers refuse the switch.",
-    "`Tab n` names a new branch at the selected checkout's tip, asks for its worktree destination, and attaches there in persistent mode. Creating a worktree for an existing branch belongs to that branch's `Tab w` action in the branch list.",
-    "`Tab D` removes one ordinary worktree after confirmation, leaving its branch. It refuses Git changes and unsaved persistent-session buffers; unpublished tracked or unretained detached history needs the exact branch name or displayed path. Current, locked, bare, and unavailable worktrees are also refused.",
+    "`{ui:context-launcher.open-actions} n` names a new branch at the selected checkout's tip, asks for its worktree destination, and attaches there in persistent mode. Creating a worktree for an existing branch belongs to that branch's `{ui:context-launcher.open-actions} w` action in the branch list.",
+    "`{ui:context-launcher.open-actions} D` removes one ordinary worktree after confirmation, leaving its branch. It refuses Git changes and unsaved persistent-session buffers; unpublished tracked or unretained detached history needs the exact branch name or displayed path. Current, locked, bare, and unavailable worktrees are also refused.",
     "A clean session on the worktree is stopped and forgotten rather than refusing the removal. The confirmation names it and asks for the exact branch name for that reason alone. The session stops before Git is asked to remove the directory it owns, and the removal has to succeed before its record is forgotten, so a refusal at either point leaves everything below it alone. This happens in standalone mode too: stopping that host is part of the removal, not a `session` command.",
 ];
 
@@ -1167,6 +1167,34 @@ const GIT_BLAME_OVERVIEW: &[&str] = &[
 mod tests {
     use super::*;
     use crate::keymap::default_keymap;
+
+    #[test]
+    fn context_launcher_help_uses_effective_keys_in_prose_and_tables() {
+        for aliases in ["[F8]", "[]"] {
+            let source = format!("ui: {{context-launcher: {{open-actions: {aliases}}}}}");
+            let result = crate::keymap::configured::compile(
+                &serde_yaml::from_str(&source).unwrap(),
+                default_keymap(),
+            );
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            let document = render_document(
+                HelpTopic::GitStatus,
+                GrammarKind::Runyte,
+                BindingScope::GitStatus,
+                &result.keymap,
+                true,
+            );
+            let label = if aliases == "[]" { "unbound" } else { "F8" };
+            assert!(
+                document
+                    .text()
+                    .contains(&format!("{label} opens the action menu"))
+            );
+            assert!(document.text().contains(&format!("{label} s")));
+            assert!(!document.text().contains("Tab s"));
+            assert!(!roles_at(&document, label).is_empty());
+        }
+    }
 
     #[test]
     fn direct_configured_action_descriptions_remain_literal_prose() {
