@@ -563,10 +563,9 @@ impl App {
                 destination: None,
                 focus_entry: None,
             };
-            let message = confirmation.message();
             self.directory_reload_confirmation = Some(confirmation);
             self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-            self.status(message);
+            self.status_simple_confirmation();
             return Ok(());
         }
         self.reload_directory_buffer(buffer)
@@ -913,10 +912,9 @@ impl App {
                 destination: Some(path.to_path_buf()),
                 focus_entry: None,
             };
-            let message = confirmation.message();
             self.directory_reload_confirmation = Some(confirmation);
             self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-            self.status(message);
+            self.status_simple_confirmation();
             return Ok(None);
         }
         let view = self.listing_view();
@@ -2261,11 +2259,8 @@ impl App {
             generation: observation.generation,
             observation: observation.observation,
         };
-        self.status(confirmation.message(
-            self.buffers[buffer_id].external_file_status().is_stale(),
-            self.keymap(),
-        ));
         self.file_reload_confirmation = Some(confirmation);
+        self.status_simple_confirmation();
         self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
         Ok(())
     }

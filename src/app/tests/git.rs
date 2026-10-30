@@ -4029,6 +4029,15 @@ fn p_pulls_the_current_branch_and_shift_p_pushes_the_selected_one() {
 /// offers to replay the local ones on top rather than reporting a dead end.
 #[test]
 fn pulling_a_diverged_branch_offers_to_replay_the_local_commits() {
+    check_pull_confirmation(false);
+}
+
+#[test]
+fn configured_confirmation_rebase_preserves_cancel_and_mutation() {
+    check_pull_confirmation(true);
+}
+
+fn check_pull_confirmation(configured: bool) {
     use crate::git::{Divergence, MemoryGitProvider, Repository, Upstream};
 
     let root = temporary("git-diverged");
@@ -4058,6 +4067,9 @@ fn pulling_a_diverged_branch_offers_to_replay_the_local_commits() {
     )))));
     ports.replace_git(Box::new(Rc::clone(&provider)));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    if configured {
+        super::ui_confirmations::configure(&mut app, "confirmation", "F8");
+    }
     app.execute_command("git-branches").unwrap();
 
     context_action(&mut app, 'p');
@@ -4080,7 +4092,15 @@ fn pulling_a_diverged_branch_offers_to_replay_the_local_commits() {
     assert_eq!(provider.pulls(), 0, "nothing was fast-forwarded");
     assert_eq!(provider.rebases(), 0);
 
-    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    key(
+        &mut app,
+        if configured {
+            KeyCode::Function(10)
+        } else {
+            KeyCode::Escape
+        },
+        Modifiers::NONE,
+    );
 
     assert!(app.git_pull_rebase.is_none());
     assert_eq!(provider.rebases(), 0);
@@ -4098,10 +4118,25 @@ fn pulling_a_diverged_branch_offers_to_replay_the_local_commits() {
     )))));
     ports.replace_git(Box::new(Rc::clone(&provider)));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    if configured {
+        super::ui_confirmations::configure(&mut app, "confirmation", "F8");
+    }
     app.execute_command("git-branches").unwrap();
 
     context_action(&mut app, 'p');
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    if configured {
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert_eq!(provider.rebases(), 0);
+    }
+    key(
+        &mut app,
+        if configured {
+            KeyCode::Function(8)
+        } else {
+            KeyCode::Enter
+        },
+        Modifiers::NONE,
+    );
 
     assert!(app.git_pull_rebase.is_none());
     assert_eq!(provider.rebases(), 1);
@@ -6415,7 +6450,21 @@ fn closing_an_edited_explorer_requires_force_and_touches_no_files() {
 /// file changed underneath and a stale buffer would refuse its next save.
 #[test]
 fn discarding_restores_the_file_and_reloads_its_buffer() {
+    check_discard_confirmation(None);
+}
+
+#[test]
+fn configured_confirmation_git_discard_preserves_effect_and_target() {
+    for accept in ["F8", "Esc"] {
+        check_discard_confirmation(Some(accept));
+    }
+}
+
+fn check_discard_confirmation(accept: Option<&str>) {
     let (root, mut app, provider) = staged_project("discard");
+    if let Some(accept) = accept {
+        super::ui_confirmations::configure(&mut app, "confirmation", accept);
+    }
     let path = root.join("lorem.md");
     fs::write(&path, "edited on disk\n").unwrap();
     app.open_file(path.clone()).unwrap();
@@ -6424,7 +6473,8 @@ fn discarding_restores_the_file_and_reloads_its_buffer() {
 
     app.execute_command("git-discard").unwrap();
     assert!(
-        app.status.contains("Press Enter to discard"),
+        app.status
+            .contains(&format!("Press {} to discard", accept.unwrap_or("Enter"))),
         "{}",
         app.status
     );
@@ -6440,7 +6490,14 @@ fn discarding_restores_the_file_and_reloads_its_buffer() {
 
     // The fake restores by truncating; the point is that the buffer follows.
     fs::write(&path, "committed\n").unwrap();
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    if accept.is_some() {
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert!(provider.discards().is_empty());
+    }
+    app.handle_input(InputEvent::Key(
+        KeyStroke::parse(accept.unwrap_or("Enter")).unwrap(),
+    ))
+    .unwrap();
 
     assert!(!app.status_error, "{}", app.status);
     assert_eq!(provider.discards(), vec![PathBuf::from("lorem.md")]);

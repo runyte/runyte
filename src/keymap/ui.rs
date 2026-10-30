@@ -34,10 +34,12 @@ pub enum Owner {
     Finder,
     SessionDirectory,
     SessionInventory,
+    Confirmation,
+    StashConfirmation,
 }
 
 impl Owner {
-    const ALL: [Self; 17] = [
+    const ALL: [Self; 19] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -55,6 +57,8 @@ impl Owner {
         Self::Finder,
         Self::SessionDirectory,
         Self::SessionInventory,
+        Self::Confirmation,
+        Self::StashConfirmation,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -75,6 +79,8 @@ impl Owner {
             Self::Finder => "finder",
             Self::SessionDirectory => "session-directory",
             Self::SessionInventory => "session-inventory",
+            Self::Confirmation => "confirmation",
+            Self::StashConfirmation => "stash-confirmation",
         }
     }
     pub fn is_session_navigation(self) -> bool {
@@ -117,6 +123,7 @@ impl Owner {
             }
             Self::Path => &[OpenActions, Cancel],
             Self::PluginManagerActions => &[Cancel],
+            Self::Confirmation | Self::StashConfirmation => &[Accept, Cancel],
             Self::FilePicker | Self::Finder => picker::actions(self),
             Self::SessionDirectory | Self::SessionInventory => session_navigation::actions(self),
             Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
@@ -138,6 +145,9 @@ impl Owner {
             | Self::ProgramActions
             | Self::BufferActions
             | Self::TerminalActions => false,
+            Self::Confirmation | Self::StashConfirmation => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+            }
             Self::SessionActions => matches!(key.code, KeyCode::Char(c) if c.is_control()),
             Self::FilePicker | Self::Finder | Self::PluginManagerActions => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control())
@@ -365,7 +375,16 @@ impl Bindings {
     /// Compact titles name a bounded subset of effective aliases; the full
     /// action legend can still use `label` to show every authored spelling.
     pub fn compact_label(&self, owner: Owner, action: Action, aliases: usize) -> String {
-        self.owner_bindings(owner, true)
+        self.compact_label_with_leader(owner, action, aliases, true)
+    }
+    pub fn compact_label_with_leader(
+        &self,
+        owner: Owner,
+        action: Action,
+        aliases: usize,
+        leader_active: bool,
+    ) -> String {
+        self.owner_bindings(owner, leader_active)
             .labels
             .get(&action)
             .filter(|keys| !keys.is_empty())
@@ -455,6 +474,18 @@ impl OwnerBindings {
 
 fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     use Action::*;
+    if matches!(owner, Owner::Confirmation | Owner::StashConfirmation) {
+        return match key.code {
+            KeyCode::Enter => Some(Accept),
+            KeyCode::Escape => Some(Cancel),
+            KeyCode::Char('c')
+                if owner == Owner::Confirmation && key.modifiers.contains(Modifiers::CONTROL) =>
+            {
+                Some(Cancel)
+            }
+            _ => None,
+        };
+    }
     if owner.is_session_navigation() {
         return session_navigation::legacy_action(owner, key);
     }
@@ -511,6 +542,14 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if matches!(owner, Owner::Confirmation | Owner::StashConfirmation) {
+        return match action {
+            Action::Accept => &["Enter"],
+            Action::Cancel if owner == Owner::Confirmation => &["Esc", "Ctrl-c"],
+            Action::Cancel => &["Esc"],
+            _ => &[],
+        };
+    }
     if owner.is_session_navigation() {
         return session_navigation::labels(action);
     }

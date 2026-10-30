@@ -3629,10 +3629,7 @@ impl App {
                 self.buffer_action_menu = None;
                 self.buffer_discard_confirmation = Some(buffer);
                 self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-                self.status(format!(
-                    "Discard changes to {}?\nEnter confirms.\nEscape cancels.",
-                    self.buffers[buffer].display_name()
-                ));
+                self.status_simple_confirmation();
             }
             BufferAction::Close => self.close_buffer(buffer),
             BufferAction::CloseHidden => {

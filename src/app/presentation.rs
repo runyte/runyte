@@ -1718,6 +1718,10 @@ impl App {
                     crate::command::EditorCommand::ListAccept,
                 ));
         }
+        if self.simple_confirmation_ui_owner().is_some() {
+            return self.simple_confirmation_action(*key)
+                == Some(crate::keymap::ui::Action::Accept);
+        }
         if key.code == KeyCode::Escape {
             return false;
         }
@@ -1759,15 +1763,147 @@ impl App {
         self.settings_view.is_some()
     }
 
+    pub(super) fn status_simple_confirmation(&mut self) {
+        if let Some(confirmation) = self.confirmation_overlay() {
+            self.status(confirmation.message);
+        }
+    }
+
+    pub(super) fn simple_confirmation_keys(&self) -> (String, String) {
+        use crate::keymap::ui::{Action, Owner};
+        let owner = self
+            .simple_confirmation_ui_owner()
+            .unwrap_or(Owner::Confirmation);
+        let label = |action| {
+            self.keymap.ui().compact_label_with_leader(
+                owner,
+                action,
+                1,
+                self.space_dismisses_input_overlay(),
+            )
+        };
+        let cancel = label(Action::Cancel);
+        (
+            label(Action::Accept),
+            if cancel == "Esc" {
+                "Escape".into()
+            } else {
+                cancel
+            },
+        )
+    }
+
+    pub(super) fn simple_confirmation_message(&self, message: &str) -> String {
+        let (accept, cancel) = self.simple_confirmation_keys();
+        format!("{message}\n{accept} confirms.\n{cancel} cancels.")
+    }
+
     /// Describes the one pending yes/no decision without borrowing the status
     /// line. Service feedback and action echoes may change while a decision is
     /// open; its popup must continue to name the exact operation Enter accepts.
     fn confirmation_overlay(&self) -> Option<ConfirmationOverlay> {
+        let (accept_key, cancel_key) = self.simple_confirmation_keys();
         if let Some(confirmation) = &self.plugins.provider_overwrite {
             return Some(ConfirmationOverlay {
                 title: "Overwrite remote document",
                 accept: "overwrite remote document",
                 message: confirmation.message(),
+                input: None,
+            });
+        }
+        if let Some(confirmation) = &self.directory_reload_confirmation {
+            return Some(ConfirmationOverlay {
+                title: "Discard directory edits",
+                accept: if confirmation.destination.is_some() {
+                    "discard and open"
+                } else {
+                    "discard and refresh"
+                },
+                message: confirmation.message(&accept_key, &cancel_key),
+                input: None,
+            });
+        }
+        if let Some(confirmation) = &self.file_reload_confirmation {
+            return Some(ConfirmationOverlay {
+                title: "Reload file",
+                accept: "reload and discard",
+                message: confirmation.message(
+                    self.buffers[confirmation.buffer]
+                        .external_file_status()
+                        .is_stale(),
+                    self.keymap(),
+                    &accept_key,
+                    &cancel_key,
+                ),
+                input: None,
+            });
+        }
+        if let Some(confirmation) = &self.git_discard_confirmation {
+            return Some(ConfirmationOverlay {
+                title: "Discard Git changes",
+                accept: "discard changes",
+                message: confirmation.message(&accept_key, &cancel_key),
+                input: None,
+            });
+        }
+        if let Some(confirmation) = &self.git_stash_confirmation {
+            let (title, accept) = match &confirmation.mutation {
+                StashMutation::Create { .. } => ("Create stash", "create stash"),
+                StashMutation::Apply { .. } => ("Apply stash", "apply stash"),
+                StashMutation::Drop { .. } => ("Drop stash", "drop stash"),
+            };
+            return Some(ConfirmationOverlay {
+                title,
+                accept,
+                message: self.simple_confirmation_message(&confirmation.message),
+                input: None,
+            });
+        }
+        if let Some(confirmation) = &self.git_branch_switch {
+            return Some(ConfirmationOverlay {
+                title: "Switch branch",
+                accept: "switch branches",
+                message: confirmation.action.message(),
+                input: Some((confirmation.input.clone(), confirmation.cursor)),
+            });
+        }
+        if let Some(confirmation) = &self.git_branch_deletion {
+            return Some(ConfirmationOverlay {
+                title: "Delete branch",
+                accept: "delete branch",
+                message: confirmation.message(),
+                input: confirmation
+                    .typed()
+                    .then(|| (confirmation.input.clone(), confirmation.cursor)),
+            });
+        }
+        if let Some(confirmation) = &self.git_pull_rebase {
+            return Some(ConfirmationOverlay {
+                title: "Replay commits",
+                accept: "replay commits",
+                message: confirmation.message(&accept_key, &cancel_key),
+                input: None,
+            });
+        }
+        if let Some(confirmation) = &self.git_worktree_removal {
+            return Some(ConfirmationOverlay {
+                title: "Remove worktree",
+                accept: "remove worktree",
+                message: confirmation.message(),
+                input: confirmation
+                    .typed()
+                    .then(|| (confirmation.input.clone(), confirmation.cursor)),
+            });
+        }
+        if let Some(buffer) = self.buffer_discard_confirmation {
+            let name = self
+                .buffers
+                .get(buffer)
+                .map_or_else(|| "buffer".to_owned(), Buffer::display_name);
+            return Some(ConfirmationOverlay {
+                title: "Discard buffer changes",
+                accept: "discard changes",
+                message: self.simple_confirmation_message(&format!("Discard changes to {name}?")),
                 input: None,
             });
         }
@@ -1796,100 +1932,7 @@ impl App {
                 input: None,
             });
         }
-        if let Some(confirmation) = &self.file_reload_confirmation {
-            return Some(ConfirmationOverlay {
-                title: "Reload file",
-                accept: "reload and discard",
-                message: confirmation.message(
-                    self.buffers[confirmation.buffer]
-                        .external_file_status()
-                        .is_stale(),
-                    self.keymap(),
-                ),
-                input: None,
-            });
-        }
-        if let Some(confirmation) = &self.directory_reload_confirmation {
-            return Some(ConfirmationOverlay {
-                title: "Discard directory edits",
-                accept: if confirmation.destination.is_some() {
-                    "discard and open"
-                } else {
-                    "discard and refresh"
-                },
-                message: confirmation.message(),
-                input: None,
-            });
-        }
-        if let Some(buffer) = self.buffer_discard_confirmation {
-            let name = self
-                .buffers
-                .get(buffer)
-                .map_or_else(|| "buffer".to_owned(), Buffer::display_name);
-            return Some(ConfirmationOverlay {
-                title: "Discard buffer changes",
-                accept: "discard changes",
-                message: format!("Discard changes to {name}?\nEnter confirms.\nEscape cancels."),
-                input: None,
-            });
-        }
-        if let Some(confirmation) = &self.git_discard_confirmation {
-            return Some(ConfirmationOverlay {
-                title: "Discard Git changes",
-                accept: "discard changes",
-                message: confirmation.message(),
-                input: None,
-            });
-        }
-        if let Some(confirmation) = &self.git_stash_confirmation {
-            let (title, accept) = match &confirmation.mutation {
-                StashMutation::Create { .. } => ("Create stash", "create stash"),
-                StashMutation::Apply { .. } => ("Apply stash", "apply stash"),
-                StashMutation::Drop { .. } => ("Drop stash", "drop stash"),
-            };
-            return Some(ConfirmationOverlay {
-                title,
-                accept,
-                message: confirmation.message.clone(),
-                input: None,
-            });
-        }
-        if let Some(confirmation) = &self.git_branch_switch {
-            return Some(ConfirmationOverlay {
-                title: "Switch branch",
-                accept: "switch branches",
-                message: confirmation.action.message(),
-                input: Some((confirmation.input.clone(), confirmation.cursor)),
-            });
-        }
-        if let Some(confirmation) = &self.git_branch_deletion {
-            return Some(ConfirmationOverlay {
-                title: "Delete branch",
-                accept: "delete branch",
-                message: confirmation.message(),
-                input: confirmation
-                    .typed()
-                    .then(|| (confirmation.input.clone(), confirmation.cursor)),
-            });
-        }
-        if let Some(confirmation) = &self.git_pull_rebase {
-            return Some(ConfirmationOverlay {
-                title: "Replay commits",
-                accept: "replay commits",
-                message: confirmation.message(),
-                input: None,
-            });
-        }
-        self.git_worktree_removal
-            .as_ref()
-            .map(|confirmation| ConfirmationOverlay {
-                title: "Remove worktree",
-                accept: "remove worktree",
-                message: confirmation.message(),
-                input: confirmation
-                    .typed()
-                    .then(|| (confirmation.input.clone(), confirmation.cursor)),
-            })
+        None
     }
 
     pub(crate) fn native_prompt_input_rejected(&self) -> bool {
@@ -2829,6 +2872,21 @@ impl App {
                 ),
                 OverlayAction::new("Esc", "cancel"),
             ];
+            if let Some(owner) = self.simple_confirmation_ui_owner() {
+                use crate::keymap::ui::Action;
+                let label = |action| {
+                    self.keymap.ui().compact_label_with_leader(
+                        owner,
+                        action,
+                        1,
+                        self.space_dismisses_input_overlay(),
+                    )
+                };
+                overlay.actions = vec![
+                    OverlayAction::new(label(Action::Accept), confirmation.accept),
+                    OverlayAction::new(label(Action::Cancel), "cancel"),
+                ];
+            }
             if self.list_layer_input_active()
                 && self.list_menu_ui_owner() == Some(crate::keymap::ui::Owner::TerminalActions)
                 && self.terminal_action_menu.as_ref().is_some_and(|menu| {

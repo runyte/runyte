@@ -278,6 +278,15 @@ for example, removing this owner's cancel makes Escape perform `list-close`
 unless you also change Escape in `global.list`. Removing its inherited leader
 restores literal filter input without an implicit Escape translation.
 
+The `confirmation` owner supports `accept` and `cancel` for file and directory
+reloads, buffer and Git discard, and pull/rebase confirmation. Defaults are Enter
+and Esc/Ctrl-c. `stash-confirmation` has the same actions but defaults to Enter
+and Esc; Ctrl-c remains inert there. Both inherit leader cancellation only where
+the existing overlay allows it (for example, an underlying nonempty filter
+suppresses it). Replacing `cancel` also replaces inherited leader cancellation.
+A remapped acceptance still revalidates the captured file, repository, or other
+target, and requires the current presented frame wherever that check applies.
+
 The `session-directory` and `session-inventory` owners handle direct session
 navigation independently of `global.list`. They support `next`, `previous`,
 `page-up`, `page-down`, `first`, `last`, `accept`, `cancel`, and `backspace`.

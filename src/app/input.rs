@@ -1971,16 +1971,16 @@ impl App {
             return self.handle_fs_confirmation(legacy_key);
         }
         if self.directory_reload_confirmation.is_some() {
-            return self.handle_directory_reload_confirmation(legacy_key);
+            return self.handle_directory_reload_confirmation(key);
         }
         if self.file_reload_confirmation.is_some() {
-            return self.handle_file_reload_confirmation(legacy_key);
+            return self.handle_file_reload_confirmation(key);
         }
         if self.git_discard_confirmation.is_some() {
-            return self.handle_git_discard_confirmation(legacy_key);
+            return self.handle_git_discard_confirmation(key);
         }
         if self.git_stash_confirmation.is_some() {
-            return self.handle_git_stash_confirmation(legacy_key);
+            return self.handle_git_stash_confirmation(key);
         }
         if self.git_branch_switch.is_some() {
             return self.handle_branch_switch_confirmation(legacy_key);
@@ -1989,13 +1989,13 @@ impl App {
             return self.handle_branch_deletion_confirmation(legacy_key);
         }
         if self.git_pull_rebase.is_some() {
-            return self.handle_pull_rebase_confirmation(legacy_key);
+            return self.handle_pull_rebase_confirmation(key);
         }
         if self.git_worktree_removal.is_some() {
             return self.handle_worktree_removal_confirmation(legacy_key);
         }
         if self.buffer_discard_confirmation.is_some() {
-            return self.handle_buffer_discard_confirmation(legacy_key);
+            return self.handle_buffer_discard_confirmation(key);
         }
         if self.context_action_menu.is_some() {
             return self.handle_context_action_key(key);
@@ -3278,6 +3278,54 @@ impl App {
         self.normalize_buffer(buffer_id);
     }
 
+    pub(super) fn simple_confirmation_ui_owner(&self) -> Option<crate::keymap::ui::Owner> {
+        use crate::keymap::ui::Owner;
+        if self.context_overlay_active()
+            || self.plugins.input.is_some()
+            || self.plugins.provider_reload.is_some()
+            || self.plugins.provider_overwrite.is_some()
+            || self.session_inventory_open()
+            || self.session_directory_chooser_open()
+            || self.merge_ui.review.is_some()
+            || self.directory_tree_delete.is_some()
+            || self.directory_tree_destination.is_some()
+            || self.fs_confirmation.is_some()
+        {
+            return None;
+        }
+        if self.directory_reload_confirmation.is_some()
+            || self.file_reload_confirmation.is_some()
+            || self.git_discard_confirmation.is_some()
+        {
+            return Some(Owner::Confirmation);
+        }
+        if self.git_stash_confirmation.is_some() {
+            return Some(Owner::StashConfirmation);
+        }
+        if self.git_branch_switch.is_some() || self.git_branch_deletion.is_some() {
+            return None;
+        }
+        if self.git_pull_rebase.is_some() {
+            return Some(Owner::Confirmation);
+        }
+        if self.git_worktree_removal.is_some() {
+            return None;
+        }
+        self.buffer_discard_confirmation
+            .map(|_| Owner::Confirmation)
+    }
+
+    pub(super) fn simple_confirmation_action(
+        &self,
+        key: KeyStroke,
+    ) -> Option<crate::keymap::ui::Action> {
+        self.keymap.ui().lookup_with_leader(
+            self.simple_confirmation_ui_owner()?,
+            key,
+            self.space_dismisses_input_overlay(),
+        )
+    }
+
     fn handle_fs_confirmation(&mut self, key: KeyStroke) -> Result<()> {
         let control = key.modifiers.contains(Modifiers::CONTROL);
         match (key.code, key.modifiers) {
@@ -3340,16 +3388,12 @@ impl App {
     }
 
     fn handle_directory_reload_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        match self.simple_confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 self.directory_reload_confirmation = None;
                 self.status("directory refresh cancelled");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.directory_reload_confirmation = None;
-                self.status("directory refresh cancelled");
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let Some(confirmation) = self.directory_reload_confirmation.take() else {
                     return Ok(());
                 };
@@ -3373,16 +3417,12 @@ impl App {
     }
 
     fn handle_git_discard_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        match self.simple_confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 self.git_discard_confirmation = None;
                 self.status("discard cancelled; nothing was changed");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.git_discard_confirmation = None;
-                self.status("discard cancelled; nothing was changed");
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let Some(confirmation) = self.git_discard_confirmation.take() else {
                     return Ok(());
                 };
@@ -3478,10 +3518,9 @@ impl App {
     }
 
     fn handle_pull_rebase_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        let cancelled = match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => true,
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => true,
-            (KeyCode::Enter, _) => {
+        let cancelled = match self.simple_confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => true,
+            Some(crate::keymap::ui::Action::Accept) => {
                 if self.git_pull_rebase.take().is_some() {
                     self.rebase_onto_upstream();
                 }
@@ -3563,16 +3602,12 @@ impl App {
     }
 
     fn handle_buffer_discard_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        match self.simple_confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 self.buffer_discard_confirmation = None;
                 self.status("discard cancelled");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.buffer_discard_confirmation = None;
-                self.status("discard cancelled");
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let Some(buffer) = self.buffer_discard_confirmation.take() else {
                     return Ok(());
                 };
@@ -3584,16 +3619,12 @@ impl App {
     }
 
     fn handle_file_reload_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        match self.simple_confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 self.file_reload_confirmation = None;
                 self.status("reload cancelled");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.file_reload_confirmation = None;
-                self.status("reload cancelled");
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let Some(mut confirmation) = self.file_reload_confirmation.take() else {
                     return Ok(());
                 };

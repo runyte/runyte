@@ -776,3 +776,59 @@ fn compact_ui_labels_use_effective_authored_aliases_and_preserve_unbound_state()
         "F10/F11/F12"
     );
 }
+
+#[test]
+fn simple_confirmation_defaults_preserve_every_modifier_and_stash_ctrl_c_exception() {
+    let bindings = Bindings::default();
+    for owner in [Owner::Confirmation, Owner::StashConfirmation] {
+        for bits in 0..64 {
+            let modifiers = Modifiers::from_bits(bits).unwrap();
+            for (code, expected) in [
+                (KeyCode::Enter, Some(Action::Accept)),
+                (KeyCode::Escape, Some(Action::Cancel)),
+                (
+                    KeyCode::Char('c'),
+                    (owner == Owner::Confirmation && modifiers.contains(Modifiers::CONTROL))
+                        .then_some(Action::Cancel),
+                ),
+                (KeyCode::Tab, None),
+            ] {
+                assert_eq!(
+                    bindings.lookup(owner, KeyStroke::new(code, modifiers)),
+                    expected
+                );
+            }
+        }
+        let (bindings, errors) = configured(&format!(
+            "{}: {{accept: [Esc], cancel: [F10]}}",
+            owner.name()
+        ));
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            bindings.lookup(owner, KeyStroke::plain(KeyCode::Enter)),
+            None
+        );
+        assert_eq!(
+            bindings.lookup(owner, KeyStroke::plain(KeyCode::Escape)),
+            Some(Action::Accept)
+        );
+        assert_eq!(bindings.lookup(owner, KeyStroke::char(' ')), None);
+        assert_eq!(
+            bindings.lookup(owner, KeyStroke::new(KeyCode::Escape, Modifiers::ALT)),
+            None
+        );
+        let (bindings, errors) =
+            configured(&format!("{}: {{accept: [], cancel: []}}", owner.name()));
+        assert!(errors.is_empty());
+        assert_eq!(
+            bindings.lookup(owner, KeyStroke::plain(KeyCode::Escape)),
+            None
+        );
+        assert_eq!(
+            bindings.lookup(owner, KeyStroke::plain(KeyCode::Enter)),
+            None
+        );
+        assert_eq!(bindings.lookup(owner, KeyStroke::char(' ')), None);
+        assert!(owner.structural(KeyStroke::char('\n')));
+    }
+}

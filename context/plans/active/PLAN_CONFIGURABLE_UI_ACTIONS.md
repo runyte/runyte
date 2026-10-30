@@ -270,3 +270,15 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   an Open-with title clipping regression from expanded prompt aliases; compact
   effective labels fix it and the exact integration regression now passes. Final
   full-suite validation remains pending.
+- Simple reload/discard/rebase confirmations and stash confirmations now resolve
+  shared actions using raw input and the existing conditional leader policy.
+  Stash has a separate owner to preserve its inert Ctrl-c default. Presented
+  approval checks resolve effective acceptance before the Escape exemption;
+  existing repeat behavior and target revalidation are unchanged. Body, status
+  and compact footer hints read effective bindings. Astra identified conflicting
+  display/input order for stacked decisions; concrete dialog selection now follows
+  dispatch, with stacked stash/buffer and armed-terminal/buffer regressions.
+  Astra cleared production changes; all 41 confirmation tests passed, including
+  remap/removal, stale disk/repository captures, actual discard/rebase effects,
+  dynamic hints and stacked owner behavior. Text and filesystem confirmations
+  remain separate pending checkpoints.

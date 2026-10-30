@@ -1087,7 +1087,7 @@ struct FileReloadConfirmation {
 }
 
 impl FileReloadConfirmation {
-    fn message(&self, stale: bool, keymap: &Keymap) -> String {
+    fn message(&self, stale: bool, keymap: &Keymap, accept: &str, cancel: &str) -> String {
         let mut message = format!(
             "Reload {} and discard unsaved Runyte changes and their undo history?",
             self.path.display()
@@ -1103,21 +1103,22 @@ impl FileReloadConfirmation {
                 .text,
             );
         }
-        message.push_str("\nEnter confirms.\nEscape cancels.");
+        message.push_str(&format!("\n{accept} confirms.\n{cancel} cancels."));
         message
     }
 }
 
 impl DirectoryReloadConfirmation {
-    fn message(&self) -> String {
+    fn message(&self, accept: &str, cancel: &str) -> String {
         match self.destination.as_deref() {
             Some(path) => format!(
-                "Discard unsaved directory edits and open {}?\nEnter confirms.\nEscape cancels.",
+                "Discard unsaved directory edits and open {}?\n{accept} confirms.\n{cancel} cancels.",
                 path.display()
             ),
             None => {
-                "Discard unsaved directory edits and refresh?\nEnter confirms.\nEscape cancels."
-                    .to_owned()
+                format!(
+                    "Discard unsaved directory edits and refresh?\n{accept} confirms.\n{cancel} cancels."
+                )
             }
         }
     }
@@ -1487,12 +1488,12 @@ struct GitDiscardConfirmation {
 }
 
 impl GitDiscardConfirmation {
-    fn message(&self) -> String {
+    fn message(&self, accept: &str, cancel: &str) -> String {
         let what = match self.paths.as_slice() {
             [only] => only.display().to_string(),
             many => format!("{} paths", many.len()),
         };
-        let mut sentences = vec![format!("Press Enter to discard changes to {what}.")];
+        let mut sentences = vec![format!("Press {accept} to discard changes to {what}.")];
         if self.skipped_untracked > 0 {
             sentences.push(format!(
                 "{} untracked file{} will be left alone.",
@@ -1501,7 +1502,7 @@ impl GitDiscardConfirmation {
             ));
         }
         sentences.push("This cannot be undone.".to_owned());
-        sentences.push("Escape keeps them.".to_owned());
+        sentences.push(format!("{cancel} keeps them."));
         sentences.join("\n")
     }
 }
@@ -1746,7 +1747,7 @@ struct PullRebaseConfirmation {
 }
 
 impl PullRebaseConfirmation {
-    fn message(&self) -> String {
+    fn message(&self, accept: &str, cancel: &str) -> String {
         let Self {
             branch,
             upstream,
@@ -1754,9 +1755,9 @@ impl PullRebaseConfirmation {
             behind,
         } = self;
         format!(
-            "Branch {branch} and {upstream} have both moved on.\nPress Enter to replay {ahead} local \
+            "Branch {branch} and {upstream} have both moved on.\nPress {accept} to replay {ahead} local \
              commit{} on top of the {behind} on {upstream}.\nA conflict undoes the replay and \
-             changes nothing.\nEscape leaves the branch as it is.",
+             changes nothing.\n{cancel} leaves the branch as it is.",
             if *ahead == 1 { "" } else { "s" }
         )
     }
