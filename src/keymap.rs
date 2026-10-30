@@ -1152,6 +1152,11 @@ impl Keymap {
         }
     }
 
+    pub(crate) fn list_key_is_configured(&self, scope: BindingScope, key: Key) -> bool {
+        self.overrides
+            .affects(Mode::List, scope, &KeySequence::from(key), false)
+    }
+
     pub fn lookup(&self, mode: Mode, sequence: &KeySequence) -> Lookup<'_> {
         self.lookup_in(mode, BindingScope::Global, sequence)
     }
@@ -2761,7 +2766,7 @@ fn list_bindings() -> Vec<Binding> {
     let manager = |sequence: Key, target: BindingTarget| {
         Binding::implemented_in(LIST, BindingScope::SessionManager, sequence, target)
     };
-    vec![
+    let mut bindings = vec![
         list(Key::ctrl('n'), Command::ListNext),
         platform(Key::plain(KeyCode::Down), Command::ListNext),
         list(Key::ctrl('p'), Command::ListPrevious),
@@ -2780,7 +2785,31 @@ fn list_bindings() -> Vec<Binding> {
         manager(Key::ctrl('o'), Command::OpenSessionDirectory.into()),
         manager(Key::ctrl('e'), Command::OpenSessionDestinations.into()),
         manager(Key::ctrl('g'), ColonCommand::GitWorktrees.into()),
-    ]
+    ];
+    // These three former raw list actions accepted every modifier mask.
+    // Materialize the compatibility spellings so exact scoped overrides,
+    // validation and discovery all see the same effective bindings.
+    for (code, command) in [
+        (KeyCode::Enter, Command::ListAccept),
+        (KeyCode::Tab, Command::ListOpenActions),
+        (KeyCode::Backspace, Command::ListBackspace),
+    ] {
+        for bits in 0..64 {
+            let key = Key::new(code, Modifiers::from_bits(bits).expect("six-bit modifiers"));
+            let binding = if bits == 0 {
+                list(key, command)
+            } else {
+                platform(key, command)
+            };
+            if !bindings
+                .iter()
+                .any(|existing| existing.sequence == binding.sequence)
+            {
+                bindings.push(binding);
+            }
+        }
+    }
+    bindings
 }
 
 /// The four keys single-key pane movement claims, and where each one goes.
@@ -3760,11 +3789,6 @@ mod tests {
                     !matches!(key.code, KeyCode::Char(_))
                         || key.modifiers.contains(Modifiers::CONTROL),
                     "{keymap_name} list binding {} would take filter text",
-                    key.label()
-                );
-                assert!(
-                    !matches!(key.code, KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace),
-                    "{keymap_name} list binding {} is list grammar",
                     key.label()
                 );
             }

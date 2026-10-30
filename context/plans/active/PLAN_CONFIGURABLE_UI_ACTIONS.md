@@ -225,3 +225,17 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   library tests passed (16 ignored), including navigation, acceptance, both split
   axes, query ownership and publication timing; root Clippy, formatting and guide
   validation passed.
+- Lists expose `list-accept`, `list-open-actions`, and `list-backspace` through
+  their existing scoped registry. Explicit compatibility rows preserve every
+  legacy modifier mask; exact overrides retain sibling aliases. Direct workflow
+  dispatch preserves report no-ops and owner cleanup. Leader resolution follows
+  effective Escape, consumes tombstones, and drives truthful hints. Stale-row
+  guards retain nested-owner precedence. LSP presented-frame checks and Windows
+  plugin handoff classification use active ownership and configured provenance.
+  Astra reviewed and cleared the implementation after regressions were added for
+  covering confirmations, nested stale selection, named leaders and fresh versus
+  repeated/replayed acceptance. Full library validation passed 4,118 tests with
+  only the command-inventory count assertion failing; that count was updated and
+  its test passed separately, as did an additional report-remapping regression.
+  Formatting, guide validation and root Clippy passed. Nested menus and their
+  separate cancellation/confirmation policies remain the next checkpoint.

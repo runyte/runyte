@@ -178,9 +178,6 @@ fn structural_and_unmigrated_handlers_cannot_be_shadowed_or_silently_unbound() {
     for (scope, mode, key) in [
         ("global", "list", "1"),
         ("session-manager", "list", "Meta-2"),
-        ("global", "list", "Enter"),
-        ("global", "list", "Ctrl-Tab"),
-        ("global", "list", "Backspace"),
         ("global", "list", "Space"),
         ("markdown", "normal", "Tab"),
         ("git-merge-input", "normal", "Left"),
@@ -460,5 +457,55 @@ fn terminal_help_and_routing_follow_scoped_remaps_and_removals() {
     assert_eq!(
         map.terminal_input_route(keymap::Key::ctrl('w'), false, false),
         keymap::terminal_input::Route::Child
+    );
+}
+
+#[test]
+fn list_raw_action_defaults_cover_all_modifiers_and_exact_overrides() {
+    use crate::input::{KeyCode, KeyStroke, Modifiers};
+    let defaults = keymap::default_keymap();
+    let edited = configured(
+        "scopes: {global: {list: {Enter: null, Ctrl-Tab: list-backspace, F8: list-accept, F9: list-open-actions}}}",
+    );
+    for bits in 0..64 {
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        for (code, expected) in [
+            (KeyCode::Enter, EditorCommand::ListAccept),
+            (KeyCode::Tab, EditorCommand::ListOpenActions),
+            (KeyCode::Backspace, EditorCommand::ListBackspace),
+        ] {
+            let key = KeyStroke::new(code, modifiers);
+            assert_eq!(
+                defaults.list_binding(S::Global, key).map(|b| b.target),
+                Some(expected.into())
+            );
+            let override_target = if code == KeyCode::Enter && modifiers.is_empty() {
+                None
+            } else if code == KeyCode::Tab && modifiers == Modifiers::CONTROL {
+                Some(EditorCommand::ListBackspace.into())
+            } else {
+                Some(expected.into())
+            };
+            for scope in [S::Global, S::SessionManager] {
+                assert_eq!(
+                    edited.list_binding(scope, key).map(|b| b.target),
+                    override_target
+                );
+            }
+        }
+    }
+    assert_eq!(
+        edited
+            .list_binding(S::Global, KeyStroke::parse("F8").unwrap())
+            .unwrap()
+            .target,
+        EditorCommand::ListAccept.into()
+    );
+    assert_eq!(
+        edited
+            .list_binding(S::Global, KeyStroke::parse("F9").unwrap())
+            .unwrap()
+            .target,
+        EditorCommand::ListOpenActions.into()
     );
 }

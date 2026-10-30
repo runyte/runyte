@@ -684,11 +684,63 @@ impl App {
         result
     }
 
+    /// The generic list receives input only after every covering owner. Keep
+    /// approval classification on that same ownership boundary.
+    pub(super) fn list_input_active(&self) -> bool {
+        self.list.is_some()
+            && self.macro_replay.is_none()
+            && !self.context_overlay_active()
+            && self.plugins.input.is_none()
+            && self.plugins.provider_reload.is_none()
+            && self.plugins.provider_overwrite.is_none()
+            && !self.session_inventory_open()
+            && !self.session_directory_chooser_open()
+            && self.merge_ui.review.is_none()
+            && self.directory_tree_delete.is_none()
+            && self.directory_tree_destination.is_none()
+            && self.fs_confirmation.is_none()
+            && self.directory_reload_confirmation.is_none()
+            && self.file_reload_confirmation.is_none()
+            && self.git_discard_confirmation.is_none()
+            && self.git_stash_confirmation.is_none()
+            && self.git_branch_switch.is_none()
+            && self.git_branch_deletion.is_none()
+            && self.git_pull_rebase.is_none()
+            && self.git_worktree_removal.is_none()
+            && self.buffer_discard_confirmation.is_none()
+            && self.context_action_menu.is_none()
+            && self.program_action_menu.is_none()
+            && self.path_action_menu.is_none()
+            && self.path_popup.is_none()
+            && self.picker.is_none()
+            && self.terminal_action_menu.is_none()
+            && self.session_action_menu.is_none()
+            && self.buffer_action_menu.is_none()
+    }
+
     pub(super) fn fresh_physical_approval_key(&self, input: &InputEvent) -> bool {
         let InputEvent::Key(key) = input else {
             return false;
         };
         let plain_enter = key.code == KeyCode::Enter && key.modifiers.is_empty();
+        if self.list_input_active() {
+            let resolved = self.list_registry_key(*key);
+            if self.plugin_manager_actions_open()
+                && (resolved.code == KeyCode::Escape
+                    || (resolved.code == KeyCode::Char('c')
+                        && resolved.modifiers.contains(Modifiers::CONTROL)))
+            {
+                return false;
+            }
+            return self.list_binding_for(*key)
+                == Some(crate::keymap::BindingTarget::Editor(
+                    EditorCommand::ListAccept,
+                ))
+                && (plain_enter
+                    || self
+                        .keymap
+                        .list_key_is_configured(self.list_binding_scope(), resolved));
+        }
         if self.mode == Mode::Command
             && !self.has_input_overlay()
             && !self.context_overlay_active()
@@ -1962,10 +2014,10 @@ impl App {
         if self.picker.is_some() {
             return self.handle_picker(key);
         }
-        key = legacy_key;
         if self.list.is_some() {
             return self.handle_list_key(key);
         }
+        key = legacy_key;
         // Live jump labels own the keyboard: every key either names a label or
         // dismisses them.
         if self.jump.is_some() {
@@ -2036,7 +2088,7 @@ impl App {
         }
     }
 
-    fn space_dismisses_input_overlay(&self) -> bool {
+    pub(super) fn space_dismisses_input_overlay(&self) -> bool {
         if self.exact_confirmation_accepts_space() {
             return false;
         }
@@ -5023,6 +5075,9 @@ impl App {
             Command::JumpForwardBuffer => self.jump_in(false, true),
             Command::NewBuffer => self.open_scratch_buffer(),
             Command::OpenNavigator => self.open_navigator(),
+            Command::ListAccept | Command::ListOpenActions | Command::ListBackspace => {
+                self.run_list_owned_action(command)?;
+            }
             Command::ListNext
             | Command::ListPrevious
             | Command::ListPageDown

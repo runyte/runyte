@@ -185,14 +185,22 @@ Use `global.list` for ordinary result-list bindings and `session-manager.list`
 for overrides in the session manager. List bindings contain one key. List
 navigation actions are `list-next`, `list-previous`, `list-page-down`,
 `list-page-up`, `list-first`, `list-last`, `list-toggle-preview`,
-`list-clear-filter`, and `list-close`. Nested action menus own their input
-separately. Numbered session choices remain structural input.
+`list-clear-filter`, and `list-close`. Use `list-accept` to activate a row,
+`list-open-actions` to open its actions (or cycle tags / advance to the next row
+when no action menu applies), and `list-backspace` to delete the last filter
+character. These three actions do nothing in reports. Their inherited Enter,
+Tab and Backspace bindings accept every modifier combination, preserving the
+original behavior; scoped overrides replace or remove only the exact spelling.
+For example, `Enter: null` leaves `Shift-Enter` available. Empty-filter leader
+input follows the effective Escape action, including its removal. Nested action
+menus own their input separately. Numbered session choices remain structural
+input.
 
 `:help key-actions` includes the scoped action names and their modes.
 Actions must be supported by the selected view and mode. Scoped assignments
 currently take one action name, without arguments or action lists. Editor
 sequences may contain up to eight keys, including `Leader` and `Window`.
-Context-action Tab, raw list Enter/Tab/Backspace, overlay leader dismissal,
+Context-action Tab, overlay leader dismissal,
 and merge acknowledgment editing still belong to their existing input owners;
 assignments or removals that those handlers would bypass are rejected.
 

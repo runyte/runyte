@@ -159,13 +159,10 @@ fn compile(section: &Value, base: &Keymap) -> Result<Keymap, String> {
                 }
 
                 if (mode == Mode::List
-                    && (matches!(
-                        first.code,
-                        KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace
-                    ) || (matches!(first.code, KeyCode::Char('1'..='9' | ' '))
+                    && (matches!(first.code, KeyCode::Char('1'..='9' | ' '))
                         && !first
                             .modifiers
-                            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER))))
+                            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)))
                     || (matches!(mode, Mode::Normal | Mode::Select)
                         && !scope.is_merge_review()
                         && scope != BindingScope::DirectoryTree

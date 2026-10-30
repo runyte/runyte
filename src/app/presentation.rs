@@ -838,6 +838,65 @@ impl App {
         self.quit_directory_handoff = enabled;
     }
 
+    /// Effective list spellings, preferring authored primary bindings over
+    /// compatibility aliases. A surviving alias is shown when primaries were
+    /// removed, so the label never claims an available action is unbound.
+    pub(crate) fn list_action_keys(&self, command: crate::command::EditorCommand) -> String {
+        use crate::keymap::{BindingRole, BindingTarget};
+        let target = BindingTarget::Editor(command);
+        let bindings = self
+            .keymap
+            .bindings_for_scope(Mode::List, self.list_binding_scope())
+            .filter(|binding| {
+                binding.target == target
+                    && self.list_binding_for(binding.sequence.as_slice()[0]) == Some(target)
+            })
+            .collect::<Vec<_>>();
+        let mut primary = bindings
+            .iter()
+            .filter(|binding| binding.role == BindingRole::Primary)
+            .map(|binding| binding.sequence.to_string())
+            .collect::<Vec<_>>();
+        let leader = self.keymap.leader();
+        if primary.is_empty()
+            && self.list_leader_active(leader)
+            && self.list_binding_for(leader) == Some(target)
+            && !primary.contains(&leader.label())
+        {
+            primary.push(leader.label());
+        }
+        if !primary.is_empty() {
+            primary.join("/")
+        } else {
+            bindings.first().map_or_else(
+                || "unbound".to_owned(),
+                |binding| binding.sequence.to_string(),
+            )
+        }
+    }
+
+    pub(crate) fn list_scroll_keys(&self) -> String {
+        use crate::{
+            command::EditorCommand,
+            input::{KeyCode, KeyStroke},
+            keymap::BindingTarget,
+        };
+        [
+            (KeyCode::Up, EditorCommand::ListPrevious, "↑"),
+            (KeyCode::Down, EditorCommand::ListNext, "↓"),
+        ]
+        .into_iter()
+        .map(|(key, action, label)| {
+            if self.list_binding_for(KeyStroke::plain(key)) == Some(BindingTarget::Editor(action)) {
+                label.to_owned()
+            } else {
+                self.list_action_keys(action)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+    }
+
     /// The keys the open list's legend names, in the order it names them.
     ///
     /// Read from the same registry `handle_list_key` dispatches through, so
@@ -861,7 +920,8 @@ impl App {
             legend.push(("1-9".to_owned(), "attach"));
         }
         for binding in self.keymap.bindings_for_scope(Mode::List, scope) {
-            if binding.role != BindingRole::Primary
+            if self.list_binding_for(binding.sequence.as_slice()[0]) != Some(binding.target)
+                || binding.role != BindingRole::Primary
                 || binding.availability != BindingAvailability::Implemented
                 || binding.target.id().platform_unavailable().is_some()
                 || binding.target.id().capability().is_some_and(|capability| {
@@ -1562,6 +1622,17 @@ impl App {
                     _ => false,
                 });
         }
+        if self.list_input_active()
+            && self
+                .list_actions
+                .iter()
+                .any(|action| matches!(action, super::ListAction::LspTrust { .. }))
+        {
+            return self.list_binding_for(*key)
+                == Some(crate::keymap::BindingTarget::Editor(
+                    crate::command::EditorCommand::ListAccept,
+                ));
+        }
         if key.code == KeyCode::Escape {
             return false;
         }
@@ -2236,6 +2307,7 @@ impl App {
             }
         }
         if let Some(picker) = &self.list {
+            use crate::command::EditorCommand;
             let visible = picker.visible_indices();
             let report = picker.purpose == ListPurpose::Report;
             let report_offset = picker.report_offset.min(visible.len().saturating_sub(1));
@@ -2342,31 +2414,54 @@ impl App {
             };
             snapshot.actions.clear();
             if picker.has_tags() {
-                snapshot
-                    .actions
-                    .push(OverlayAction::new("Tab", picker.tag_label()));
+                snapshot.actions.push(OverlayAction::new(
+                    self.list_action_keys(EditorCommand::ListOpenActions),
+                    picker.tag_label(),
+                ));
             }
             if let Some(action) = &picker.primary_action {
-                snapshot.actions.push(OverlayAction::new("Enter", action));
+                snapshot.actions.push(OverlayAction::new(
+                    self.list_action_keys(EditorCommand::ListAccept),
+                    action,
+                ));
             }
             if let Some((key, action)) = &picker.secondary_action {
-                snapshot.actions.push(OverlayAction::new(key, action));
+                snapshot.actions.push(OverlayAction::new(
+                    if key == "Tab" {
+                        self.list_action_keys(EditorCommand::ListOpenActions)
+                    } else {
+                        key.clone()
+                    },
+                    action,
+                ));
             }
             if picker.purpose == ListPurpose::Report {
-                snapshot.actions.push(OverlayAction::new("↑/↓", "scroll"));
-                snapshot.actions.push(OverlayAction::new("Esc", "dismiss"));
+                snapshot
+                    .actions
+                    .push(OverlayAction::new(self.list_scroll_keys(), "scroll"));
+                snapshot.actions.push(OverlayAction::new(
+                    self.list_action_keys(EditorCommand::ListClose),
+                    "dismiss",
+                ));
             } else if picker.has_key_legend() {
                 // Everything past the keys needed to use the list at all is
                 // the legend's to name.
-                snapshot.actions.push(OverlayAction::new("Esc", "close"));
+                snapshot.actions.push(OverlayAction::new(
+                    self.list_action_keys(EditorCommand::ListClose),
+                    "close",
+                ));
                 snapshot.legend = self.list_legend();
             } else {
                 if picker.has_preview() {
-                    snapshot
-                        .actions
-                        .push(OverlayAction::new("Ctrl-t", "toggle preview"));
+                    snapshot.actions.push(OverlayAction::new(
+                        self.list_action_keys(EditorCommand::ListTogglePreview),
+                        "toggle preview",
+                    ));
                 }
-                snapshot.actions.push(OverlayAction::new("Esc", "cancel"));
+                snapshot.actions.push(OverlayAction::new(
+                    self.list_action_keys(EditorCommand::ListClose),
+                    "cancel",
+                ));
             }
             if picker.has_preview() {
                 snapshot.show_preview = picker.show_preview;

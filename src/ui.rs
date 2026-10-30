@@ -4317,28 +4317,42 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     // The filter reads on the query line under the title, where every other
     // surface that owns a typed query keeps it. The title stays the surface's
     // name, its counts, and the keys that act on it.
+    use crate::command::EditorCommand;
+    let keys = |action| app.list_action_keys(action);
     let mut hints = Vec::new();
     if picker.has_tags() {
-        hints.push(format!("Tab {}", picker.tag_label()));
+        hints.push(format!(
+            "{} {}",
+            keys(EditorCommand::ListOpenActions),
+            picker.tag_label()
+        ));
     }
     if let Some(action) = &picker.primary_action {
-        hints.push(format!("Enter {action}"));
+        hints.push(format!("{} {action}", keys(EditorCommand::ListAccept)));
     }
     if let Some((key, action)) = &picker.secondary_action {
+        let key = if key == "Tab" {
+            keys(EditorCommand::ListOpenActions)
+        } else {
+            key.clone()
+        };
         hints.push(format!("{key} {action}"));
     }
     if preview_layout && !picker.has_key_legend() {
-        hints.push("Ctrl-t preview".to_owned());
+        hints.push(format!(
+            "{} preview",
+            keys(EditorCommand::ListTogglePreview)
+        ));
     }
     if picker.purpose == crate::picker::ListPurpose::Report {
-        hints.push("↑/↓ scroll".to_owned());
+        hints.push(format!("{} scroll", app.list_scroll_keys()));
     }
     hints.push(if picker.purpose == crate::picker::ListPurpose::Report {
-        "Esc dismiss".to_owned()
+        format!("{} dismiss", keys(EditorCommand::ListClose))
     } else if picker.has_key_legend() {
-        "Esc close".to_owned()
+        format!("{} close", keys(EditorCommand::ListClose))
     } else {
-        "Esc cancel".to_owned()
+        format!("{} cancel", keys(EditorCommand::ListClose))
     });
     let title = format!(" {} · {} ", picker.title, hints.join(" · "));
     let block = Block::default()

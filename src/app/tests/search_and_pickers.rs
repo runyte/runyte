@@ -5694,3 +5694,254 @@ fn configured_finder_mode_and_cancel_keep_filter_text_owned() {
     assert!(app.active_buffer().to_string().is_empty());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn configured_list_actions_keep_filter_target_and_report_ownership() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    configure_picker_actions(
+        &mut app,
+        "scopes: {global: {list: {Enter: null, Tab: null, Backspace: null, F6: list-backspace, F7: list-open-actions, F8: list-accept}}}",
+    );
+    let root = temporary("configured-list-target");
+    fs::create_dir_all(&root).unwrap();
+    let chosen = root.join("chosen.txt");
+    fs::write(&chosen, "selected list target").unwrap();
+    app.list_actions = vec![
+        ListAction::OpenPath(root.join("missing.txt")),
+        ListAction::OpenPath(chosen.clone()),
+    ];
+    let rows = || {
+        vec![
+            PickerItem::new("alpha", "", 0),
+            PickerItem::new("beta", "", 1),
+        ]
+    };
+    app.list = Some(ListPicker::fuzzy("Results", rows()).as_choice("open"));
+    // No default raw-key fallback may survive an exact scoped removal.
+    for code in [KeyCode::Enter, KeyCode::Tab] {
+        key(&mut app, code, Modifiers::NONE);
+        assert_eq!(app.list.as_ref().unwrap().selected, 0);
+    }
+    press(&mut app, 'a');
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().filter, "a");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(app.list.as_ref().unwrap().filter.is_empty());
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().selected, 1);
+    let snapshot = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|s| s.kind == crate::snapshot::OverlayKind::ResultList)
+        .unwrap();
+    assert!(snapshot.actions.iter().any(|a| a.key_hint == "F8"));
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.list.is_none());
+    assert_eq!(
+        app.buffers[app.active().buffer].path.as_ref(),
+        Some(&chosen)
+    );
+    assert_eq!(text(&app), "selected list target");
+    app.list = Some(ListPicker::new("Report", rows()).as_report());
+    for code in [
+        KeyCode::Function(6),
+        KeyCode::Function(7),
+        KeyCode::Function(8),
+    ] {
+        key(&mut app, code, Modifiers::NONE);
+        assert_eq!(app.list.as_ref().unwrap().report_offset, 0);
+        assert!(app.list.as_ref().unwrap().filter.is_empty());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn configured_list_leader_follows_escape_and_consumes_tombstones() {
+    for escape in ["list-next", "null"] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        configure_picker_actions(
+            &mut app,
+            &format!("leader: F12\nscopes: {{global: {{list: {{Esc: {escape}}}}}}}"),
+        );
+        app.list = Some(ListPicker::fuzzy(
+            "Results",
+            vec![
+                PickerItem::new("alpha", "", 0),
+                PickerItem::new("beta", "", 1),
+            ],
+        ));
+        key(&mut app, KeyCode::Function(12), Modifiers::NONE);
+        assert!(app.list.as_ref().unwrap().filter.is_empty());
+        assert_eq!(
+            app.list.as_ref().unwrap().selected,
+            usize::from(escape == "list-next")
+        );
+        press(&mut app, 'a');
+        key(&mut app, KeyCode::Function(12), Modifiers::NONE);
+        assert_eq!(app.list.as_ref().unwrap().filter, "a");
+        key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+        key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+        key(&mut app, KeyCode::Function(12), Modifiers::NONE);
+        assert!(app.list.as_ref().unwrap().filter.is_empty());
+    }
+}
+
+#[test]
+fn configured_list_acceptance_requires_presented_lsp_permission() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    configure_picker_actions(
+        &mut app,
+        "scopes: {global: {list: {Enter: null, F8: list-accept, Esc: list-accept}}}",
+    );
+    app.list = Some(ListPicker::new(
+        "LSP permission",
+        vec![PickerItem::new("Allow", "", 0)],
+    ));
+    app.list_actions = vec![ListAction::LspTrust {
+        allowed: true,
+        remember: false,
+    }];
+    for (spelling, expected) in [
+        ("F8", true),
+        ("Esc", true),
+        ("Space", true),
+        ("Enter", false),
+        ("Shift-Enter", true),
+        ("Down", false),
+    ] {
+        assert_eq!(
+            app.input_requires_presented_approval(&InputEvent::Key(
+                KeyStroke::parse(spelling).unwrap()
+            )),
+            expected,
+            "{spelling}"
+        );
+    }
+}
+
+#[test]
+fn configured_list_acceptance_cannot_override_covering_decision_or_nested_guards() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    configure_picker_actions(
+        &mut app,
+        "scopes: {global: {list: {Enter: null, F8: list-accept}}}",
+    );
+    app.list = Some(ListPicker::new(
+        "LSP permission",
+        vec![PickerItem::new("Allow", "", 0)],
+    ));
+    app.list_actions = vec![ListAction::LspTrust {
+        allowed: true,
+        remember: false,
+    }];
+    app.buffer_discard_confirmation = Some(app.active().buffer);
+    assert!(
+        app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+    );
+    assert!(
+        !app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::parse("F8").unwrap()))
+    );
+    assert!(!app.fresh_physical_approval_key(&InputEvent::Key(KeyStroke::parse("F8").unwrap())));
+    app.buffer_discard_confirmation = None;
+    app.open_navigator();
+    app.navigator_selection_lost = true;
+    app.buffer_action_menu = Some(BufferActionMenu {
+        buffer: app.active().buffer,
+        actions: vec![BufferAction::BringHere],
+        selected: 0,
+    });
+    app.handle_list_key(KeyStroke::plain(KeyCode::Enter))
+        .unwrap();
+    assert!(app.navigator_selection_lost);
+    assert!(app.buffer_action_menu.is_some());
+    assert!(app.status.contains("selected destination closed"));
+    app.handle_list_key(KeyStroke::parse("F8").unwrap())
+        .unwrap();
+    assert!(!app.navigator_selection_lost);
+    assert!(app.buffer_action_menu.is_some());
+}
+
+#[test]
+fn list_hints_resolve_named_leader_before_advertising_acceptance() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    // A minimal map makes Enter available as an editor prefix; factory
+    // DirectoryTree owns Enter and correctly rejects it as a global leader.
+    app.keymap = Arc::new(
+        crate::keymap::Keymap::new(vec![
+            crate::keymap::Binding::implemented(
+                &[Mode::List],
+                KeyStroke::plain(KeyCode::Enter),
+                EditorCommand::ListAccept,
+            ),
+            crate::keymap::Binding::implemented(
+                &[Mode::List],
+                KeyStroke::parse("Shift-Enter").unwrap(),
+                EditorCommand::ListAccept,
+            )
+            .with_role(crate::keymap::BindingRole::Compatibility),
+            crate::keymap::Binding::implemented(
+                &[Mode::List],
+                KeyStroke::plain(KeyCode::Escape),
+                EditorCommand::ListClose,
+            ),
+        ])
+        .unwrap(),
+    );
+    configure_picker_actions(&mut app, "leader: Enter");
+    app.list = Some(ListPicker::fuzzy(
+        "Results",
+        vec![PickerItem::new("alpha", "", 0)],
+    ));
+    assert_ne!(app.list_action_keys(EditorCommand::ListAccept), "Enter");
+    assert_eq!(app.list_action_keys(EditorCommand::ListClose), "Esc");
+    assert_eq!(
+        app.list_binding_for(KeyStroke::plain(KeyCode::Enter)),
+        Some(crate::keymap::BindingTarget::Editor(
+            EditorCommand::ListClose
+        ))
+    );
+    let spelling = app.list_action_keys(EditorCommand::ListAccept);
+    assert_eq!(
+        app.list_binding_for(KeyStroke::parse(&spelling).unwrap()),
+        Some(crate::keymap::BindingTarget::Editor(
+            EditorCommand::ListAccept
+        ))
+    );
+    press(&mut app, 'a');
+    assert_eq!(app.list_action_keys(EditorCommand::ListAccept), "Enter");
+}
+
+#[test]
+fn configured_report_hints_follow_removed_arrows_and_rebound_navigation() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    configure_picker_actions(
+        &mut app,
+        "scopes: {global: {list: {Down: null, Ctrl-n: null, F9: list-next}}}",
+    );
+    app.list = Some(
+        ListPicker::new(
+            "Report",
+            vec![
+                PickerItem::new("alpha", "", 0),
+                PickerItem::new("beta", "", 1),
+            ],
+        )
+        .as_report(),
+    );
+    assert_eq!(app.list_scroll_keys(), "↑/F9");
+    let snapshot = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|s| s.kind == crate::snapshot::OverlayKind::ResultList)
+        .unwrap();
+    assert!(
+        snapshot
+            .actions
+            .iter()
+            .any(|a| a.label == "scroll" && a.key_hint == "↑/F9")
+    );
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().report_offset, 0);
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().report_offset, 1);
+}

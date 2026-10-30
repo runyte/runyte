@@ -2629,31 +2629,53 @@ impl App {
 
     /// Handles a key while a result picker is open.
     pub(super) fn handle_list_key(&mut self, key: KeyStroke) -> Result<()> {
+        let bound = self.list_binding_for(key);
+        let leader = self.list_leader_active(key);
+        // Nested owners retain their own cancellation until their UI maps
+        // replace this compatibility translation.
+        let nested_key = if leader {
+            KeyStroke::plain(KeyCode::Escape)
+        } else {
+            key
+        };
+        let activating = if self.terminal_action_menu.is_some()
+            || self.session_action_menu.is_some()
+            || self.buffer_action_menu.is_some()
+        {
+            matches!(nested_key.code, KeyCode::Enter | KeyCode::Tab)
+        } else {
+            matches!(
+                bound,
+                Some(BindingTarget::Editor(
+                    EditorCommand::ListAccept | EditorCommand::ListOpenActions
+                ))
+            )
+        };
         if self.plugin_manager_actions_open()
-            && (key.code == KeyCode::Escape
-                || (key.code == KeyCode::Char('c') && key.modifiers.contains(Modifiers::CONTROL)))
+            && (nested_key.code == KeyCode::Escape
+                || (nested_key.code == KeyCode::Char('c')
+                    && nested_key.modifiers.contains(Modifiers::CONTROL)))
         {
             self.return_to_plugin_manager();
             return Ok(());
         }
         if self.navigator_open() && self.navigator_selection_lost {
-            if matches!(key.code, KeyCode::Enter | KeyCode::Tab) {
+            if activating {
                 self.action_failed("selected destination closed; select a destination again");
                 return Ok(());
             }
             self.navigator_selection_lost = false;
         }
         if self.terminal_action_menu.is_some() {
-            return self.handle_terminal_action_key(key);
+            return self.handle_terminal_action_key(nested_key);
         }
         #[cfg(any(unix, windows))]
         if self.session_action_menu.is_some() {
-            return self.handle_session_action_key(key);
+            return self.handle_session_action_key(nested_key);
         }
-        let bound = self.list_binding_for(key);
         #[cfg(windows)]
         if self.session_manager_selection_lost && self.session_manager_open() {
-            if matches!(key.code, KeyCode::Enter | KeyCode::Tab) {
+            if activating {
                 self.action_failed("selected session changed; select a session again");
                 return Ok(());
             }
@@ -2662,10 +2684,14 @@ impl App {
             }
         }
         if self.buffer_action_menu.is_some() {
-            return self.handle_buffer_action_key(key);
+            return self.handle_buffer_action_key(nested_key);
         }
         if let Some(target) = bound {
             return self.run_list_binding(target);
+        }
+        if leader {
+            // A removed Escape still consumes the empty-filter leader.
+            return Ok(());
         }
         let report = self
             .list
@@ -2676,40 +2702,6 @@ impl App {
         }
         let mut preview_changed = false;
         match key.code {
-            KeyCode::Tab => {
-                if let Some(ListAction::PluginEntry(index)) = self.selected_list_action() {
-                    self.open_plugin_manager_actions(index);
-                    return Ok(());
-                }
-                if let Some(ListAction::Destination(destination)) = self.selected_list_action() {
-                    self.open_navigator_actions(destination);
-                    return Ok(());
-                }
-                #[cfg(any(unix, windows))]
-                if matches!(self.selected_list_action(), Some(ListAction::Workspace(_))) {
-                    self.open_session_actions();
-                    return Ok(());
-                }
-                // An empty terminal list still offers to start a terminal.
-                if self.destination_scope() == Some(super::DestinationScope::Terminals) {
-                    self.open_terminal_actions();
-                    return Ok(());
-                }
-                if self.list.as_ref().is_some_and(ListPicker::has_tags) {
-                    self.list.as_mut().unwrap().cycle_tag();
-                    preview_changed = true;
-                } else {
-                    self.list.as_mut().unwrap().down();
-                    preview_changed = true;
-                }
-            }
-            KeyCode::Backspace => {
-                self.list.as_mut().unwrap().pop_filter();
-                preview_changed = true;
-            }
-            KeyCode::Enter => {
-                self.activate_list_selection()?;
-            }
             KeyCode::Char(character)
                 if !key
                     .modifiers
@@ -2739,6 +2731,64 @@ impl App {
         Ok(())
     }
 
+    /// Actions formerly owned by raw list keys run without editor-command
+    /// cleanup or terminal interception. Reports deliberately ignore them.
+    pub(super) fn run_list_owned_action(&mut self, command: EditorCommand) -> Result<()> {
+        if self
+            .list
+            .as_ref()
+            .is_none_or(|list| list.purpose == ListPurpose::Report)
+        {
+            return Ok(());
+        }
+        let mut preview_changed = false;
+        match command {
+            EditorCommand::ListOpenActions => {
+                if let Some(ListAction::PluginEntry(index)) = self.selected_list_action() {
+                    self.open_plugin_manager_actions(index);
+                    return Ok(());
+                }
+                if let Some(ListAction::Destination(destination)) = self.selected_list_action() {
+                    self.open_navigator_actions(destination);
+                    return Ok(());
+                }
+                #[cfg(any(unix, windows))]
+                if matches!(self.selected_list_action(), Some(ListAction::Workspace(_))) {
+                    self.open_session_actions();
+                    return Ok(());
+                }
+                // An empty terminal list still offers to start a terminal.
+                if self.destination_scope() == Some(super::DestinationScope::Terminals) {
+                    self.open_terminal_actions();
+                    return Ok(());
+                }
+                if self.list.as_ref().is_some_and(ListPicker::has_tags) {
+                    self.list.as_mut().unwrap().cycle_tag();
+                    preview_changed = true;
+                } else {
+                    self.list.as_mut().unwrap().down();
+                    preview_changed = true;
+                }
+            }
+            EditorCommand::ListBackspace => {
+                self.list.as_mut().unwrap().pop_filter();
+                preview_changed = true;
+            }
+            EditorCommand::ListAccept => {
+                self.activate_list_selection()?;
+            }
+            _ => {}
+        }
+        if preview_changed {
+            self.list_selection_changed();
+        }
+        Ok(())
+    }
+
+    pub(super) fn list_leader_active(&self, key: KeyStroke) -> bool {
+        key.canonical_for_binding() == self.keymap.leader() && self.space_dismisses_input_overlay()
+    }
+
     /// The registry scope the open list reads its keys from.
     pub(super) fn list_binding_scope(&self) -> BindingScope {
         #[cfg(any(unix, windows))]
@@ -2750,10 +2800,19 @@ impl App {
 
     /// What `key` does in the open list, from the same registry that draws
     /// the list's key legend.
-    fn list_binding_for(&self, key: KeyStroke) -> Option<BindingTarget> {
+    pub(super) fn list_binding_for(&self, key: KeyStroke) -> Option<BindingTarget> {
+        let key = self.list_registry_key(key);
         self.keymap
             .list_binding(self.list_binding_scope(), key)
             .map(|binding| binding.target)
+    }
+
+    pub(super) fn list_registry_key(&self, key: KeyStroke) -> KeyStroke {
+        if self.list_leader_active(key) {
+            KeyStroke::plain(KeyCode::Escape)
+        } else {
+            key
+        }
     }
 
     fn run_list_binding(&mut self, target: BindingTarget) -> Result<()> {
@@ -2776,6 +2835,11 @@ impl App {
             return Ok(());
         }
         match target {
+            BindingTarget::Editor(
+                command @ (EditorCommand::ListAccept
+                | EditorCommand::ListOpenActions
+                | EditorCommand::ListBackspace),
+            ) => self.run_list_owned_action(command),
             BindingTarget::Editor(command) => self.execute_editor_command(command),
             #[cfg(any(unix, windows))]
             BindingTarget::Colon(ColonCommand::GitWorktrees) => {
