@@ -176,7 +176,7 @@ pub struct EditorSnapshot {
     /// The area a pane being Alt-dragged would occupy if it were released
     /// now, outlined over the panes it would displace.
     pub pane_drop: Option<Rect>,
-    pub pane_gestures: crate::keymap::pointer::PaneGestures,
+    pub pointer_bindings: crate::keymap::pointer_actions::Bindings,
     pub window_bindings: crate::keymap::native_window::Bindings,
     pub preview_bindings: crate::keymap::native_preview::Bindings,
     pub preview_source: Option<(usize, usize)>,
@@ -982,7 +982,7 @@ impl App {
             mode: self.mode,
             panes,
             pane_drop: self.pane_drop_preview(prepared),
-            pane_gestures: self.keymap().pane_gestures(),
+            pointer_bindings: self.keymap().pointer().clone(),
             window_bindings: self.native_window_bindings(),
             preview_bindings,
             preview_structural: matches!(self.mode, Mode::Insert | Mode::Replace)

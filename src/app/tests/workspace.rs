@@ -4590,3 +4590,32 @@ fn configured_session_inventory_actions_preserve_incarnation_and_dynamic_report_
         OpenDestination::Terminal(TerminalId::from_raw(7))
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn remapped_session_strip_activation_keeps_the_presented_target() {
+    let (mut app, geometry, click) = clickable_session_strip();
+    let target = app.workspace_rows[2].selection();
+    let section = serde_yaml::from_str("pointer: {session-activate: [Ctrl-MiddleClick]}").unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty());
+    app.set_keymap(compiled.keymap);
+    let view = app.prepare_view(geometry);
+    app.handle_pointer(click, &view).unwrap();
+    assert!(app.take_workspace_switch().is_none());
+    app.workspace_rows[2] =
+        distinct_publication_row(temporary("strip-new-target"), "replacement", b"replacement");
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Middle),
+            modifiers: Modifiers::CONTROL,
+            ..click
+        },
+        &view,
+    )
+    .unwrap();
+    assert_eq!(
+        app.take_workspace_switch().unwrap().target,
+        WorkspaceSwitchTarget::Selected(target)
+    );
+}

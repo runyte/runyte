@@ -29,6 +29,31 @@ fn same_passive_motion(previous: &NativeInput, next: &NativeInput) -> bool {
             if a.kind == MouseEventKind::Moved && b.kind == MouseEventKind::Moved && a.modifiers == b.modifiers)
 }
 
+fn host_pointer_press(input: &NativeInput) -> bool {
+    let Ok(Some(runyte::input::InputEvent::Pointer(pointer))) =
+        runyte::tui::input::convert_event(input.event.clone())
+    else {
+        return false;
+    };
+    runyte::keymap::pointer_actions::Action::ALL
+        .into_iter()
+        .any(|action| input.pointer_bindings.press(action, pointer))
+}
+
+fn scroll_policy(input: &NativeInput) -> [Option<runyte::keymap::pointer_actions::Action>; 4] {
+    use runyte::input::PointerEventKind::*;
+    let Ok(Some(runyte::input::InputEvent::Pointer(pointer))) =
+        runyte::tui::input::convert_event(input.event.clone())
+    else {
+        return [None; 4];
+    };
+    [ScrollUp, ScrollDown, ScrollLeft, ScrollRight].map(|kind| {
+        input
+            .pointer_bindings
+            .wheel(runyte::input::PointerEvent { kind, ..pointer })
+    })
+}
+
 /// Overlay cells own wheel input even when native media lies underneath.
 fn overlay_owns_scroll(overlays: &[runyte::layout::Rect], column: f32, row: f32) -> bool {
     overlays.iter().any(|area| {
@@ -72,7 +97,7 @@ impl<T> Queue<T> {
         match &input.event {
             Event::Mouse(event) => match event.kind {
                 MouseEventKind::Down(button) => {
-                    let claimed = matches!(runyte::tui::input::convert_event(input.event.clone()), Ok(Some(runyte::input::InputEvent::Pointer(pointer))) if input.pane_gestures.action(pointer).is_some());
+                    let claimed = matches!(runyte::tui::input::convert_event(input.event.clone()), Ok(Some(runyte::input::InputEvent::Pointer(pointer))) if input.pointer_bindings.pane_gestures().action(pointer).is_some());
                     self.pane_gesture = claimed.then_some((input.attachment, button));
                     self.pane_gesture.is_some()
                 }
@@ -96,6 +121,29 @@ impl<T> Queue<T> {
             _ => self.pane_gesture.is_some(),
         }
     }
+    fn capture_host_drag(&mut self, input: &NativeInput) {
+        use runyte::keymap::pointer_actions::Action;
+        if let Ok(Some(runyte::input::InputEvent::Pointer(pointer))) =
+            runyte::tui::input::convert_event(input.event.clone())
+            && ([
+                Action::Select,
+                Action::Extend,
+                Action::Resize,
+                Action::TreeResize,
+                Action::OpenLink,
+            ]
+            .into_iter()
+            .any(|action| input.pointer_bindings.press(action, pointer))
+                || (!input.pointer_bindings.is_default(Action::Copy)
+                    && input.pointer_bindings.press(Action::Copy, pointer)))
+            && let crossterm::event::Event::Mouse(event) = &input.event
+            && let crossterm::event::MouseEventKind::Down(button) = event.kind
+            && button != crossterm::event::MouseButton::Left
+        {
+            self.pane_gesture = Some((input.attachment, button));
+        }
+    }
+
     /// A release outside the window may never reach GPUI's mouse-up handler.
     /// Cancel on the first buttonless motion instead of turning hover into a
     /// synthetic left drag (or committing an unseen drop with a synthetic up).
@@ -285,7 +333,7 @@ impl super::NativeView {
                         {
                             continue;
                         }
-                        if event.button == MouseButton::Middle {
+                        if event.button == MouseButton::Middle && !host_pointer_press(&input) {
                             continue;
                         }
                     }
@@ -329,6 +377,7 @@ impl super::NativeView {
                         if matches!(event.touch_phase, TouchPhase::Started) {
                             self.scroll = ScrollAccumulator::default();
                         }
+                        self.scroll.set_policy(scroll_policy(&input));
                         let Some((kind, events)) = self
                             .scroll
                             .push(ScrollAccumulator::delta(event.delta, metrics), when)
@@ -340,6 +389,7 @@ impl super::NativeView {
                     }
                 }
             }
+            self.routing.capture_host_drag(&input);
             let barrier = self
                 .frame
                 .as_ref()

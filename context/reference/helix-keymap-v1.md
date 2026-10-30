@@ -319,8 +319,8 @@ The `Space t` namespace is labelled **Terminals** and carries no capability:
 its one command that needs a pane showing a terminal reports that itself, and
 `Space t s` is meant to be reached from a pane that is showing a document.
 
-Mouse input is grammar-independent application input rather than a hidden key
-binding table. Left click on a session-strip entry switches to that running
+Mouse input is grammar-independent application input. Its editor-owned actions
+resolve through the shared `keys.pointer` registry; the following describes defaults. Left click on a session-strip entry switches to that running
 persistent session, including unnumbered sessions, through the same guarded
 attachment path as keyboard navigation. Left click in a pane focuses/places, Shift-click extends, left drag
 selects, wheel events scroll the pane under the pointer, and a drag on a shared
@@ -342,7 +342,12 @@ Shared borders retain ordinary resizing. Both gestures belong to the editor
 even over a terminal requesting mouse reports or a native document preview.
 `keys.pointer.pane-move` and `pane-extend` replace their exact modifier aliases;
 left, middle and right drags are supported. The initiating button and action
-remain captured across configuration reloads and modifier changes.
+remain captured across configuration reloads and modifier changes. Selection,
+extension, pane/tree resizing, copying, native link opening, wheel directions,
+tree row selection/opening and session-strip activation have effective pointer
+actions in the same registry. Their hit-region precedence is preserved; live
+terminal SGR reports stay raw. Config-only reload rejects old-frame presses and
+wheel events while captured drags retain their semantic action and button.
 
 | Sequence | Helix command | Runyte command | Status | Notes |
 | --- | --- | --- | --- | --- |

@@ -474,7 +474,7 @@ mod tests {
             cursor: None,
             overlays: vec![],
             media_input: false,
-            pane_gestures: Default::default(),
+            pointer_bindings: Default::default(),
             window_bindings: Default::default(),
             preview_bindings: Default::default(),
             preview_source: None,

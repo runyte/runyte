@@ -301,7 +301,7 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
         }
         None => keymap,
     };
-    keymap.pane_gestures = super::pointer::compile(section.get("pointer"), &mut errors);
+    keymap.pointer = super::pointer_actions::compile(section.get("pointer"), &mut errors);
     keymap = super::scopes::apply(section.get("scopes"), keymap, &mut errors, defer_policy);
     if defer_policy {
         let conflict = keymap.ui().input_policy_conflict().or_else(|| {

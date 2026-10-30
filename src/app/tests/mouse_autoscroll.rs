@@ -217,3 +217,92 @@ fn selection_history_groups_autoscroll_and_keyboard_cancelled_drag() {
     key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
     assert!(app.status.contains("no earlier selection"));
 }
+
+#[test]
+fn remapped_selection_retains_button_anchor_autoscroll_and_cancelled_tails() {
+    let mut app = document(&"abcdef\n".repeat(40), false);
+    let section =
+        serde_yaml::from_str("pointer: {select: [MiddleDrag], extend: [Ctrl-MiddleDrag]}").unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty());
+    app.set_keymap(compiled.keymap);
+    pointer(&mut app, PointerEventKind::Down(PointerButton::Left), 3);
+    assert!(app.pointer_drag.is_none());
+    pointer(&mut app, PointerEventKind::Down(PointerButton::Middle), 3);
+    let anchor = app.active().selection.primary().anchor;
+    app.set_keymap(Arc::new(crate::keymap::default_keymap().clone()));
+    pointer(&mut app, PointerEventKind::Drag(PointerButton::Left), 6);
+    assert!(app.pointer_autoscroll_delay(Instant::now()).is_none());
+    pointer(&mut app, PointerEventKind::Drag(PointerButton::Middle), 6);
+    assert!(tick(&mut app));
+    assert_eq!(app.active().selection.primary().anchor, anchor);
+    assert_eq!(app.mode, Mode::Select);
+    pointer(&mut app, PointerEventKind::Up(PointerButton::Left), 6);
+    assert!(app.pointer_drag.is_none());
+    assert!(app.pane_pointer_owned);
+    pointer(&mut app, PointerEventKind::Up(PointerButton::Middle), 6);
+    assert!(!app.pane_pointer_owned);
+}
+
+#[test]
+fn remapped_extend_and_wheel_actions_match_default_semantics() {
+    let text = "abcdef\n".repeat(40);
+    let mut baseline = document(&text, false);
+    let mut remapped = document(&text, false);
+    let section = serde_yaml::from_str("pointer: {select: [MiddleDrag], extend: [Ctrl-MiddleDrag], scroll-up: [WheelDown], scroll-down: [WheelUp]}").unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty());
+    remapped.set_keymap(compiled.keymap);
+    for (app, button, modifiers, wheel) in [
+        (
+            &mut baseline,
+            PointerButton::Left,
+            Modifiers::SHIFT,
+            PointerEventKind::ScrollDown,
+        ),
+        (
+            &mut remapped,
+            PointerButton::Middle,
+            Modifiers::CONTROL,
+            PointerEventKind::ScrollUp,
+        ),
+    ] {
+        pointer(app, PointerEventKind::Down(button), 2);
+        pointer(app, PointerEventKind::Up(button), 2);
+        let view = app.prepare_view(geometry());
+        let column = view.pane(app.active_pane).unwrap().body.x + 4;
+        app.handle_pointer(
+            PointerEvent {
+                kind: PointerEventKind::Down(button),
+                column,
+                row: 4,
+                modifiers,
+            },
+            &view,
+        )
+        .unwrap();
+        app.handle_pointer(
+            PointerEvent {
+                kind: PointerEventKind::Up(button),
+                column,
+                row: 4,
+                modifiers: Modifiers::NONE,
+            },
+            &view,
+        )
+        .unwrap();
+        app.handle_pointer(
+            PointerEvent {
+                kind: wheel,
+                column,
+                row: 4,
+                modifiers: Modifiers::NONE,
+            },
+            &view,
+        )
+        .unwrap();
+    }
+    assert_eq!(baseline.active().selection, remapped.active().selection);
+    assert_eq!(baseline.mode, remapped.mode);
+    assert_eq!(baseline.active().scroll_row, remapped.active().scroll_row);
+}

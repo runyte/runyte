@@ -20,6 +20,7 @@ mod effective;
 pub mod native_preview;
 pub mod native_window;
 pub mod pointer;
+pub mod pointer_actions;
 mod scopes;
 pub mod terminal_input;
 pub mod ui;
@@ -674,7 +675,7 @@ impl std::error::Error for DuplicateBinding {}
 
 #[derive(Clone, Debug)]
 pub struct Keymap {
-    pane_gestures: pointer::PaneGestures,
+    pointer: pointer_actions::Bindings,
     preview: native_preview::Cache,
     ui: ui::Bindings,
     overrides: effective::Overrides,
@@ -702,8 +703,12 @@ impl Default for Keymap {
 }
 
 impl Keymap {
+    pub fn pointer(&self) -> &pointer_actions::Bindings {
+        &self.pointer
+    }
+
     pub fn pane_gestures(&self) -> pointer::PaneGestures {
-        self.pane_gestures
+        self.pointer.pane_gestures()
     }
 
     pub fn ui(&self) -> &ui::Bindings {
@@ -841,7 +846,7 @@ impl Keymap {
             }
         }
         let mut keymap = Self {
-            pane_gestures: pointer::PaneGestures::default(),
+            pointer: pointer_actions::Bindings::default(),
             preview: native_preview::Cache::default(),
             ui: ui::Bindings::default(),
             overrides: effective::Overrides::default(),

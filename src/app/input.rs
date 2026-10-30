@@ -16,8 +16,8 @@ use super::{
     GeneratedViewIdentity, GrammarContext, GrammarNotice, GrammarOutput, HOVER_PEEK_ROWS, HashSet,
     HelpInvocation, InputEvent, InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence,
     KeyStroke, Keymap, LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers,
-    Motion, Offset, Path, PathBuf, PathHint, PickerTarget, PointerButton, PointerDrag,
-    PointerEvent, PointerEventKind, PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu,
+    Motion, Offset, Path, PathBuf, PathHint, PickerTarget, PointerDrag, PointerEvent,
+    PointerEventKind, PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu,
     ProgramChoice, PromptKind, Range, RangeIntent, RequestKind, Result, SearchMode, SearchQuery,
     Selection, SelectionSemantics, SettingId, SettingType, SettingValue, SignatureContext,
     StashScope, SyntaxObject, SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard,
@@ -991,17 +991,28 @@ impl App {
         view: &PreparedView,
         repetitions: u16,
     ) -> Result<PointerOutcome> {
-        if self.pointer_link_pressed {
+        use crate::keymap::pointer_actions::{Action as PointerAction, Trigger};
+        let bindings = self.keymap.pointer().clone();
+        let press = |action| bindings.press(action, event);
+        let scroll = bindings.wheel(event);
+        if let Some(button) = self.pointer_link_pressed {
             match event.kind {
-                PointerEventKind::Up(PointerButton::Left) => {
-                    self.pointer_link_pressed = false;
+                PointerEventKind::Up(released) if released == button => {
+                    self.pointer_link_pressed = None;
                     return Ok(PointerOutcome::Unchanged);
                 }
-                PointerEventKind::Drag(PointerButton::Left) => {
+                PointerEventKind::Drag(pressed) if pressed == button => {
                     return Ok(PointerOutcome::Unchanged);
                 }
-                PointerEventKind::Down(PointerButton::Left) => {
-                    self.pointer_link_pressed = false;
+                PointerEventKind::Drag(_) | PointerEventKind::Up(_)
+                    if button != crate::input::PointerButton::Left =>
+                {
+                    return Ok(PointerOutcome::Unchanged);
+                }
+                PointerEventKind::Down(pressed)
+                    if button != crate::input::PointerButton::Left || pressed == button =>
+                {
+                    self.pointer_link_pressed = None
                 }
                 _ => {}
             }
@@ -1043,7 +1054,7 @@ impl App {
             return Ok(PointerOutcome::Unchanged);
         }
         self.plugins.foreground_generation += 1;
-        if !matches!(event.kind, PointerEventKind::Drag(PointerButton::Left)) {
+        if !self.pointer_drag_matches(event) {
             self.pointer_autoscroll = None;
         }
         // Any press ends a pending tree double click; only a second press on
@@ -1063,12 +1074,12 @@ impl App {
         }
         if matches!(self.pointer_drag, Some(PointerDrag::DirectoryTreeResize)) {
             match event.kind {
-                PointerEventKind::Drag(PointerButton::Left) => self.resize_tree(
+                PointerEventKind::Drag(_) if self.pointer_drag_matches(event) => self.resize_tree(
                     i32::from(event.column) - i32::from(view.geometry.editor.x) + 1,
                     view.geometry.editor.width,
                 ),
                 PointerEventKind::Up(_) => {
-                    self.cancel_pointer_drag();
+                    self.release_pointer_drag(event);
                 }
                 _ => {}
             }
@@ -1092,10 +1103,29 @@ impl App {
                 self.report_input_feedback();
             }
             match event.kind {
-                PointerEventKind::Down(PointerButton::Left) => {
-                    if event.column == area.x.saturating_add(area.width).saturating_sub(1) {
-                        self.pointer_drag = Some(PointerDrag::DirectoryTreeResize);
+                PointerEventKind::Down(button)
+                    if press(PointerAction::TreeResize)
+                        || press(PointerAction::TreeSelect)
+                        || bindings.matches(
+                            PointerAction::TreeOpen,
+                            Trigger::double_click(button),
+                            event.modifiers,
+                        ) =>
+                {
+                    if press(PointerAction::TreeResize)
+                        && event.column == area.x.saturating_add(area.width).saturating_sub(1)
+                    {
+                        self.begin_pointer_drag(PointerDrag::DirectoryTreeResize, button);
                         return Ok(PointerOutcome::Changed);
+                    }
+                    if !press(PointerAction::TreeSelect)
+                        && !bindings.matches(
+                            PointerAction::TreeOpen,
+                            Trigger::double_click(button),
+                            event.modifiers,
+                        )
+                    {
+                        return Ok(PointerOutcome::Unchanged);
                     }
                     if event.row <= area.y {
                         return Ok(PointerOutcome::Unchanged);
@@ -1107,18 +1137,32 @@ impl App {
                     let mut double_click = false;
                     if let Some(selected) = view.tree_rows.get(row) {
                         let now = self.last_interaction;
-                        double_click = previous_tree_click.is_some_and(|(path, at)| {
-                            &path == selected
-                                && now.saturating_duration_since(at) <= TREE_DOUBLE_CLICK_INTERVAL
-                        });
-                        self.directory_tree.selected = selected.clone();
+                        double_click = bindings.matches(
+                            PointerAction::TreeOpen,
+                            Trigger::double_click(button),
+                            event.modifiers,
+                        ) && previous_tree_click.is_some_and(
+                            |(path, at, previous_button, previous_bindings)| {
+                                &path == selected
+                                    && previous_button == button
+                                    && previous_bindings == bindings
+                                    && now.saturating_duration_since(at)
+                                        <= TREE_DOUBLE_CLICK_INTERVAL
+                            },
+                        );
+                        if press(PointerAction::TreeSelect) || double_click {
+                            self.directory_tree.selected = selected.clone();
+                        }
                         // A third press starts a new pair rather than
                         // toggling a directory straight back.
                         if !double_click {
-                            self.directory_tree_click = Some((selected.clone(), now));
+                            self.directory_tree_click =
+                                Some((selected.clone(), now, button, bindings.clone()));
                         }
                     }
-                    self.enter_directory_tree();
+                    if press(PointerAction::TreeSelect) || double_click {
+                        self.enter_directory_tree();
+                    }
                     if double_click {
                         // Reported here rather than returned: a persistent
                         // host publishes no frame for a failed pointer event,
@@ -1135,10 +1179,10 @@ impl App {
                         self.refresh_navigator();
                     }
                 }
-                PointerEventKind::ScrollUp => self
+                _ if scroll == Some(PointerAction::ScrollUp) => self
                     .directory_tree
                     .select_relative(-3 * isize::try_from(repetitions).unwrap_or(isize::MAX / 3)),
-                PointerEventKind::ScrollDown => self
+                _ if scroll == Some(PointerAction::ScrollDown) => self
                     .directory_tree
                     .select_relative(3 * isize::try_from(repetitions).unwrap_or(isize::MAX / 3)),
                 _ => {}
@@ -1150,16 +1194,11 @@ impl App {
             self.status_error = false;
             return Ok(PointerOutcome::Changed);
         }
-        if self.native_media
-            && event.kind == PointerEventKind::Down(PointerButton::Left)
-            && event.modifiers
-                == if cfg!(target_os = "macos") {
-                    Modifiers::SUPER
-                } else {
-                    Modifiers::CONTROL
-                }
-        {
-            self.pointer_link_pressed = true;
+        if self.native_media && press(PointerAction::OpenLink) {
+            let PointerEventKind::Down(button) = event.kind else {
+                unreachable!("link press")
+            };
+            self.pointer_link_pressed = Some(button);
             self.invalidate_all_partial_guards();
             self.grammar.reset();
             self.jump = None;
@@ -1179,14 +1218,18 @@ impl App {
             });
             if attempted {
                 let outcome = state.outcome(self, CommandOutcomeHint::Infer);
-                let spelling = if cfg!(target_os = "macos") {
-                    "Cmd-left-click"
+                let spelling = if bindings.is_default(PointerAction::OpenLink) {
+                    if cfg!(target_os = "macos") {
+                        "Cmd-left-click".to_owned()
+                    } else {
+                        "Ctrl-left-click".to_owned()
+                    }
                 } else {
-                    "Ctrl-left-click"
+                    bindings.label(PointerAction::OpenLink)
                 };
                 self.action_feedback = None;
                 self.report_completed_action(
-                    spelling,
+                    &spelling,
                     "Open the file or web link under the pointer",
                     outcome,
                 );
@@ -1198,7 +1241,7 @@ impl App {
             return Ok(PointerOutcome::Changed);
         }
         let active_pane = self.active_pane;
-        let selection_drag = self.pointer_selection_drag_active()
+        let selection_drag = self.pointer_drag.is_some()
             && matches!(
                 event.kind,
                 PointerEventKind::Drag(_) | PointerEventKind::Up(_)
@@ -1214,8 +1257,71 @@ impl App {
         }
         self.invalidate_all_partial_guards();
         self.status_error = false;
+        if press(PointerAction::SessionActivate)
+            && let Some(strip) = &view.session_strip
+            && event.row.checked_add(1) == Some(view.geometry.editor.y)
+            && event.column >= view.geometry.editor.x
+        {
+            if self.jump.take().is_some() {
+                self.status("jump cancelled");
+                self.report_input_feedback();
+            }
+            self.grammar.reset();
+            self.pointer_drag = None;
+            let column = usize::from(event.column - view.geometry.editor.x);
+            if let Some(label) = strip
+                .snapshot
+                .layout(view.geometry.editor.width)
+                .entries
+                .iter()
+                .find(|label| label.cells.contains(&column))
+                && let Some(selection) = strip.targets.get(label.index)
+                && {
+                    #[cfg(windows)]
+                    {
+                        self.current_native_publication.as_ref() != Some(selection)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        selection.project_root() != self.project_root
+                    }
+                }
+                && self.request_selected_workspace_switch(selection.clone())
+            {
+                self.workspace_switch.as_mut().unwrap().running_only = true;
+            }
+            return Ok(PointerOutcome::Changed);
+        }
+        if press(PointerAction::Resize)
+            && let Some((first, second, axis)) = pointer_resize_pair(view, event.column, event.row)
+        {
+            if self.jump.take().is_some() {
+                self.status("jump cancelled");
+                self.report_input_feedback();
+            }
+            self.grammar.reset();
+            let PointerEventKind::Down(button) = event.kind else {
+                unreachable!("resize press")
+            };
+            self.begin_pointer_drag(
+                PointerDrag::Resize {
+                    first,
+                    second,
+                    axis,
+                    last_column: event.column,
+                    last_row: event.row,
+                },
+                button,
+            );
+            return Ok(PointerOutcome::Changed);
+        }
+
         match event.kind {
-            PointerEventKind::Down(PointerButton::Left) => {
+            PointerEventKind::Down(button)
+                if (press(PointerAction::Select) || press(PointerAction::Extend))
+                    && !(press(PointerAction::Copy)
+                        && self.pointer_over_active_selection(view, event.column, event.row)) =>
+            {
                 if self.jump.take().is_some() {
                     self.status("jump cancelled");
                     self.report_input_feedback();
@@ -1223,47 +1329,6 @@ impl App {
                 // A pointer press cancels any modal prefix/operator/register
                 // state before it establishes a new spatial interaction.
                 self.grammar.reset();
-                if let Some(strip) = &view.session_strip
-                    && event.row.checked_add(1) == Some(view.geometry.editor.y)
-                    && event.column >= view.geometry.editor.x
-                {
-                    self.pointer_drag = None;
-                    let column = usize::from(event.column - view.geometry.editor.x);
-                    if let Some(label) = strip
-                        .snapshot
-                        .layout(view.geometry.editor.width)
-                        .entries
-                        .iter()
-                        .find(|label| label.cells.contains(&column))
-                        && let Some(selection) = strip.targets.get(label.index)
-                        && {
-                            #[cfg(windows)]
-                            {
-                                self.current_native_publication.as_ref() != Some(selection)
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                selection.project_root() != self.project_root
-                            }
-                        }
-                        && self.request_selected_workspace_switch(selection.clone())
-                    {
-                        self.workspace_switch.as_mut().unwrap().running_only = true;
-                    }
-                    return Ok(PointerOutcome::Changed);
-                }
-                if let Some((first, second, axis)) =
-                    pointer_resize_pair(view, event.column, event.row)
-                {
-                    self.pointer_drag = Some(PointerDrag::Resize {
-                        first,
-                        second,
-                        axis,
-                        last_column: event.column,
-                        last_row: event.row,
-                    });
-                    return Ok(PointerOutcome::Changed);
-                }
                 let Some(pane_id) = pointer_pane(view, event.column, event.row) else {
                     self.pointer_drag = None;
                     return Ok(PointerOutcome::Changed);
@@ -1289,7 +1354,7 @@ impl App {
                     let screen_row = usize::from(event.row - view.pane(pane_id).unwrap().body.y);
                     let screen_column =
                         usize::from(event.column - view.pane(pane_id).unwrap().body.x);
-                    let extend = event.modifiers.contains(Modifiers::SHIFT);
+                    let extend = press(PointerAction::Extend);
                     let Some(offset) = self.terminals.get(terminal).and_then(|session| {
                         session.review_offset_at_view_cell(rows, screen_row, screen_column)
                     }) else {
@@ -1307,11 +1372,14 @@ impl App {
                     if let Some(session) = self.terminals.get_mut(terminal) {
                         session.set_review_selection(anchor, offset);
                     }
-                    self.pointer_drag = Some(PointerDrag::TerminalSelection {
-                        pane: pane_id,
-                        terminal,
-                        anchor,
-                    });
+                    self.begin_pointer_drag(
+                        PointerDrag::TerminalSelection {
+                            pane: pane_id,
+                            terminal,
+                            anchor,
+                        },
+                        button,
+                    );
                     self.mode = if anchor == offset {
                         Mode::Normal
                     } else {
@@ -1324,7 +1392,7 @@ impl App {
                 // press leaves behind. A Shift-click is extending a selection
                 // rather than placing an Insert caret, so its head addresses a
                 // character even when the pane was in Insert mode.
-                let extend = event.modifiers.contains(Modifiers::SHIFT);
+                let extend = press(PointerAction::Extend);
                 let insert = matches!(self.mode, Mode::Insert | Mode::Replace) && !extend;
                 let Some(offset) =
                     self.pointer_offset(view, pane_id, event.column, event.row, insert)
@@ -1343,11 +1411,15 @@ impl App {
                 let pane = self.panes.get_mut(&pane_id).unwrap();
                 pane.replace_selection(selection);
                 pane.mark_selection_semantics(semantics);
-                self.pointer_drag = Some(PointerDrag::Selection {
-                    pane: pane_id,
-                    buffer: pane.buffer,
-                    anchor,
-                });
+                let buffer_id = pane.buffer;
+                self.begin_pointer_drag(
+                    PointerDrag::Selection {
+                        pane: pane_id,
+                        buffer: buffer_id,
+                        anchor,
+                    },
+                    button,
+                );
                 if extend && anchor != offset {
                     self.mode = Mode::Select;
                 } else if matches!(previous_mode, Mode::Insert | Mode::Replace) {
@@ -1365,113 +1437,124 @@ impl App {
                 }
                 self.dismiss_popups();
             }
-            PointerEventKind::Drag(PointerButton::Left) => match self.pointer_drag {
-                Some(PointerDrag::Selection {
-                    pane,
-                    buffer,
-                    anchor,
-                }) => {
-                    if self
-                        .panes
-                        .get(&pane)
-                        .is_none_or(|candidate| candidate.buffer != buffer)
-                    {
-                        self.pointer_drag = None;
-                        return Ok(PointerOutcome::Changed);
+            PointerEventKind::Drag(_) if self.pointer_drag_matches(event) => {
+                match self.pointer_drag {
+                    Some(PointerDrag::Selection {
+                        pane,
+                        buffer,
+                        anchor,
+                    }) => {
+                        if self
+                            .panes
+                            .get(&pane)
+                            .is_none_or(|candidate| candidate.buffer != buffer)
+                        {
+                            self.pointer_drag = None;
+                            return Ok(PointerOutcome::Changed);
+                        }
+                        // A drag builds a selection whatever mode it started in,
+                        // and a selection covers characters.
+                        self.update_pointer_autoscroll(event, view);
+                        let Some(offset) =
+                            self.pointer_drag_offset(view, pane, event.column, event.row)
+                        else {
+                            return Ok(PointerOutcome::Changed);
+                        };
+                        self.activate_pane(pane);
+                        let (selection, semantics) = self.pointer_selection(anchor, offset);
+                        let candidate = self.panes.get_mut(&pane).unwrap();
+                        candidate.replace_selection(selection);
+                        candidate.mark_selection_semantics(semantics);
+                        candidate.preserve_scroll = true;
+                        self.mode = if anchor == offset {
+                            Mode::Normal
+                        } else {
+                            Mode::Select
+                        };
                     }
-                    // A drag builds a selection whatever mode it started in,
-                    // and a selection covers characters.
-                    self.update_pointer_autoscroll(event, view);
-                    let Some(offset) =
-                        self.pointer_drag_offset(view, pane, event.column, event.row)
-                    else {
-                        return Ok(PointerOutcome::Changed);
-                    };
-                    self.activate_pane(pane);
-                    let (selection, semantics) = self.pointer_selection(anchor, offset);
-                    let candidate = self.panes.get_mut(&pane).unwrap();
-                    candidate.replace_selection(selection);
-                    candidate.mark_selection_semantics(semantics);
-                    candidate.preserve_scroll = true;
-                    self.mode = if anchor == offset {
-                        Mode::Normal
-                    } else {
-                        Mode::Select
-                    };
-                }
-                Some(PointerDrag::TerminalSelection {
-                    pane,
-                    terminal,
-                    anchor,
-                }) => {
-                    if self.terminal_of_pane(pane) != Some(terminal) {
-                        self.pointer_drag = None;
-                        return Ok(PointerOutcome::Changed);
+                    Some(PointerDrag::TerminalSelection {
+                        pane,
+                        terminal,
+                        anchor,
+                    }) => {
+                        if self.terminal_of_pane(pane) != Some(terminal) {
+                            self.pointer_drag = None;
+                            return Ok(PointerOutcome::Changed);
+                        }
+                        let Some(prepared) = view.pane(pane) else {
+                            self.pointer_drag = None;
+                            return Ok(PointerOutcome::Changed);
+                        };
+                        if !rect_contains(prepared.body, event.column, event.row) {
+                            return Ok(PointerOutcome::Changed);
+                        }
+                        let screen_row = usize::from(event.row.saturating_sub(prepared.body.y));
+                        let screen_column =
+                            usize::from(event.column.saturating_sub(prepared.body.x));
+                        let Some(offset) = self.terminals.get(terminal).and_then(|session| {
+                            session.review_offset_at_view_cell(
+                                usize::from(prepared.body.height),
+                                screen_row,
+                                screen_column,
+                            )
+                        }) else {
+                            return Ok(PointerOutcome::Changed);
+                        };
+                        self.activate_pane(pane);
+                        if let Some(session) = self.terminals.get_mut(terminal) {
+                            session.set_review_selection(anchor, offset);
+                        }
+                        self.mode = if anchor == offset {
+                            Mode::Normal
+                        } else {
+                            Mode::Select
+                        };
                     }
-                    let Some(prepared) = view.pane(pane) else {
-                        self.pointer_drag = None;
-                        return Ok(PointerOutcome::Changed);
-                    };
-                    if !rect_contains(prepared.body, event.column, event.row) {
-                        return Ok(PointerOutcome::Changed);
-                    }
-                    let screen_row = usize::from(event.row.saturating_sub(prepared.body.y));
-                    let screen_column = usize::from(event.column.saturating_sub(prepared.body.x));
-                    let Some(offset) = self.terminals.get(terminal).and_then(|session| {
-                        session.review_offset_at_view_cell(
-                            usize::from(prepared.body.height),
-                            screen_row,
-                            screen_column,
-                        )
-                    }) else {
-                        return Ok(PointerOutcome::Changed);
-                    };
-                    self.activate_pane(pane);
-                    if let Some(session) = self.terminals.get_mut(terminal) {
-                        session.set_review_selection(anchor, offset);
-                    }
-                    self.mode = if anchor == offset {
-                        Mode::Normal
-                    } else {
-                        Mode::Select
-                    };
-                }
-                Some(PointerDrag::Resize {
-                    first,
-                    second,
-                    axis,
-                    last_column,
-                    last_row,
-                }) => {
-                    let cells = match axis {
-                        Axis::Horizontal => i32::from(event.column) - i32::from(last_column),
-                        Axis::Vertical => i32::from(event.row) - i32::from(last_row),
-                    };
-                    let delta = cells.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
-                    if delta != 0 {
-                        self.layout
-                            .resize_between_cells(first, second, view.layout_area(), delta);
-                    }
-                    self.pointer_drag = Some(PointerDrag::Resize {
+                    Some(PointerDrag::Resize {
                         first,
                         second,
                         axis,
-                        last_column: event.column,
-                        last_row: event.row,
-                    });
+                        last_column,
+                        last_row,
+                    }) => {
+                        let cells = match axis {
+                            Axis::Horizontal => i32::from(event.column) - i32::from(last_column),
+                            Axis::Vertical => i32::from(event.row) - i32::from(last_row),
+                        };
+                        let delta = cells.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+                        if delta != 0 {
+                            self.layout.resize_between_cells(
+                                first,
+                                second,
+                                view.layout_area(),
+                                delta,
+                            );
+                        }
+                        self.pointer_drag = Some(PointerDrag::Resize {
+                            first,
+                            second,
+                            axis,
+                            last_column: event.column,
+                            last_row: event.row,
+                        });
+                    }
+                    Some(PointerDrag::DirectoryTreeResize) => {
+                        unreachable!("tree drag is handled before pane input")
+                    }
+                    Some(PointerDrag::MovePane { .. }) => {
+                        unreachable!("pane moves are handled before pane input")
+                    }
+                    None => {}
                 }
-                Some(PointerDrag::DirectoryTreeResize) => {
-                    unreachable!("tree drag is handled before pane input")
-                }
-                Some(PointerDrag::MovePane { .. }) => {
-                    unreachable!("pane moves are handled before pane input")
-                }
-                None => {}
-            },
-            PointerEventKind::Up(_) => {
-                self.cancel_pointer_drag();
             }
-            PointerEventKind::ScrollUp | PointerEventKind::ScrollDown => {
+            PointerEventKind::Up(_) => {
+                self.release_pointer_drag(event);
+            }
+            _ if matches!(
+                scroll,
+                Some(PointerAction::ScrollUp | PointerAction::ScrollDown)
+            ) =>
+            {
                 let Some(pane) = pointer_pane(view, event.column, event.row) else {
                     return Ok(PointerOutcome::Changed);
                 };
@@ -1485,14 +1568,14 @@ impl App {
                     && let Some(session) = self.terminals.get_mut(id)
                 {
                     let lines = 3usize.saturating_mul(usize::from(repetitions));
-                    if event.kind == PointerEventKind::ScrollUp {
+                    if scroll == Some(PointerAction::ScrollUp) {
                         session.scroll_back(lines);
                     } else {
                         session.scroll_forward(lines);
                     }
                     return Ok(PointerOutcome::Changed);
                 }
-                let direction = if event.kind == PointerEventKind::ScrollUp {
+                let direction = if scroll == Some(PointerAction::ScrollUp) {
                     -1
                 } else {
                     1
@@ -1501,7 +1584,11 @@ impl App {
                     self.scroll_pane(pane, direction);
                 }
             }
-            PointerEventKind::ScrollLeft | PointerEventKind::ScrollRight => {
+            _ if matches!(
+                scroll,
+                Some(PointerAction::ScrollLeft | PointerAction::ScrollRight)
+            ) =>
+            {
                 let Some(pane) = pointer_pane(view, event.column, event.row) else {
                     return Ok(PointerOutcome::Changed);
                 };
@@ -1529,7 +1616,7 @@ impl App {
                 if prefix_width > 0 || !soft_wrap || overflow {
                     let candidate = self.panes.get_mut(&pane).unwrap();
                     let columns = 3usize.saturating_mul(usize::from(repetitions));
-                    if event.kind == PointerEventKind::ScrollLeft {
+                    if scroll == Some(PointerAction::ScrollLeft) {
                         let text_columns = columns.min(candidate.scroll_col);
                         candidate.scroll_col -= text_columns;
                         candidate.row_prefix_scroll = candidate
@@ -1548,8 +1635,15 @@ impl App {
                     candidate.preserve_scroll = true;
                 }
             }
-            PointerEventKind::Down(PointerButton::Right) => {
+            PointerEventKind::Down(button) if press(PointerAction::Copy) => {
                 self.pointer_drag = None;
+                if !bindings.is_default(PointerAction::Copy)
+                    || press(PointerAction::Select)
+                    || press(PointerAction::Extend)
+                {
+                    self.pane_pointer_owned = true;
+                    self.pane_pointer_button = Some(button);
+                }
                 if !self.pointer_over_active_selection(view, event.column, event.row) {
                     return Ok(PointerOutcome::Changed);
                 }
@@ -1566,14 +1660,16 @@ impl App {
                     outcome = CommandOutcome::Status("yanked to system clipboard".to_owned());
                 }
                 self.report_completed_action(
-                    "right mouse click",
+                    &if bindings.is_default(PointerAction::Copy) {
+                        "right mouse click".to_owned()
+                    } else {
+                        bindings.label(PointerAction::Copy)
+                    },
                     "Yank to the system clipboard",
                     outcome,
                 );
             }
-            PointerEventKind::Down(PointerButton::Middle)
-            | PointerEventKind::Drag(PointerButton::Middle | PointerButton::Right)
-            | PointerEventKind::Moved => {}
+            _ => {}
         }
         Ok(PointerOutcome::Changed)
     }

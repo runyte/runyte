@@ -289,9 +289,8 @@ const TERMINAL_OVERVIEW: &[&str] = &[
     "The pane's buffer is still there behind the terminal, and leaving the terminal shows it again without ending the program. Closing the pane or opening a file in it does the same; the session keeps running and the terminal list reaches it.",
 ];
 
-/// Mouse input sits above the keymap and therefore cannot appear in the
-/// registry-derived rows below. Keep the application-wide gestures together
-/// here so every contextual help document describes them.
+/// Default mouse overview. Configured maps use semantic prose and the live
+/// pointer registry below so removed aliases are never advertised.
 const MOUSE_OVERVIEW: &[&str] = &[
     "Left click focuses a pane and places its caret. Shift-click extends the current selection, and left-button drag selects text and enters SELECT mode. The wheel scrolls the pane under the pointer; dragging a shared pane border resizes the split.",
     "Right-clicking any current selection copies all current selections to the system clipboard, exactly like {binding:Space c y}, without moving or replacing them.",
@@ -455,9 +454,25 @@ pub(crate) fn render_document_with_descriptions(
         gestures.labels(crate::keymap::pointer::PaneAction::Move),
         gestures.labels(crate::keymap::pointer::PaneAction::Extend)
     );
-    for paragraph in MOUSE_OVERVIEW {
-        let _ = writeln!(out, "{paragraph}\n");
+    if keymap.pointer() == &crate::keymap::pointer_actions::Bindings::default() {
+        for paragraph in MOUSE_OVERVIEW {
+            let _ = writeln!(out, "{paragraph}\n");
+        }
+    } else {
+        let _ = writeln!(
+            out,
+            "Selection focuses and places a caret; extension keeps its anchor. Copy operates on the current selections. Borders own resizing before pane-content actions. A reviewed terminal accepts editor selection and copying; live SGR mouse reporting remains owned by the terminal child.\n"
+        );
     }
+    for action in crate::keymap::pointer_actions::Action::ALL {
+        let _ = writeln!(
+            out,
+            "  {}: {}",
+            action.name(),
+            keymap.pointer().label(action)
+        );
+    }
+    out.push('\n');
 
     // Written out as-is. These rows are already aligned against each other,
     // so anything that reflowed them would be destroying the only reason they

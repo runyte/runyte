@@ -124,7 +124,7 @@ struct FrameData {
     cursor: Option<ratatui::layout::Position>,
     overlays: Vec<runyte::layout::Rect>,
     media_input: bool,
-    pane_gestures: runyte::keymap::pointer::PaneGestures,
+    pointer_bindings: runyte::keymap::pointer_actions::Bindings,
     window_bindings: runyte::keymap::native_window::Bindings,
     preview_bindings: runyte::keymap::native_preview::Bindings,
     preview_source: Option<(usize, usize)>,
@@ -169,7 +169,7 @@ pub(crate) struct NativeInput {
     event: Event,
     presented: Option<runyte::workspace::FrameId>,
     presentation_only: bool,
-    pane_gestures: runyte::keymap::pointer::PaneGestures,
+    pointer_bindings: runyte::keymap::pointer_actions::Bindings,
     window_bindings: runyte::keymap::native_window::Bindings,
     preview_bindings: runyte::keymap::native_preview::Bindings,
     preview_target: Option<preview::Target>,
@@ -214,14 +214,14 @@ struct Bridge {
     media: Mutex<Vec<MediaPane>>,
     previews: Mutex<Vec<preview::Pane>>,
     painted_media: Mutex<Vec<MediaPane>>,
-    painted_pane_gestures: Mutex<runyte::keymap::pointer::PaneGestures>,
+    painted_pointer_bindings: Mutex<runyte::keymap::pointer_actions::Bindings>,
     painted_window_bindings: Mutex<runyte::keymap::native_window::Bindings>,
     painted_preview_bindings: Mutex<runyte::keymap::native_preview::Bindings>,
     painted_preview_target: Mutex<Option<preview::Target>>,
     overlays: Mutex<Vec<runyte::layout::Rect>>,
     default_colors: Mutex<(u32, u32)>,
     media_input: AtomicBool,
-    pane_gestures: Mutex<runyte::keymap::pointer::PaneGestures>,
+    pointer_bindings: Mutex<runyte::keymap::pointer_actions::Bindings>,
     window_bindings: Mutex<runyte::keymap::native_window::Bindings>,
     preview_bindings: Mutex<runyte::keymap::native_preview::Bindings>,
     preview_source: Mutex<Option<(usize, usize)>>,
@@ -260,7 +260,7 @@ impl Bridge {
             event,
             presented: *self.presented.lock().unwrap(),
             presentation_only: false,
-            pane_gestures: *self.painted_pane_gestures.lock().unwrap(),
+            pointer_bindings: self.painted_pointer_bindings.lock().unwrap().clone(),
             window_bindings: self.painted_window_bindings.lock().unwrap().clone(),
             preview_bindings: self.painted_preview_bindings.lock().unwrap().clone(),
             preview_target: *self.painted_preview_target.lock().unwrap(),
@@ -350,7 +350,7 @@ pub(crate) fn capture_media(
 
 fn capture_snapshot_media(snapshot: &runyte::workspace::HostFrame, counts: &[media::PageCount]) {
     let Some(bridge) = BRIDGE.get() else { return };
-    *bridge.pane_gestures.lock().unwrap() = snapshot.editor.pane_gestures;
+    *bridge.pointer_bindings.lock().unwrap() = snapshot.editor.pointer_bindings.clone();
     *bridge.window_bindings.lock().unwrap() = snapshot.editor.window_bindings.clone();
     *bridge.preview_bindings.lock().unwrap() = snapshot.editor.preview_bindings.clone();
     *bridge.preview_source.lock().unwrap() = snapshot.editor.preview_source;
@@ -595,7 +595,7 @@ impl Surface {
                     previews: bridge.previews.lock().unwrap().clone(),
                     overlays: bridge.overlays.lock().unwrap().clone(),
                     media_input: bridge.media_input.load(Ordering::Acquire),
-                    pane_gestures: *bridge.pane_gestures.lock().unwrap(),
+                    pointer_bindings: bridge.pointer_bindings.lock().unwrap().clone(),
                     window_bindings: bridge.window_bindings.lock().unwrap().clone(),
                     preview_bindings: bridge.preview_bindings.lock().unwrap().clone(),
                     preview_source: *bridge.preview_source.lock().unwrap(),
@@ -771,14 +771,14 @@ pub(crate) fn launch(
         media: Mutex::new(Vec::new()),
         previews: Mutex::new(Vec::new()),
         painted_media: Mutex::new(Vec::new()),
-        painted_pane_gestures: Mutex::new(Default::default()),
+        painted_pointer_bindings: Mutex::new(Default::default()),
         painted_window_bindings: Mutex::new(Default::default()),
         painted_preview_bindings: Mutex::new(Default::default()),
         painted_preview_target: Mutex::new(None),
         overlays: Mutex::new(Vec::new()),
         default_colors: Mutex::new((FALLBACK_BACKGROUND, FALLBACK_FOREGROUND)),
         media_input: AtomicBool::new(true),
-        pane_gestures: Mutex::new(Default::default()),
+        pointer_bindings: Mutex::new(Default::default()),
         window_bindings: Mutex::new(Default::default()),
         preview_bindings: Mutex::new(Default::default()),
         preview_source: Mutex::new(None),
@@ -1361,7 +1361,8 @@ impl Render for NativeView {
                         } else {
                             Vec::new()
                         };
-                        *bridge.painted_pane_gestures.lock().unwrap() = frame.pane_gestures;
+                        *bridge.painted_pointer_bindings.lock().unwrap() =
+                            frame.pointer_bindings.clone();
                         *bridge.painted_window_bindings.lock().unwrap() =
                             frame.window_bindings.clone();
                         *bridge.painted_preview_bindings.lock().unwrap() =
@@ -1377,7 +1378,7 @@ impl Render for NativeView {
                                 event: Event::FocusGained,
                                 presented: frame.id,
                                 presentation_only: true,
-                                pane_gestures: frame.pane_gestures,
+                                pointer_bindings: frame.pointer_bindings.clone(),
                                 window_bindings: frame.window_bindings.clone(),
                                 preview_bindings: frame.preview_bindings.clone(),
                                 preview_target: preview::Target::from_frame(frame),
@@ -1486,11 +1487,20 @@ const SCROLL_GESTURE_GAP: std::time::Duration = std::time::Duration::from_millis
 /// within a gesture.
 #[derive(Default, Debug)]
 struct ScrollAccumulator {
+    policy: Option<[Option<runyte::keymap::pointer_actions::Action>; 4]>,
     /// Pending scroll events per axis; positive scrolls left or up.
     events: Point<f32>,
     last: Option<std::time::Instant>,
 }
 impl ScrollAccumulator {
+    fn set_policy(&mut self, policy: [Option<runyte::keymap::pointer_actions::Action>; 4]) {
+        if self.policy.is_some_and(|previous| previous != policy) {
+            self.events = Point::default();
+            self.last = None;
+        }
+        self.policy = Some(policy);
+    }
+
     /// The delta in scroll events, and whether it is mainly vertical. The axis
     /// is judged on the raw delta: cells are narrower than they are tall, so
     /// converted horizontal motion would outweigh the same vertical motion.

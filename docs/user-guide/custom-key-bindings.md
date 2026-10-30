@@ -487,10 +487,57 @@ pointer bindings. Omitted actions retain their defaults, including with
 `LeftDrag`, `MiddleDrag`, and `RightDrag`, with optional `Ctrl-`, `Alt-`, `Shift-`, `Super-`, `Hyper-`, or
 `Meta-` modifiers. Shared pane borders retain resizing priority. The action is
 captured when the button is pressed and lasts through release, even when the
-modifiers or configuration change. Conflicting or invalid pointer bindings
+modifiers or configuration change. Conflicting or invalid pane bindings
 retain both default pane gestures and produce a configuration diagnostic.
 Contextual help shows the effective gestures. Configuration fragments merge
 `pointer` by action; a later action list replaces the earlier list.
+
+The same section exposes other editor-owned pointer actions:
+
+| Actions | Accepted gestures | Default behavior |
+| --- | --- | --- |
+| `select`, `extend` | `LeftDrag`, `MiddleDrag`, `RightDrag` | Left selects; Shift-left extends the existing anchor |
+| `pane-resize`, `tree-resize` | Button drags | Left drag on the corresponding border |
+| `open-link` | `LeftClick`, `MiddleClick`, `RightClick` | Ctrl-left in the native window; Super-left on macOS |
+| `copy` | Button clicks | Right click inside the current selection copies it |
+| `scroll-up`, `scroll-down`, `scroll-left`, `scroll-right` | `WheelUp`, `WheelDown`, `WheelLeft`, `WheelRight` | Matching direction, three cells per host event |
+| `tree-select` | Button clicks | Left click selects the presented tree row |
+| `tree-open` | `LeftDoubleClick`, `MiddleDoubleClick`, `RightDoubleClick` | Two left clicks on the same presented row open it |
+| `session-activate` | Button clicks | Left click activates the presented session-strip entry |
+
+Drag bindings start on button-down and retain their button and target until
+release. Click bindings act on button-down. Prefix any gesture with the same
+exact modifiers as pane gestures. Defaults for ordinary clicks, resizing, and
+wheel movement accept all modifiers; default selection distinguishes Shift.
+An authored alias always matches only its written modifiers.
+
+```yaml
+keys:
+  pointer:
+    select: [LeftDrag]
+    extend: [Ctrl-LeftDrag]
+    open-link: [Alt-MiddleClick]
+    tree-open: [MiddleDoubleClick]
+```
+
+Selection and extension compete in one group, pane move and extension in
+another, and the four wheel directions in a third. Replace conflicting lists
+together; inheriting a conflicting alias is an error. An invalid group retains
+its defaults without discarding valid mappings in other groups. Each action
+accepts at most 192 aliases. Unknown action names reject the pointer section.
+
+Hit regions retain their precedence. Resizing owns matching border presses,
+pane gestures precede content actions, and link opening precedes live terminal
+mouse reporting. Inside the active selection, copying takes priority over
+selection; elsewhere the selection gesture can still place a caret. For
+unconditional right-button selection, configure `select: [RightDrag]` together
+with `copy: []`. Live terminal SGR reports retain their original physical
+buttons, modifiers, and wheel directions. Native media and preview gestures
+have their own input ownership.
+
+Old-frame presses and wheel events are rejected after configuration reload.
+A drag already in progress keeps its captured action. Contextual help displays
+the effective pointer bindings, including removed actions as `unbound`.
 
 `Ctrl-Alt-LeftDrag` avoids terminals that reserve Shift for native selection.
 The terminal or window manager still needs to deliver the configured gesture.

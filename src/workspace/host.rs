@@ -214,7 +214,7 @@ struct PreparedFrame {
     id: FrameId,
     pointer_compatible_since: FrameId,
     gesture_compatible_since: FrameId,
-    pane_gestures: crate::keymap::pointer::PaneGestures,
+    pointer_bindings: crate::keymap::pointer_actions::Bindings,
     view: PreparedView,
 }
 
@@ -1415,18 +1415,18 @@ impl WorkspaceHost {
             .as_ref()
             .filter(|prepared| prepared.view == view)
             .map_or(id, |prepared| prepared.pointer_compatible_since);
-        let pane_gestures = self.app.keymap().pane_gestures();
+        let pointer_bindings = self.app.keymap().pointer().clone();
         let gesture_compatible_since = self
             .prepared
             .as_ref()
-            .filter(|prepared| prepared.pane_gestures == pane_gestures)
+            .filter(|prepared| prepared.pointer_bindings == pointer_bindings)
             .map_or(id, |prepared| prepared.gesture_compatible_since);
         self.prepared = Some(PreparedFrame {
             geometry,
             id,
             pointer_compatible_since,
             gesture_compatible_since,
-            pane_gestures,
+            pointer_bindings,
             view,
         });
         if self.app.plugins.deferred_presentation {
@@ -1596,7 +1596,7 @@ impl WorkspaceHost {
                 // does, and must publish a frame that removes its outline.
                 if matches!(event.kind, crate::input::PointerEventKind::Up(_))
                     && !pane_release
-                    && self.app.cancel_pointer_drag()
+                    && self.app.release_pointer_drag(event)
                 {
                     return Ok(HostInputOutcome::AppliedWithoutVisualChange);
                 }
@@ -1609,16 +1609,24 @@ impl WorkspaceHost {
                 };
                 if let crate::input::PointerEventKind::Down(button) = event.kind
                     && (frame < prepared.gesture_compatible_since
-                        || prepared.pane_gestures != self.app.keymap().pane_gestures())
+                        || &prepared.pointer_bindings != self.app.keymap().pointer())
                 {
                     self.app.discard_pointer_gesture(button);
                     return Ok(HostInputOutcome::IgnoredStaleFrame);
                 }
+                if matches!(
+                    event.kind,
+                    crate::input::PointerEventKind::ScrollUp
+                        | crate::input::PointerEventKind::ScrollDown
+                        | crate::input::PointerEventKind::ScrollLeft
+                        | crate::input::PointerEventKind::ScrollRight
+                ) && (frame < prepared.gesture_compatible_since
+                    || &prepared.pointer_bindings != self.app.keymap().pointer())
+                {
+                    return Ok(HostInputOutcome::IgnoredStaleFrame);
+                }
                 let continued_selection = self.app.pointer_selection_drag_active()
-                    && matches!(
-                        event.kind,
-                        crate::input::PointerEventKind::Drag(crate::input::PointerButton::Left)
-                    );
+                    && self.app.pointer_drag_matches(event);
                 if (frame < prepared.pointer_compatible_since && !continued_selection)
                     || frame > prepared.id
                 {
@@ -2512,6 +2520,51 @@ mod tests {
             HostInputOutcome::IgnoredStaleFrame
         );
         assert_eq!(&host.app().active().selection, &after_compatible_input);
+    }
+
+    #[test]
+    fn pointer_wheel_rejects_a_captured_map_replaced_without_geometry_changes() {
+        let mut host = host();
+        host.app_mut().buffers[0].apply(&Transaction::insert(0, "abcdef\n".repeat(100)));
+        let first = host.prepare_frame(geometry());
+        let pane = host.app().active_pane;
+        let source = first.editor.pane(pane).unwrap().area;
+        let event = PointerEvent {
+            kind: PointerEventKind::ScrollUp,
+            column: source.x + 4,
+            row: source.y + 3,
+            modifiers: Modifiers::NONE,
+        };
+        let section =
+            serde_yaml::from_str("pointer: {scroll-up: [WheelDown], scroll-down: [WheelUp]}")
+                .unwrap();
+        let configured =
+            crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+        assert!(configured.errors.is_empty());
+        host.app_mut().set_keymap(configured.keymap);
+        for prepared in [false, true] {
+            if prepared {
+                host.prepare_frame(geometry());
+            }
+            assert_eq!(
+                host.execute(HostCommand::Pointer {
+                    event,
+                    frame: first.id,
+                    repetitions: 1
+                })
+                .unwrap(),
+                HostInputOutcome::IgnoredStaleFrame
+            );
+            assert_eq!(host.app().active().scroll_row, 0);
+        }
+        let frame = host.prepare_frame(geometry()).id;
+        host.execute(HostCommand::Pointer {
+            event,
+            frame,
+            repetitions: 1,
+        })
+        .unwrap();
+        assert!(host.app().active().scroll_row > 0);
     }
 
     #[test]

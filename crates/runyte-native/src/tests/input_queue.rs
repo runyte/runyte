@@ -8,7 +8,7 @@ fn input(event: Event, frame: u64) -> NativeInput {
         event,
         presented: Some(runyte::protocol::FrameId::from_raw(frame).into()),
         presentation_only: false,
-        pane_gestures: Default::default(),
+        pointer_bindings: Default::default(),
         window_bindings: Default::default(),
         preview_bindings: Default::default(),
         preview_target: None,

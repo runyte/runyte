@@ -219,7 +219,7 @@ fn left_press(app: &mut App, view: &PreparedView, row: u16) {
 /// A second press guaranteed to fall inside the double-click interval, however
 /// loaded the machine running the test is.
 fn left_press_again(app: &mut App, view: &PreparedView, row: u16) {
-    if let Some((_, at)) = app.directory_tree_click.as_mut() {
+    if let Some((_, at, _, _)) = app.directory_tree_click.as_mut() {
         *at = Instant::now();
     }
     left_press(app, view, row);
@@ -328,10 +328,12 @@ fn separate_or_slow_tree_clicks_only_select() {
     assert!(!tree_row_expanded(&app, &root.join("sub")));
 
     // A second press after the interval is a fresh single click.
-    let (path, at) = app.directory_tree_click.clone().unwrap();
+    let (path, at, button, bindings) = app.directory_tree_click.clone().unwrap();
     app.directory_tree_click = Some((
         path,
         at - crate::app::input::TREE_DOUBLE_CLICK_INTERVAL - Duration::from_millis(1),
+        button,
+        bindings,
     ));
     left_press(&mut app, &view, 2);
     assert!(!tree_row_expanded(&app, &root.join("sub")));
@@ -1689,5 +1691,69 @@ fn tree_delete_structural_masks_and_inherited_leader_match_the_presented_hint() 
     press(&mut app, 'y');
     assert!(app.directory_tree_delete.is_none());
     assert!(root.join("file.txt").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn remapped_tree_open_tracks_button_map_and_double_click_target() {
+    let (mut app, root) = isolated("tree-remapped-pointer");
+    fs::create_dir(root.join("sub")).unwrap();
+    chord(&mut app, 'd');
+    app.directory_tree.refresh(root.clone());
+    wait_for_tree_rows(&mut app, 2);
+    let section = serde_yaml::from_str(
+        "pointer: {tree-select: [], tree-open: [MiddleDoubleClick], tree-resize: [RightDrag]}",
+    )
+    .unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty());
+    app.set_keymap(compiled.keymap);
+    let view = app.prepare_view(geometry(80, 20));
+    let event = PointerEvent {
+        kind: PointerEventKind::Down(PointerButton::Middle),
+        column: 2,
+        row: 2,
+        modifiers: Modifiers::NONE,
+    };
+    app.handle_pointer(event, &view).unwrap();
+    assert!(!tree_row_expanded(&app, &root.join("sub")));
+    app.directory_tree_click.as_mut().unwrap().1 = Instant::now();
+    app.handle_pointer(event, &view).unwrap();
+    assert!(tree_row_expanded(&app, &root.join("sub")));
+    let view = app.prepare_view(geometry(80, 20));
+    let area = view.tree_area.unwrap();
+    let border = area.x + area.width - 1;
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Right),
+            column: border,
+            ..event
+        },
+        &view,
+    )
+    .unwrap();
+    assert_eq!(app.pointer_drag, Some(PointerDrag::DirectoryTreeResize));
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Drag(PointerButton::Right),
+            column: border + 3,
+            ..event
+        },
+        &view,
+    )
+    .unwrap();
+    assert_eq!(
+        app.prepare_view(geometry(80, 20)).tree_area.unwrap().width,
+        area.width + 3
+    );
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Up(PointerButton::Right),
+            ..event
+        },
+        &view,
+    )
+    .unwrap();
+    assert!(app.pointer_drag.is_none());
     fs::remove_dir_all(root).unwrap();
 }

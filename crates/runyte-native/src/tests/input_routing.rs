@@ -25,7 +25,7 @@ fn key(code: char, attachment: u64) -> NativeInput {
         event: Event::Key(key),
         presented: Some(runyte::protocol::FrameId::from_raw(42).into()),
         presentation_only: false,
-        pane_gestures: Default::default(),
+        pointer_bindings: Default::default(),
         window_bindings: Default::default(),
         preview_bindings: Default::default(),
         preview_target: None,
@@ -161,7 +161,7 @@ fn consecutive_drags_coalesce_without_crossing_physical_input_boundaries() {
             modifiers: KeyModifiers::NONE,
         }),
         presentation_only: false,
-        pane_gestures: Default::default(),
+        pointer_bindings: Default::default(),
         window_bindings: Default::default(),
         preview_bindings: Default::default(),
         preview_target: None,
@@ -377,7 +377,7 @@ fn configured_pane_gesture_owns_native_routing_until_release() {
     };
     let mut queue: Queue = Queue::default();
     let mut input = key('x', 1);
-    input.pane_gestures = gestures;
+    input.pointer_bindings = with_pane_gestures(gestures);
     let mut event = MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
         column: 5,
@@ -392,7 +392,7 @@ fn configured_pane_gesture_owns_native_routing_until_release() {
     event.modifiers = KeyModifiers::CONTROL | KeyModifiers::ALT;
     input.event = Event::Mouse(event);
     assert!(queue.editor_pane_gesture(&input));
-    input.pane_gestures = disabled;
+    input.pointer_bindings = with_pane_gestures(disabled);
     event.kind = MouseEventKind::Drag(MouseButton::Left);
     event.modifiers = KeyModifiers::NONE;
     input.event = Event::Mouse(event);
@@ -417,7 +417,7 @@ fn queued_pane_press_keeps_the_painted_configuration() {
     for (captured, later, expected) in [(enabled, disabled, true), (disabled, enabled, false)] {
         let mut queue: Queue = Queue::default();
         let mut input = key('x', 1);
-        input.pane_gestures = captured;
+        input.pointer_bindings = with_pane_gestures(captured);
         input.event = Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 5,
@@ -567,9 +567,12 @@ fn physical_pointer_motion_and_remapped_capture_retain_button_identity() {
         assert_eq!(pointer_motion(Some(native)), MouseEventKind::Drag(button));
         let mut queue: Queue = Queue::default();
         let mut input = key('x', 1);
-        input.pane_gestures.move_pane = [0; 3];
-        input.pane_gestures.extend_pane = [0; 3];
-        input.pane_gestures.extend_pane[index] = 1 << KeyModifiers::CONTROL.bits();
+        let mut gestures = runyte::keymap::pointer::PaneGestures {
+            move_pane: [0; 3],
+            extend_pane: [0; 3],
+        };
+        gestures.extend_pane[index] = 1 << KeyModifiers::CONTROL.bits();
+        input.pointer_bindings = with_pane_gestures(gestures);
         input.event = Event::Mouse(MouseEvent {
             kind: MouseEventKind::Down(button),
             column: 5,
@@ -577,7 +580,8 @@ fn physical_pointer_motion_and_remapped_capture_retain_button_identity() {
             modifiers: KeyModifiers::CONTROL,
         });
         assert!(queue.editor_pane_gesture(&input));
-        input.pane_gestures.extend_pane = [0; 3];
+        gestures.extend_pane = [0; 3];
+        input.pointer_bindings = with_pane_gestures(gestures);
         input.event = Event::Mouse(MouseEvent {
             kind: MouseEventKind::Drag(button),
             column: 8,
@@ -597,7 +601,10 @@ fn unmatched_pane_release_keeps_the_initiating_buttons_tail_owned() {
     use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
     let mut queue: Queue = Queue::default();
     let mut input = key('x', 1);
-    input.pane_gestures.extend_pane = [0, 0, 1];
+    input.pointer_bindings = with_pane_gestures(runyte::keymap::pointer::PaneGestures {
+        move_pane: [0; 3],
+        extend_pane: [0, 0, 1],
+    });
     for kind in [
         MouseEventKind::Down(MouseButton::Right),
         MouseEventKind::Up(MouseButton::Left),
@@ -641,4 +648,105 @@ fn passive_motion_coalesces_without_consuming_room_for_real_input() {
     assert!(queue.push_coalesced(input, 1, |a, b| a == b));
     assert!(queue.push(key('x', 2), 1));
     assert_eq!(queue.inputs.len(), 6);
+}
+
+fn with_pane_gestures(
+    gestures: runyte::keymap::pointer::PaneGestures,
+) -> runyte::keymap::pointer_actions::Bindings {
+    let mut masks = *runyte::keymap::pointer_actions::Bindings::default().masks();
+    masks[0][3..6].copy_from_slice(&gestures.move_pane);
+    masks[1][3..6].copy_from_slice(&gestures.extend_pane);
+    runyte::keymap::pointer_actions::Bindings::from_masks(masks).unwrap()
+}
+
+#[test]
+fn middle_double_click_initiators_reach_the_host_without_single_click_actions() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use runyte::keymap::pointer_actions::{Action, Bindings, Trigger};
+    let mut masks = *Bindings::default().masks();
+    masks[Action::TreeSelect as usize] = [0; 14];
+    masks[Action::TreeOpen as usize] = [0; 14];
+    masks[Action::TreeOpen as usize][Trigger::MiddleDoubleClick as usize] = 1;
+    let mut input = key('x', 1);
+    input.pointer_bindings = Bindings::from_masks(masks).unwrap();
+    input.event = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Middle),
+        column: 2,
+        row: 2,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(host_pointer_press(&input));
+}
+
+#[test]
+fn remapped_host_selection_routes_nonleft_tails_after_reload() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use runyte::keymap::pointer_actions::{Action, Bindings, Trigger};
+    let mut queue: Queue = Queue::default();
+    let mut input = key('x', 1);
+    input.event = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 3,
+        row: 3,
+        modifiers: KeyModifiers::NONE,
+    });
+    queue.capture_host_drag(&input);
+    assert!(
+        queue.pane_gesture.is_none(),
+        "factory left-selection keeps native key precedence"
+    );
+    let mut masks = *Bindings::default().masks();
+    masks[Action::Select as usize] = [0; 14];
+    masks[Action::Select as usize][Trigger::MiddleDrag as usize] = 1;
+    input.pointer_bindings = Bindings::from_masks(masks).unwrap();
+    if let Event::Mouse(event) = &mut input.event {
+        event.kind = MouseEventKind::Down(MouseButton::Middle);
+    }
+    assert!(host_pointer_press(&input));
+    assert!(!queue.editor_pane_gesture(&input));
+    queue.capture_host_drag(&input);
+    input.pointer_bindings = Bindings::default();
+    for kind in [
+        MouseEventKind::Drag(MouseButton::Middle),
+        MouseEventKind::Up(MouseButton::Left),
+        MouseEventKind::Up(MouseButton::Middle),
+    ] {
+        if let Event::Mouse(event) = &mut input.event {
+            event.kind = kind;
+            event.modifiers = KeyModifiers::ALT;
+        }
+        assert!(queue.editor_pane_gesture(&input));
+    }
+    assert!(queue.pane_gesture.is_none());
+}
+
+#[test]
+fn remapped_copy_claims_its_tail_without_changing_factory_right_click_routing() {
+    use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+    use runyte::keymap::pointer_actions::{Action, Bindings, Trigger};
+    let mut queue: Queue = Queue::default();
+    let mut input = key('x', 1);
+    input.event = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Right),
+        column: 3,
+        row: 3,
+        modifiers: KeyModifiers::NONE,
+    });
+    queue.capture_host_drag(&input);
+    assert!(queue.pane_gesture.is_none());
+    let mut masks = *Bindings::default().masks();
+    masks[Action::Copy as usize] = [0; 14];
+    masks[Action::Copy as usize][Trigger::MiddleClick as usize] = 1;
+    input.pointer_bindings = Bindings::from_masks(masks).unwrap();
+    if let Event::Mouse(event) = &mut input.event {
+        event.kind = MouseEventKind::Down(MouseButton::Middle);
+    }
+    assert!(host_pointer_press(&input));
+    queue.capture_host_drag(&input);
+    assert!(queue.pane_gesture.is_some());
+    if let Event::Mouse(event) = &mut input.event {
+        event.kind = MouseEventKind::Up(MouseButton::Middle);
+    }
+    assert!(queue.editor_pane_gesture(&input));
+    assert!(queue.pane_gesture.is_none());
 }

@@ -983,3 +983,47 @@ fn cancelled_nonleft_pane_tails_never_reach_live_terminal_mouse_reporting() {
     assert!(app.pointer_drag.is_none());
     assert!(!app.pane_pointer_owned);
 }
+
+#[test]
+fn remapped_border_resize_precedes_pane_move_and_keeps_its_button() {
+    let mut app = wide_top_over_two_columns();
+    configure_pointer(
+        &mut app,
+        "pointer: {pane-resize: [MiddleDrag], pane-move: [MiddleDrag]}",
+    );
+    let left = area(&mut app, 1);
+    let boundary = left.x + left.width;
+    pointer(
+        &mut app,
+        PointerEventKind::Down(PointerButton::Middle),
+        boundary,
+        left.y + 5,
+        Modifiers::NONE,
+    );
+    assert!(matches!(app.pointer_drag, Some(PointerDrag::Resize { .. })));
+    configure_pointer(&mut app, "pointer: {pane-resize: []}");
+    pointer(
+        &mut app,
+        PointerEventKind::Drag(PointerButton::Left),
+        boundary + 6,
+        left.y + 5,
+        Modifiers::NONE,
+    );
+    assert_eq!(area(&mut app, 1).width, 40);
+    pointer(
+        &mut app,
+        PointerEventKind::Drag(PointerButton::Middle),
+        boundary + 6,
+        left.y + 5,
+        Modifiers::ALT,
+    );
+    pointer(
+        &mut app,
+        PointerEventKind::Up(PointerButton::Middle),
+        boundary + 6,
+        left.y + 5,
+        Modifiers::NONE,
+    );
+    assert_eq!(area(&mut app, 1).width, 46);
+    assert!(app.pointer_drag.is_none());
+}

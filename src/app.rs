@@ -2939,7 +2939,12 @@ pub struct App {
     directory_tree_geometry: Option<(Rect, Rect)>,
     /// The tree entry the last left press landed on, and when. A second
     /// press on the same entry soon enough opens it as Enter does.
-    directory_tree_click: Option<(PathBuf, Instant)>,
+    directory_tree_click: Option<(
+        PathBuf,
+        Instant,
+        PointerButton,
+        crate::keymap::pointer_actions::Bindings,
+    )>,
     /// The pane temporarily presented across the complete editor area by
     /// `:zen` or `:fullscreen`, if either is active.
     maximized: Option<MaximizedPane>,
@@ -3326,7 +3331,7 @@ pub struct App {
     pane_pointer_button: Option<PointerButton>,
     /// The release and drags of a link click remain editor-owned even when
     /// navigation opens a popup or changes the pane underneath the pointer.
-    pointer_link_pressed: bool,
+    pointer_link_pressed: Option<PointerButton>,
     pointer_autoscroll: Option<mouse_autoscroll::Autoscroll>,
     /// Code actions backing a code-action picker.
     lsp_actions: Vec<ActionEntry>,
@@ -3919,7 +3924,7 @@ impl App {
             pointer_drag: None,
             pane_pointer_owned: false,
             pane_pointer_button: None,
-            pointer_link_pressed: false,
+            pointer_link_pressed: None,
             pointer_autoscroll: None,
             lsp_actions: Vec::new(),
             lsp_action_source: None,

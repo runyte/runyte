@@ -508,3 +508,22 @@ stale/missing frames, live SGR non-delivery, native capture and bounded passive
 coalescing. Focused root pointer/pane/protocol tests, 20 native routing tests,
 both required Clippy invocations, formatting and guide checks passed. Astra's
 final review has no remaining blockers. Remaining pointer owners are next.
+
+Host pointer registry checkpoint: one bounded map now owns pane gestures,
+selection/extension, pane and tree resizing, links/copy, four wheel directions,
+tree selection/opening and session-strip activation. Protocol 87 publishes the
+whole map; native input captures it and host configuration-only reload rejects
+old-frame presses and wheels. Competing owners validate and roll back separately.
+Double-click initiation reaches the host even without a single-click action.
+Copy takes precedence inside the active selection, documented alongside explicit
+removal for unconditional alternate-button selection. Non-left captured tails,
+selection autoscroll and native fractional wheel policy have regression coverage.
+
+Astra's final source review found no remaining blocker. The complete library run
+had 4239 passing tests and one incorrect new link-test expectation: link opening
+already places the caret at the clicked position. Correcting the expectation and
+rerunning pointer/remap tests and the final link/copy tail tests passed. All desktop
+package tests, both required Clippy checks, formatting and guide checks passed.
+The earlier sandboxed library attempt was stopped because socket fixtures require
+local transport permissions; the complete run used those permissions. Native
+media/preview pointer actions and final full validation/coverage remain pending.

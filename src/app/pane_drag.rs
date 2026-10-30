@@ -48,6 +48,27 @@ impl App {
         self.pane_pointer_button = Some(button);
     }
 
+    pub(super) fn begin_pointer_drag(&mut self, drag: PointerDrag, button: PointerButton) {
+        self.pointer_drag = Some(drag);
+        self.pane_pointer_button = Some(button);
+        self.pane_pointer_owned = button != PointerButton::Left;
+    }
+
+    pub(crate) fn pointer_drag_matches(&self, event: PointerEvent) -> bool {
+        event.kind
+            == PointerEventKind::Drag(self.pane_pointer_button.unwrap_or(PointerButton::Left))
+    }
+
+    pub(crate) fn release_pointer_drag(&mut self, event: PointerEvent) -> bool {
+        let retain = self.pane_pointer_owned
+            && self.pane_pointer_button.is_some_and(|button| {
+                button != PointerButton::Left && event.kind != PointerEventKind::Up(button)
+            });
+        let owned = self.cancel_pointer_drag();
+        self.pane_pointer_owned = retain;
+        owned
+    }
+
     /// A stale drop cannot commit geometry, but an unrelated button release
     /// must still leave the initiating button's remaining events captured.
     pub(crate) fn cancel_pane_drop(&mut self, event: PointerEvent) {
@@ -71,7 +92,7 @@ impl App {
     }
 
     pub(crate) fn consume_cancelled_pane_pointer(&mut self, event: PointerEvent) -> bool {
-        if !self.pane_pointer_owned || self.pointer_pane_drag_active() {
+        if !self.pane_pointer_owned || self.pointer_drag.is_some() {
             return false;
         }
         match event.kind {
@@ -135,7 +156,12 @@ impl App {
         let Some(action) = self.keymap.pane_gestures().action(event) else {
             return false;
         };
-        if pointer_resize_pair(view, event.column, event.row).is_some() {
+        if self
+            .keymap
+            .pointer()
+            .press(crate::keymap::pointer_actions::Action::Resize, event)
+            && pointer_resize_pair(view, event.column, event.row).is_some()
+        {
             return false;
         }
         let Some(pane) = pointer_pane(view, event.column, event.row) else {

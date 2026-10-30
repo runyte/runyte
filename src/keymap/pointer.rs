@@ -4,7 +4,6 @@
 //! subsequent motion belongs to that action even when modifiers change.
 
 use crate::input::{KeyStroke, Modifiers, PointerButton, PointerEvent, PointerEventKind};
-use serde_yaml::Value;
 
 #[cfg(test)]
 #[path = "../tests/pointer_bindings.rs"]
@@ -106,66 +105,7 @@ impl PaneGestures {
     }
 }
 
-pub(super) fn compile(section: Option<&Value>, errors: &mut Vec<String>) -> PaneGestures {
-    let defaults = PaneGestures::default();
-    let Some(section) = section else {
-        return defaults;
-    };
-    let Some(mapping) = section.as_mapping() else {
-        errors.push("pointer rejected: expected action-to-gesture-list mapping".into());
-        return defaults;
-    };
-    let mut candidate = defaults;
-    let parsed = (|| -> Result<(), String> {
-        if mapping.len() > 2 {
-            return Err("unknown pointer actions or too many actions".into());
-        }
-        for (action, gestures) in mapping {
-            let target = match action.as_str() {
-                Some("pane-move") => &mut candidate.move_pane,
-                Some("pane-extend") => &mut candidate.extend_pane,
-                _ => return Err("expected pane-move or pane-extend action name".into()),
-            };
-            let gestures = gestures
-                .as_sequence()
-                .ok_or("expected a list; use [] to unbind")?;
-            if gestures.len() > 64 {
-                return Err("at most 64 gestures per action".into());
-            }
-            *target = [0; 3];
-            for gesture in gestures {
-                let spelling = gesture.as_str().ok_or("gestures must be strings")?;
-                if spelling.len() > 64 {
-                    return Err("gesture spelling exceeds 64 bytes".into());
-                }
-                let (button, prefix) = ["LeftDrag", "MiddleDrag", "RightDrag"]
-                    .iter()
-                    .enumerate()
-                    .find_map(|(button, suffix)| {
-                        spelling.strip_suffix(suffix).map(|prefix| (button, prefix))
-                    })
-                    .ok_or("expected LeftDrag, MiddleDrag or RightDrag with optional modifiers")?;
-                // Parse a non-character key so Shift remains an exact modifier.
-                let key = KeyStroke::parse(&format!("{prefix}Left"))?;
-                let bit = 1u64 << key.modifiers.bits();
-                if target[button] & bit != 0 {
-                    return Err(format!("duplicate gesture {spelling:?}"));
-                }
-                target[button] |= bit;
-            }
-        }
-        if PaneGestures::from_masks(candidate.masks()).is_none() {
-            return Err("pane-move and pane-extend have overlapping gestures".into());
-        }
-        Ok(())
-    })();
-    match parsed {
-        Ok(()) => candidate,
-        Err(error) => {
-            errors.push(format!(
-                "pointer rejected: {error}; default gestures retained"
-            ));
-            defaults
-        }
-    }
+#[cfg(test)]
+fn compile(section: Option<&serde_yaml::Value>, errors: &mut Vec<String>) -> PaneGestures {
+    super::pointer_actions::compile(section, errors).pane_gestures()
 }

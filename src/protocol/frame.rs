@@ -207,7 +207,7 @@ impl EditorDamageFrame {
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.pane_drop != next.editor.pane_drop
-            || base.editor.pane_gestures != next.editor.pane_gestures
+            || base.editor.pointer_bindings != next.editor.pointer_bindings
             || base.editor.window_bindings != next.editor.window_bindings
             || base.editor.window_authored != next.editor.window_authored
             || base.editor.window_guard != next.editor.window_guard
@@ -365,7 +365,7 @@ impl TerminalDamageFrame {
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.pane_drop != next.editor.pane_drop
-            || base.editor.pane_gestures != next.editor.pane_gestures
+            || base.editor.pointer_bindings != next.editor.pointer_bindings
             || base.editor.window_bindings != next.editor.window_bindings
             || base.editor.window_authored != next.editor.window_authored
             || base.editor.window_guard != next.editor.window_guard
@@ -596,7 +596,7 @@ pub struct EditorSnapshot {
     pub directory_tree: Option<DirectoryTreeSnapshot>,
     pub panes: Vec<PaneSnapshot>,
     pub pane_drop: Option<Rect>,
-    pub pane_gestures: [u64; 6],
+    pub pointer_bindings: [[u64; 14]; 15],
     pub window_bindings: Vec<WindowBinding>,
     pub window_authored: u8,
     pub window_guard: u8,
@@ -676,7 +676,7 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
             directory_tree: value.directory_tree.map(Into::into),
             panes: value.panes.into_iter().map(Into::into).collect(),
             pane_drop: value.pane_drop.map(Into::into),
-            pane_gestures: value.pane_gestures.masks(),
+            pointer_bindings: *value.pointer_bindings.masks(),
             preview_bindings: value
                 .preview_bindings
                 .entries()
@@ -757,9 +757,9 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
         }
         let mut preview_bindings = Preview::from_entries(entries, fallback)?;
         preview_bindings.unavailable = value.preview_unavailable;
-        if crate::keymap::pointer::PaneGestures::from_masks(value.pane_gestures).is_none() {
-            return Err("overlapping pane gestures".into());
-        }
+        let pointer_bindings =
+            crate::keymap::pointer_actions::Bindings::from_masks(value.pointer_bindings)
+                .ok_or("invalid pointer bindings")?;
         if value.window_bindings.len() > crate::keymap::native_window::Bindings::MAX_ENTRIES {
             return Err("too many window bindings".into());
         }
@@ -807,8 +807,7 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
                 .map(TryInto::try_into)
                 .collect::<Result<_, _>>()?,
             pane_drop: value.pane_drop.map(Into::into),
-            pane_gestures: crate::keymap::pointer::PaneGestures::from_masks(value.pane_gestures)
-                .expect("validated gesture masks"),
+            pointer_bindings,
             status: value.status.into(),
             session_strip: value.session_strip.map(TryInto::try_into).transpose()?,
         })
@@ -1204,7 +1203,7 @@ mod tests {
                 directory_tree: None,
                 session_strip: None,
                 pane_drop: None,
-                pane_gestures: [1 << 4, 1 << 5, 0, 0, 0, 0],
+                pointer_bindings: *crate::keymap::pointer_actions::Bindings::default().masks(),
                 window_bindings: Vec::new(),
                 window_authored: 0,
                 window_guard: 0,
@@ -1461,15 +1460,40 @@ mod tests {
         let base = terminal_frame(1, 1, 'x');
         let mut next = base.clone();
         next.id = FrameId::from_raw(2);
-        next.editor.pane_gestures = [0, 1 << 6, 1, 0, 0, 1 << 7];
+        next.editor.pointer_bindings[0][3] = 0;
+        next.editor.pointer_bindings[0][4] = 1;
+        next.editor.pointer_bindings[1][3] = 1 << 6;
+        next.editor.pointer_bindings[1][5] = 1 << 7;
         assert!(TerminalDamageFrame::between(&base, &next).is_none());
         assert!(EditorDamageFrame::between(&base, &next).is_none());
         let wire = serde_json::to_vec(&next).unwrap();
         let decoded: HostFrame = serde_json::from_slice(&wire).unwrap();
         let editor: core::EditorSnapshot = decoded.editor.try_into().unwrap();
-        assert_eq!(editor.pane_gestures.move_pane, [0, 1, 0]);
-        assert_eq!(editor.pane_gestures.extend_pane, [1 << 6, 0, 1 << 7]);
-        next.editor.pane_gestures = [1 << 6, 1 << 6, 0, 0, 0, 0];
+        assert_eq!(editor.pointer_bindings.pane_gestures().move_pane, [0, 1, 0]);
+        assert_eq!(
+            editor.pointer_bindings.pane_gestures().extend_pane,
+            [1 << 6, 0, 1 << 7]
+        );
+        next.editor.pointer_bindings[0][3] = 1 << 6;
+        assert!(core::EditorSnapshot::try_from(next.editor).is_err());
+    }
+
+    #[test]
+    fn nonpane_pointer_maps_force_full_publication_and_reject_invalid_owner_masks() {
+        use crate::keymap::pointer_actions::{Action, Trigger};
+        let base = terminal_frame(1, 1, 'x');
+        let mut next = base.clone();
+        next.editor.pointer_bindings[Action::Copy as usize] = [0; 14];
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        let decoded: HostFrame =
+            serde_json::from_slice(&serde_json::to_vec(&next).unwrap()).unwrap();
+        let editor: core::EditorSnapshot = decoded.editor.try_into().unwrap();
+        assert_eq!(editor.pointer_bindings.label(Action::Copy), "unbound");
+        let mut invalid = next.editor.clone();
+        invalid.pointer_bindings[Action::Select as usize][Trigger::WheelUp as usize] = 1;
+        assert!(core::EditorSnapshot::try_from(invalid).is_err());
+        next.editor.pointer_bindings[Action::Extend as usize][Trigger::LeftDrag as usize] |= 1;
         assert!(core::EditorSnapshot::try_from(next.editor).is_err());
     }
 
