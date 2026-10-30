@@ -59,10 +59,11 @@ pub enum Owner {
     MergePrefix,
     MacroReplay,
     Hover,
+    CharacterInput,
 }
 
 impl Owner {
-    const ALL: [Self; 35] = [
+    const ALL: [Self; 36] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -98,6 +99,7 @@ impl Owner {
         Self::MergePrefix,
         Self::MacroReplay,
         Self::Hover,
+        Self::CharacterInput,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -136,6 +138,7 @@ impl Owner {
             Self::MergePrefix => "merge-prefix",
             Self::MacroReplay => "macro-replay",
             Self::Hover => "hover",
+            Self::CharacterInput => "character-input",
         }
     }
     pub fn is_confirmation(self) -> bool {
@@ -189,6 +192,7 @@ impl Owner {
                 | Self::MergePrefix
                 | Self::MacroReplay
                 | Self::Hover
+                | Self::CharacterInput
         ) && !self.is_plugin_input()
             && !self.is_prompt()
             && !self.is_session_navigation()
@@ -213,7 +217,7 @@ impl Owner {
             Self::Path => &[OpenActions, Cancel],
             Self::MergeAcknowledgment => &[Backspace, Delete, MoveLeft, MoveRight],
             Self::MergePrefix => &[ResetAndContinue],
-            Self::MacroReplay => &[Cancel],
+            Self::MacroReplay | Self::CharacterInput => &[Cancel],
             Self::Hover => &[Accept],
             Self::PluginConfirmation => &[Accept, Cancel],
             Self::PluginPicker => &[Accept, Cancel, Next, Previous, Backspace],
@@ -263,6 +267,7 @@ impl Owner {
     fn structural(self, key: KeyStroke) -> bool {
         match self {
             Self::MergePrefix | Self::MacroReplay => false,
+            Self::CharacterInput => matches!(key.code, KeyCode::Char(_)),
             Self::Hover => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control() || (c.is_ascii_digit() && key.modifiers.is_empty()))
             }
@@ -698,6 +703,9 @@ impl OwnerBindings {
 
 fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     use Action::*;
+    if owner == Owner::CharacterInput {
+        return (key.code == KeyCode::Escape).then_some(Cancel);
+    }
     if owner == Owner::Hover {
         return (key == KeyStroke::plain(KeyCode::Enter)).then_some(Accept);
     }
@@ -775,6 +783,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner == Owner::CharacterInput {
+        return &["Esc"];
+    }
     if owner == Owner::Hover {
         return &["Enter"];
     }

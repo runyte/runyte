@@ -1050,7 +1050,12 @@ impl RunyteGrammar {
     ) -> Result<GrammarOutput, CommandInvocationError> {
         if let Some((command, count)) = self.awaiting_character.take() {
             let first = self.first_operand.take();
-            if key.code == KeyCode::Escape {
+            if context
+                .keymap
+                .ui()
+                .lookup(crate::keymap::ui::Owner::CharacterInput, key)
+                == Some(crate::keymap::ui::Action::Cancel)
+            {
                 self.awaiting_binding = None;
                 return Ok(GrammarOutput::one(EditorIntent::Notice(
                     GrammarNotice::CharacterInputCancelled,
@@ -2501,6 +2506,88 @@ mod tests {
         assert!(output.reprocess.is_none());
         assert_eq!(output.intents.len(), 1);
         output.intents.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn character_input_cancellation_uses_effective_actions_and_keeps_operands_structural() {
+        for source in [
+            "{}",
+            "ui: {character-input: {cancel: [F8]}}",
+            "ui: {character-input: {cancel: []}}",
+        ] {
+            let compiled = crate::keymap::configured::compile(
+                &serde_yaml::from_str(source).unwrap(),
+                crate::keymap::default_keymap(),
+            );
+            assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+            for mode in [Mode::Normal, Mode::Select] {
+                for sequence in ["2 f", "m r", "m r (", "Space m R"] {
+                    for bits in 0..64 {
+                        let modifiers = Modifiers::from_bits(bits).unwrap();
+                        for code in [KeyCode::Escape, KeyCode::Function(8), KeyCode::Char('x')] {
+                            let mut grammar = RunyteGrammar::default();
+                            let context = || {
+                                GrammarContext::new(mode, BindingScope::Global, &compiled.keymap)
+                            };
+                            for key in KeySequence::parse(sequence).unwrap().as_slice() {
+                                grammar.translate(InputEvent::Key(*key), context()).unwrap();
+                            }
+                            assert!(grammar.awaiting_character().is_some(), "{sequence}");
+                            let key = KeyStroke::new(code, modifiers);
+                            let output =
+                                grammar.translate(InputEvent::Key(key), context()).unwrap();
+                            let intent = only_intent(output);
+                            if code == KeyCode::Char('x') && sequence == "m r" {
+                                assert!(matches!(
+                                    intent,
+                                    EditorIntent::Notice(GrammarNotice::AwaitingSecondCharacter {
+                                        first: 'x',
+                                        ..
+                                    })
+                                ));
+                            } else if code == KeyCode::Char('x') {
+                                assert!(
+                                    matches!(intent, EditorIntent::Command(_)),
+                                    "{sequence} {key:?}: {intent:?}"
+                                );
+                            } else {
+                                let cancelled = source == "{}" && code == KeyCode::Escape
+                                    || source.contains("[F8]")
+                                        && key == KeyStroke::plain(KeyCode::Function(8));
+                                assert_eq!(
+                                    intent,
+                                    EditorIntent::Notice(if cancelled {
+                                        GrammarNotice::CharacterInputCancelled
+                                    } else {
+                                        GrammarNotice::ExpectedCharacter
+                                    }),
+                                    "{sequence} {source} {key:?}"
+                                );
+                            }
+                            assert_eq!(
+                                grammar.awaiting_character().is_some(),
+                                code == KeyCode::Char('x') && sequence == "m r"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        for alias in ["x", "Ctrl-c", "Alt-x", "Meta-x"] {
+            let source = format!("ui: {{character-input: {{cancel: [{alias}]}}}}");
+            let compiled = crate::keymap::configured::compile(
+                &serde_yaml::from_str(&source).unwrap(),
+                crate::keymap::default_keymap(),
+            );
+            assert_eq!(compiled.errors.len(), 1, "{alias}");
+            assert_eq!(
+                compiled.keymap.ui().lookup(
+                    crate::keymap::ui::Owner::CharacterInput,
+                    KeyStroke::plain(KeyCode::Escape)
+                ),
+                Some(crate::keymap::ui::Action::Cancel)
+            );
+        }
     }
 
     #[test]

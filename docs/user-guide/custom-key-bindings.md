@@ -1160,3 +1160,11 @@ alias. The progress message shows the effective keys.
 by normal input handling. Command prompts, completion and pending key sequences
 retain precedence. Character operands and plain count digits remain structural.
 Hover hints show only reachable aliases. The hover owner adds no leader alias. `[]` removes the expansion shortcut.
+
+`ui.character-input.cancel` cancels a pending character operand, such as the
+character after `f` or either operand of `m r`. It defaults to Escape with any
+modifiers. Character keys, including modified characters, remain operands and
+cannot be assigned to cancellation. Named keys and function keys are available.
+Other non-character keys retain their existing “expected a character” result;
+removing cancellation does not make them valid operands. The owner adds no
+leader alias.

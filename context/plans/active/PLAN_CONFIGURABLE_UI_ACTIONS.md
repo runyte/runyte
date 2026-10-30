@@ -387,3 +387,10 @@ constraints were reviewed with Astra before implementation.
   hover-related tests passed, including raw modifier coverage, removal, structural
   text, covered snapshots and actual default/remapped macro replay. Astra's final
   source review and guide validation are clear.
+- Character-operand cancellation now resolves `ui.character-input.cancel`.
+  Every character key remains an operand regardless of modifiers, while Escape
+  retains all default modifier aliases. Removing cancellation keeps the existing
+  invalid-non-character behavior. Astra found no blocker and suggested coverage
+  for the first of two operands; the expanded matrix now covers both phases,
+  counted finds and macro-register operands in Normal/Select. All 32 grammar
+  tests passed, followed by the expanded matrix, root Clippy and guide checks.
