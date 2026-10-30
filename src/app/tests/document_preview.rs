@@ -355,3 +355,24 @@ fn keyboard_and_pointer_swaps_keep_each_preview_with_its_source() {
         }
     }
 }
+
+#[test]
+fn preview_frames_publish_current_structural_input_ownership() {
+    let root = TestRuntimeRoot::new("preview-structural").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    seed(&mut app, "abcx");
+    app.execute(parse_colon_command("preview").unwrap())
+        .unwrap();
+    let mut host = crate::workspace::WorkspaceHost::new(app);
+    let geometry = preview_test_geometry();
+    assert!(!host.prepare_frame(geometry).editor.preview_structural);
+    press(&mut host, 'i');
+    assert!(host.prepare_frame(geometry).editor.preview_structural);
+    key(&mut host, KeyCode::Escape, Modifiers::NONE);
+    assert!(!host.prepare_frame(geometry).editor.preview_structural);
+    press(&mut host, 'f');
+    assert!(host.prepare_frame(geometry).editor.preview_structural);
+    press(&mut host, 'x');
+    assert!(!host.prepare_frame(geometry).editor.preview_structural);
+}

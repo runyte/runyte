@@ -27,6 +27,8 @@ fn key(code: char, attachment: u64) -> NativeInput {
         presentation_only: false,
         pane_gestures: Default::default(),
         window_bindings: Default::default(),
+        preview_bindings: Default::default(),
+        preview_target: None,
         routing_serial: 0,
     }
 }
@@ -161,6 +163,8 @@ fn consecutive_drags_coalesce_without_crossing_physical_input_boundaries() {
         presentation_only: false,
         pane_gestures: Default::default(),
         window_bindings: Default::default(),
+        preview_bindings: Default::default(),
+        preview_target: None,
         routing_serial: 0,
     };
     for column in 0..300 {
@@ -509,4 +513,44 @@ fn queued_window_operand_waits_for_host_and_keeps_captured_configuration() {
         &Bindings::default(),
         Some(&released)
     ));
+}
+
+#[test]
+fn queued_preview_navigation_keeps_painted_map_and_document_identity() {
+    use runyte::{
+        input::{KeyCode as CoreCode, KeyStroke},
+        keymap::{
+            KeySequence,
+            native_preview::{Action as PreviewAction, Bindings},
+        },
+    };
+    let stroke = KeyStroke::plain(CoreCode::Function(8));
+    let map =
+        |action| Bindings::from_entries(vec![(KeySequence::from(stroke), action)], vec![]).unwrap();
+    let mut first = key('x', 1);
+    first.event = Event::Key(KeyEvent::new(KeyCode::F(8), KeyModifiers::NONE));
+    first.preview_bindings = map(PreviewAction::ZoomIn);
+    first.preview_target = Some(super::super::preview::Target {
+        pane: 2,
+        source: 7,
+        generation: 11,
+    });
+    let mut later = first.clone();
+    later.preview_bindings = map(PreviewAction::Back);
+    later.preview_target.as_mut().unwrap().generation = 12;
+    let mut queue: Queue = Queue::default();
+    queue.push(first, ());
+    queue.push(later, ());
+    let first = queue.next(1, 0, true).unwrap().0;
+    let later = queue.next(1, 0, true).unwrap().0;
+    assert_eq!(
+        first.preview_bindings.lookup(&KeySequence::from(stroke)),
+        runyte::keymap::native_preview::Lookup::Action(PreviewAction::ZoomIn)
+    );
+    assert_eq!(
+        later.preview_bindings.lookup(&KeySequence::from(stroke)),
+        runyte::keymap::native_preview::Lookup::Action(PreviewAction::Back)
+    );
+    assert_eq!(first.preview_target.unwrap().generation, 11);
+    assert_eq!(later.preview_target.unwrap().generation, 12);
 }

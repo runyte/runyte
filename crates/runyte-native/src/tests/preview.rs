@@ -16,6 +16,7 @@ fn dropping_view_cancels_its_pending_helper_request() {
         hidden: false,
         zoom: 1.0,
         keys: Default::default(),
+        keys_bindings: None,
     };
     drop(state);
     assert!(flag.load(Ordering::Acquire));
@@ -223,6 +224,7 @@ fn an_in_flight_cache_refresh_cannot_rewind_a_newer_cached_scroll() {
             hidden: false,
             zoom: 1.0,
             keys: Default::default(),
+            keys_bindings: None,
         },
     );
     results
@@ -459,6 +461,7 @@ fn pointer_fixture() -> (super::Views, super::Pane, super::CellMetrics) {
             dragging: false,
             hidden: false,
             keys: Default::default(),
+            keys_bindings: None,
         },
     );
     let pane = super::Pane {
@@ -566,4 +569,304 @@ fn cancelling_preview_capture_preserves_selection_and_stops_later_motion() {
         PointerResult::Changed
     );
     assert!(views.states[&1].dragging);
+}
+
+#[test]
+fn preview_input_fences_replacement_but_preserves_intentional_source_handoff() {
+    use super::{InputRoute, Target, input_route};
+    let target = Target {
+        pane: 2,
+        source: 7,
+        generation: 11,
+    };
+    let source = Some((2, 7));
+    assert_eq!(
+        input_route(Some(target), Some(target), source, true, None),
+        InputRoute::Local
+    );
+    assert_eq!(
+        input_route(Some(target), Some(target), source, false, None),
+        InputRoute::Host
+    );
+    assert_eq!(
+        input_route(None, Some(target), source, true, None),
+        InputRoute::Host
+    );
+    for replacement in [
+        Target { pane: 3, ..target },
+        Target {
+            source: 8,
+            ..target
+        },
+        Target {
+            generation: 12,
+            ..target
+        },
+    ] {
+        assert_eq!(
+            input_route(Some(target), Some(replacement), source, true, None),
+            InputRoute::Discard
+        );
+        assert_eq!(
+            input_route(Some(target), Some(replacement), source, true, Some(target)),
+            InputRoute::Discard
+        );
+    }
+    assert_eq!(
+        input_route(Some(target), None, source, true, None),
+        InputRoute::Discard
+    );
+    // i intentionally returns to source; a/b/c already queued from the same
+    // painted preview remain source input after the dismissal acknowledgement.
+    for _ in ['a', 'b', 'c'] {
+        assert_eq!(
+            input_route(Some(target), None, source, true, Some(target)),
+            InputRoute::Host
+        );
+    }
+    assert_eq!(
+        input_route(Some(target), None, Some((3, 7)), true, Some(target)),
+        InputRoute::Discard
+    );
+}
+
+#[test]
+fn effective_preview_navigation_keeps_pane_precedence_and_remapped_semantics() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use runyte::{
+        command::Mode,
+        keymap::{BindingScope, KeySequence},
+    };
+    let section = serde_json::from_value(serde_json::json!({"ui": {"native-preview": {"back": ["F8"]}}, "scopes": {"media": {"normal": {"F7": "media-zoom-in"}}}})).unwrap();
+    let compiled = runyte::keymap::configured::compile(&section, runyte::keymap::default_keymap());
+    assert!(compiled.errors.is_empty());
+    let bindings = compiled
+        .keymap
+        .native_preview(Mode::Normal, BindingScope::Global);
+    let mut keys = KeySequence::parse("g").unwrap();
+    assert_eq!(
+        super::effective_navigation(
+            &mut keys,
+            KeyEvent::new(KeyCode::Char('h'), KeyModifiers::CONTROL),
+            600.0,
+            &bindings
+        ),
+        Some(super::Navigation::Forward)
+    );
+    assert!(keys.is_empty());
+    assert_eq!(
+        super::effective_navigation(
+            &mut keys,
+            KeyEvent::new(KeyCode::F(7), KeyModifiers::NONE),
+            600.0,
+            &bindings
+        ),
+        Some(super::Navigation::Zoom(1.2))
+    );
+    assert_eq!(
+        super::effective_navigation(
+            &mut keys,
+            KeyEvent::new(KeyCode::F(8), KeyModifiers::NONE),
+            600.0,
+            &bindings
+        ),
+        Some(super::Navigation::Back)
+    );
+    keys = KeySequence::parse("g").unwrap();
+    assert_eq!(
+        super::effective_navigation(
+            &mut keys,
+            KeyEvent::new(KeyCode::F(8), KeyModifiers::NONE),
+            600.0,
+            &bindings
+        ),
+        None
+    );
+    assert_eq!(
+        bindings.fallback_action(runyte::input::KeyStroke::plain(
+            runyte::input::KeyCode::Function(8)
+        )),
+        Some(runyte::keymap::native_preview::Action::Back)
+    );
+}
+
+#[test]
+fn authored_keep_open_hands_insert_and_operand_input_to_current_host_owner() {
+    use super::{Navigation, Target, effective_navigation, forwards_structural_input};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use runyte::{
+        command::Mode,
+        keymap::{BindingScope, KeySequence},
+    };
+    let section = serde_json::from_value(
+        serde_json::json!({"ui": {"native-preview": {"keep-open-and-continue": ["i", "f"]}}}),
+    )
+    .unwrap();
+    let compiled = runyte::keymap::configured::compile(&section, runyte::keymap::default_keymap());
+    assert!(compiled.errors.is_empty());
+    let map = compiled
+        .keymap
+        .native_preview(Mode::Normal, BindingScope::Global);
+    let target = Some(Target {
+        pane: 2,
+        source: 7,
+        generation: 11,
+    });
+    for starter in ['i', 'f'] {
+        let mut keys = KeySequence::default();
+        assert_eq!(
+            effective_navigation(
+                &mut keys,
+                KeyEvent::new(KeyCode::Char(starter), KeyModifiers::NONE),
+                600.0,
+                &map
+            ),
+            Some(Navigation::ForwardInput)
+        );
+        let mut forwarded = target;
+        // The queue waits for the host acknowledgement; its current frame says
+        // Insert/operand, even though the captured map still contains j/k.
+        for _ in ['j', 'k', 'x'] {
+            assert!(forwards_structural_input(&mut forwarded, target, true));
+        }
+        assert!(!forwards_structural_input(&mut forwarded, target, false));
+        assert!(forwarded.is_none());
+        assert!(!forwards_structural_input(&mut forwarded, target, true));
+    }
+}
+
+#[test]
+fn preview_queue_combines_captured_maps_prefixes_handoff_and_host_acknowledgements() {
+    use super::{InputOwnership, InputRoute, Navigation, Target};
+    use crate::{NativeInput, input_routing::Queue};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use runyte::{
+        input::{KeyCode as CoreCode, KeyStroke},
+        keymap::{
+            KeySequence,
+            native_preview::{Action, Bindings},
+        },
+    };
+    let target = Some(Target {
+        pane: 2,
+        source: 7,
+        generation: 11,
+    });
+    let source = Some((2, 7));
+    let map = |top| {
+        Bindings::from_entries(
+            vec![
+                (KeySequence::parse("g g").unwrap(), top),
+                (KeySequence::parse("i").unwrap(), Action::ForwardInput),
+                (KeySequence::parse("j").unwrap(), Action::Down),
+            ],
+            vec![(KeyStroke::plain(CoreCode::Escape), Action::Back)],
+        )
+        .unwrap()
+    };
+    let a = map(Action::Top);
+    let b = map(Action::Bottom);
+    let input = |code, map: &Bindings| NativeInput {
+        attachment: 1,
+        event: Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+        presented: Some(runyte::protocol::FrameId::from_raw(42).into()),
+        presentation_only: false,
+        pane_gestures: Default::default(),
+        window_bindings: Default::default(),
+        preview_bindings: map.clone(),
+        preview_target: target,
+        routing_serial: 0,
+    };
+    let navigation = |state: &mut State, input: &NativeInput| {
+        let Event::Key(key) = input.event else {
+            panic!("key fixture")
+        };
+        state.navigation(key, 600.0, &input.preview_bindings)
+    };
+    let mut queue: Queue = Queue::default();
+    queue.push(input(KeyCode::Char('g'), &a), ());
+    queue.push(input(KeyCode::Char('g'), &a), ());
+    let mut state = State::default();
+    // Current map B must not reinterpret keys already captured from map A.
+    assert_ne!(a, b);
+    assert_eq!(
+        navigation(&mut state, &queue.next(1, 0, true).unwrap().0),
+        Some(Navigation::Prefix)
+    );
+    assert_eq!(
+        navigation(&mut state, &queue.next(1, 0, true).unwrap().0),
+        Some(Navigation::Top)
+    );
+    assert_eq!(
+        navigation(&mut state, &input(KeyCode::Char('g'), &a)),
+        Some(Navigation::Prefix)
+    );
+    assert_eq!(
+        navigation(&mut state, &input(KeyCode::Char('g'), &b)),
+        Some(Navigation::Prefix),
+        "map change cancels the old prefix"
+    );
+    assert_eq!(
+        navigation(&mut state, &input(KeyCode::Char('g'), &b)),
+        Some(Navigation::Bottom)
+    );
+
+    let mut ownership = InputOwnership::default();
+    queue.push(input(KeyCode::Char('i'), &a), ());
+    queue.push(input(KeyCode::Char('j'), &a), ());
+    let mut start = queue.next(1, 0, true).unwrap().0;
+    assert_eq!(
+        ownership.route(start.preview_target, target, source, true, false),
+        InputRoute::Local
+    );
+    assert_eq!(
+        navigation(&mut state, &start),
+        Some(Navigation::ForwardInput)
+    );
+    ownership.forward(start.preview_target, true, false);
+    queue.forward(&mut start);
+    assert!(queue.next(1, 0, true).is_none());
+    let text = queue.next(1, start.routing_serial, true).unwrap().0;
+    assert_eq!(
+        ownership.route(text.preview_target, target, source, true, true),
+        InputRoute::Host,
+        "host Insert receives j instead of preview scroll"
+    );
+    assert_eq!(
+        ownership.route(text.preview_target, target, source, true, false),
+        InputRoute::Local
+    );
+
+    queue.push(input(KeyCode::Esc, &a), ());
+    queue.push(input(KeyCode::Char('i'), &a), ());
+    queue.push(input(KeyCode::Char('x'), &a), ());
+    let back = queue.next(1, start.routing_serial, true).unwrap().0;
+    assert_eq!(navigation(&mut state, &back), None);
+    assert_eq!(
+        back.preview_bindings
+            .fallback_action(KeyStroke::plain(CoreCode::Escape)),
+        Some(Action::Back)
+    );
+    ownership.back(back.preview_target);
+    let mut insert = queue.next(1, start.routing_serial, true).unwrap().0;
+    assert_eq!(
+        ownership.route(insert.preview_target, target, source, true, false),
+        InputRoute::Host
+    );
+    queue.forward(&mut insert);
+    assert!(queue.next(1, start.routing_serial, true).is_none());
+    let text = queue.next(1, insert.routing_serial, true).unwrap().0;
+    assert_eq!(
+        ownership.route(text.preview_target, None, source, true, true),
+        InputRoute::Host
+    );
+    assert_eq!(
+        ownership.route(text.preview_target, None, Some((2, 8)), true, true),
+        InputRoute::Discard
+    );
+    queue.push(text, ());
+    assert!(
+        queue.next(2, 0, true).is_none(),
+        "replacement attachment discards old captured input"
+    );
 }

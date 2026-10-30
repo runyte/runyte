@@ -10,6 +10,8 @@ fn input(event: Event, frame: u64) -> NativeInput {
         presentation_only: false,
         pane_gestures: Default::default(),
         window_bindings: Default::default(),
+        preview_bindings: Default::default(),
+        preview_target: None,
         routing_serial: 0,
     }
 }

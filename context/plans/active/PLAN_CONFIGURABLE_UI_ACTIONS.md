@@ -453,3 +453,47 @@ navigation versus native compatibility aliases.
   All 27 window-related root tests, both queued window tests, root and desktop
   Clippy, complete desktop-package tests, formatting and guide checks passed.
   Preview projection and remaining pointer actions are still pending.
+
+Preview implementation refinements from review: local commands require both a
+plain semantic action and Implemented availability. Forwarding uses the source's
+actual mode/scope; unsupported Media-only commands are not advertised as local
+commands. Explicit UI Back/Copy replaces inherited aliases while retaining
+explicit Media assignments. Forward-pane controls compatibility bypasses;
+effective source pane commands remain host-owned. Intentional Back and
+return-to-source preserve queued same-source typing, while unrelated source,
+pane, generation and attachment changes remain fenced. Keep-open transitions
+publish current structural ownership independently of captured bindings.
+
+The projection is built only for active previews and cached by mode/scope with a
+16-entry cap. Factory/provenance metadata is precomputed, and lookup is indexed.
+Wire maps are capped at 512 entries and 512 fallback aliases. Oversized maps
+become an explicitly unavailable projection with a visible message and atomic
+return-to-source fallback. No partial mapping or projection panic is permitted.
+
+### Remaining pointer migration
+
+Keep public pointer action names flat, but compile and roll back internal owner
+groups independently. Cross-owner overlaps are intentional: tree borders, shared
+borders, pane gestures, links, live terminal reports, editor selection, previews
+and media retain their existing hit-test precedence. Competing actions in one
+owner use strict simultaneous replacement. An extend remap onto an inherited
+selection gesture requires an explicit compatible selection list; diagnostics
+must identify the conflict rather than silently deleting inherited aliases.
+
+Pointer-down captures semantic action, initiating button, painted map and target.
+Native physical move conversion and routing must be generalized together; never
+simulate LeftDrag to execute a remapped action. Preserve cancellation, unmatched
+release compatibility, passive motion, autoscroll and consumed stale gesture tails.
+Tree row selection/opening and session-strip activation retain captured targets.
+Media auto-selection retains content-dependent text/wordless-PDF/region/pan
+behavior; double-click zoom and fitted-PDF wheel paging remain explicit cases.
+Continuous native wheel deltas stay continuous, including diagonal movement,
+zoom/Shift precedence and fractional accumulators; host wheel retains bounded
+three-cell repetitions. Current live-child SGR passthrough must remain raw.
+
+Preview checkpoint validation: Astra found no remaining blockers after the
+combined queued-input ownership regressions. Full root and desktop-package
+tests, both required Clippy invocations, formatting and user-guide checks pass.
+Protocol 85 validates the bounded preview projection and forces full publication
+when its bindings, source or structural ownership change. Remaining pointer work
+and final coverage validation are still pending.

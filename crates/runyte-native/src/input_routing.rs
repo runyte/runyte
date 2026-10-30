@@ -222,7 +222,7 @@ impl super::NativeView {
                                             .with_current_guard(&frame.window_bindings)
                                     },
                                 );
-                            if self.preview_key(key, &window_bindings, cx) {
+                            if self.preview_key(key, &input, &window_bindings, cx) {
                                 continue;
                             }
                             if let Some(event) = self.window_shortcut(key, &window_bindings, cx) {

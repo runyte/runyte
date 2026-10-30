@@ -63,12 +63,13 @@ pub enum Owner {
     CharacterInput,
     ContextLauncher,
     NativeWindow,
+    NativePreview,
     GrammarPrefix,
     KeyHints,
 }
 
 impl Owner {
-    const ALL: [Self; 40] = [
+    const ALL: [Self; 41] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -107,6 +108,7 @@ impl Owner {
         Self::CharacterInput,
         Self::ContextLauncher,
         Self::NativeWindow,
+        Self::NativePreview,
         Self::GrammarPrefix,
         Self::KeyHints,
     ];
@@ -150,6 +152,7 @@ impl Owner {
             Self::CharacterInput => "character-input",
             Self::ContextLauncher => "context-launcher",
             Self::NativeWindow => "native-window",
+            Self::NativePreview => "native-preview",
             Self::GrammarPrefix => "grammar-prefix",
             Self::KeyHints => "key-hints",
         }
@@ -208,6 +211,7 @@ impl Owner {
                 | Self::CharacterInput
                 | Self::ContextLauncher
                 | Self::NativeWindow
+                | Self::NativePreview
                 | Self::GrammarPrefix
                 | Self::KeyHints
         ) && !self.is_plugin_input()
@@ -238,6 +242,7 @@ impl Owner {
             Self::Hover => &[Accept],
             Self::ContextLauncher => &[OpenActions],
             Self::NativeWindow => &[FontIncrease, FontDecrease, PasteText],
+            Self::NativePreview => &[Back, Copy, KeepOpenAndContinue, ForwardPane],
             Self::GrammarPrefix => &[Cancel, Back],
             Self::KeyHints => &[Next, Previous],
             Self::PluginConfirmation => &[Accept, Cancel],
@@ -292,7 +297,7 @@ impl Owner {
             Self::NativeWindow => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control() || !key.modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER))
             }
-            Self::Hover | Self::ContextLauncher => {
+            Self::Hover | Self::ContextLauncher | Self::NativePreview => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control() || (c.is_ascii_digit() && key.modifiers.is_empty()))
             }
             Self::MergeAcknowledgment => {
@@ -364,6 +369,9 @@ impl Owner {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Action {
+    Copy,
+    KeepOpenAndContinue,
+    ForwardPane,
     FontIncrease,
     FontDecrease,
     PasteText,
@@ -409,6 +417,9 @@ pub enum Action {
 impl Action {
     pub fn name(self) -> &'static str {
         match self {
+            Self::Copy => "copy",
+            Self::KeepOpenAndContinue => "keep-open-and-continue",
+            Self::ForwardPane => "forward-pane",
             Self::FontIncrease => "font-increase",
             Self::FontDecrease => "font-decrease",
             Self::PasteText => "paste-text",
@@ -501,6 +512,9 @@ impl Bindings {
                             KeyCode::PageDown,
                             KeyCode::Char('v'),
                             KeyCode::Char('V'),
+                            KeyCode::Char('C'),
+                            KeyCode::Char('l'),
+                            KeyCode::Char(':'),
                             KeyCode::Char('+'),
                             KeyCode::Char('='),
                             KeyCode::Char('-'),
@@ -593,6 +607,14 @@ impl Bindings {
             return bindings.keys.get(&key).copied();
         }
         Some(action)
+    }
+    pub(crate) fn keys(&self, owner: Owner) -> impl Iterator<Item = (KeyStroke, Action)> + '_ {
+        self.owners[&owner]
+            .keys
+            .iter()
+            .filter_map(move |(&key, &action)| {
+                (self.lookup(owner, key) == Some(action)).then_some((key, action))
+            })
     }
     pub fn native_window(&self) -> &super::native_window::Bindings {
         self.window.get_or_init(|| {
@@ -804,6 +826,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     if matches!(owner, Owner::GrammarPrefix | Owner::KeyHints) {
         return grammar::legacy_action(owner, key);
     }
+    if owner == Owner::NativePreview {
+        return super::native_preview::legacy_ui(key);
+    }
     if owner == Owner::NativeWindow {
         return super::native_window::lookup(key).map(|binding| match binding.action {
             super::native_window::Action::FontSize(1) => FontIncrease,
@@ -895,6 +920,24 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner == Owner::NativePreview {
+        return match action {
+            Action::Back => &["Esc"],
+            Action::Copy => &["Ctrl-c", "Super-c"],
+            Action::KeepOpenAndContinue => &["Space", ":", "Ctrl-w"],
+            Action::ForwardPane => &[
+                "Ctrl-Left",
+                "Ctrl-Right",
+                "Ctrl-Up",
+                "Ctrl-Down",
+                "Ctrl-h",
+                "Ctrl-j",
+                "Ctrl-k",
+                "Ctrl-l",
+            ],
+            _ => &[],
+        };
+    }
     if owner == Owner::NativeWindow {
         return match action {
             Action::FontIncrease => &["Ctrl-+", "Ctrl-="],

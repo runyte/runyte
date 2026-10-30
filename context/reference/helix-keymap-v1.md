@@ -778,16 +778,28 @@ share the registry. Native mouse mappings are documented in the user guide.
 
 Native window font controls use `keymap::native_window`: Ctrl-plus/Ctrl-equals
 increase and Ctrl-minus decreases the window-local font size. Ctrl-Shift-v
-pastes system clipboard text as literal frontend input. These reserved window
-controls are not editor commands, are not remappable, and their help and
-execution read the same registry. They apply while overlays or terminals own
-input. Ctrl-Shift-c (`Ctrl-C` in configured key spellings) is a shared registry
+pastes system clipboard text as literal frontend input. These window controls
+are shared configurable UI actions under `keys.ui.native-window`, and their help
+and execution read the same effective registry. Factory controls retain their
+precedence while overlays or terminals own input; authored character chords yield
+to structural operands and text owners. Painted input captures its binding map,
+while current structural eligibility is checked after preceding host input. Ctrl-Shift-c (`Ctrl-C` in configured key spellings) is a shared registry
 binding for clipboard yank in Normal/Select/Insert/Replace and Terminal Insert;
 media scopes copy the native selection. Ordinary Ctrl-c stays child input.
 On macOS, Cmd-c (`Cmd-c` or `Super-c` in configuration) is also bound to clipboard yank in text and
 terminal review, and to native selection copy in media. Cmd-v (`Cmd-v` or `Super-v`) is
 an additional native-window literal-paste shortcut; Ctrl-Shift-v remains
 available. These Command aliases do not change other Command keys.
+
+Native document previews project the supported single semantic navigation actions
+from effective Media Normal bindings. Source mode/scope owns forwarded commands;
+chains and unsupported Media-only commands never execute partially in the preview.
+`keys.ui.native-preview` configures native Back, Copy, keep-open forwarding and
+compatibility pane bypasses. Current source/pane/generation eligibility is separate
+from captured bindings. Back and intentional dismissal preserve queued same-source
+typing; unrelated replacement targets do not inherit it. Prefix state belongs to
+its captured map. Bounded projections report an oversized map and return input to
+source atomically. See [custom bindings](../../docs/user-guide/custom-key-bindings.md).
 
 Key labels use `Cmd` for the Command modifier on macOS and `Super` elsewhere.
 Both modifier spellings parse on every platform, including in configured

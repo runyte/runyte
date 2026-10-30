@@ -17,6 +17,7 @@ use crate::{
 pub mod actions;
 pub mod configured;
 mod effective;
+pub mod native_preview;
 pub mod native_window;
 pub mod pointer;
 mod scopes;
@@ -674,6 +675,7 @@ impl std::error::Error for DuplicateBinding {}
 #[derive(Clone, Debug)]
 pub struct Keymap {
     pane_gestures: pointer::PaneGestures,
+    preview: native_preview::Cache,
     ui: ui::Bindings,
     overrides: effective::Overrides,
     terminal_input: terminal_input::Index,
@@ -840,6 +842,7 @@ impl Keymap {
         }
         let mut keymap = Self {
             pane_gestures: pointer::PaneGestures::default(),
+            preview: native_preview::Cache::default(),
             ui: ui::Bindings::default(),
             overrides: effective::Overrides::default(),
             terminal_input: terminal_input::Index::default(),
@@ -858,6 +861,7 @@ impl Keymap {
     }
 
     fn rebuild_lookup_index(&mut self) {
+        self.preview = native_preview::Cache::default();
         // Keep positions into the binding registry so cloned maps can update
         // descriptions without leaving lookup, help, and hints out of sync.
         let mut scopes = BindingScope::ALL.to_vec();

@@ -476,6 +476,9 @@ mod tests {
             media_input: false,
             pane_gestures: Default::default(),
             window_bindings: Default::default(),
+            preview_bindings: Default::default(),
+            preview_source: None,
+            preview_structural: false,
             routing_serial: 0,
             metadata_paths: vec![],
         }

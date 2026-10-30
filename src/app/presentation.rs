@@ -1158,6 +1158,11 @@ impl App {
         let mut text = document.text().to_owned();
         if self.native_media {
             text.push_str(&self.native_window_bindings().help());
+            text.push_str(
+                &self
+                    .keymap()
+                    .native_preview_help(self.mode, self.key_binding_scope()),
+            );
         }
         let existing = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_help()).then_some(index)

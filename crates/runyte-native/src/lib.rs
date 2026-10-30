@@ -126,6 +126,9 @@ struct FrameData {
     media_input: bool,
     pane_gestures: runyte::keymap::pointer::PaneGestures,
     window_bindings: runyte::keymap::native_window::Bindings,
+    preview_bindings: runyte::keymap::native_preview::Bindings,
+    preview_source: Option<(usize, usize)>,
+    preview_structural: bool,
     routing_serial: u64,
     metadata_paths: Vec<PathBuf>,
 }
@@ -168,6 +171,8 @@ pub(crate) struct NativeInput {
     presentation_only: bool,
     pane_gestures: runyte::keymap::pointer::PaneGestures,
     window_bindings: runyte::keymap::native_window::Bindings,
+    preview_bindings: runyte::keymap::native_preview::Bindings,
+    preview_target: Option<preview::Target>,
     routing_serial: u64,
 }
 struct PendingMediaRequest {
@@ -211,11 +216,16 @@ struct Bridge {
     painted_media: Mutex<Vec<MediaPane>>,
     painted_pane_gestures: Mutex<runyte::keymap::pointer::PaneGestures>,
     painted_window_bindings: Mutex<runyte::keymap::native_window::Bindings>,
+    painted_preview_bindings: Mutex<runyte::keymap::native_preview::Bindings>,
+    painted_preview_target: Mutex<Option<preview::Target>>,
     overlays: Mutex<Vec<runyte::layout::Rect>>,
     default_colors: Mutex<(u32, u32)>,
     media_input: AtomicBool,
     pane_gestures: Mutex<runyte::keymap::pointer::PaneGestures>,
     window_bindings: Mutex<runyte::keymap::native_window::Bindings>,
+    preview_bindings: Mutex<runyte::keymap::native_preview::Bindings>,
+    preview_source: Mutex<Option<(usize, usize)>>,
+    preview_structural: AtomicBool,
     dequeued_serial: AtomicU64,
     remote_serial: AtomicU64,
     metadata_paths: Mutex<Vec<PathBuf>>,
@@ -252,6 +262,8 @@ impl Bridge {
             presentation_only: false,
             pane_gestures: *self.painted_pane_gestures.lock().unwrap(),
             window_bindings: self.painted_window_bindings.lock().unwrap().clone(),
+            preview_bindings: self.painted_preview_bindings.lock().unwrap().clone(),
+            preview_target: *self.painted_preview_target.lock().unwrap(),
             routing_serial: 0,
         }
     }
@@ -340,6 +352,11 @@ fn capture_snapshot_media(snapshot: &runyte::workspace::HostFrame, counts: &[med
     let Some(bridge) = BRIDGE.get() else { return };
     *bridge.pane_gestures.lock().unwrap() = snapshot.editor.pane_gestures;
     *bridge.window_bindings.lock().unwrap() = snapshot.editor.window_bindings.clone();
+    *bridge.preview_bindings.lock().unwrap() = snapshot.editor.preview_bindings.clone();
+    *bridge.preview_source.lock().unwrap() = snapshot.editor.preview_source;
+    bridge
+        .preview_structural
+        .store(snapshot.editor.preview_structural, Ordering::Release);
     let (background, foreground) = runyte::ui::native_default_colors(&snapshot.editor.theme);
     *bridge.default_colors.lock().unwrap() = (
         rgb_value(background, FALLBACK_BACKGROUND),
@@ -580,6 +597,9 @@ impl Surface {
                     media_input: bridge.media_input.load(Ordering::Acquire),
                     pane_gestures: *bridge.pane_gestures.lock().unwrap(),
                     window_bindings: bridge.window_bindings.lock().unwrap().clone(),
+                    preview_bindings: bridge.preview_bindings.lock().unwrap().clone(),
+                    preview_source: *bridge.preview_source.lock().unwrap(),
+                    preview_structural: bridge.preview_structural.load(Ordering::Acquire),
                     routing_serial: if snapshot_area.is_some() {
                         bridge.remote_serial.load(Ordering::Acquire)
                     } else {
@@ -753,11 +773,16 @@ pub(crate) fn launch(
         painted_media: Mutex::new(Vec::new()),
         painted_pane_gestures: Mutex::new(Default::default()),
         painted_window_bindings: Mutex::new(Default::default()),
+        painted_preview_bindings: Mutex::new(Default::default()),
+        painted_preview_target: Mutex::new(None),
         overlays: Mutex::new(Vec::new()),
         default_colors: Mutex::new((FALLBACK_BACKGROUND, FALLBACK_FOREGROUND)),
         media_input: AtomicBool::new(true),
         pane_gestures: Mutex::new(Default::default()),
         window_bindings: Mutex::new(Default::default()),
+        preview_bindings: Mutex::new(Default::default()),
+        preview_source: Mutex::new(None),
+        preview_structural: AtomicBool::new(false),
         dequeued_serial: AtomicU64::new(0),
         remote_serial: AtomicU64::new(0),
         metadata_paths: Mutex::new(Vec::new()),
@@ -1339,6 +1364,10 @@ impl Render for NativeView {
                         *bridge.painted_pane_gestures.lock().unwrap() = frame.pane_gestures;
                         *bridge.painted_window_bindings.lock().unwrap() =
                             frame.window_bindings.clone();
+                        *bridge.painted_preview_bindings.lock().unwrap() =
+                            frame.preview_bindings.clone();
+                        *bridge.painted_preview_target.lock().unwrap() =
+                            preview::Target::from_frame(frame);
                         let previous =
                             std::mem::replace(&mut *bridge.presented.lock().unwrap(), frame.id);
                         if previous != frame.id || previous_attachment != frame.attachment {
@@ -1350,6 +1379,8 @@ impl Render for NativeView {
                                 presentation_only: true,
                                 pane_gestures: frame.pane_gestures,
                                 window_bindings: frame.window_bindings.clone(),
+                                preview_bindings: frame.preview_bindings.clone(),
+                                preview_target: preview::Target::from_frame(frame),
                                 routing_serial: 0,
                             });
                         }

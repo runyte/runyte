@@ -1221,3 +1221,34 @@ from the frame where it was captured; structural ownership is checked after
 preceding editor input has been processed. Document previews still receive
 navigation before window shortcuts, and pasting keeps its existing preview
 dismissal behavior.
+
+Native document previews use the supported navigation subset of effective
+`scopes.media.normal` bindings: movement and scrolling, pages and half-pages,
+document start/end, zoom, reset zoom, copy, and return to source. Only a single
+implemented semantic action executes locally. Action chains, plugin commands,
+and other commands continue through the source buffer's actual mode and scope.
+A Media-only unsupported command has no local preview meaning and is omitted
+from preview hints.
+
+`ui.native-preview` exposes `back`, `copy`, `keep-open-and-continue`, and
+`forward-pane`. Back defaults to Escape; copy also accepts the existing Ctrl/Super
+C variants. Keep-open retains the existing Space, colon, and Ctrl-w forwarding
+behavior. Forward-pane controls the compatibility Ctrl-arrow and fast-pane-key
+bypasses; effective source pane commands remain host-owned even with
+`forward-pane: []`. Plain count digits remain structural.
+
+Replacing Back or Copy removes its inherited Media aliases as well as its native
+compatibility aliases. Explicit Media assignments for that action remain. An
+explicit UI alias overrides local navigation at that key; a host-owned pane or
+prefix family takes precedence, and help omits masked aliases. If an authored
+source command shares a first key with preview navigation, that family returns
+to source from its first key so the complete command reaches the editor.
+
+Queued preview input retains the painted map and document identity. Returning to
+source preserves subsequent queued typing in that same pane and source; input
+for an unrelated replacement preview is discarded. A configured keep-open action
+that enters Insert/Replace or starts a character operand hands subsequent input
+to that editor interaction until it finishes. The preview map is limited to 512
+local/forwarding entries and 512 compatibility aliases. If it exceeds those
+limits, the preview reports this and input returns to source; it never installs
+a partial map.

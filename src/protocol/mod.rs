@@ -212,7 +212,8 @@ use crate::workspace::{
 // Version 82 removes that layout with terminal proposals.
 // Version 83 carries effective pane pointer gestures for native input routing.
 // Version 84 carries effective native-window bindings with painted input frames.
-pub const VERSION: u32 = 84;
+// Version 85 carries effective preview navigation and source identity.
+pub const VERSION: u32 = 85;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1571,7 +1572,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 84);
+        assert_eq!(VERSION, 85);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

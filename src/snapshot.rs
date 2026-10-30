@@ -178,6 +178,9 @@ pub struct EditorSnapshot {
     pub pane_drop: Option<Rect>,
     pub pane_gestures: crate::keymap::pointer::PaneGestures,
     pub window_bindings: crate::keymap::native_window::Bindings,
+    pub preview_bindings: crate::keymap::native_preview::Bindings,
+    pub preview_source: Option<(usize, usize)>,
+    pub preview_structural: bool,
     pub status: StatusSnapshot,
     pub session_strip: Option<SessionStripSnapshot>,
 }
@@ -841,7 +844,7 @@ impl App {
         self.visible_pane_snapshots
             .borrow_mut()
             .retain(|pane, _| prepared.pane(*pane).is_some());
-        let panes = prepared
+        let panes: Vec<PaneSnapshot> = prepared
             .panes
             .iter()
             .map(|pane| {
@@ -909,6 +912,15 @@ impl App {
                     session.review_selection_count(),
                 )
             });
+        let preview_bindings = if panes
+            .iter()
+            .any(|pane| pane.active && pane.preview.is_some())
+        {
+            self.keymap()
+                .native_preview(self.mode, self.key_binding_scope())
+        } else {
+            Default::default()
+        };
         EditorSnapshot {
             geometry: prepared.geometry,
             directory_tree: prepared.tree_area.map(|area| {
@@ -972,6 +984,13 @@ impl App {
             pane_drop: self.pane_drop_preview(prepared),
             pane_gestures: self.keymap().pane_gestures(),
             window_bindings: self.native_window_bindings(),
+            preview_bindings,
+            preview_structural: matches!(self.mode, Mode::Insert | Mode::Replace)
+                || self.awaiting_character_command().is_some(),
+            preview_source: self
+                .active_terminal()
+                .is_none()
+                .then_some((self.active_pane, self.active().buffer)),
             status: StatusSnapshot {
                 mode: self.mode,
                 workspace_number: self.workspace_number,
