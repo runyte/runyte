@@ -1959,10 +1959,10 @@ impl App {
         if self.path_popup.is_some() {
             return self.handle_path_popup_key(key);
         }
-        key = legacy_key;
         if self.picker.is_some() {
             return self.handle_picker(key);
         }
+        key = legacy_key;
         if self.list.is_some() {
             return self.handle_list_key(key);
         }
@@ -4078,10 +4078,26 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn picker_ui_owner(&self) -> crate::keymap::ui::Owner {
+        if self.finder.is_some() {
+            crate::keymap::ui::Owner::Finder
+        } else {
+            crate::keymap::ui::Owner::FilePicker
+        }
+    }
+
     fn handle_picker(&mut self, key: KeyStroke) -> Result<()> {
-        if key.code == KeyCode::Escape
-            || key.code == KeyCode::Char('c') && key.modifiers.contains(Modifiers::CONTROL)
-        {
+        use crate::keymap::ui::Action;
+        let owner = self.picker_ui_owner();
+        let leader_active = self
+            .picker
+            .as_ref()
+            .is_some_and(|picker| picker.query.is_empty());
+        let action = self
+            .keymap
+            .ui()
+            .lookup_with_leader(owner, key, leader_active);
+        if action == Some(Action::Cancel) {
             self.close_file_picker();
             return Ok(());
         }
@@ -4090,44 +4106,43 @@ impl App {
         // moving the selection, opening a row, switching mode — and reads it
         // as the ranker last left it, so nothing is accepted from a list that
         // has already been answered.
-        if !edits_picker_query(key) {
+        if !edits_picker_query(key, action) {
             self.publish_paced_picker_rows();
         }
 
-        if self.finder.is_some() && key.code == KeyCode::Tab && key.modifiers.is_empty() {
+        if action == Some(Action::ToggleMode) {
             self.toggle_finder_mode();
             return Ok(());
         }
         if self.finder.is_some() {
-            return self.handle_resource_picker(key);
+            return self.handle_resource_picker(key, action);
         }
 
         let page = 10;
-        let control = key.modifiers.contains(Modifiers::CONTROL);
         let mut selection_changed = false;
         let mut query_changed = false;
-        let result: Result<Option<PickerTarget>> = match (key.code, key.modifiers) {
-            (KeyCode::Char('p'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+        let result: Result<Option<PickerTarget>> = match action {
+            Some(Action::Previous) => {
                 self.picker.as_mut().unwrap().up();
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::Char('n'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::Next) => {
                 self.picker.as_mut().unwrap().down();
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::Char('u'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::PageUp) => {
                 self.picker.as_mut().unwrap().page_up(page);
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::Char('d'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::PageDown) => {
                 self.picker.as_mut().unwrap().page_down(page);
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::Char('s'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::SplitHorizontal) => {
                 let target = self.picker.as_ref().and_then(FilePicker::selected_target);
                 if let Some(target) = target {
                     self.close_file_picker();
@@ -4137,7 +4152,7 @@ impl App {
                 }
                 return Ok(());
             }
-            (KeyCode::Char('v'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::SplitVertical) => {
                 let target = self.picker.as_ref().and_then(FilePicker::selected_target);
                 if let Some(target) = target {
                     self.close_file_picker();
@@ -4147,58 +4162,30 @@ impl App {
                 }
                 return Ok(());
             }
-            (KeyCode::Char('t'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::TogglePreview) => {
                 let picker = self.picker.as_mut().unwrap();
                 picker.show_preview = !picker.show_preview;
                 Ok(None)
             }
-            (KeyCode::Down | KeyCode::Tab, _) => {
-                self.picker.as_mut().unwrap().down();
-                selection_changed = true;
-                Ok(None)
-            }
-            (KeyCode::Up | KeyCode::BackTab, _) => {
-                self.picker.as_mut().unwrap().up();
-                selection_changed = true;
-                Ok(None)
-            }
-            (KeyCode::PageUp, _) => {
-                self.picker.as_mut().unwrap().page_up(page);
-                selection_changed = true;
-                Ok(None)
-            }
-            (KeyCode::PageDown, _) => {
-                self.picker.as_mut().unwrap().page_down(page);
-                selection_changed = true;
-                Ok(None)
-            }
-            (KeyCode::Home, _) => {
+            Some(Action::First) => {
                 self.picker.as_mut().unwrap().first();
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::End, _) => {
+            Some(Action::Last) => {
                 self.picker.as_mut().unwrap().last();
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::Left, _) => {
+            Some(Action::MoveLeft) => {
                 self.picker.as_mut().unwrap().query_left();
                 Ok(None)
             }
-            (KeyCode::Char('b'), _) if control => {
-                self.picker.as_mut().unwrap().query_left();
-                Ok(None)
-            }
-            (KeyCode::Right, _) => {
+            Some(Action::MoveRight) => {
                 self.picker.as_mut().unwrap().query_right();
                 Ok(None)
             }
-            (KeyCode::Char('f'), _) if control => {
-                self.picker.as_mut().unwrap().query_right();
-                Ok(None)
-            }
-            (KeyCode::Backspace, _) => {
+            Some(Action::Backspace) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4209,7 +4196,7 @@ impl App {
                 selection_changed = query_changed;
                 Ok(None)
             }
-            (KeyCode::Char('h'), _) if control => {
+            Some(Action::DeleteBackward) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4220,7 +4207,7 @@ impl App {
                 selection_changed = query_changed;
                 Ok(None)
             }
-            (KeyCode::Delete, _) => {
+            Some(Action::Delete) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
                 if self.file_scanner.is_some() {
@@ -4231,7 +4218,7 @@ impl App {
                 selection_changed = query_changed;
                 Ok(None)
             }
-            (KeyCode::Char('w'), _) if control => {
+            Some(Action::DeleteWordBackward) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4242,7 +4229,7 @@ impl App {
                 selection_changed = query_changed;
                 Ok(None)
             }
-            (KeyCode::Char('k'), _) if control => {
+            Some(Action::DeleteToEnd) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
                 if self.file_scanner.is_some() {
@@ -4253,21 +4240,24 @@ impl App {
                 selection_changed = query_changed;
                 Ok(None)
             }
-            (KeyCode::Char('a'), _) if control => {
+            Some(Action::MoveStart) => {
                 self.picker.as_mut().unwrap().query_cursor = 0;
                 Ok(None)
             }
-            (KeyCode::Char('e'), _) if control => {
+            Some(Action::MoveEnd) => {
                 let picker = self.picker.as_mut().unwrap();
                 picker.query_cursor = picker.query.chars().count();
                 Ok(None)
             }
-            (KeyCode::Enter, _) => Ok(self.picker.as_ref().and_then(FilePicker::selected_target)),
-            (KeyCode::Char(character), _)
-                if !key
+            Some(Action::Accept) => Ok(self.picker.as_ref().and_then(FilePicker::selected_target)),
+            None if matches!(key.code, KeyCode::Char(_))
+                && !key
                     .modifiers
                     .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER) =>
             {
+                let KeyCode::Char(character) = key.code else {
+                    unreachable!()
+                };
                 if self.file_scanner.is_some() {
                     self.picker
                         .as_mut()
@@ -4298,42 +4288,36 @@ impl App {
         Ok(())
     }
 
-    fn handle_resource_picker(&mut self, key: KeyStroke) -> Result<()> {
+    fn handle_resource_picker(
+        &mut self,
+        key: KeyStroke,
+        action: Option<crate::keymap::ui::Action>,
+    ) -> Result<()> {
+        use crate::keymap::ui::Action;
         let page = 10;
-        let control = key.modifiers.contains(Modifiers::CONTROL);
         let mut query_changed = false;
-        match (key.code, key.modifiers) {
-            (KeyCode::Char('p'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+        match action {
+            Some(Action::Previous) => {
                 self.finder.as_mut().unwrap().up();
             }
-            (KeyCode::Char('n'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::Next) => {
                 self.finder.as_mut().unwrap().down();
             }
-            (KeyCode::Char('u'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::PageUp) => {
                 self.finder.as_mut().unwrap().page_up(page);
             }
-            (KeyCode::Char('d'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::PageDown) => {
                 self.finder.as_mut().unwrap().page_down(page);
             }
-            (KeyCode::Down, _) => self.finder.as_mut().unwrap().down(),
-            (KeyCode::Up | KeyCode::BackTab, _) => self.finder.as_mut().unwrap().up(),
-            (KeyCode::PageUp, _) => self.finder.as_mut().unwrap().page_up(page),
-            (KeyCode::PageDown, _) => self.finder.as_mut().unwrap().page_down(page),
-            (KeyCode::Home, _) => self.finder.as_mut().unwrap().first(),
-            (KeyCode::End, _) => self.finder.as_mut().unwrap().last(),
-            (KeyCode::Left, _) => {
+            Some(Action::First) => self.finder.as_mut().unwrap().first(),
+            Some(Action::Last) => self.finder.as_mut().unwrap().last(),
+            Some(Action::MoveLeft) => {
                 self.picker.as_mut().unwrap().query_left();
             }
-            (KeyCode::Char('b'), _) if control => {
-                self.picker.as_mut().unwrap().query_left();
-            }
-            (KeyCode::Right, _) => {
+            Some(Action::MoveRight) => {
                 self.picker.as_mut().unwrap().query_right();
             }
-            (KeyCode::Char('f'), _) if control => {
-                self.picker.as_mut().unwrap().query_right();
-            }
-            (KeyCode::Backspace, _) => {
+            Some(Action::Backspace) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4342,7 +4326,7 @@ impl App {
                     picker.backspace_query();
                 }
             }
-            (KeyCode::Char('h'), _) if control => {
+            Some(Action::DeleteBackward) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4351,7 +4335,7 @@ impl App {
                     picker.backspace_query();
                 }
             }
-            (KeyCode::Delete, _) => {
+            Some(Action::Delete) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
                 if self.file_scanner.is_some() {
@@ -4360,7 +4344,7 @@ impl App {
                     picker.delete_query();
                 }
             }
-            (KeyCode::Char('w'), _) if control => {
+            Some(Action::DeleteWordBackward) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4369,7 +4353,7 @@ impl App {
                     picker.delete_query_word();
                 }
             }
-            (KeyCode::Char('k'), _) if control => {
+            Some(Action::DeleteToEnd) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
                 if self.file_scanner.is_some() {
@@ -4378,14 +4362,14 @@ impl App {
                     picker.delete_query_end();
                 }
             }
-            (KeyCode::Char('a'), _) if control => {
+            Some(Action::MoveStart) => {
                 self.picker.as_mut().unwrap().query_cursor = 0;
             }
-            (KeyCode::Char('e'), _) if control => {
+            Some(Action::MoveEnd) => {
                 let picker = self.picker.as_mut().unwrap();
                 picker.query_cursor = picker.query.chars().count();
             }
-            (KeyCode::Char('s'), _) if control => {
+            Some(Action::SplitHorizontal) => {
                 let target = self
                     .finder
                     .as_ref()
@@ -4399,7 +4383,7 @@ impl App {
                 }
                 return Ok(());
             }
-            (KeyCode::Char('v'), _) if control => {
+            Some(Action::SplitVertical) => {
                 let target = self
                     .finder
                     .as_ref()
@@ -4413,11 +4397,11 @@ impl App {
                 }
                 return Ok(());
             }
-            (KeyCode::Char('t'), _) if control => {
+            Some(Action::TogglePreview) => {
                 let picker = self.picker.as_mut().unwrap();
                 picker.show_preview = !picker.show_preview;
             }
-            (KeyCode::Enter, _) => {
+            Some(Action::Accept) => {
                 if let (Some(finder), Some(picker)) = (self.finder.as_ref(), self.picker.as_ref())
                     && let Some(target) = finder.selected_target(picker)
                 {
@@ -4425,11 +4409,14 @@ impl App {
                 }
                 return Ok(());
             }
-            (KeyCode::Char(character), _)
-                if !key
+            None if matches!(key.code, KeyCode::Char(_))
+                && !key
                     .modifiers
                     .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER) =>
             {
+                let KeyCode::Char(character) = key.code else {
+                    unreachable!()
+                };
                 if self.file_scanner.is_some() {
                     self.picker
                         .as_mut()
@@ -6901,16 +6888,16 @@ fn is_macro_replay_cancel(input: &InputEvent) -> bool {
 /// so it is also the only thing that may run against rows the ranker has
 /// already replaced. Caret movement is counted with the rest: publishing a
 /// held answer before it costs nothing and keeps the rule one line long.
-fn edits_picker_query(key: KeyStroke) -> bool {
-    let control = key.modifiers.contains(Modifiers::CONTROL);
-    match key.code {
-        KeyCode::Backspace | KeyCode::Delete => true,
-        KeyCode::Char('w' | 'k') if control => true,
-        KeyCode::Char(_) => !key
+fn edits_picker_query(key: KeyStroke, action: Option<crate::keymap::ui::Action>) -> bool {
+    use crate::keymap::ui::Action;
+    matches!(
+        action,
+        Some(Action::Backspace | Action::Delete | Action::DeleteWordBackward | Action::DeleteToEnd)
+    ) || (action.is_none()
+        && matches!(key.code, KeyCode::Char(_))
+        && !key
             .modifiers
-            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER),
-        _ => false,
-    }
+            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER))
 }
 
 fn edit_confirmation_text(input: &mut String, cursor: &mut usize, key: KeyStroke) {

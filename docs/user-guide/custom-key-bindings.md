@@ -306,6 +306,34 @@ Accepting a command from an explicitly configured key retains the same native
 handoff eligibility as fresh Enter. Repeated or replayed input cannot acquire
 that authority. Existing modified-Enter defaults retain their original limits.
 
+The `file-picker` and `finder` owners support `accept`, `cancel`, `next`,
+`previous`, `page-up`, `page-down`, `first`, `last`, `move-left`, `move-right`,
+`move-start`, `move-end`, `backspace`, `delete-backward`, `delete`,
+`delete-word-backward`, `delete-to-end`, `split-horizontal`, `split-vertical`,
+and `toggle-preview`. `finder` also supports `toggle-mode` (plain Tab).
+File-picker Tab aliases `next`; modified Tab in Finder remains unbound.
+The existing Ctrl-s/Ctrl-v shortcuts open files horizontally/vertically;
+splits remain unavailable for buffer and terminal rows.
+
+These owners inherit leader cancellation only while the query is empty.
+Once text exists, the leader resumes its configured ordinary meaning. Replacing
+or removing `cancel` removes the inherited leader shortcut too. Literal filter
+characters remain structural input. Picker `delete-backward` (Ctrl-h) retains
+its existing ranking-publication behavior; `backspace` defers held ranking
+results until an action reads them.
+
+```yaml
+keys:
+  ui:
+    finder:
+      accept: [F8]
+      toggle-mode: [F9]
+      toggle-preview: [F10]
+    file-picker:
+      split-horizontal: [Ctrl-F8]
+      split-vertical: [Alt-F8]
+```
+
 Pane drag gestures can be changed independently of keyboard bindings:
 
 ```yaml

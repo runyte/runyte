@@ -2,6 +2,7 @@
 //! Shared semantic UI actions. Owners execute actions without rewriting input;
 //! literal input and structural option identifiers retain their own meaning.
 
+mod picker;
 mod prompt;
 
 use crate::input::{KeyCode, KeyStroke, Modifiers};
@@ -24,10 +25,12 @@ pub enum Owner {
     TextPrompt,
     PathPrompt,
     ProgramPrompt,
+    FilePicker,
+    Finder,
 }
 
 impl Owner {
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 11] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -37,6 +40,8 @@ impl Owner {
         Self::TextPrompt,
         Self::PathPrompt,
         Self::ProgramPrompt,
+        Self::FilePicker,
+        Self::Finder,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -49,7 +54,12 @@ impl Owner {
             Self::TextPrompt => "text-prompt",
             Self::PathPrompt => "path-prompt",
             Self::ProgramPrompt => "program-prompt",
+            Self::FilePicker => "file-picker",
+            Self::Finder => "finder",
         }
+    }
+    pub fn is_picker(self) -> bool {
+        matches!(self, Self::FilePicker | Self::Finder)
     }
     pub fn is_prompt(self) -> bool {
         matches!(
@@ -75,6 +85,7 @@ impl Owner {
                 &[Next, Previous, Accept, Cancel]
             }
             Self::Path => &[OpenActions, Cancel],
+            Self::FilePicker | Self::Finder => picker::actions(self),
             Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
                 prompt::actions(self)
             }
@@ -90,6 +101,13 @@ impl Owner {
             // of modifiers. Preserve that broader structural input policy.
             Self::PathActions => matches!(key.code, KeyCode::Char('r' | 's')),
             Self::Completion | Self::Path | Self::ProgramActions => false,
+            Self::FilePicker | Self::Finder => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+                    || matches!(key.code, KeyCode::Char(_))
+                        && !key
+                            .modifiers
+                            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
+            }
             Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control())
                     || matches!(key.code, KeyCode::Char(_))
@@ -127,6 +145,12 @@ pub enum Action {
     First,
     Last,
     Complete,
+    PageUp,
+    PageDown,
+    SplitVertical,
+    SplitHorizontal,
+    TogglePreview,
+    ToggleMode,
 }
 
 impl Action {
@@ -156,6 +180,12 @@ impl Action {
             Self::First => "first",
             Self::Last => "last",
             Self::Complete => "complete",
+            Self::PageUp => "page-up",
+            Self::PageDown => "page-down",
+            Self::SplitVertical => "split-vertical",
+            Self::SplitHorizontal => "split-horizontal",
+            Self::TogglePreview => "toggle-preview",
+            Self::ToggleMode => "toggle-mode",
         }
     }
 }
@@ -165,6 +195,7 @@ struct OwnerBindings {
     keys: Arc<HashMap<KeyStroke, Action>>,
     labels: Arc<HashMap<Action, Vec<String>>>,
     configured: std::collections::HashSet<Action>,
+    without_leader: Option<Box<OwnerBindings>>,
 }
 
 #[derive(Clone, Debug)]
@@ -201,6 +232,10 @@ impl Bindings {
                             KeyCode::Char('p'),
                             KeyCode::Char('j'),
                             KeyCode::Char('k'),
+                            KeyCode::PageUp,
+                            KeyCode::PageDown,
+                            KeyCode::Char('v'),
+                            KeyCode::Char('t'),
                             KeyCode::Backspace,
                             KeyCode::Delete,
                             KeyCode::Home,
@@ -242,6 +277,7 @@ impl Bindings {
                             keys: Arc::new(keys),
                             labels: Arc::new(labels),
                             configured: Default::default(),
+                            without_leader: None,
                         },
                     )
                 })
@@ -263,22 +299,42 @@ impl Bindings {
         self.owners[&owner].configured.contains(&action)
     }
     pub fn lookup(&self, owner: Owner, key: KeyStroke) -> Option<Action> {
-        self.owners[&owner]
+        self.lookup_with_leader(owner, key, true)
+    }
+    pub fn lookup_with_leader(
+        &self,
+        owner: Owner,
+        key: KeyStroke,
+        leader_active: bool,
+    ) -> Option<Action> {
+        self.owner_bindings(owner, leader_active)
             .keys
             .get(&key.canonical_for_binding())
             .copied()
     }
     pub fn label(&self, owner: Owner, action: Action) -> String {
-        self.owners[&owner]
+        self.label_with_leader(owner, action, true)
+    }
+    pub fn label_with_leader(&self, owner: Owner, action: Action, leader_active: bool) -> String {
+        self.owner_bindings(owner, leader_active)
             .labels
             .get(&action)
             .filter(|keys| !keys.is_empty())
             .map_or_else(|| "unbound".into(), |keys| keys.join("/"))
     }
+    fn owner_bindings(&self, owner: Owner, leader_active: bool) -> &OwnerBindings {
+        let bindings = &self.owners[&owner];
+        if !leader_active {
+            bindings.without_leader.as_deref().unwrap_or(bindings)
+        } else {
+            bindings
+        }
+    }
 }
 
 impl OwnerBindings {
     fn add_leader(&mut self, leader: KeyStroke) {
+        self.without_leader = Some(Box::new(self.clone()));
         let leader = leader.canonical_for_binding();
         // The old frontend rewrote the effective leader to Escape before
         // owner dispatch. Preserve that precedence for inherited cancel only.
@@ -326,6 +382,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     if owner.is_prompt() {
         return prompt::legacy_action(owner, key);
     }
+    if owner.is_picker() {
+        return picker::legacy_action(owner, key);
+    }
     let control = key.modifiers.contains(Modifiers::CONTROL);
     if owner == Owner::Completion {
         return match (key.code, control) {
@@ -366,6 +425,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
     if owner.is_prompt() {
         return prompt::labels(owner, action);
+    }
+    if owner.is_picker() {
+        return picker::labels(owner, action);
     }
     use Action::*;
     match (owner, action) {
@@ -457,8 +519,15 @@ pub(super) fn compile(
             let mut candidate = Bindings::legacy().owners[&owner].clone();
             Arc::make_mut(&mut candidate.keys)
                 .retain(|_, action| !assignments.contains_key(action));
-            if owner.inherits_leader() && !assignments.contains_key(&Action::Cancel) {
-                candidate.add_leader(leader);
+            let inherited_leader =
+                owner.inherits_leader() && !assignments.contains_key(&Action::Cancel);
+            if inherited_leader
+                && assignments
+                    .values()
+                    .flatten()
+                    .any(|key| *key == leader.canonical_for_binding())
+            {
+                return Err("overlapping action bindings".into());
             }
             candidate.configured = assignments.keys().copied().collect();
             for (action, keys) in assignments {
@@ -472,6 +541,9 @@ pub(super) fn compile(
                         return Err("overlapping action bindings".into());
                     }
                 }
+            }
+            if inherited_leader {
+                candidate.add_leader(leader);
             }
             Ok(candidate)
         })();

@@ -2041,6 +2041,13 @@ impl App {
             ));
         }
         if let Some(picker) = &self.picker {
+            use crate::keymap::ui::Action;
+            let owner = self.picker_ui_owner();
+            let label = |action| {
+                self.keymap
+                    .ui()
+                    .label_with_leader(owner, action, picker.query.is_empty())
+            };
             if let Some(finder) = &self.finder {
                 // The header carries paced counts instead of saying whether a
                 // scan is running: a word that appears and goes on every
@@ -2114,28 +2121,33 @@ impl App {
                 snapshot.actions = if picker.ranking && !self.held_rank_releases_rows() {
                     Vec::new()
                 } else {
-                    vec![OverlayAction::new("Enter", "open")]
+                    vec![OverlayAction::new(label(Action::Accept), "open")]
                 };
                 if matches!(finder.selected_target(picker), Some(FinderTarget::File(_))) {
-                    snapshot
-                        .actions
-                        .push(OverlayAction::new("Ctrl-s", "open file horizontally"));
-                    snapshot
-                        .actions
-                        .push(OverlayAction::new("Ctrl-v", "open file vertically"));
+                    snapshot.actions.push(OverlayAction::new(
+                        label(Action::SplitHorizontal),
+                        "open file horizontally",
+                    ));
+                    snapshot.actions.push(OverlayAction::new(
+                        label(Action::SplitVertical),
+                        "open file vertically",
+                    ));
                 }
                 snapshot.actions.push(OverlayAction::new(
-                    "Tab",
+                    label(Action::ToggleMode),
                     if finder.mode == crate::finder::FinderMode::Names {
                         "contents"
                     } else {
                         "names"
                     },
                 ));
+                snapshot.actions.push(OverlayAction::new(
+                    label(Action::TogglePreview),
+                    "toggle preview",
+                ));
                 snapshot
                     .actions
-                    .push(OverlayAction::new("Ctrl-t", "toggle preview"));
-                snapshot.actions.push(OverlayAction::new("Esc", "cancel"));
+                    .push(OverlayAction::new(label(Action::Cancel), "cancel"));
                 snapshot.show_preview = picker.show_preview;
                 if let Some(item) = finder.selected_item() {
                     snapshot.preview_title = Some(match item.kind {
@@ -2194,6 +2206,11 @@ impl App {
                     (!picker.matches.is_empty()).then_some(picker.selected - row_offset),
                     picker.error.clone(),
                 );
+                snapshot.actions = vec![
+                    OverlayAction::new(label(Action::Accept), "open"),
+                    OverlayAction::new(label(Action::TogglePreview), "toggle preview"),
+                    OverlayAction::new(label(Action::Cancel), "cancel"),
+                ];
                 snapshot.row_offset = row_offset;
                 snapshot.total_rows = total_rows;
                 snapshot.omitted_rows = total_rows.saturating_sub(ROW_LIMIT);
@@ -2205,14 +2222,15 @@ impl App {
                 snapshot.preview = Some(file_overlay_preview(picker.preview.as_ref()));
                 if picker.ranking && !self.held_rank_releases_rows() {
                     snapshot.actions = vec![
-                        OverlayAction::new("Ctrl-t", "toggle preview"),
-                        OverlayAction::new("Esc", "cancel"),
+                        OverlayAction::new(label(Action::TogglePreview), "toggle preview"),
+                        OverlayAction::new(label(Action::Cancel), "cancel"),
                     ];
                 }
                 if self.finder.is_some() {
-                    snapshot
-                        .actions
-                        .insert(1, OverlayAction::new("Tab", "buffers + terminals"));
+                    snapshot.actions.insert(
+                        1,
+                        OverlayAction::new(label(Action::ToggleMode), "buffers + terminals"),
+                    );
                 }
                 overlays.push(snapshot);
             }

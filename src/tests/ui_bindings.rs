@@ -429,3 +429,97 @@ fn prompt_literal_input_is_reserved_and_failed_owner_does_not_grant_accept_autho
         );
     }
 }
+
+#[test]
+fn picker_default_named_keys_and_control_aliases_preserve_modifier_rules() {
+    use Action::*;
+    let map = Bindings::default();
+    for owner in [Owner::FilePicker, Owner::Finder] {
+        for bits in 0..64 {
+            let m = Modifiers::from_bits(bits).unwrap();
+            for (code, expected) in [
+                (KeyCode::Enter, Some(Accept)),
+                (KeyCode::Escape, Some(Cancel)),
+                (KeyCode::Down, Some(Next)),
+                (KeyCode::Up, Some(Previous)),
+                (KeyCode::BackTab, Some(Previous)),
+                (KeyCode::PageDown, Some(PageDown)),
+                (KeyCode::PageUp, Some(PageUp)),
+                (KeyCode::Backspace, Some(Backspace)),
+                (KeyCode::Delete, Some(Delete)),
+                (KeyCode::Left, Some(MoveLeft)),
+                (
+                    KeyCode::Char('h'),
+                    m.contains(Modifiers::CONTROL).then_some(DeleteBackward),
+                ),
+                (
+                    KeyCode::Char('s'),
+                    m.contains(Modifiers::CONTROL).then_some(SplitHorizontal),
+                ),
+                (
+                    KeyCode::Char('v'),
+                    m.contains(Modifiers::CONTROL).then_some(SplitVertical),
+                ),
+                (
+                    KeyCode::Tab,
+                    if owner == Owner::FilePicker {
+                        Some(Next)
+                    } else {
+                        m.is_empty().then_some(ToggleMode)
+                    },
+                ),
+            ] {
+                assert_eq!(
+                    map.lookup(owner, KeyStroke::new(code, m)),
+                    expected,
+                    "{owner:?} {code:?} {m:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn conditional_picker_leader_restores_the_configured_map_and_its_hints() {
+    let source = serde_yaml::from_str("file-picker: {next: [F6]}").unwrap();
+    let mut errors = vec![];
+    let bindings = compile(Some(&source), KeyStroke::ctrl('n'), &mut errors);
+    assert!(errors.is_empty());
+    assert_eq!(
+        bindings.lookup_with_leader(Owner::FilePicker, KeyStroke::ctrl('n'), true),
+        Some(Action::Cancel)
+    );
+    assert_eq!(
+        bindings.lookup_with_leader(Owner::FilePicker, KeyStroke::ctrl('n'), false),
+        None,
+        "removed next must not resurrect"
+    );
+    assert_eq!(
+        bindings.lookup_with_leader(Owner::FilePicker, KeyStroke::parse("F6").unwrap(), false),
+        Some(Action::Next)
+    );
+    assert_eq!(
+        bindings.label_with_leader(Owner::FilePicker, Action::Cancel, false),
+        "Esc/Ctrl-c"
+    );
+    assert_eq!(
+        bindings.label_with_leader(Owner::FilePicker, Action::Next, false),
+        "F6"
+    );
+    let bindings = compile(None, KeyStroke::plain(KeyCode::Down), &mut errors);
+    assert_eq!(
+        bindings.lookup_with_leader(Owner::Finder, KeyStroke::plain(KeyCode::Down), false),
+        Some(Action::Next)
+    );
+    assert!(
+        bindings
+            .label_with_leader(Owner::Finder, Action::Next, false)
+            .contains("Down")
+    );
+    assert!(
+        !bindings
+            .label_with_leader(Owner::Finder, Action::Next, true)
+            .split('/')
+            .any(|s| s == "Down")
+    );
+}

@@ -216,3 +216,12 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   inspect captured plugin requests across fresh/repeat/replay. A Windows host
   regression additionally exercises actual handoff success/refusal; it requires
   Windows CI/runtime, unavailable in this Linux environment.
+- File pickers and the project finder now resolve shared UI actions before
+  held-ranking publication and query editing. Separate backspace actions retain
+  the former Ctrl-h publication behavior. Empty-query leader cancellation uses
+  the authored map underneath the temporary leader overlay, including removed
+  defaults; nonempty queries restore that map. Effective snapshot and standalone
+  hints follow owner bindings. Astra found no blocking issue. All 4,112 active
+  library tests passed (16 ignored), including navigation, acceptance, both split
+  axes, query ownership and publication timing; root Clippy, formatting and guide
+  validation passed.

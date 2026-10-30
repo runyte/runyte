@@ -3643,9 +3643,19 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         String::new()
     };
     let (found, candidates) = app.picker_progress_counts();
+    let preview_key = app.keymap().ui().label_with_leader(
+        app.picker_ui_owner(),
+        crate::keymap::ui::Action::TogglePreview,
+        picker.query.is_empty(),
+    );
+    let mode_key = app.keymap().ui().label_with_leader(
+        app.picker_ui_owner(),
+        crate::keymap::ui::Action::ToggleMode,
+        picker.query.is_empty(),
+    );
     let title = if app.finder.is_some() {
         format!(
-            " Finder · Files · {} · {found}/{candidates} matched{}{} · Tab buffers + terminals · Ctrl-t preview ",
+            " Finder · Files · {} · {found}/{candidates} matched{}{} · {mode_key} buffers + terminals · {preview_key} preview ",
             picker.root.display(),
             skipped,
             if picker.limited {
@@ -3656,7 +3666,7 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         )
     } else {
         format!(
-            " {} · {} · {found}/{candidates} matched{}{} · Ctrl-t preview ",
+            " {} · {} · {found}/{candidates} matched{}{} · {preview_key} preview ",
             picker.kind.title(),
             picker.root.display(),
             skipped,
@@ -3832,6 +3842,16 @@ fn draw_resource_finder(
         .as_ref()
         .map_or(String::new(), |error| format!(" · scan failed: {error}"));
     let (found, candidates) = app.picker_progress_counts();
+    let preview_key = app.keymap().ui().label_with_leader(
+        app.picker_ui_owner(),
+        crate::keymap::ui::Action::TogglePreview,
+        picker.query.is_empty(),
+    );
+    let mode_key = app.keymap().ui().label_with_leader(
+        app.picker_ui_owner(),
+        crate::keymap::ui::Action::ToggleMode,
+        picker.query.is_empty(),
+    );
     // Three keys open this overlay over three different scopes, so a finder
     // that is not the ordinary project one says which it is.
     let scope = picker
@@ -3841,7 +3861,7 @@ fn draw_resource_finder(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " Finder · {}{} · {found}/{candidates} matched{}{}{} · Tab {} · Ctrl-t preview ",
+            " Finder · {}{} · {found}/{candidates} matched{}{}{} · {mode_key} {} · {preview_key} preview ",
             finder.mode.title(),
             scope,
             skipped,
@@ -10336,6 +10356,28 @@ mod tests {
                 .ends_with("界面.rs"),
             "left truncation should retain a wide-character basename"
         );
+    }
+
+    #[test]
+    fn standalone_picker_titles_follow_configured_owner_actions() {
+        let mut config = Config::default();
+        config.merge_keys_source("ui: {finder: {toggle-mode: [F9], toggle-preview: [F10]}, file-picker: {toggle-preview: [F11]}}").unwrap();
+        let mut app = App::new(config, None).unwrap();
+        app.picker = Some(crate::file_picker::FilePicker::new(
+            1,
+            std::path::PathBuf::from("/project"),
+            crate::file_picker::ScanScope::ignoring("/project"),
+        ));
+        app.finder = Some(crate::finder::ResourceFinder::new(
+            crate::finder::FinderMode::Names,
+        ));
+        let screen = rendered(&mut app, 160, 28);
+        assert!(screen.contains("F9 contents"), "{screen}");
+        assert!(screen.contains("F10 preview"), "{screen}");
+        assert!(!screen.contains("Ctrl-t preview"));
+        app.finder = None;
+        let screen = rendered(&mut app, 160, 28);
+        assert!(screen.contains("F11 preview"), "{screen}");
     }
 
     #[test]

@@ -5530,3 +5530,167 @@ fn configured_markdown_scope_moves_and_removes_actions_without_changing_other_mo
     assert_eq!(app.active().selection.primary().head, 0);
     assert_eq!(text(&app), "one\ntwo\nthree");
 }
+
+fn configure_picker_actions(app: &mut App, source: &str) {
+    let compiled =
+        crate::keymap::configured::compile(&serde_yaml::from_str(source).unwrap(), &app.keymap);
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.keymap = compiled.keymap;
+}
+
+#[test]
+fn configured_file_picker_navigation_open_split_and_nested_text_keep_their_targets() {
+    let root = temporary("configured-file-picker");
+    fs::create_dir_all(&root).unwrap();
+    for name in ["alpha.rs", "beta.rs"] {
+        fs::write(root.join(name), name).unwrap();
+    }
+    for accept in ["accept", "split-horizontal", "split-vertical"] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        configure_picker_actions(
+            &mut app,
+            &format!(
+                "ui: {{file-picker: {{next: [F6], previous: [F7], {accept}: [F8], cancel: [F9], toggle-preview: [F10]}}}}"
+            ),
+        );
+        let mut picker = FilePicker::new(
+            1,
+            root.clone(),
+            crate::file_picker::ScanScope::ignoring(&root),
+        );
+        picker.add_paths(vec![
+            ScanEntry::file(root.join("alpha.rs")),
+            ScanEntry::file(root.join("beta.rs")),
+        ]);
+        app.picker = Some(picker);
+        for key in ["Down", "Tab", "Ctrl-n", "Shift-F6", "Esc", "Ctrl-c"] {
+            app.handle_key(KeyStroke::parse(key).unwrap()).unwrap();
+            assert_eq!(app.picker.as_ref().unwrap().selected, 0, "{key}");
+        }
+        app.handle_key(KeyStroke::parse("F6").unwrap()).unwrap();
+        assert_eq!(app.picker.as_ref().unwrap().selected, 1);
+        app.handle_key(KeyStroke::parse("F7").unwrap()).unwrap();
+        assert_eq!(app.picker.as_ref().unwrap().selected, 0);
+        let preview = app.picker.as_ref().unwrap().show_preview;
+        app.handle_key(KeyStroke::parse("F10").unwrap()).unwrap();
+        assert_eq!(app.picker.as_ref().unwrap().show_preview, !preview);
+        let snapshot = app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|s| s.kind == crate::snapshot::OverlayKind::FilePicker)
+            .unwrap();
+        assert!(snapshot.actions.iter().any(|a| a.key_hint == "F10"));
+        app.handle_key(KeyStroke::parse("F8").unwrap()).unwrap();
+        assert!(app.picker.is_none());
+        assert_eq!(
+            app.active_buffer().path.as_deref(),
+            Some(root.join("alpha.rs").as_path())
+        );
+        assert_eq!(app.panes.len(), if accept == "accept" { 1 } else { 2 });
+        if let Layout::Split { axis, .. } = &app.layout {
+            assert_eq!(
+                *axis,
+                if accept == "split-horizontal" {
+                    Axis::Vertical
+                } else {
+                    Axis::Horizontal
+                }
+            );
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn configured_picker_pacing_classifies_resolved_actions_before_query_changes() {
+    let root = temporary("configured-picker-pacing");
+    fs::create_dir_all(&root).unwrap();
+    for (action, publishes) in [
+        ("next", true),
+        ("backspace", false),
+        ("delete-backward", true),
+    ] {
+        let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        )))));
+        let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+        configure_picker_actions(
+            &mut app,
+            &format!("ui: {{file-picker: {{{action}: [F6]}}}}"),
+        );
+        let (scanner, _events) = crate::file_picker::scanner();
+        app.attach_file_scanner(scanner);
+        let mut picker = FilePicker::new(
+            9,
+            root.clone(),
+            crate::file_picker::ScanScope::ignoring(&root),
+        );
+        picker.add_paths(vec![
+            ScanEntry::file(root.join("alpha.rs")),
+            ScanEntry::file(root.join("beta.rs")),
+        ]);
+        let one = vec![picker.matches[0].clone()];
+        app.picker = Some(picker);
+        app.picker_rows_published = Some(Instant::now());
+        app.apply_file_picker_event(FilePickerEvent::Ranked {
+            scan_id: 9,
+            query_revision: 0,
+            matches: one,
+            match_positions: vec![Some(0), None],
+            finder_matches: None,
+            finder_revision: None,
+            finder_positions: HashMap::new(),
+            flushed: false,
+        });
+        assert!(app.held_rank.is_some());
+        app.handle_key(KeyStroke::parse("F6").unwrap()).unwrap();
+        assert_eq!(app.held_rank.is_none(), publishes, "{action}");
+        assert_eq!(
+            app.picker.as_ref().unwrap().matches.len(),
+            if publishes { 1 } else { 2 }
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn configured_finder_mode_and_cancel_keep_filter_text_owned() {
+    let root = temporary("configured-finder-mode");
+    fs::create_dir_all(&root).unwrap();
+    for name in ["alpha.rs", "beta.rs"] {
+        fs::write(root.join(name), name).unwrap();
+    }
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    configure_picker_actions(
+        &mut app,
+        "ui: {finder: {next: [F6], toggle-mode: [F9], cancel: [F10]}}",
+    );
+    app.open_project_picker().unwrap();
+    let mode = app.finder.as_ref().unwrap().mode;
+    for key in ["Tab", "Shift-F9", "Down", "Ctrl-n", "Esc"] {
+        app.handle_key(KeyStroke::parse(key).unwrap()).unwrap();
+        assert_eq!(app.finder.as_ref().unwrap().mode, mode);
+        assert_eq!(app.finder.as_ref().unwrap().selected, 0);
+    }
+    app.handle_key(KeyStroke::parse("F6").unwrap()).unwrap();
+    assert_eq!(app.finder.as_ref().unwrap().selected, 1);
+    app.handle_key(KeyStroke::parse("F9").unwrap()).unwrap();
+    assert_ne!(app.finder.as_ref().unwrap().mode, mode);
+    app.handle_key(KeyStroke::char(' ')).unwrap();
+    assert_eq!(app.picker.as_ref().unwrap().query, " ");
+    let snapshot = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|s| s.kind == crate::snapshot::OverlayKind::FilePicker)
+        .unwrap();
+    assert!(snapshot.actions.iter().any(|a| a.key_hint == "F9"));
+    assert!(snapshot.actions.iter().any(|a| a.key_hint == "F10"));
+    app.handle_key(KeyStroke::parse("F10").unwrap()).unwrap();
+    assert!(app.picker.is_none());
+    assert!(app.finder.is_none());
+    assert!(app.active_buffer().to_string().is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
