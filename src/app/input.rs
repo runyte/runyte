@@ -687,6 +687,10 @@ impl App {
     /// The generic list receives input only after every covering owner. Keep
     /// approval classification on that same ownership boundary.
     pub(super) fn list_input_active(&self) -> bool {
+        self.list_layer_input_active() && self.list_menu_ui_owner().is_none()
+    }
+
+    pub(super) fn list_layer_input_active(&self) -> bool {
         self.list.is_some()
             && self.macro_replay.is_none()
             && !self.context_overlay_active()
@@ -713,9 +717,6 @@ impl App {
             && self.path_action_menu.is_none()
             && self.path_popup.is_none()
             && self.picker.is_none()
-            && self.terminal_action_menu.is_none()
-            && self.session_action_menu.is_none()
-            && self.buffer_action_menu.is_none()
     }
 
     pub(super) fn fresh_physical_approval_key(&self, input: &InputEvent) -> bool {

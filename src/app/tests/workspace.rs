@@ -4378,3 +4378,42 @@ fn session_actions_end_with_the_manager_chords_whichever_row_is_selected() {
 
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+#[cfg(unix)]
+fn configured_session_menu_arming_navigation_and_stale_identity_follow_actions() {
+    let (mut app, root) =
+        session_manager_with_running_and_stopped_rows("configured-session-menu", true);
+    let compiled = crate::keymap::configured::compile(&serde_yaml::from_str("ui: {session-actions: {accept: [F8], next: [F6], previous: [F5], back: [F7], cancel: [F10]}}").unwrap(), &app.keymap);
+    assert!(compiled.errors.is_empty());
+    app.keymap = compiled.keymap;
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    let menu = app.session_action_menu.as_mut().unwrap();
+    menu.selected = menu
+        .actions
+        .iter()
+        .position(|a| *a == SessionAction::ForceClose)
+        .unwrap();
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.session_action_menu.as_ref().unwrap().force_armed);
+    assert!(app.status.contains("press F8 again"));
+    assert!(
+        app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::parse("F8").unwrap()))
+    );
+    assert!(
+        !app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+    );
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert!(app.session_action_menu.as_ref().unwrap().force_armed);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(!app.session_action_menu.as_ref().unwrap().force_armed);
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.session_action_menu.as_ref().unwrap().force_armed);
+    app.workspace_rows.clear();
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.session_action_menu.is_none());
+    assert!(app.status.contains("selected session changed"));
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}

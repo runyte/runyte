@@ -239,3 +239,16 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   its test passed separately, as did an additional report-remapping regression.
   Formatting, guide validation and root Clippy passed. Nested menus and their
   separate cancellation/confirmation policies remain the next checkpoint.
+- Nested buffer, terminal and session menus now own configurable UI actions.
+  Back (legacy Tab) is distinct from Cancel (Escape/Ctrl-c/leader), preserving
+  stale-selection refusal for Back while permitting cancellation. Navigation
+  disarms captured terminal/session confirmations; removed keys remain inert.
+  Armed acceptance uses the active owner at the presented-frame gate, including
+  hidden-live terminal Close. Effective hints and force-kill messages combine
+  surviving dismissal actions. Session-menu literal control characters remain
+  reserved for the existing text prehandler. Astra cleared the implementation;
+  all 30 focused menu tests, root and desktop Clippy, desktop tests, formatting
+  and guide validation passed. Tests include target preservation, all modifier
+  defaults, remap/removal, stale rows, arming/disarming, covering confirmations,
+  hidden-live terminal closure and effective dismissal text. Plugin-manager
+  return remains a separate transparent prehandler for the next checkpoint.

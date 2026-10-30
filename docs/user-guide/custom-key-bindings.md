@@ -254,6 +254,20 @@ Tab/Esc/Ctrl-c to cancel. The `path` popup supports `open-actions` (Tab) and
 `cancel` (Esc/Ctrl-c). These menu owners also inherit the effective leader as a
 cancel key. Reassigning or removing `cancel` removes that leader binding too.
 
+The nested `buffer-actions`, `terminal-actions`, and `session-actions` owners
+support `next`, `previous`, `accept`, `back`, and `cancel`. Their navigation uses
+Down/Ctrl-n and Up/Ctrl-p/Shift-Tab; Enter accepts, Tab goes back, and Esc/Ctrl-c
+cancels. Both back and cancel close the menu. They are separate actions because
+back, like acceptance, refuses a stale selected row; cancel can always dismiss
+that stale menu. This distinction follows the actions when remapped. These
+owners also inherit leader cancellation. Replacing cancel leaves back available;
+replace or remove both actions to change every dismissal key.
+
+For terminal and session actions requiring a second confirmation, the configured
+accept key both arms and confirms. Navigation disarms the confirmation; an
+unbound key does not. Acceptance still revalidates the captured target and
+requires the current presented frame where that gate applies.
+
 ```yaml
 keys:
   ui:

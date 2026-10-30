@@ -1622,6 +1622,25 @@ impl App {
                     _ => false,
                 });
         }
+        if self.list_layer_input_active()
+            && let Some(owner) = self.list_menu_ui_owner()
+        {
+            use crate::keymap::ui::{Action, Owner};
+            let armed = match owner {
+                Owner::TerminalActions => self
+                    .terminal_action_menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.close_armed),
+                Owner::SessionActions => self
+                    .session_action_menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.force_armed),
+                _ => false,
+            };
+            if armed {
+                return self.keymap.ui().lookup(owner, *key) == Some(Action::Accept);
+            }
+        }
         if self.list_input_active()
             && self
                 .list_actions
@@ -1695,11 +1714,18 @@ impl App {
                 title: "Force kill terminal",
                 accept: "force kill",
                 message: format!(
-                    "Force kill {}{} and discard its retained output?\nThe terminal process group will be killed. Unsaved work in the program will be lost.\nEnter confirms.\nEscape cancels.",
+                    "Force kill {}{} and discard its retained output?\nThe terminal process group will be killed. Unsaved work in the program will be lost.\n{} confirms.\n{} cancels.",
                     session.display_name(),
                     session
                         .number()
-                        .map_or_else(String::new, |number| format!(" (#{number})"))
+                        .map_or_else(String::new, |number| format!(" (#{number})")),
+                    self.keymap.ui().label(
+                        crate::keymap::ui::Owner::TerminalActions,
+                        crate::keymap::ui::Action::Accept
+                    ),
+                    self.keymap
+                        .ui()
+                        .dismissal_label(crate::keymap::ui::Owner::TerminalActions),
                 ),
                 input: None,
             });
@@ -2550,7 +2576,7 @@ impl App {
             overlays.push(snapshot);
         }
         if let Some(menu) = &self.buffer_action_menu {
-            overlays.push(bounded(
+            let mut snapshot = bounded(
                 OverlayKind::BufferActions,
                 self.buffers
                     .get(menu.buffer)
@@ -2562,7 +2588,14 @@ impl App {
                     .collect(),
                 Some(menu.selected),
                 None,
-            ));
+            );
+            snapshot.actions = menu_action_hints(
+                self.keymap.ui(),
+                crate::keymap::ui::Owner::BufferActions,
+                "choose",
+                "back",
+            );
+            overlays.push(snapshot);
         }
         #[cfg(any(unix, windows))]
         if let Some(menu) = &self.session_action_menu {
@@ -2615,7 +2648,7 @@ impl App {
                 }
                 rows.push(result);
             }
-            overlays.push(bounded(
+            let mut snapshot = bounded(
                 OverlayKind::BufferActions,
                 self.workspace_row_index(&menu.selection)
                     .ok()
@@ -2626,10 +2659,17 @@ impl App {
                 rows,
                 selected,
                 None,
-            ));
+            );
+            snapshot.actions = menu_action_hints(
+                self.keymap.ui(),
+                crate::keymap::ui::Owner::SessionActions,
+                "choose",
+                "back",
+            );
+            overlays.push(snapshot);
         }
         if let Some(menu) = &self.terminal_action_menu {
-            overlays.push(bounded(
+            let mut snapshot = bounded(
                 OverlayKind::BufferActions,
                 self.terminals.get(menu.id).map_or_else(
                     || "Terminal actions".to_owned(),
@@ -2685,7 +2725,14 @@ impl App {
                     .collect(),
                 Some(menu.selected),
                 None,
-            ));
+            );
+            snapshot.actions = menu_action_hints(
+                self.keymap.ui(),
+                crate::keymap::ui::Owner::TerminalActions,
+                "choose",
+                "back",
+            );
+            overlays.push(snapshot);
         }
 
         if let Some(confirmation) = self.confirmation_overlay() {
@@ -2711,6 +2758,27 @@ impl App {
                 ),
                 OverlayAction::new("Esc", "cancel"),
             ];
+            if self.list_layer_input_active()
+                && self.list_menu_ui_owner() == Some(crate::keymap::ui::Owner::TerminalActions)
+                && self.terminal_action_menu.as_ref().is_some_and(|menu| {
+                    menu.close_armed
+                        && menu.selected_action() == Some(super::TerminalAction::ForceKill)
+                })
+            {
+                use crate::keymap::ui::{Action, Owner};
+                overlay.actions = vec![
+                    OverlayAction::new(
+                        self.keymap
+                            .ui()
+                            .label(Owner::TerminalActions, Action::Accept),
+                        "force kill",
+                    ),
+                    OverlayAction::new(
+                        self.keymap.ui().dismissal_label(Owner::TerminalActions),
+                        "cancel",
+                    ),
+                ];
+            }
             if let Some((_, cursor)) = typed_input {
                 overlay.input = OverlayInput::Text;
                 overlay.query_cursor = Some(cursor);
@@ -3408,6 +3476,6 @@ fn menu_action_hints(
             },
             accept,
         ),
-        OverlayAction::new(bindings.label(owner, Action::Cancel), cancel),
+        OverlayAction::new(bindings.dismissal_label(owner), cancel),
     ]
 }

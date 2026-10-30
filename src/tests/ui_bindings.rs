@@ -523,3 +523,103 @@ fn conditional_picker_leader_restores_the_configured_map_and_its_hints() {
             .any(|s| s == "Down")
     );
 }
+
+#[test]
+fn list_menu_defaults_keep_back_cancel_and_all_modifier_aliases_distinct() {
+    use Action::*;
+    let defaults = Bindings::default();
+    for owner in [
+        Owner::BufferActions,
+        Owner::TerminalActions,
+        Owner::SessionActions,
+    ] {
+        for bits in 0..64 {
+            let m = Modifiers::from_bits(bits).unwrap();
+            for (code, action) in [
+                (KeyCode::Tab, Some(Back)),
+                (KeyCode::Escape, Some(Cancel)),
+                (KeyCode::Enter, Some(Accept)),
+                (KeyCode::Down, Some(Next)),
+                (KeyCode::Up, Some(Previous)),
+                (KeyCode::BackTab, Some(Previous)),
+                (
+                    KeyCode::Char('n'),
+                    m.contains(Modifiers::CONTROL).then_some(Next),
+                ),
+                (
+                    KeyCode::Char('p'),
+                    m.contains(Modifiers::CONTROL).then_some(Previous),
+                ),
+                (
+                    KeyCode::Char('c'),
+                    m.contains(Modifiers::CONTROL).then_some(Cancel),
+                ),
+                (KeyCode::Char('j'), None),
+            ] {
+                assert_eq!(
+                    defaults.lookup(owner, KeyStroke::new(code, m)),
+                    action,
+                    "{owner:?} {code:?} {m:?}"
+                );
+            }
+        }
+        let (map, errors) = configured(&format!(
+            "{}: {{accept: [Ctrl-F8], back: [F9], cancel: []}}",
+            owner.name()
+        ));
+        assert!(errors.is_empty(), "{errors:?}");
+        for key in [
+            "Enter",
+            "Shift-Enter",
+            "Tab",
+            "Esc",
+            "Ctrl-c",
+            "Space",
+            "F8",
+        ] {
+            assert_eq!(
+                map.lookup(owner, KeyStroke::parse(key).unwrap()),
+                None,
+                "{owner:?} {key}"
+            );
+        }
+        assert_eq!(
+            map.lookup(owner, KeyStroke::parse("Ctrl-F8").unwrap()),
+            Some(Accept)
+        );
+        assert_eq!(
+            map.lookup(owner, KeyStroke::parse("F9").unwrap()),
+            Some(Back)
+        );
+        let inherited = Bindings::with_leader(KeyStroke::plain(KeyCode::Tab));
+        assert_eq!(
+            inherited.lookup(owner, KeyStroke::plain(KeyCode::Tab)),
+            Some(Cancel)
+        );
+    }
+}
+
+#[test]
+fn session_menu_rejects_intercepted_control_text_and_dismissal_uses_surviving_actions() {
+    let (map, errors) = configured("session-actions: {accept: [\"\\u0001\"]}");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(
+        map.lookup(Owner::SessionActions, KeyStroke::plain(KeyCode::Enter)),
+        Some(Action::Accept)
+    );
+    for owner in [
+        Owner::BufferActions,
+        Owner::TerminalActions,
+        Owner::SessionActions,
+    ] {
+        for (source, expected) in [
+            ("cancel: []", "Tab"),
+            ("back: [], cancel: [F10]", "F10"),
+            ("back: [], cancel: []", "unbound"),
+        ] {
+            let (map, errors) = configured(&format!("{}: {{{source}}}", owner.name()));
+            assert!(errors.is_empty(), "{errors:?}");
+            assert_eq!(map.dismissal_label(owner), expected);
+        }
+    }
+}

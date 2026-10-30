@@ -2631,18 +2631,18 @@ impl App {
     pub(super) fn handle_list_key(&mut self, key: KeyStroke) -> Result<()> {
         let bound = self.list_binding_for(key);
         let leader = self.list_leader_active(key);
-        // Nested owners retain their own cancellation until their UI maps
-        // replace this compatibility translation.
+        // The plugin manager's transparent return handler still owns legacy
+        // cancellation ahead of the list and its nested action menus.
         let nested_key = if leader {
             KeyStroke::plain(KeyCode::Escape)
         } else {
             key
         };
-        let activating = if self.terminal_action_menu.is_some()
-            || self.session_action_menu.is_some()
-            || self.buffer_action_menu.is_some()
-        {
-            matches!(nested_key.code, KeyCode::Enter | KeyCode::Tab)
+        let activating = if let Some(owner) = self.list_menu_ui_owner() {
+            matches!(
+                self.keymap.ui().lookup(owner, key),
+                Some(crate::keymap::ui::Action::Accept | crate::keymap::ui::Action::Back)
+            )
         } else {
             matches!(
                 bound,
@@ -2667,11 +2667,11 @@ impl App {
             self.navigator_selection_lost = false;
         }
         if self.terminal_action_menu.is_some() {
-            return self.handle_terminal_action_key(nested_key);
+            return self.handle_terminal_action_key(key);
         }
         #[cfg(any(unix, windows))]
         if self.session_action_menu.is_some() {
-            return self.handle_session_action_key(nested_key);
+            return self.handle_session_action_key(key);
         }
         #[cfg(windows)]
         if self.session_manager_selection_lost && self.session_manager_open() {
@@ -2684,7 +2684,7 @@ impl App {
             }
         }
         if self.buffer_action_menu.is_some() {
-            return self.handle_buffer_action_key(nested_key);
+            return self.handle_buffer_action_key(key);
         }
         if let Some(target) = bound {
             return self.run_list_binding(target);
@@ -2729,6 +2729,19 @@ impl App {
             self.list_selection_changed();
         }
         Ok(())
+    }
+
+    pub(super) fn list_menu_ui_owner(&self) -> Option<crate::keymap::ui::Owner> {
+        use crate::keymap::ui::Owner;
+        if self.terminal_action_menu.is_some() {
+            Some(Owner::TerminalActions)
+        } else if self.session_action_menu.is_some() {
+            Some(Owner::SessionActions)
+        } else if self.buffer_action_menu.is_some() {
+            Some(Owner::BufferActions)
+        } else {
+            None
+        }
     }
 
     /// Actions formerly owned by raw list keys run without editor-command
@@ -3004,26 +3017,26 @@ impl App {
 
     #[cfg(any(unix, windows))]
     fn handle_session_action_key(&mut self, key: KeyStroke) -> Result<()> {
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, control) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) | (KeyCode::Tab, _) => {
+        use crate::keymap::ui::{Action, Owner};
+        match self.keymap.ui().lookup(Owner::SessionActions, key) {
+            Some(Action::Cancel | Action::Back) => {
                 self.session_action_menu = None;
             }
-            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
+            Some(Action::Next) => {
                 let menu = self.session_action_menu.as_mut().unwrap();
                 if !menu.actions.is_empty() {
                     menu.selected = (menu.selected + 1) % menu.actions.len();
                     menu.force_armed = false;
                 }
             }
-            (KeyCode::Up, _) | (KeyCode::Char('p'), true) | (KeyCode::BackTab, _) => {
+            Some(Action::Previous) => {
                 let menu = self.session_action_menu.as_mut().unwrap();
                 if !menu.actions.is_empty() {
                     menu.selected = (menu.selected + menu.actions.len() - 1) % menu.actions.len();
                     menu.force_armed = false;
                 }
             }
-            (KeyCode::Enter, _) => {
+            Some(Action::Accept) => {
                 if let Some(target) = self
                     .session_action_menu
                     .as_ref()
@@ -3057,9 +3070,7 @@ impl App {
                         .is_some_and(|menu| !menu.force_armed)
                 {
                     self.session_action_menu.as_mut().unwrap().force_armed = true;
-                    self.status(
-                        "force close discards protected buffers, waiters, and live terminals; press Enter again to confirm",
-                    );
+                    self.status(format!("force close discards protected buffers, waiters, and live terminals; press {} again to confirm", self.keymap.ui().label(Owner::SessionActions, Action::Accept)));
                     return Ok(());
                 }
                 match (running, action) {
@@ -3170,22 +3181,22 @@ impl App {
     }
 
     fn handle_terminal_action_key(&mut self, key: KeyStroke) -> Result<()> {
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, control) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) | (KeyCode::Tab, _) => {
+        use crate::keymap::ui::{Action, Owner};
+        match self.keymap.ui().lookup(Owner::TerminalActions, key) {
+            Some(Action::Cancel | Action::Back) => {
                 self.terminal_action_menu = None;
             }
-            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
+            Some(Action::Next) => {
                 let menu = self.terminal_action_menu.as_mut().unwrap();
                 menu.selected = (menu.selected + 1) % menu.actions.len();
                 menu.close_armed = false;
             }
-            (KeyCode::Up, _) | (KeyCode::Char('p'), true) | (KeyCode::BackTab, _) => {
+            Some(Action::Previous) => {
                 let menu = self.terminal_action_menu.as_mut().unwrap();
                 menu.selected = (menu.selected + menu.actions.len() - 1) % menu.actions.len();
                 menu.close_armed = false;
             }
-            (KeyCode::Enter, _) => {
+            Some(Action::Accept) => {
                 let (id, action, armed) = {
                     let menu = self.terminal_action_menu.as_ref().unwrap();
                     (menu.id, menu.selected_action(), menu.close_armed)
@@ -3203,7 +3214,7 @@ impl App {
                     }
                     if !armed {
                         self.terminal_action_menu.as_mut().unwrap().close_armed = true;
-                        self.status("force kill ends this terminal and discards its output; press Enter again to confirm");
+                        self.status(format!("force kill ends this terminal and discards its output; press {} again to confirm", self.keymap.ui().label(Owner::TerminalActions, Action::Accept)));
                         return Ok(());
                     }
                 }
@@ -3213,7 +3224,12 @@ impl App {
                     && !armed
                 {
                     self.terminal_action_menu.as_mut().unwrap().close_armed = true;
-                    self.status("closing ends this hidden live process; press Enter again");
+                    self.status(format!(
+                        "closing ends this hidden live process; press {} again",
+                        self.keymap
+                            .ui()
+                            .label(Owner::TerminalActions, Action::Accept)
+                    ));
                     return Ok(());
                 }
                 if action == TerminalAction::CloseExited
@@ -3259,24 +3275,24 @@ impl App {
     }
 
     fn handle_buffer_action_key(&mut self, key: KeyStroke) -> Result<()> {
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, control) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) | (KeyCode::Tab, _) => {
+        use crate::keymap::ui::{Action, Owner};
+        match self.keymap.ui().lookup(Owner::BufferActions, key) {
+            Some(Action::Cancel | Action::Back) => {
                 self.buffer_action_menu = None;
             }
-            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
+            Some(Action::Next) => {
                 let menu = self.buffer_action_menu.as_mut().unwrap();
                 if !menu.actions.is_empty() {
                     menu.selected = (menu.selected + 1) % menu.actions.len();
                 }
             }
-            (KeyCode::Up, _) | (KeyCode::Char('p'), true) | (KeyCode::BackTab, _) => {
+            Some(Action::Previous) => {
                 let menu = self.buffer_action_menu.as_mut().unwrap();
                 if !menu.actions.is_empty() {
                     menu.selected = (menu.selected + menu.actions.len() - 1) % menu.actions.len();
                 }
             }
-            (KeyCode::Enter, _) => {
+            Some(Action::Accept) => {
                 let chosen = self
                     .buffer_action_menu
                     .as_ref()

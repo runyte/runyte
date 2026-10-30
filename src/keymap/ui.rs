@@ -21,6 +21,9 @@ pub enum Owner {
     Path,
     PathActions,
     ProgramActions,
+    BufferActions,
+    TerminalActions,
+    SessionActions,
     CommandPrompt,
     TextPrompt,
     PathPrompt,
@@ -30,12 +33,15 @@ pub enum Owner {
 }
 
 impl Owner {
-    const ALL: [Self; 11] = [
+    const ALL: [Self; 14] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
         Self::PathActions,
         Self::ProgramActions,
+        Self::BufferActions,
+        Self::TerminalActions,
+        Self::SessionActions,
         Self::CommandPrompt,
         Self::TextPrompt,
         Self::PathPrompt,
@@ -50,6 +56,9 @@ impl Owner {
             Self::Path => "path",
             Self::PathActions => "path-actions",
             Self::ProgramActions => "program-actions",
+            Self::BufferActions => "buffer-actions",
+            Self::TerminalActions => "terminal-actions",
+            Self::SessionActions => "session-actions",
             Self::CommandPrompt => "command-prompt",
             Self::TextPrompt => "text-prompt",
             Self::PathPrompt => "path-prompt",
@@ -57,6 +66,12 @@ impl Owner {
             Self::FilePicker => "file-picker",
             Self::Finder => "finder",
         }
+    }
+    pub fn is_list_menu(self) -> bool {
+        matches!(
+            self,
+            Self::BufferActions | Self::TerminalActions | Self::SessionActions
+        )
     }
     pub fn is_picker(self) -> bool {
         matches!(self, Self::FilePicker | Self::Finder)
@@ -84,6 +99,9 @@ impl Owner {
             Self::ContextActions | Self::PathActions | Self::ProgramActions => {
                 &[Next, Previous, Accept, Cancel]
             }
+            Self::BufferActions | Self::TerminalActions | Self::SessionActions => {
+                &[Next, Previous, Accept, Back, Cancel]
+            }
             Self::Path => &[OpenActions, Cancel],
             Self::FilePicker | Self::Finder => picker::actions(self),
             Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
@@ -100,7 +118,12 @@ impl Owner {
             // This menu historically matches its choice character regardless
             // of modifiers. Preserve that broader structural input policy.
             Self::PathActions => matches!(key.code, KeyCode::Char('r' | 's')),
-            Self::Completion | Self::Path | Self::ProgramActions => false,
+            Self::Completion
+            | Self::Path
+            | Self::ProgramActions
+            | Self::BufferActions
+            | Self::TerminalActions => false,
+            Self::SessionActions => matches!(key.code, KeyCode::Char(c) if c.is_control()),
             Self::FilePicker | Self::Finder => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control())
                     || matches!(key.code, KeyCode::Char(_))
@@ -128,6 +151,7 @@ pub enum Action {
     CancelOrContinue,
     DismissAndContinue,
     OpenActions,
+    Back,
     Save,
     MoveLeft,
     MoveRight,
@@ -163,6 +187,7 @@ impl Action {
             Self::CancelOrContinue => "cancel-or-continue",
             Self::DismissAndContinue => "dismiss-and-continue",
             Self::OpenActions => "open-actions",
+            Self::Back => "back",
             Self::Save => "save",
             Self::MoveLeft => "move-left",
             Self::MoveRight => "move-right",
@@ -322,6 +347,23 @@ impl Bindings {
             .filter(|keys| !keys.is_empty())
             .map_or_else(|| "unbound".into(), |keys| keys.join("/"))
     }
+    pub fn dismissal_label(&self, owner: Owner) -> String {
+        let actions: &[Action] = if owner.is_list_menu() {
+            &[Action::Back, Action::Cancel]
+        } else {
+            &[Action::Cancel]
+        };
+        let labels = actions
+            .iter()
+            .map(|&action| self.label(owner, action))
+            .filter(|label| label != "unbound")
+            .collect::<Vec<_>>();
+        if labels.is_empty() {
+            "unbound".to_owned()
+        } else {
+            labels.join("/")
+        }
+    }
     fn owner_bindings(&self, owner: Owner, leader_active: bool) -> &OwnerBindings {
         let bindings = &self.owners[&owner];
         if !leader_active {
@@ -397,7 +439,10 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
             _ => None,
         };
     }
-    if owner == Owner::ProgramActions {
+    if owner.is_list_menu() && key.code == KeyCode::Tab {
+        return Some(Back);
+    }
+    if owner == Owner::ProgramActions || owner.is_list_menu() {
         return match (key.code, control) {
             (KeyCode::Escape | KeyCode::Tab, _) | (KeyCode::Char('c'), true) => Some(Cancel),
             (KeyCode::Down, _) | (KeyCode::Char('n'), true) => Some(Next),
@@ -430,6 +475,16 @@ fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
         return picker::labels(owner, action);
     }
     use Action::*;
+    if owner.is_list_menu() {
+        return match action {
+            Next => &["Down", "Ctrl-n"],
+            Previous => &["Up", "Ctrl-p", "BackTab"],
+            Accept => &["Enter"],
+            Back => &["Tab"],
+            Cancel => &["Esc", "Ctrl-c"],
+            _ => &[],
+        };
+    }
     match (owner, action) {
         (Owner::Completion, Next) => &["Down", "Ctrl-n"],
         (Owner::Completion, Previous) => &["Up", "Ctrl-p"],
