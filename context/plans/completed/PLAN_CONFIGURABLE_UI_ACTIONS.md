@@ -3,7 +3,8 @@
 
 Tracking issue: [#46](https://github.com/runyte/runyte/issues/46).
 Implementation branch: `feat/configurable-ui-actions`.
-Status: approved implementation; independent Astra High design and code reviews.
+Status: implemented and locally validated; independent Astra High design and code reviews.
+Draft pull request: [#47](https://github.com/runyte/runyte/pull/47).
 
 ## Contract
 
@@ -80,7 +81,7 @@ separate reductions of the issue's acceptance criteria.
    effective bindings, preserving PTY forwarding and frontend ownership.
 8. [x] Convert action-owned grammar controls (cancel/back/context actions/hint
    navigation), retaining counts, operands and jump-label identifiers.
-9. [ ] Complete documentation and direct-input audit; run full validation and
+9. [x] Complete documentation and direct-input audit; run full validation and
    independent final review. Publish reviewable branch/PR linked to #46.
 
 ## Input-owner inventory
@@ -591,5 +592,5 @@ passed at 92.47% line coverage against the 89% floor. Desktop coverage passed
 at 50.64% against its separate 40% floor. The coverage register records the
 commands and measured totals. These Linux runs do not replace native
 macOS/Windows CI or interactive GPU/window acceptance. Implementation and local
-validation are complete; publication of the draft PR is the remaining delivery
-step. The issue remains open until integration.
+validation are complete and published in draft PR #47. The issue remains open
+until integration.

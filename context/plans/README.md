@@ -26,10 +26,6 @@ current sources take precedence.
 
 Active work:
 
-- [Configurable UI actions](active/PLAN_CONFIGURABLE_UI_ACTIONS.md): shared,
-  scoped keyboard and pointer actions with unchanged defaults, structural option
-  input, and effective bindings across terminal and native surfaces ([#46](https://github.com/runyte/runyte/issues/46)).
-
 - [MCP read and write permissions](active/PLAN_MCP_READ_WRITE_PERMISSIONS.md):
   two per-workspace permissions, direct terminal writes with a revision-guarded
   delayed Enter, and removal of nudges, terminal bindings and reviewed
@@ -59,6 +55,11 @@ Proposed work:
   portability and browser lifecycle ownership before implementation.
 
 The retained completed records cover:
+
+- [Configurable UI actions](completed/PLAN_CONFIGURABLE_UI_ACTIONS.md): shared,
+  scoped keyboard and pointer actions, structural input boundaries, captured
+  native ownership, and effective bindings across terminal and native surfaces
+  ([#46](https://github.com/runyte/runyte/issues/46), [PR #47](https://github.com/runyte/runyte/pull/47));
 
 - [Agent channel](completed/PLAN_AGENT_CHANNEL.md): the implemented
   workspace-scoped conversation through `runyte mcp`, with verified participant
