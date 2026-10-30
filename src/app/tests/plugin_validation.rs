@@ -738,3 +738,373 @@ fn pointer_only_cancellation_of_queued_validation_requests_redraw() {
     assert!(app.plugins.presentation_dirty);
     assert!(form_snapshot(&app).message.is_none());
 }
+
+fn configure_plugin_input(app: &mut App, source: &str) {
+    let compiled =
+        crate::keymap::configured::compile(&serde_yaml::from_str(source).unwrap(), &app.keymap);
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+}
+
+#[test]
+fn configured_plugin_submission_requires_fresh_input_and_retains_validation_authority() {
+    for spelling in ["F8", "Esc", "Ctrl-F8"] {
+        for validate in [false, true] {
+            let mut app = fixture(vec![field("name", Kind::Text, validate)]);
+            configure_plugin_input(
+                &mut app,
+                &format!("ui: {{plugin-form: {{accept: [{spelling}], cancel: [F10]}}}}"),
+            );
+            type_text(&mut app, "name");
+            let input = InputEvent::Key(KeyStroke::parse(spelling).unwrap());
+            assert!(app.input_requires_presented_approval(&input));
+            assert_eq!(form_snapshot(&app).actions[0].key_hint, spelling);
+            key(&mut app, KeyCode::Enter, Modifiers::NONE);
+            app.handle_repeated_input(input.clone()).unwrap();
+            app.handle_replayed_input(input.clone()).unwrap();
+            assert!(app.plugins.input_finished.is_empty());
+            assert!(app.peek_plugin_validation().is_none());
+            app.handle_input(input.clone()).unwrap();
+            if validate {
+                let intent = app.peek_plugin_validation().unwrap();
+                assert!(intent.native_handoff_allowed);
+                assert!(app.plugin_validation_pending(&intent));
+                // A repeated acceptance invalidates the queued submission,
+                // so the older asynchronous result cannot submit it.
+                app.handle_repeated_input(input.clone()).unwrap();
+                assert!(respond(&mut app, &intent, ValidationStatus::Valid));
+                assert!(app.plugins.input_finished.is_empty());
+                app.handle_input(input).unwrap();
+                let intent = app.peek_plugin_validation().unwrap();
+                assert!(app.plugin_validation_pending(&intent));
+                assert!(respond(&mut app, &intent, ValidationStatus::Valid));
+            }
+            let (_, context, submission) = app.plugins.input_finished.pop().unwrap();
+            assert!(submission.accepted && context.native_handoff_allowed);
+            assert_eq!(submission.values["name"], Value::Text("name".into()));
+            assert!(!app.plugin_physical_input);
+        }
+    }
+}
+
+#[test]
+fn configured_plugin_form_editing_and_choice_navigation_keep_field_semantics() {
+    let mut choice = field("choice", Kind::Choice, false);
+    choice.choices = vec!["a".into(), "b".into(), "c".into()];
+    let mut app = fixture(vec![field("text", Kind::Text, false), choice]);
+    configure_plugin_input(
+        &mut app,
+        "ui: {plugin-form: {next: [F6], backspace: [F2], move-start: [F3], delete: [F4]}, plugin-choice: {move-left: [Ctrl-F2], move-right: [F2], previous: [F5]}}",
+    );
+    type_text(&mut app, "a\u{301}b");
+    key(&mut app, KeyCode::Function(2), Modifiers::NONE);
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[0],
+        Value::Text("a\u{301}".into())
+    );
+    key(&mut app, KeyCode::Function(3), Modifiers::NONE);
+    key(&mut app, KeyCode::Function(4), Modifiers::NONE);
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[0],
+        Value::Text("".into())
+    );
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    key(&mut app, KeyCode::Function(2), Modifiers::NONE);
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[1],
+        Value::Text("b".into())
+    );
+    key(&mut app, KeyCode::Function(2), Modifiers::CONTROL);
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[1],
+        Value::Text("a".into())
+    );
+    key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[1],
+        Value::Text("b".into())
+    );
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[1],
+        Value::Text("b".into()),
+        "removed alias remains inert"
+    );
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(app.plugins.input.as_ref().unwrap().selected, 0);
+}
+
+#[test]
+fn configured_plugin_completion_keeps_repeat_policy_and_never_submits_through_a_changed_layer() {
+    let root = crate::test_support::TestRuntimeRoot::new("configured-plugin-completion").unwrap();
+    std::fs::write(root.path().join("alpha"), "fixture").unwrap();
+    std::fs::write(root.path().join("alpine"), "fixture").unwrap();
+    let mut path = field("path", Kind::Text, false);
+    path.completion = Some(crate::plugin::interaction::Completion::LocalPath);
+    let mut app = fixture(vec![path]);
+    app.project_root = root.path().to_owned();
+    configure_plugin_input(
+        &mut app,
+        "ui: {plugin-form: {accept: [Tab], next: [F6]}, plugin-path-completion: {accept-or-continue: [F8], next: [F4], previous: [F3]}}",
+    );
+    type_text(&mut app, "al");
+    assert!(
+        form_snapshot(&app)
+            .actions
+            .iter()
+            .any(|a| a.key_hint == "Tab/F8" && a.label == "complete")
+    );
+    let input = InputEvent::Key(KeyStroke::plain(KeyCode::Function(8)));
+    app.handle_repeated_input(input.clone()).unwrap();
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[0],
+        Value::Text("al".into())
+    );
+    assert!(app.plugins.input_finished.is_empty());
+    key(&mut app, KeyCode::Function(4), Modifiers::NONE);
+    assert_eq!(app.plugins.input.as_ref().unwrap().completion_selected, 1);
+    key(&mut app, KeyCode::Function(3), Modifiers::NONE);
+    assert_eq!(app.plugins.input.as_ref().unwrap().completion_selected, 0);
+    // Repeated Tab is still completion input, not submission.
+    let tab = InputEvent::Key(KeyStroke::plain(KeyCode::Tab));
+    assert!(
+        app.input_requires_presented_approval(&tab),
+        "masked submission still needs a presented frame"
+    );
+    app.handle_repeated_input(tab.clone()).unwrap();
+    assert_eq!(
+        app.plugins.input.as_ref().unwrap().values[0],
+        Value::Text("alpha".into())
+    );
+    assert!(app.plugins.input_finished.is_empty());
+    // The completion layer disappeared. The same repeat must not acquire the
+    // underlying form's configured submission authority.
+    assert!(app.plugin_path_hints().is_empty());
+    app.handle_repeated_input(tab.clone()).unwrap();
+    assert!(app.plugins.input_finished.is_empty());
+    app.handle_input(tab).unwrap();
+    let (_, context, submission) = app.plugins.input_finished.pop().unwrap();
+    assert!(submission.accepted && context.native_handoff_allowed);
+}
+
+#[test]
+fn configured_plugin_confirmation_and_picker_preserve_repeat_and_literal_input() {
+    for confirmation in [true, false] {
+        let mut app = fixture(vec![field("choice", Kind::Text, false)]);
+        let surface = app.plugins.input.as_mut().unwrap();
+        surface.confirmation = confirmation;
+        if !confirmation {
+            surface.picker = Some(crate::picker::ListPicker::new(
+                "Pick",
+                vec![
+                    crate::picker::PickerItem::new("alpha", "", 0),
+                    crate::picker::PickerItem::new("beta", "", 1),
+                ],
+            ));
+        }
+        let owner = if confirmation {
+            "plugin-confirmation"
+        } else {
+            "plugin-picker"
+        };
+        configure_plugin_input(
+            &mut app,
+            &format!("ui: {{{owner}: {{accept: [F8], cancel: [F10]}}}}"),
+        );
+        if !confirmation {
+            type_text(&mut app, "be\u{301}");
+            key(&mut app, KeyCode::Backspace, Modifiers::ALT);
+            assert_eq!(
+                app.plugins
+                    .input
+                    .as_ref()
+                    .unwrap()
+                    .picker
+                    .as_ref()
+                    .unwrap()
+                    .filter,
+                "be",
+                "picker backspace retains scalar deletion"
+            );
+        }
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        let input = InputEvent::Key(KeyStroke::plain(KeyCode::Function(8)));
+        assert!(app.input_requires_presented_approval(&input));
+        app.handle_repeated_input(input.clone()).unwrap();
+        app.handle_replayed_input(input.clone()).unwrap();
+        assert!(app.plugins.input_finished.is_empty());
+        assert_eq!(form_snapshot(&app).actions[0].key_hint, "F8");
+        app.handle_input(input).unwrap();
+        let (_, context, submission) = app.plugins.input_finished.pop().unwrap();
+        assert!(submission.accepted && context.native_handoff_allowed);
+        assert_eq!(
+            submission.values["choice"],
+            if confirmation {
+                Value::Boolean(true)
+            } else {
+                Value::Text("beta".into())
+            }
+        );
+    }
+}
+
+#[test]
+fn stale_plugin_submission_key_falls_back_without_handoff_authority() {
+    use super::plugin_rich_views;
+    let model = plugin_rich_views::model(&["row"]);
+    let (mut app, buffer, projection) = plugin_rich_views::fixture(model.clone());
+    let mut receiver = plugin_rich_views::commands(&mut app, buffer, model, projection);
+    app.note_plugin_frontend(true);
+    configure_plugin_input(&mut app, "ui: {plugin-form: {accept: [F8]}}");
+    app.set_keymap(Arc::new(
+        app.keymap
+            .with_plugin_bindings(vec![crate::keymap::Binding::implemented_in(
+                &[Mode::Normal],
+                crate::keymap::BindingScope::Plugin(0),
+                KeyStroke::plain(KeyCode::Function(8)),
+                crate::keymap::BindingTarget::Plugin(2),
+            )])
+            .unwrap(),
+    ));
+    let mut surface = fixture(vec![field("name", Kind::Text, false)])
+        .plugins
+        .input
+        .take()
+        .unwrap();
+    surface.context.buffer = buffer;
+    surface.context.pane = app.active_pane;
+    surface.context.attachment = app.plugins.attachment_generation.wrapping_add(1);
+    app.plugins.input = Some(surface);
+    app.plugins
+        .presented_views
+        .insert(app.active_pane, (buffer, 1));
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(!app.plugins.input_finished.pop().unwrap().2.accepted);
+    assert!(receiver.try_recv().is_ok(), "{}", app.status);
+    let requests = &app.plugins.instances[&0].application.requests;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests.values().next().unwrap().native_handoff_allowed,
+        !cfg!(windows)
+    );
+}
+
+#[test]
+fn plugin_picker_remapped_navigation_removal_and_repeat_cancel_are_owner_local() {
+    let mut app = fixture(vec![field("choice", Kind::Text, false)]);
+    app.plugins.input.as_mut().unwrap().picker = Some(crate::picker::ListPicker::new(
+        "Pick",
+        vec![
+            crate::picker::PickerItem::new("alpha", "", 0),
+            crate::picker::PickerItem::new("beta", "", 1),
+        ],
+    ));
+    configure_plugin_input(
+        &mut app,
+        "ui: {plugin-picker: {next: [F6], previous: [F5], backspace: [F2], accept: [], cancel: [Enter]}}",
+    );
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert_eq!(
+        app.plugins
+            .input
+            .as_ref()
+            .unwrap()
+            .picker
+            .as_ref()
+            .unwrap()
+            .selected,
+        0
+    );
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(
+        app.plugins
+            .input
+            .as_ref()
+            .unwrap()
+            .picker
+            .as_ref()
+            .unwrap()
+            .selected,
+        1
+    );
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(
+        app.plugins
+            .input
+            .as_ref()
+            .unwrap()
+            .picker
+            .as_ref()
+            .unwrap()
+            .selected,
+        0
+    );
+    type_text(&mut app, "ab");
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(
+        app.plugins
+            .input
+            .as_ref()
+            .unwrap()
+            .picker
+            .as_ref()
+            .unwrap()
+            .filter,
+        "ab"
+    );
+    key(&mut app, KeyCode::Function(2), Modifiers::NONE);
+    assert_eq!(
+        app.plugins
+            .input
+            .as_ref()
+            .unwrap()
+            .picker
+            .as_ref()
+            .unwrap()
+            .filter,
+        "a"
+    );
+    assert_eq!(form_snapshot(&app).actions[0].key_hint, "unbound");
+    let input = InputEvent::Key(KeyStroke::plain(KeyCode::Enter));
+    assert!(!app.input_requires_presented_approval(&input));
+    app.handle_repeated_input(input).unwrap();
+    let (_, context, submission) = app.plugins.input_finished.pop().unwrap();
+    assert!(!submission.accepted && !context.native_handoff_allowed);
+}
+
+#[test]
+fn plugin_choice_toggle_can_be_remapped_or_removed_without_affecting_text_space() {
+    for binding in ["[F2]", "[]"] {
+        let mut app = fixture(vec![
+            field("enabled", Kind::Boolean, false),
+            field("text", Kind::Text, false),
+        ]);
+        configure_plugin_input(
+            &mut app,
+            &format!("ui: {{plugin-choice: {{toggle-selection: {binding}}}}}"),
+        );
+        key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
+        assert_eq!(
+            app.plugins.input.as_ref().unwrap().values[0],
+            Value::Boolean(false)
+        );
+        key(&mut app, KeyCode::Function(2), Modifiers::NONE);
+        assert_eq!(
+            app.plugins.input.as_ref().unwrap().values[0],
+            Value::Boolean(binding == "[F2]")
+        );
+        let hint = form_snapshot(&app)
+            .actions
+            .into_iter()
+            .find(|a| a.label == "choice")
+            .unwrap()
+            .key_hint;
+        assert!(!hint.contains("Space"), "{hint}");
+        key(&mut app, KeyCode::Tab, Modifiers::NONE);
+        key(&mut app, KeyCode::Char(' '), Modifiers::NONE);
+        assert_eq!(
+            app.plugins.input.as_ref().unwrap().values[1],
+            Value::Text(" ".into())
+        );
+    }
+}

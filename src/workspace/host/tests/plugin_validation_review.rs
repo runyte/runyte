@@ -216,7 +216,7 @@ fn validation_timeout_releases_request_and_late_result_cannot_accept_the_surface
             .input
             .as_ref()
             .unwrap()
-            .validation_feedback()
+            .validation_feedback("Enter", "Escape")
             .unwrap()
             .contains("unavailable")
     );

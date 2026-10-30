@@ -4,6 +4,7 @@
 
 mod confirmation;
 mod context_review;
+mod plugin_input;
 mod provider;
 pub(crate) use context_review::Route as ContextReviewRoute;
 mod picker;
@@ -47,10 +48,15 @@ pub enum Owner {
     ContextReview,
     ProviderReload,
     ProviderOverwrite,
+    PluginConfirmation,
+    PluginPicker,
+    PluginForm,
+    PluginChoice,
+    PluginPathCompletion,
 }
 
 impl Owner {
-    const ALL: [Self; 26] = [
+    const ALL: [Self; 31] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -77,6 +83,11 @@ impl Owner {
         Self::ContextReview,
         Self::ProviderReload,
         Self::ProviderOverwrite,
+        Self::PluginConfirmation,
+        Self::PluginPicker,
+        Self::PluginForm,
+        Self::PluginChoice,
+        Self::PluginPathCompletion,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -106,6 +117,11 @@ impl Owner {
             Self::ContextReview => "context-review",
             Self::ProviderReload => "provider-reload",
             Self::ProviderOverwrite => "provider-overwrite",
+            Self::PluginConfirmation => "plugin-confirmation",
+            Self::PluginPicker => "plugin-picker",
+            Self::PluginForm => "plugin-form",
+            Self::PluginChoice => "plugin-choice",
+            Self::PluginPathCompletion => "plugin-path-completion",
         }
     }
     pub fn is_confirmation(self) -> bool {
@@ -140,8 +156,19 @@ impl Owner {
     pub(crate) fn is_provider(self) -> bool {
         matches!(self, Self::ProviderReload | Self::ProviderOverwrite)
     }
+    pub(crate) fn is_plugin_input(self) -> bool {
+        matches!(
+            self,
+            Self::PluginConfirmation
+                | Self::PluginPicker
+                | Self::PluginForm
+                | Self::PluginChoice
+                | Self::PluginPathCompletion
+        )
+    }
     fn inherits_leader(self) -> bool {
         !matches!(self, Self::Completion | Self::ContextReview)
+            && !self.is_plugin_input()
             && !self.is_prompt()
             && !self.is_session_navigation()
     }
@@ -163,6 +190,22 @@ impl Owner {
                 &[Next, Previous, Accept, Back, Cancel]
             }
             Self::Path => &[OpenActions, Cancel],
+            Self::PluginConfirmation => &[Accept, Cancel],
+            Self::PluginPicker => &[Accept, Cancel, Next, Previous, Backspace],
+            Self::PluginForm => &[
+                Accept, Cancel, Next, Previous, Backspace, Delete, MoveLeft, MoveRight, MoveStart,
+                MoveEnd,
+            ],
+            Self::PluginChoice => &[
+                Accept,
+                Cancel,
+                Next,
+                Previous,
+                MoveLeft,
+                MoveRight,
+                ToggleSelection,
+            ],
+            Self::PluginPathCompletion => &[Accept, AcceptOrContinue, Next, Previous],
             Self::ProviderReload => &[Next, Previous, Accept, Cancel],
             Self::ProviderOverwrite => &[Accept, Cancel],
             Self::ContextReview => &[
@@ -194,7 +237,11 @@ impl Owner {
     }
     fn structural(self, key: KeyStroke) -> bool {
         match self {
-            Self::ProviderReload | Self::ProviderOverwrite => false,
+            Self::ProviderReload | Self::ProviderOverwrite | Self::PluginConfirmation => false,
+            Self::PluginChoice => false,
+            Self::PluginPicker | Self::PluginForm | Self::PluginPathCompletion => {
+                key.modifiers.is_empty() && matches!(key.code, KeyCode::Char(_))
+            }
             Self::ContextReview => {
                 key.modifiers.is_empty()
                     && matches!(key.code, KeyCode::Char('x' | 'r' | 'n' | '1' | '2'))
@@ -259,6 +306,7 @@ pub enum Action {
     Next,
     Previous,
     Accept,
+    AcceptOrContinue,
     Cancel,
     CancelOrContinue,
     DismissAndContinue,
@@ -299,6 +347,7 @@ impl Action {
             Self::Next => "next",
             Self::Previous => "previous",
             Self::Accept => "accept",
+            Self::AcceptOrContinue => "accept-or-continue",
             Self::Cancel => "cancel",
             Self::CancelOrContinue => "cancel-or-continue",
             Self::DismissAndContinue => "dismiss-and-continue",
@@ -397,6 +446,7 @@ impl Bindings {
                             KeyCode::Char('u'),
                             KeyCode::Char('h'),
                             KeyCode::Char('d'),
+                            KeyCode::Char(' '),
                         ] {
                             let key = KeyStroke::new(code, modifiers);
                             if let Some(action) = legacy_action(owner, key) {
@@ -457,7 +507,7 @@ impl Bindings {
         let bindings = self.owner_bindings(owner, leader_active);
         let canonical = key.canonical_for_binding();
         let action = bindings.keys.get(&canonical).copied()?;
-        if owner.is_provider()
+        if (owner.is_provider() || owner.is_plugin_input())
             && !bindings.configured.contains(&action)
             && bindings.inherited_leader != Some(canonical)
         {
@@ -495,6 +545,40 @@ impl Bindings {
             .get(&action)
             .filter(|keys| !keys.is_empty())
             .map_or_else(|| "unbound".into(), |keys| keys.join("/"))
+    }
+    /// Select a label reachable through a layered owner's actual routing.
+    pub(crate) fn reachable_label(
+        &self,
+        owner: Owner,
+        action: Action,
+        preferred: Option<KeyStroke>,
+        reachable: impl Fn(KeyStroke) -> bool,
+    ) -> String {
+        let bindings = self.owner_bindings(owner, true);
+        let valid = |key| self.lookup(owner, key) == Some(action) && reachable(key);
+        if let Some(key) = preferred.filter(|key| valid(*key)) {
+            return key.label();
+        }
+        if let Some(label) = bindings.labels.get(&action).and_then(|labels| {
+            labels
+                .iter()
+                .find(|label| KeyStroke::parse(label).is_ok_and(&valid))
+        }) {
+            return label.clone();
+        }
+        let mut aliases = bindings
+            .keys
+            .iter()
+            .filter(|(_, found)| **found == action)
+            .map(|(key, _)| *key)
+            .filter(|key| valid(*key))
+            .map(|key| key.label())
+            .collect::<Vec<_>>();
+        aliases.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
+        aliases
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "unbound".into())
     }
     pub fn dismissal_label(&self, owner: Owner) -> String {
         let actions: &[Action] = if owner.is_list_menu() {
@@ -580,6 +664,9 @@ impl OwnerBindings {
 
 fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     use Action::*;
+    if owner.is_plugin_input() {
+        return plugin_input::legacy_action(owner, key);
+    }
     if owner.is_provider() {
         return provider::legacy_action(owner, key);
     }
@@ -645,6 +732,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner.is_plugin_input() {
+        return plugin_input::labels(owner, action);
+    }
     if owner.is_provider() {
         return provider::labels(action);
     }
@@ -710,7 +800,7 @@ pub(super) fn compile(
         errors.push("ui rejected: expected owner mappings".into());
         return result;
     };
-    if owners.len() > 32 {
+    if owners.len() > 64 {
         errors.push("ui rejected: too many owners".into());
         return result;
     }

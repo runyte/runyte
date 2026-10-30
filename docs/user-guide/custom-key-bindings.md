@@ -312,6 +312,31 @@ accept Shift/Meta/Hyper but ignore Control/Alt/Super; configured cancellation
 matches its exact authored modifiers. Neither tree owner adds a Ctrl-c alias.
 Both preserve conditional leader cancellation and captured targets.
 
+Plugin input uses separate owners for each interaction:
+
+| Owner | Actions |
+| --- | --- |
+| `plugin-confirmation` | `accept`, `cancel` |
+| `plugin-picker` | `accept`, `cancel`, `next`, `previous`, `backspace` |
+| `plugin-form` | `accept`, `cancel`, `next`, `previous`, `backspace`, `delete`, `move-left`, `move-right`, `move-start`, `move-end` |
+| `plugin-choice` | `accept`, `cancel`, `next`, `previous`, `move-left`, `move-right`, `toggle-selection` |
+| `plugin-path-completion` | `accept`, `accept-or-continue`, `next`, `previous` |
+
+These owners do not inherit leader cancellation. Form text and picker filters
+remain literal input. Choice fields use plain Left/Right and Space by default;
+Space is the configurable `toggle-selection` action there. Text fields retain
+Space as text. Picker Backspace removes one character; form editing retains
+its grapheme-aware cursor and deletion behavior.
+
+Path completion takes precedence only while candidates are available.
+`accept` defaults to Tab; `accept-or-continue` defaults to Enter and completes
+an unfinished path, otherwise allowing the form to handle Enter. Completion
+Up/Down cycle candidates; modified navigation falls through to the form.
+Repeating Tab may complete a path, while repeating conditional completion or
+submission cannot submit a form. Remapped submission retains fresh-input,
+presented-frame, field-validation, and captured-context checks. Completion
+cannot lend submission authority to another input owner.
+
 The `provider-reload` owner supports `next`, `previous`, `accept`, and `cancel`;
 `provider-overwrite` supports `accept` and `cancel`. Both retain fresh physical
 approval and captured document checks. Reload defaults to plain Down/Tab and

@@ -679,7 +679,7 @@ impl App {
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
         let previous = self.plugin_physical_input;
         self.plugin_physical_input = self.fresh_physical_approval_key(&input);
-        let result = self.handle_frontend_input(input, true);
+        let result = self.handle_frontend_input(input, true, true);
         self.plugin_physical_input = previous;
         result
     }
@@ -777,6 +777,10 @@ impl App {
         let provider_owner = self.provider_ui_owner();
         let repeated_provider_accept =
             matches!(&input, InputEvent::Key(key) if self.provider_repeat_suppressed(*key));
+        let plugin_owned = !self.context_overlay_active()
+            && provider_owner.is_none()
+            && self.macro_replay.is_none()
+            && self.plugins.input.is_some();
         let approval = if self.context_overlay_active() {
             !repeated_context_accept
         } else if provider_owner.is_some() {
@@ -786,7 +790,7 @@ impl App {
         };
         let previous = self.plugin_physical_input;
         self.plugin_physical_input = false;
-        let result = self.handle_frontend_input(input, approval);
+        let result = self.handle_frontend_input(input, approval, false);
         self.plugin_physical_input = previous;
         if result.is_ok() && repeated_provider_accept {
             match provider_owner {
@@ -798,7 +802,7 @@ impl App {
                 }
                 _ => {}
             }
-        } else if result.is_ok() && provider_owner.is_none() && repeated_enter {
+        } else if result.is_ok() && provider_owner.is_none() && !plugin_owned && repeated_enter {
             // The repeat invalidated every earlier invocation, but this
             // retained surface still belongs to the same visible interaction.
             // A later fresh acceptance must be able to approve it.
@@ -811,7 +815,12 @@ impl App {
         result
     }
 
-    fn handle_frontend_input(&mut self, input: InputEvent, approval: bool) -> Result<()> {
+    fn handle_frontend_input(
+        &mut self,
+        input: InputEvent,
+        approval: bool,
+        fresh: bool,
+    ) -> Result<()> {
         if self.context_overlay_active() {
             self.handle_context_input(input, approval);
             return Ok(());
@@ -858,9 +867,9 @@ impl App {
         }
         if self.plugins.input.is_some() {
             self.last_interaction = Instant::now();
-            if approval {
-                self.handle_plugin_input(input);
-            }
+            let previous = self.plugin_physical_input;
+            self.handle_plugin_input(input, fresh);
+            self.plugin_physical_input = previous;
             return Ok(());
         }
         self.handle_input_inner(input, false)

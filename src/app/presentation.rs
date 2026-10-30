@@ -1676,6 +1676,10 @@ impl App {
         if self.provider_ui_owner().is_some() {
             return self.provider_accept_key(*key);
         }
+        if self.plugins.input.is_some() {
+            return self.macro_replay.is_none()
+                && self.plugin_input_requires_presented_approval(*key);
+        }
         if let Some(review) = &self.merge_ui.review {
             // Merge approval uses configured bindings. Only the editing keys
             // consumed before that registry lookup can bypass presentation.
@@ -3493,6 +3497,22 @@ impl App {
             overlays.push(snapshot);
         }
         if let Some(surface) = &self.plugins.input {
+            use crate::keymap::ui::{Action, Owner};
+            let owner = self.plugin_input_ui_owner().unwrap();
+            let path_hints = self.plugin_path_hints();
+            let has_hints = owner == Owner::PluginForm && !path_hints.is_empty();
+            let partial = has_hints
+                && matches!(&surface.values[surface.selected], crate::plugin::interaction::Value::Text(value) if self.plugin_enter_accepts_path_hint(value));
+            let label = |action| self.plugin_input_key_label(owner, action, has_hints, partial);
+            let navigation = || {
+                let previous = label(Action::Previous);
+                let next = label(Action::Next);
+                if previous == "Up" && next == "Down" {
+                    "↑/↓".into()
+                } else {
+                    format!("{previous}/{next}")
+                }
+            };
             let mut snapshot = bounded(
                 OverlayKind::Prompt,
                 &surface.title,
@@ -3507,16 +3527,27 @@ impl App {
                 surface
                     .error
                     .map(super::plugin_interaction::InputError::feedback)
-                    .or_else(|| surface.validation_feedback()),
+                    .or_else(|| {
+                        let cancel = label(Action::Cancel);
+                        surface.validation_feedback(
+                            &label(Action::Accept),
+                            if cancel == "Esc" { "Escape" } else { &cancel },
+                        )
+                    }),
             );
             snapshot.layout = OverlayLayout::Standard;
             snapshot.query_cursor = Some(surface.cursor);
             snapshot.query_placeholder = surface.fields[surface.selected].label.clone();
-            snapshot.actions = vec![OverlayAction::new("Enter", "submit")];
+            snapshot.actions = vec![OverlayAction::new(label(Action::Accept), "submit")];
             if surface.fields.len() > 1 {
-                snapshot
-                    .actions
-                    .push(OverlayAction::new("Tab/↑/↓", "field"));
+                snapshot.actions.push(OverlayAction::new(
+                    if label(Action::Next) == "Tab" && label(Action::Previous) == "Up" {
+                        "Tab/↑/↓".into()
+                    } else {
+                        format!("{}/{}", label(Action::Next), label(Action::Previous))
+                    },
+                    "field",
+                ));
             } else if matches!(
                 surface.fields[0].kind,
                 crate::plugin::interaction::Kind::Text | crate::plugin::interaction::Kind::Secret
@@ -3533,13 +3564,28 @@ impl App {
                 crate::plugin::interaction::Kind::Choice
                     | crate::plugin::interaction::Kind::Boolean
             ) {
-                snapshot
-                    .actions
-                    .push(OverlayAction::new("←/→/Space", "choice"));
+                snapshot.actions.push(OverlayAction::new(
+                    if label(Action::MoveLeft) == "Left"
+                        && label(Action::MoveRight) == "Right"
+                        && label(Action::ToggleSelection) == "Space"
+                    {
+                        "←/→/Space".into()
+                    } else {
+                        format!(
+                            "{}/{}/{}",
+                            label(Action::MoveLeft),
+                            label(Action::MoveRight),
+                            label(Action::ToggleSelection)
+                        )
+                    },
+                    "choice",
+                ));
             }
-            snapshot.actions.push(OverlayAction::new("Esc", "cancel"));
+            snapshot
+                .actions
+                .push(OverlayAction::new(label(Action::Cancel), "cancel"));
             if surface.fields[surface.selected].completion.is_some() {
-                let hints = self.plugin_path_hints();
+                let hints = &path_hints;
                 if snapshot.message.is_none() {
                     snapshot.message = Some(
                         "Local path · relative to workspace · type a directory or filename prefix"
@@ -3547,31 +3593,52 @@ impl App {
                     );
                 }
                 if !hints.is_empty() {
-                    snapshot.rows = path_hint_rows(&hints);
+                    snapshot.rows = path_hint_rows(hints);
                     snapshot.total_rows = hints.len();
                     snapshot.selected = Some(surface.completion_selected.min(hints.len() - 1));
                     snapshot.scroll_anchor = snapshot.selected;
-                    let enter_completes = matches!(
-                        &surface.values[surface.selected],
-                        crate::plugin::interaction::Value::Text(value)
-                            if self.plugin_enter_accepts_path_hint(value)
-                    );
-                    snapshot.actions = if enter_completes {
-                        vec![
-                            OverlayAction::new("Tab/Enter", "complete"),
-                            OverlayAction::new("↑/↓", "path"),
-                            OverlayAction::new("Shift-Tab", "field"),
-                            OverlayAction::new("Esc", "cancel"),
-                        ]
-                    } else {
-                        vec![
-                            OverlayAction::new("Tab", "complete"),
-                            OverlayAction::new("↑/↓", "path"),
-                            OverlayAction::new("Shift-Tab", "field"),
-                            OverlayAction::new("Enter", "submit"),
-                            OverlayAction::new("Esc", "cancel"),
-                        ]
+                    let completion_label = |action| {
+                        self.plugin_input_key_label(
+                            Owner::PluginPathCompletion,
+                            action,
+                            true,
+                            partial,
+                        )
                     };
+                    let mut completes = [
+                        completion_label(Action::Accept),
+                        completion_label(Action::AcceptOrContinue),
+                    ]
+                    .into_iter()
+                    .filter(|key| key != "unbound")
+                    .collect::<Vec<_>>();
+                    completes.dedup();
+                    let complete = if completes.is_empty() {
+                        "unbound".into()
+                    } else {
+                        completes.join("/")
+                    };
+                    let previous = completion_label(Action::Previous);
+                    let next = completion_label(Action::Next);
+                    snapshot.actions = vec![
+                        OverlayAction::new(complete, "complete"),
+                        OverlayAction::new(
+                            if previous == "Up" && next == "Down" {
+                                "↑/↓".into()
+                            } else {
+                                format!("{previous}/{next}")
+                            },
+                            "path",
+                        ),
+                        OverlayAction::new(label(Action::Next), "field"),
+                    ];
+                    let submit = label(Action::Accept);
+                    if submit != "unbound" {
+                        snapshot.actions.push(OverlayAction::new(submit, "submit"));
+                    }
+                    snapshot
+                        .actions
+                        .push(OverlayAction::new(label(Action::Cancel), "cancel"));
                 }
             }
             if surface.confirmation {
@@ -3586,8 +3653,8 @@ impl App {
                 snapshot.query_cursor = None;
                 snapshot.query_placeholder.clear();
                 snapshot.actions = vec![
-                    OverlayAction::new("Enter", "confirm"),
-                    OverlayAction::new("Esc", "cancel"),
+                    OverlayAction::new(label(Action::Accept), "confirm"),
+                    OverlayAction::new(label(Action::Cancel), "cancel"),
                 ];
             }
             if let Some(picker) = &surface.picker {
@@ -3607,9 +3674,9 @@ impl App {
                 snapshot.query_cursor = Some(picker.filter.chars().count());
                 snapshot.query_placeholder = "Type to filter".into();
                 snapshot.actions = vec![
-                    OverlayAction::new("Enter", "choose"),
-                    OverlayAction::new("↑/↓", "select"),
-                    OverlayAction::new("Esc", "cancel"),
+                    OverlayAction::new(label(Action::Accept), "choose"),
+                    OverlayAction::new(navigation(), "select"),
+                    OverlayAction::new(label(Action::Cancel), "cancel"),
                 ];
             }
             overlays.push(snapshot);

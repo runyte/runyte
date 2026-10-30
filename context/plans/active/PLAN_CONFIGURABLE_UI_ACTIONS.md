@@ -328,3 +328,15 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   permission. All 143 provider-related tests passed, including modifier masks,
   removal, repeats, stale competing dialogs, reoffers, actual request authority,
   and host lifecycle regressions. Root Clippy, formatting and guide checks pass.
+- Plugin forms, pickers, confirmations, choice fields and path completion now
+  resolve separate shared owners. Literal text, exact default modifier policies,
+  scalar picker deletion versus grapheme form editing, and validation revision
+  semantics remain intact. Space choice toggling is configurable. Completion
+  retains Tab versus conditional Enter repeat behavior. Final dispatch resolves
+  its completion route once and checks explicit physical freshness; presented
+  admission conservatively includes any masked base submission. This closes the
+  mutable-filesystem routing races identified by Astra. No authority is lent to
+  stale-surface fallback commands. Layered hints and native validation feedback
+  use effective actions. Astra cleared the final source; all 178 plugin-related
+  tests, root Clippy, formatting and guide checks passed. UI owner input remains
+  bounded (64 owners, 32 aliases per action).
