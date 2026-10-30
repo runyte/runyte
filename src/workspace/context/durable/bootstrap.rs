@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use crate::private_storage::Directory;
+use anyhow::Context;
 use std::{ffi::OsStr, fs::File, io};
 
 pub(super) fn acquire(directory: &Directory) -> anyhow::Result<File> {
@@ -39,7 +40,9 @@ pub(super) fn ensure_file(directory: &Directory, name: &str) -> anyhow::Result<(
     match directory.create_new(OsStr::new(name)) {
         Ok(file) => drop(file),
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            let file = directory.open_read(OsStr::new(name))?;
+            let file = directory
+                .open_read(OsStr::new(name))
+                .with_context(|| format!("admit private SQLite file {name}"))?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
@@ -50,7 +53,9 @@ pub(super) fn ensure_file(directory: &Directory, name: &str) -> anyhow::Result<(
             }
             drop(file);
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("create private SQLite file {name}"));
+        }
     }
     Ok(())
 }

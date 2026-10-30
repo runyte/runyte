@@ -176,6 +176,12 @@ impl Store {
                 Err(e) => return Err(e.into()),
             }
         }
+        if private_sidecars {
+            // SQLite may open the rollback journal while acquiring its first
+            // write transaction. Supply private ownership before it opens, and
+            // re-admit it after BEGIN in case empty-database recovery removed it.
+            bootstrap::ensure_file(&directory, "agent-channels.sqlite3-journal")?;
+        }
         if private_sidecars && directory.open_read(OsStr::new(FILE))?.metadata()?.len() > 0 {
             bootstrap::sidecars(&directory)?;
         }
@@ -196,7 +202,9 @@ impl Store {
         }
         db.pragma_update(None, "foreign_keys", true)?;
         db.pragma_update(None, "synchronous", "FULL")?;
-        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .context("begin channel database initialization")?;
         if private_sidecars {
             // BEGIN has completed recovery, including removal of a journal
             // belonging to an empty database. Create it before the first write.
