@@ -3,6 +3,8 @@
 //! literal input and structural option identifiers retain their own meaning.
 
 mod confirmation;
+mod context_review;
+pub(crate) use context_review::Route as ContextReviewRoute;
 mod picker;
 mod prompt;
 mod session_navigation;
@@ -41,10 +43,11 @@ pub enum Owner {
     FilesystemConfirmation,
     TreeDestination,
     TreeDelete,
+    ContextReview,
 }
 
 impl Owner {
-    const ALL: [Self; 23] = [
+    const ALL: [Self; 24] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -68,6 +71,7 @@ impl Owner {
         Self::FilesystemConfirmation,
         Self::TreeDestination,
         Self::TreeDelete,
+        Self::ContextReview,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -94,6 +98,7 @@ impl Owner {
             Self::FilesystemConfirmation => "filesystem-confirmation",
             Self::TreeDestination => "tree-destination",
             Self::TreeDelete => "tree-delete",
+            Self::ContextReview => "context-review",
         }
     }
     pub fn is_confirmation(self) -> bool {
@@ -126,7 +131,9 @@ impl Owner {
         )
     }
     fn inherits_leader(self) -> bool {
-        self != Self::Completion && !self.is_prompt() && !self.is_session_navigation()
+        !matches!(self, Self::Completion | Self::ContextReview)
+            && !self.is_prompt()
+            && !self.is_session_navigation()
     }
     fn actions(self) -> &'static [Action] {
         use Action::*;
@@ -146,6 +153,19 @@ impl Owner {
                 &[Next, Previous, Accept, Back, Cancel]
             }
             Self::Path => &[OpenActions, Cancel],
+            Self::ContextReview => &[
+                Next,
+                Previous,
+                ToggleSelection,
+                Accept,
+                Cancel,
+                First,
+                Last,
+                PageUp,
+                PageDown,
+                HalfPageUp,
+                HalfPageDown,
+            ],
             Self::PluginManagerActions => &[Cancel],
             Self::Confirmation
             | Self::StashConfirmation
@@ -162,6 +182,10 @@ impl Owner {
     }
     fn structural(self, key: KeyStroke) -> bool {
         match self {
+            Self::ContextReview => {
+                key.modifiers.is_empty()
+                    && matches!(key.code, KeyCode::Char('x' | 'r' | 'n' | '1' | '2'))
+            }
             Self::ContextActions => {
                 key.modifiers.is_empty()
                     && matches!(key.code, KeyCode::Char(c) if c.is_ascii_alphabetic() && !matches!(c, 'j' | 'k'))
@@ -251,6 +275,9 @@ pub enum Action {
     TogglePreview,
     ToggleMode,
     EnterDirectory,
+    ToggleSelection,
+    HalfPageUp,
+    HalfPageDown,
 }
 
 impl Action {
@@ -288,6 +315,9 @@ impl Action {
             Self::TogglePreview => "toggle-preview",
             Self::ToggleMode => "toggle-mode",
             Self::EnterDirectory => "enter-directory",
+            Self::ToggleSelection => "toggle-selection",
+            Self::HalfPageUp => "half-page-up",
+            Self::HalfPageDown => "half-page-down",
         }
     }
 }
@@ -519,6 +549,9 @@ impl OwnerBindings {
 
 fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     use Action::*;
+    if owner == Owner::ContextReview {
+        return context_review::legacy_action(key);
+    }
     if owner.is_confirmation() {
         return confirmation::legacy_action(owner, key);
     }
@@ -578,6 +611,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner == Owner::ContextReview {
+        return context_review::labels(action);
+    }
     if owner.is_confirmation() {
         return confirmation::labels(owner, action);
     }

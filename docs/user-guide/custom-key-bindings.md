@@ -312,6 +312,17 @@ accept Shift/Meta/Hyper but ignore Control/Alt/Super; configured cancellation
 matches its exact authored modifiers. Neither tree owner adds a Ctrl-c alias.
 Both preserve conditional leader cancellation and captured targets.
 
+The `context-review` owner controls permission-review navigation: `next`,
+`previous`, `toggle-selection`, `accept`, `cancel`, `first`, `last`, `page-up`,
+`page-down`, `half-page-up`, and `half-page-down`. Choice defaults are Down, Up,
+Tab/Shift-Tab/BackTab, Enter, and Esc. Scrolling inherits the approved normal-mode
+editor motions, with plain Home/End fallbacks. Configuring a scrolling action
+replaces its inherited motions as well; an empty list disables them. Removed
+motion sequences remain consumed so they cannot become permission choices.
+The single-key permission choices (1/2, r, x, n) remain structural. Remapped
+acceptance still requires fresh physical input and a fully presented review.
+
+
 The `session-directory` and `session-inventory` owners handle direct session
 navigation independently of `global.list`. They support `next`, `previous`,
 `page-up`, `page-down`, `first`, `last`, `accept`, `cancel`, and `backspace`.

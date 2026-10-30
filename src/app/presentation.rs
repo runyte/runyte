@@ -1670,6 +1670,9 @@ impl App {
         let InputEvent::Key(key) = input else {
             return matches!(input, InputEvent::Pointer(_));
         };
+        if self.context_overlay_active() {
+            return self.context_input_requires_presented_approval(*key);
+        }
         if let Some(review) = &self.merge_ui.review {
             // Merge approval uses configured bindings. Only the editing keys
             // consumed before that registry lookup can bypass presentation.

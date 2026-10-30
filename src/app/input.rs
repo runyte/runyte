@@ -772,9 +772,16 @@ impl App {
                 modifiers: Modifiers::NONE,
             })
         );
+        let repeated_context_accept =
+            matches!(&input, InputEvent::Key(key) if self.context_accept_key(*key));
+        let approval = if self.context_overlay_active() {
+            !repeated_context_accept
+        } else {
+            !repeated_enter
+        };
         let previous = self.plugin_physical_input;
         self.plugin_physical_input = false;
-        let result = self.handle_frontend_input(input, !repeated_enter);
+        let result = self.handle_frontend_input(input, approval);
         self.plugin_physical_input = previous;
         if repeated_enter && result.is_ok() {
             // The repeat invalidated every earlier invocation, but this

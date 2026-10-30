@@ -305,3 +305,15 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   and guide validation. Regressions cover default modifier masks, remaps, captured
   targets, actual operations, masked-choice hints, plugin ownership/readiness and
   stacked decisions.
+- Accumulated checkpoint validation: the complete root suite passed (4,154
+  active library tests, 16 ignored, plus all integration/doc suites), followed
+  by desktop Clippy and desktop/native/preview tests. Logs are outside tracked
+  context. Context grant and plugin-native input owners remain the next stage.
+- Context permission review now exposes choice navigation and its six approved
+  scrolling actions. Defaults still inherit the narrow editor-motion registry;
+  replacements suppress and consume inherited aliases without exposing structural
+  permission choices. Repeat/replay and presented/full-review guards recognize
+  semantic acceptance. Hints follow effective motion and structural ownership.
+  Astra found no correctness or authority blocker. All 61 context-related tests
+  passed; additional compiled-map modifier and structural-reservation checks
+  passed, along with root Clippy, formatting and guide validation.

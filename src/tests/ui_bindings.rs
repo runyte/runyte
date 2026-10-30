@@ -950,3 +950,21 @@ fn filesystem_and_tree_defaults_preserve_named_modifier_policies_and_structural_
         Some(Action::Cancel)
     );
 }
+
+#[test]
+fn context_review_structural_choices_reject_configuration_atomically() {
+    for key in ["x", "r", "n", "1", "2", "Shift-x"] {
+        let (bindings, errors) = configured(&format!(
+            "context-review: {{accept: [F8], cancel: [{key}]}}"
+        ));
+        assert!(!errors.is_empty(), "{key}");
+        assert_eq!(
+            bindings.lookup(Owner::ContextReview, KeyStroke::plain(KeyCode::Enter)),
+            Some(Action::Accept)
+        );
+        assert_eq!(
+            bindings.lookup(Owner::ContextReview, KeyStroke::plain(KeyCode::Function(8))),
+            None
+        );
+    }
+}
