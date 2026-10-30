@@ -202,6 +202,15 @@ impl Store {
         }
         db.pragma_update(None, "foreign_keys", true)?;
         db.pragma_update(None, "synchronous", "FULL")?;
+        if private_sidecars {
+            // Read-only recovery may delete a nonempty abandoned journal next
+            // to an empty database. Restore private ownership before BEGIN can
+            // write the initial database page and open its journal.
+            let _: i64 = db
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .context("recover channel database before initialization")?;
+            bootstrap::ensure_file(&directory, "agent-channels.sqlite3-journal")?;
+        }
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .context("begin channel database initialization")?;

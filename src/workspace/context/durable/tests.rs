@@ -648,15 +648,22 @@ fn private_sidecars_survive_bootstrap_live_connections_and_last_close() {
 
 #[test]
 fn private_bootstrap_recovers_an_empty_database_with_an_abandoned_journal() {
-    let root = root();
-    let directory = Directory::open(root.path(), true).unwrap();
-    bootstrap::ensure_file(&directory, FILE).unwrap();
-    bootstrap::ensure_file(&directory, "agent-channels.sqlite3-journal").unwrap();
-    let mut store = Store::open_with_private_sidecars(root.path(), true).unwrap();
-    let identity = actor(&mut store, 1).id().to_owned();
-    drop(store);
-    let mut store = Store::open_with_private_sidecars(root.path(), true).unwrap();
-    assert_eq!(actor(&mut store, 1).id(), identity);
+    use std::io::Write;
+    for abandoned in [b"".as_slice(), b"interrupted initial journal".as_slice()] {
+        let root = root();
+        let directory = Directory::open(root.path(), true).unwrap();
+        bootstrap::ensure_file(&directory, FILE).unwrap();
+        let mut journal = directory
+            .create_new(OsStr::new("agent-channels.sqlite3-journal"))
+            .unwrap();
+        journal.write_all(abandoned).unwrap();
+        drop(journal);
+        let mut store = Store::open_with_private_sidecars(root.path(), true).unwrap();
+        let identity = actor(&mut store, 1).id().to_owned();
+        drop(store);
+        let mut store = Store::open_with_private_sidecars(root.path(), true).unwrap();
+        assert_eq!(actor(&mut store, 1).id(), identity);
+    }
 }
 
 #[test]
