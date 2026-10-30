@@ -312,6 +312,14 @@ accept Shift/Meta/Hyper but ignore Control/Alt/Super; configured cancellation
 matches its exact authored modifiers. Neither tree owner adds a Ctrl-c alias.
 Both preserve conditional leader cancellation and captured targets.
 
+The `provider-reload` owner supports `next`, `previous`, `accept`, and `cancel`;
+`provider-overwrite` supports `accept` and `cancel`. Both retain fresh physical
+approval and captured document checks. Reload defaults to plain Down/Tab and
+Up, exact Ctrl-n/Ctrl-p, and any-modifier BackTab; Shift-Tab remains inert.
+Enter accepts, Esc or exact Ctrl-c cancels, and the leader also cancels.
+When Enter is the leader, reload cancels while overwrite accepts, preserving
+its original precedence. Repeated acceptance cannot approve either dialog.
+
 The `context-review` owner controls permission-review navigation: `next`,
 `previous`, `toggle-selection`, `accept`, `cancel`, `first`, `last`, `page-up`,
 `page-down`, `half-page-up`, and `half-page-down`. Choice defaults are Down, Up,

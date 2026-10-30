@@ -968,3 +968,48 @@ fn context_review_structural_choices_reject_configuration_atomically() {
         );
     }
 }
+
+#[test]
+fn provider_explicit_aliases_use_normal_canonical_matching_but_default_leader_stays_canonical() {
+    let (bindings, errors) = configured("provider-reload: {next: [Ctrl-n]}");
+    assert!(errors.is_empty());
+    let key = KeyStroke::new(KeyCode::Char('n'), Modifiers::CONTROL | Modifiers::SHIFT);
+    assert_eq!(
+        bindings.lookup(Owner::ProviderReload, key),
+        Some(Action::Next)
+    );
+    let section = serde_yaml::from_str("provider-reload: {}").unwrap();
+    let mut errors = vec![];
+    let bindings = compile(Some(&section), KeyStroke::ctrl('n'), &mut errors);
+    assert!(errors.is_empty());
+    assert_eq!(
+        bindings.lookup(Owner::ProviderReload, key),
+        Some(Action::Cancel)
+    );
+    let (bindings, errors) = configured("provider-overwrite: {accept: [], cancel: []}");
+    assert!(errors.is_empty());
+    for key in [
+        KeyStroke::plain(KeyCode::Enter),
+        KeyStroke::plain(KeyCode::Escape),
+        KeyStroke::ctrl('c'),
+        KeyStroke::char(' '),
+    ] {
+        assert_eq!(bindings.lookup(Owner::ProviderOverwrite, key), None);
+    }
+}
+
+#[test]
+fn provider_overwrite_authored_acceptance_can_keep_its_leader_precedence() {
+    let section = serde_yaml::from_str("provider-overwrite: {accept: [Enter]}").unwrap();
+    let mut errors = vec![];
+    let bindings = compile(
+        Some(&section),
+        KeyStroke::plain(KeyCode::Enter),
+        &mut errors,
+    );
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(
+        bindings.lookup(Owner::ProviderOverwrite, KeyStroke::plain(KeyCode::Enter)),
+        Some(Action::Accept)
+    );
+}

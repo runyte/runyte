@@ -317,3 +317,14 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   Astra found no correctness or authority blocker. All 61 context-related tests
   passed; additional compiled-map modifier and structural-reservation checks
   passed, along with root Clippy, formatting and guide validation.
+- Provider reload and best-effort overwrite now have shared action owners with
+  exact raw default modifiers, unconditional leader cancellation, and their
+  differing Enter/leader precedence preserved. Semantic repeat and presented
+  guards preserve captured intent/action identity and repair only the retained
+  provider owner. Body and snapshot hints use effective actions. Astra caught
+  a pre-sync authority leak in the first implementation; provider acceptance
+  no longer grants generic plugin-command authority. A stale remapped key can
+  still reach its ordinary editor command without gaining Windows handoff
+  permission. All 143 provider-related tests passed, including modifier masks,
+  removal, repeats, stale competing dialogs, reoffers, actual request authority,
+  and host lifecycle regressions. Root Clippy, formatting and guide checks pass.

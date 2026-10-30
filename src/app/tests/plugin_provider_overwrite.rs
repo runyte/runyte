@@ -289,3 +289,133 @@ fn provider_overwrite_reoffer_requires_another_enter_and_close_uses_refreshed_co
     assert!(app.host_buffer_is_closed(intent.buffer));
     assert!(!app.should_quit);
 }
+
+fn configure_overwrite(app: &mut App, source: &str) {
+    let compiled =
+        crate::keymap::configured::compile(&serde_yaml::from_str(source).unwrap(), &app.keymap);
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+}
+
+#[test]
+fn configured_provider_overwrite_acceptance_preserves_native_lifecycle_and_hints() {
+    for spelling in ["F8", "Esc", "Ctrl-F8"] {
+        let (mut app, mut intent) = fixture("write");
+        configure_overwrite(
+            &mut app,
+            &format!("ui: {{provider-overwrite: {{accept: [{spelling}], cancel: [F10]}}}}"),
+        );
+        show(&mut app, &intent, true).unwrap();
+        let input = InputEvent::Key(KeyStroke::parse(spelling).unwrap());
+        assert!(app.input_requires_presented_approval(&input));
+        assert!(
+            !app.fresh_physical_approval_key(&input),
+            "provider acceptance does not grant unrelated plugin commands authority"
+        );
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        app.handle_repeated_input(input.clone()).unwrap();
+        app.handle_replayed_input(input.clone()).unwrap();
+        assert!(app.plugins.provider_overwrite.is_some());
+        assert!(app.take_provider_overwrite_decisions().is_empty());
+        let snapshot = confirmation_snapshot(&app);
+        assert_eq!(snapshot.actions[0].key_hint, spelling);
+        assert_eq!(snapshot.actions[1].key_hint, "F10");
+        assert!(
+            snapshot
+                .message
+                .unwrap()
+                .contains(&format!("{spelling} confirms"))
+        );
+        app.handle_input(input.clone()).unwrap();
+        let decision = app.take_provider_overwrite_decisions().pop().unwrap();
+        let context = decision.context.unwrap();
+        app.plugin_foreground(&context).unwrap();
+        intent.context = context;
+        show(&mut app, &intent, true).unwrap();
+        app.handle_repeated_input(input.clone()).unwrap();
+        assert!(app.take_provider_overwrite_decisions().is_empty());
+        app.handle_input(input).unwrap();
+        assert!(
+            app.take_provider_overwrite_decisions()
+                .pop()
+                .unwrap()
+                .context
+                .is_some()
+        );
+    }
+}
+
+#[test]
+fn provider_overwrite_enter_precedes_leader_and_raw_control_shift_c_stays_inert() {
+    for bits in 0..64 {
+        let (mut app, intent) = fixture("write");
+        show(&mut app, &intent, true).unwrap();
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        key(&mut app, KeyCode::Char('c'), modifiers);
+        assert_eq!(
+            app.plugins.provider_overwrite.is_none(),
+            modifiers == Modifiers::CONTROL
+        );
+    }
+    let (mut app, intent) = fixture("write");
+    app.set_keymap(Arc::new(crate::keymap::Keymap::new(vec![]).unwrap()));
+    configure_overwrite(&mut app, "leader: Enter");
+    show(&mut app, &intent, true).unwrap();
+    let input = InputEvent::Key(KeyStroke::plain(KeyCode::Enter));
+    assert!(app.input_requires_presented_approval(&input));
+    app.handle_repeated_input(input.clone()).unwrap();
+    assert!(app.plugins.provider_overwrite.is_some());
+    app.handle_input(input).unwrap();
+    assert!(
+        app.take_provider_overwrite_decisions()
+            .pop()
+            .unwrap()
+            .context
+            .is_some()
+    );
+}
+
+#[test]
+fn stale_provider_remapped_acceptance_cannot_authorize_an_unrelated_plugin_command() {
+    use super::plugin_rich_views;
+    let model = plugin_rich_views::model(&["row"]);
+    let (mut app, view_buffer, projection) = plugin_rich_views::fixture(model.clone());
+    let mut receiver = plugin_rich_views::commands(&mut app, view_buffer, model, projection);
+    app.note_plugin_frontend(true);
+    configure_overwrite(&mut app, "ui: {provider-overwrite: {accept: [F8]}}");
+    app.set_keymap(Arc::new(
+        app.keymap
+            .with_plugin_bindings(vec![crate::keymap::Binding::implemented_in(
+                &[Mode::Normal],
+                crate::keymap::BindingScope::Plugin(0),
+                KeyStroke::plain(KeyCode::Function(8)),
+                crate::keymap::BindingTarget::Plugin(2),
+            )])
+            .unwrap(),
+    ));
+    provider(&mut app, "remote-document");
+    app.execute_command("write").unwrap();
+    let intent = app.take_provider_save_intents().pop_front().unwrap();
+    show(&mut app, &intent, true).unwrap();
+    app.switch_buffer(view_buffer);
+    app.plugins
+        .presented_views
+        .insert(app.active_pane, (view_buffer, 1));
+    let input = InputEvent::Key(KeyStroke::plain(KeyCode::Function(8)));
+    assert!(!app.fresh_physical_approval_key(&input));
+    app.handle_input(input).unwrap();
+    assert!(
+        app.take_provider_overwrite_decisions()
+            .pop()
+            .unwrap()
+            .context
+            .is_none()
+    );
+    assert!(receiver.try_recv().is_ok(), "{}", app.status);
+    let requests = &app.plugins.instances[&0].application.requests;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests.values().next().unwrap().native_handoff_allowed,
+        !cfg!(windows)
+    );
+}

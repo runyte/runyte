@@ -1673,6 +1673,9 @@ impl App {
         if self.context_overlay_active() {
             return self.context_input_requires_presented_approval(*key);
         }
+        if self.provider_ui_owner().is_some() {
+            return self.provider_accept_key(*key);
+        }
         if let Some(review) = &self.merge_ui.review {
             // Merge approval uses configured bindings. Only the editing keys
             // consumed before that registry lookup can bypass presentation.
@@ -1842,11 +1845,31 @@ impl App {
     /// open; its popup must continue to name the exact operation Enter accepts.
     fn confirmation_overlay(&self) -> Option<ConfirmationOverlay> {
         let (accept_key, cancel_key) = self.confirmation_keys();
-        if let Some(confirmation) = &self.plugins.provider_overwrite {
+        if let Some(confirmation) = &self.plugins.provider_overwrite
+            && self.provider_ui_owner() == Some(crate::keymap::ui::Owner::ProviderOverwrite)
+        {
             return Some(ConfirmationOverlay {
                 title: "Overwrite remote document",
                 accept: "overwrite remote document",
-                message: confirmation.message(),
+                message: confirmation.message(
+                    &self.keymap.ui().compact_label(
+                        crate::keymap::ui::Owner::ProviderOverwrite,
+                        crate::keymap::ui::Action::Accept,
+                        1,
+                    ),
+                    &{
+                        let label = self.keymap.ui().compact_label(
+                            crate::keymap::ui::Owner::ProviderOverwrite,
+                            crate::keymap::ui::Action::Cancel,
+                            1,
+                        );
+                        if label == "Esc" {
+                            "Escape".into()
+                        } else {
+                            label
+                        }
+                    },
+                ),
                 input: None,
             });
         }
@@ -2268,10 +2291,27 @@ impl App {
             );
             overlay.purpose = OverlayPurpose::Choice;
             overlay.input = OverlayInput::None;
+            use crate::keymap::ui::{Action, Owner};
+            let label = |action| {
+                self.keymap
+                    .ui()
+                    .compact_label(Owner::ProviderReload, action, 2)
+            };
+            let select =
+                if label(Action::Previous) == "Up/BackTab" && label(Action::Next) == "Down/Tab" {
+                    "↑/↓ or Tab".into()
+                } else {
+                    format!("{}/{}", label(Action::Previous), label(Action::Next))
+                };
             overlay.actions = vec![
-                OverlayAction::new("↑/↓ or Tab", "select"),
-                OverlayAction::new("Enter", "choose"),
-                OverlayAction::new("Esc", "cancel"),
+                OverlayAction::new(select, "select"),
+                OverlayAction::new(label(Action::Accept), "choose"),
+                OverlayAction::new(
+                    self.keymap
+                        .ui()
+                        .compact_label(Owner::ProviderReload, Action::Cancel, 1),
+                    "cancel",
+                ),
             ];
             overlays.push(overlay);
         }
@@ -2949,6 +2989,23 @@ impl App {
                 ),
                 OverlayAction::new("Esc", "cancel"),
             ];
+            if self.provider_ui_owner() == Some(crate::keymap::ui::Owner::ProviderOverwrite) {
+                use crate::keymap::ui::{Action, Owner};
+                overlay.actions = vec![
+                    OverlayAction::new(
+                        self.keymap
+                            .ui()
+                            .compact_label(Owner::ProviderOverwrite, Action::Accept, 1),
+                        confirmation.accept,
+                    ),
+                    OverlayAction::new(
+                        self.keymap
+                            .ui()
+                            .compact_label(Owner::ProviderOverwrite, Action::Cancel, 1),
+                        "cancel",
+                    ),
+                ];
+            }
             if let Some(owner) = self.confirmation_ui_owner() {
                 use crate::keymap::ui::Action;
                 let label = |action| {

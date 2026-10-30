@@ -4,6 +4,7 @@
 
 mod confirmation;
 mod context_review;
+mod provider;
 pub(crate) use context_review::Route as ContextReviewRoute;
 mod picker;
 mod prompt;
@@ -44,10 +45,12 @@ pub enum Owner {
     TreeDestination,
     TreeDelete,
     ContextReview,
+    ProviderReload,
+    ProviderOverwrite,
 }
 
 impl Owner {
-    const ALL: [Self; 24] = [
+    const ALL: [Self; 26] = [
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -72,6 +75,8 @@ impl Owner {
         Self::TreeDestination,
         Self::TreeDelete,
         Self::ContextReview,
+        Self::ProviderReload,
+        Self::ProviderOverwrite,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -99,6 +104,8 @@ impl Owner {
             Self::TreeDestination => "tree-destination",
             Self::TreeDelete => "tree-delete",
             Self::ContextReview => "context-review",
+            Self::ProviderReload => "provider-reload",
+            Self::ProviderOverwrite => "provider-overwrite",
         }
     }
     pub fn is_confirmation(self) -> bool {
@@ -130,6 +137,9 @@ impl Owner {
             Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt
         )
     }
+    pub(crate) fn is_provider(self) -> bool {
+        matches!(self, Self::ProviderReload | Self::ProviderOverwrite)
+    }
     fn inherits_leader(self) -> bool {
         !matches!(self, Self::Completion | Self::ContextReview)
             && !self.is_prompt()
@@ -153,6 +163,8 @@ impl Owner {
                 &[Next, Previous, Accept, Back, Cancel]
             }
             Self::Path => &[OpenActions, Cancel],
+            Self::ProviderReload => &[Next, Previous, Accept, Cancel],
+            Self::ProviderOverwrite => &[Accept, Cancel],
             Self::ContextReview => &[
                 Next,
                 Previous,
@@ -182,6 +194,7 @@ impl Owner {
     }
     fn structural(self, key: KeyStroke) -> bool {
         match self {
+            Self::ProviderReload | Self::ProviderOverwrite => false,
             Self::ContextReview => {
                 key.modifiers.is_empty()
                     && matches!(key.code, KeyCode::Char('x' | 'r' | 'n' | '1' | '2'))
@@ -328,6 +341,7 @@ struct OwnerBindings {
     labels: Arc<HashMap<Action, Vec<String>>>,
     configured: std::collections::HashSet<Action>,
     without_leader: Option<Box<OwnerBindings>>,
+    inherited_leader: Option<KeyStroke>,
 }
 
 #[derive(Clone, Debug)]
@@ -410,6 +424,7 @@ impl Bindings {
                             labels: Arc::new(labels),
                             configured: Default::default(),
                             without_leader: None,
+                            inherited_leader: None,
                         },
                     )
                 })
@@ -422,7 +437,7 @@ impl Bindings {
         let mut defaults = Self::legacy().clone();
         for (&owner, bindings) in &mut defaults.owners {
             if owner.inherits_leader() {
-                bindings.add_leader(leader);
+                bindings.add_owner_leader(owner, leader);
             }
         }
         defaults
@@ -439,10 +454,16 @@ impl Bindings {
         key: KeyStroke,
         leader_active: bool,
     ) -> Option<Action> {
-        self.owner_bindings(owner, leader_active)
-            .keys
-            .get(&key.canonical_for_binding())
-            .copied()
+        let bindings = self.owner_bindings(owner, leader_active);
+        let canonical = key.canonical_for_binding();
+        let action = bindings.keys.get(&canonical).copied()?;
+        if owner.is_provider()
+            && !bindings.configured.contains(&action)
+            && bindings.inherited_leader != Some(canonical)
+        {
+            return bindings.keys.get(&key).copied();
+        }
+        Some(action)
     }
     pub fn label(&self, owner: Owner, action: Action) -> String {
         self.label_with_leader(owner, action, true)
@@ -503,9 +524,19 @@ impl Bindings {
 }
 
 impl OwnerBindings {
+    fn add_owner_leader(&mut self, owner: Owner, leader: KeyStroke) {
+        // Overwrite historically accepts Enter before checking cancellation.
+        if owner == Owner::ProviderOverwrite
+            && self.keys.get(&leader.canonical_for_binding()) == Some(&Action::Accept)
+        {
+            return;
+        }
+        self.add_leader(leader);
+    }
     fn add_leader(&mut self, leader: KeyStroke) {
         self.without_leader = Some(Box::new(self.clone()));
         let leader = leader.canonical_for_binding();
+        self.inherited_leader = Some(leader);
         // The old frontend rewrote the effective leader to Escape before
         // owner dispatch. Preserve that precedence for inherited cancel only.
         Arc::make_mut(&mut self.keys).insert(leader, Action::Cancel);
@@ -549,6 +580,9 @@ impl OwnerBindings {
 
 fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     use Action::*;
+    if owner.is_provider() {
+        return provider::legacy_action(owner, key);
+    }
     if owner == Owner::ContextReview {
         return context_review::legacy_action(key);
     }
@@ -611,6 +645,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner.is_provider() {
+        return provider::labels(action);
+    }
     if owner == Owner::ContextReview {
         return context_review::labels(action);
     }
@@ -729,10 +766,12 @@ pub(super) fn compile(
             let inherited_leader =
                 owner.inherits_leader() && !assignments.contains_key(&Action::Cancel);
             if inherited_leader
-                && assignments
-                    .values()
-                    .flatten()
-                    .any(|key| *key == leader.canonical_for_binding())
+                && assignments.iter().any(|(action, keys)| {
+                    !(owner == Owner::ProviderOverwrite && *action == Action::Accept)
+                        && keys
+                            .iter()
+                            .any(|key| *key == leader.canonical_for_binding())
+                })
             {
                 return Err("overlapping action bindings".into());
             }
@@ -750,7 +789,7 @@ pub(super) fn compile(
                 }
             }
             if inherited_leader {
-                candidate.add_leader(leader);
+                candidate.add_owner_leader(owner, leader);
             }
             Ok(candidate)
         })();

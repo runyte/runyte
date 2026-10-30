@@ -774,8 +774,13 @@ impl App {
         );
         let repeated_context_accept =
             matches!(&input, InputEvent::Key(key) if self.context_accept_key(*key));
+        let provider_owner = self.provider_ui_owner();
+        let repeated_provider_accept =
+            matches!(&input, InputEvent::Key(key) if self.provider_repeat_suppressed(*key));
         let approval = if self.context_overlay_active() {
             !repeated_context_accept
+        } else if provider_owner.is_some() {
+            !repeated_provider_accept
         } else {
             !repeated_enter
         };
@@ -783,10 +788,20 @@ impl App {
         self.plugin_physical_input = false;
         let result = self.handle_frontend_input(input, approval);
         self.plugin_physical_input = previous;
-        if repeated_enter && result.is_ok() {
+        if result.is_ok() && repeated_provider_accept {
+            match provider_owner {
+                Some(crate::keymap::ui::Owner::ProviderReload) => {
+                    self.retain_provider_reload_after_repeat()
+                }
+                Some(crate::keymap::ui::Owner::ProviderOverwrite) => {
+                    self.retain_provider_overwrite_after_repeat()
+                }
+                _ => {}
+            }
+        } else if result.is_ok() && provider_owner.is_none() && repeated_enter {
             // The repeat invalidated every earlier invocation, but this
             // retained surface still belongs to the same visible interaction.
-            // A later fresh Enter must be able to approve it.
+            // A later fresh acceptance must be able to approve it.
             if let Some(surface) = self.plugins.input.as_mut() {
                 surface.context.foreground = self.plugins.foreground_generation;
             }
