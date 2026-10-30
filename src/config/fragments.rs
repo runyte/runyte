@@ -166,8 +166,9 @@ fn merge_keys(into: &mut Value, fragment: Value) {
     };
     for (key, value) in fragment.clone() {
         let levels = match key.as_str() {
-            Some("bind") => 2,
-            Some("rebind") => 1,
+            Some("scopes") => 3,
+            Some("bind" | "ui") => 2,
+            Some("rebind" | "pointer") => 1,
             _ => 0,
         };
         match into.get_mut(&key) {

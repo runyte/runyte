@@ -3,6 +3,66 @@
 use super::NativeInput;
 use std::collections::VecDeque;
 
+pub(super) fn native_pointer_button(button: super::MouseButton) -> crossterm::event::MouseButton {
+    match button {
+        super::MouseButton::Left => crossterm::event::MouseButton::Left,
+        super::MouseButton::Middle => crossterm::event::MouseButton::Middle,
+        _ => crossterm::event::MouseButton::Right,
+    }
+}
+
+pub(super) fn pointer_motion(
+    button: Option<super::MouseButton>,
+) -> crossterm::event::MouseEventKind {
+    button.map_or(crossterm::event::MouseEventKind::Moved, |button| {
+        crossterm::event::MouseEventKind::Drag(native_pointer_button(button))
+    })
+}
+
+// Passive movement remains local, but must coalesce while routing waits just
+// like a drag. Never cross attachment, painted geometry or modifier boundaries.
+fn same_passive_motion(previous: &NativeInput, next: &NativeInput) -> bool {
+    use crossterm::event::{Event, MouseEventKind};
+    previous.attachment == next.attachment
+        && previous.presented == next.presented
+        && matches!((&previous.event, &next.event), (Event::Mouse(a), Event::Mouse(b))
+            if a.kind == MouseEventKind::Moved && b.kind == MouseEventKind::Moved && a.modifiers == b.modifiers)
+}
+
+fn host_pointer_press(input: &NativeInput) -> bool {
+    let Ok(Some(runyte::input::InputEvent::Pointer(pointer))) =
+        runyte::tui::input::convert_event(input.event.clone())
+    else {
+        return false;
+    };
+    (matches!(
+        input.pointer_target,
+        Some(super::pointer::Target::Preview(_))
+    ) && input.pointer_bindings.press(
+        runyte::keymap::pointer_actions::Action::PreviewSelect,
+        pointer,
+    )) || runyte::keymap::pointer_actions::Action::ALL
+        .into_iter()
+        .filter(|action| {
+            (*action as usize) < runyte::keymap::pointer_actions::Action::MediaPan as usize
+        })
+        .any(|action| input.pointer_bindings.press(action, pointer))
+}
+
+fn scroll_policy(input: &NativeInput) -> [Option<runyte::keymap::pointer_actions::Action>; 4] {
+    use runyte::input::PointerEventKind::*;
+    let Ok(Some(runyte::input::InputEvent::Pointer(pointer))) =
+        runyte::tui::input::convert_event(input.event.clone())
+    else {
+        return [None; 4];
+    };
+    [ScrollUp, ScrollDown, ScrollLeft, ScrollRight].map(|kind| {
+        input
+            .pointer_bindings
+            .wheel(runyte::input::PointerEvent { kind, ..pointer })
+    })
+}
+
 /// Overlay cells own wheel input even when native media lies underneath.
 fn overlay_owns_scroll(overlays: &[runyte::layout::Rect], column: f32, row: f32) -> bool {
     overlays.iter().any(|area| {
@@ -19,7 +79,7 @@ pub(super) struct Queue<T = ()> {
     bytes: usize,
     pending: Option<(u64, u64)>,
     serial: u64,
-    pane_gesture: Option<u64>,
+    pane_gesture: Option<(u64, crossterm::event::MouseButton)>,
 }
 
 #[cfg(test)]
@@ -36,20 +96,29 @@ impl<T> Queue<T> {
     /// Keep an editor-owned Alt-left gesture out of native image panning and
     /// document selection, including when Alt is released before the button.
     fn editor_pane_gesture(&mut self, input: &NativeInput) -> bool {
-        use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEventKind};
-        if self.pane_gesture != Some(input.attachment) {
+        use crossterm::event::{Event, MouseEventKind};
+        if self
+            .pane_gesture
+            .is_some_and(|(attachment, _)| attachment != input.attachment)
+        {
             self.pane_gesture = None;
         }
         match &input.event {
             Event::Mouse(event) => match event.kind {
                 MouseEventKind::Down(button) => {
-                    self.pane_gesture = (button == MouseButton::Left
-                        && [KeyModifiers::ALT, KeyModifiers::ALT | KeyModifiers::SHIFT]
-                            .contains(&event.modifiers))
-                    .then_some(input.attachment);
+                    let claimed = matches!(runyte::tui::input::convert_event(input.event.clone()), Ok(Some(runyte::input::InputEvent::Pointer(pointer))) if input.pointer_bindings.pane_gestures().action(pointer).is_some());
+                    self.pane_gesture = claimed.then_some((input.attachment, button));
                     self.pane_gesture.is_some()
                 }
-                MouseEventKind::Up(_) => self.pane_gesture.take().is_some(),
+                MouseEventKind::Up(button) => {
+                    let owned = self.pane_gesture.is_some();
+                    if self.pane_gesture.is_some_and(|(_, captured)| {
+                        captured == crossterm::event::MouseButton::Left || captured == button
+                    }) {
+                        self.pane_gesture = None;
+                    }
+                    owned
+                }
                 _ => self.pane_gesture.is_some(),
             },
             Event::FocusLost => {
@@ -61,11 +130,40 @@ impl<T> Queue<T> {
             _ => self.pane_gesture.is_some(),
         }
     }
+    fn capture_host_drag(&mut self, input: &NativeInput) {
+        use runyte::keymap::pointer_actions::Action;
+        if let Ok(Some(runyte::input::InputEvent::Pointer(pointer))) =
+            runyte::tui::input::convert_event(input.event.clone())
+            && ([
+                Action::Select,
+                Action::Extend,
+                Action::Resize,
+                Action::TreeResize,
+                Action::OpenLink,
+            ]
+            .into_iter()
+            .any(|action| input.pointer_bindings.press(action, pointer))
+                || (!input.pointer_bindings.is_default(Action::Copy)
+                    && input.pointer_bindings.press(Action::Copy, pointer)))
+            && let crossterm::event::Event::Mouse(event) = &input.event
+            && let crossterm::event::MouseEventKind::Down(button) = event.kind
+            && button != crossterm::event::MouseButton::Left
+        {
+            self.pane_gesture = Some((input.attachment, button));
+        }
+    }
+
     /// A release outside the window may never reach GPUI's mouse-up handler.
     /// Cancel on the first buttonless motion instead of turning hover into a
     /// synthetic left drag (or committing an unseen drop with a synthetic up).
-    fn cancel_lost_pane_button(&mut self, input: &mut NativeInput, left_pressed: bool) {
-        if !left_pressed && self.pane_gesture == Some(input.attachment) {
+    fn cancel_lost_pane_button(
+        &mut self,
+        input: &mut NativeInput,
+        pressed: Option<crossterm::event::MouseButton>,
+    ) {
+        if self.pane_gesture.is_some_and(|(attachment, button)| {
+            attachment == input.attachment && pressed != Some(button)
+        }) {
             self.pane_gesture = None;
             input.event = crossterm::event::Event::FocusLost;
         }
@@ -81,7 +179,8 @@ impl<T> Queue<T> {
         compatible: impl FnOnce(&T, &T) -> bool,
     ) -> bool {
         if let Some((previous, prior_action)) = self.inputs.back_mut()
-            && super::input_queue::same_drag(previous, &input)
+            && (super::input_queue::same_drag(previous, &input)
+                || same_passive_motion(previous, &input))
             && compatible(prior_action, &action)
         {
             *previous = input;
@@ -129,6 +228,14 @@ impl<T> Queue<T> {
     }
 }
 
+fn window_requires_barrier(
+    captured: &runyte::keymap::native_window::Bindings,
+    current: Option<&runyte::keymap::native_window::Bindings>,
+) -> bool {
+    captured.has_authored_characters()
+        || current.is_some_and(|bindings| bindings.has_authored_characters())
+}
+
 fn text_bytes(input: &NativeInput) -> usize {
     match &input.event {
         super::Event::Paste(text) => text.len(),
@@ -157,7 +264,29 @@ impl super::NativeView {
         action: Action,
         cx: &mut super::Context<Self>,
     ) {
-        let input = self.bridge.capture(event);
+        let mut input = self.bridge.capture(event);
+        let position = match &action {
+            Action::Down(e) => Some(e.position),
+            Action::Up(e) => Some(e.position),
+            Action::Move(e) => Some(e.position),
+            Action::Scroll(e, _, _) => Some(e.position),
+            Action::Direct => None,
+        };
+        if let Some(position) = position {
+            input.pointer_target = self
+                .bridge
+                .painted_pointer_surfaces
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|surface| {
+                    surface.contains(
+                        f32::from(position.x) / self.metrics.width,
+                        f32::from(position.y) / self.metrics.height,
+                    )
+                })
+                .map(|surface| surface.target.clone());
+        }
         if !self.routing.push_coalesced(input, action, |previous, next| {
             matches!((previous, next), (Action::Move(a), Action::Move(b)) if a.pressed_button == b.pressed_button)
         }) {
@@ -170,11 +299,20 @@ impl super::NativeView {
         use self::Action as RoutingAction;
         use super::*;
         let attachment = self.bridge.attachment.load(Ordering::Acquire);
+        if super::pointer::reset_capture(&mut self.local_pointer, attachment, false) {
+            self.cancel_local_pointer();
+        }
         let serial = self
             .frame
             .as_ref()
             .filter(|frame| frame.attachment == attachment)
             .map_or(0, |frame| frame.routing_serial);
+        self.previews.acknowledge_focus(
+            attachment,
+            serial,
+            self.frame.as_ref().and_then(|frame| frame.preview_source),
+            self.frame.as_ref().and_then(|frame| frame.preview_terminal),
+        );
         let routing_ready = self.preview_routing_ready
             || self.frame.as_ref().is_none_or(|frame| {
                 !frame.media_input || !frame.previews.iter().any(|pane| pane.active)
@@ -190,24 +328,45 @@ impl super::NativeView {
             if let RoutingAction::Move(event) = &action {
                 self.routing.cancel_lost_pane_button(
                     &mut input,
-                    event.pressed_button == Some(MouseButton::Left),
+                    event.pressed_button.map(native_pointer_button),
                 );
             }
             let cancelled = matches!(input.event, Event::FocusLost);
-            if cancelled
-                || matches!(&action, RoutingAction::Move(event) if event.pressed_button != Some(MouseButton::Left))
-                || (!current && matches!(&action, RoutingAction::Up(_)))
-            {
-                self.previews.cancel_drag();
+            let host_owned = self.routing.editor_pane_gesture(&input);
+            if super::pointer::reset_capture(
+                &mut self.local_pointer,
+                input.attachment,
+                cancelled || matches!(action, RoutingAction::Down(_)),
+            ) {
+                self.cancel_local_pointer();
             }
-            if !self.routing.editor_pane_gesture(&input) && !cancelled {
+            if !host_owned && self.local_pointer_tail(&input, &action, cx) {
+                continue;
+            }
+            if cancelled {
+                self.cancel_local_pointer();
+                self.local_pointer = None;
+            }
+            if !host_owned && !cancelled {
                 match action {
                     RoutingAction::Direct => {
                         if let Event::Key(key) = input.event {
-                            if self.preview_key(key, cx) {
+                            let window_bindings = self
+                                .frame
+                                .as_ref()
+                                .filter(|frame| frame.attachment == input.attachment)
+                                .map_or_else(
+                                    || input.window_bindings.clone(),
+                                    |frame| {
+                                        input
+                                            .window_bindings
+                                            .with_current_guard(&frame.window_bindings)
+                                    },
+                                );
+                            if self.preview_key(key, &input, &window_bindings, cx) {
                                 continue;
                             }
-                            if let Some(event) = self.window_shortcut(key, cx) {
+                            if let Some(event) = self.window_shortcut(key, &window_bindings, cx) {
                                 let Some(event) = event else {
                                     continue;
                                 };
@@ -216,14 +375,12 @@ impl super::NativeView {
                         }
                     }
                     RoutingAction::Down(event) => {
-                        if current
-                            && ((event.button == MouseButton::Left
-                                && self.preview_pointer(event.position, 0, cx))
-                                || self.media_mouse_down(&event, cx))
+                        if input.pointer_target.is_some()
+                            && self.begin_local_pointer(&input, &event, cx)
                         {
                             continue;
                         }
-                        if event.button == MouseButton::Middle {
+                        if event.button == MouseButton::Middle && !host_pointer_press(&input) {
                             continue;
                         }
                     }
@@ -258,15 +415,28 @@ impl super::NativeView {
                                 f32::from(event.position.y) / metrics.height,
                             )
                         });
+                        if !over_overlay && !current && input.pointer_target.is_some() {
+                            continue;
+                        }
+                        if !over_overlay
+                            && input
+                                .pointer_target
+                                .as_ref()
+                                .is_some_and(|target| !self.pointer_target_current(target))
+                        {
+                            continue;
+                        }
                         if current
                             && !over_overlay
-                            && (self.preview_scroll(&event, cx) || self.media_scroll(&event, cx))
+                            && (self.preview_scroll(&event, &input, cx)
+                                || self.media_scroll(&event, &input, cx))
                         {
                             continue;
                         }
                         if matches!(event.touch_phase, TouchPhase::Started) {
                             self.scroll = ScrollAccumulator::default();
                         }
+                        self.scroll.set_policy(scroll_policy(&input));
                         let Some((kind, events)) = self
                             .scroll
                             .push(ScrollAccumulator::delta(event.delta, metrics), when)
@@ -278,13 +448,21 @@ impl super::NativeView {
                     }
                 }
             }
+            if self.local_pointer.is_none() {
+                self.routing.capture_host_drag(&input);
+            }
             let barrier = self
                 .frame
                 .as_ref()
-                .is_some_and(|frame| !frame.previews.is_empty());
+                .is_some_and(|frame| !frame.previews.is_empty())
+                || window_requires_barrier(
+                    &input.window_bindings,
+                    self.frame.as_ref().map(|frame| &frame.window_bindings),
+                );
             for index in 0..copies {
                 if barrier && index + 1 == copies {
                     self.routing.forward(&mut input);
+                    self.previews.focus_forwarded_serial(input.routing_serial);
                 }
                 if !self.bridge.send_captured(input.clone()) {
                     self.routing.clear();

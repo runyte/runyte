@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     fmt,
     sync::{Arc, LazyLock},
 };
@@ -16,7 +16,14 @@ use crate::{
 
 pub mod actions;
 pub mod configured;
+mod effective;
+pub mod native_preview;
 pub mod native_window;
+pub mod pointer;
+pub mod pointer_actions;
+mod scopes;
+pub mod terminal_input;
+pub mod ui;
 pub mod validate;
 
 /// Compatibility name for a keymap key while callers migrate to the owned
@@ -668,6 +675,11 @@ impl std::error::Error for DuplicateBinding {}
 
 #[derive(Clone, Debug)]
 pub struct Keymap {
+    pointer: pointer_actions::Bindings,
+    preview: native_preview::Cache,
+    ui: ui::Bindings,
+    overrides: effective::Overrides,
+    terminal_input: terminal_input::Index,
     bindings: Vec<Binding>,
     lookup_index: Arc<HashMap<(Mode, BindingScope), HashMap<KeySequence, IndexedLookup>>>,
     fast_pane_keys: bool,
@@ -691,6 +703,17 @@ impl Default for Keymap {
 }
 
 impl Keymap {
+    pub fn pointer(&self) -> &pointer_actions::Bindings {
+        &self.pointer
+    }
+
+    pub fn pane_gestures(&self) -> pointer::PaneGestures {
+        self.pointer.pane_gestures()
+    }
+
+    pub fn ui(&self) -> &ui::Bindings {
+        &self.ui
+    }
     pub(crate) fn fast_pane_keys(&self) -> bool {
         self.fast_pane_keys
     }
@@ -772,7 +795,11 @@ impl Keymap {
                             && key.modifiers.is_empty()
                             && matches!(key.code, KeyCode::Char('1'..='9')))
                             && !(index > 0
-                                && matches!(key.code, KeyCode::Escape | KeyCode::Backspace))
+                                && binding
+                                    .modes
+                                    .iter()
+                                    .any(|mode| matches!(mode, Mode::Normal | Mode::Select))
+                                && self.ui().lookup(ui::Owner::GrammarPrefix, *key).is_some())
                     }),
                 "plugin binding {} uses a grammar-reserved count or cancellation key",
                 binding.sequence
@@ -783,10 +810,12 @@ impl Keymap {
             .bindings
             .retain(|b| !matches!(b.target, BindingTarget::Plugin(_)));
         candidate.bindings.extend(bindings);
-        let violations = validate::validate(
+        let violations = validate::with_input_policy(
             &candidate.bindings,
             &candidate.namespaces,
             &candidate.context_actions,
+            &candidate.overrides,
+            Some(candidate.ui()),
         );
         anyhow::ensure!(
             violations.is_empty(),
@@ -817,6 +846,11 @@ impl Keymap {
             }
         }
         let mut keymap = Self {
+            pointer: pointer_actions::Bindings::default(),
+            preview: native_preview::Cache::default(),
+            ui: ui::Bindings::default(),
+            overrides: effective::Overrides::default(),
+            terminal_input: terminal_input::Index::default(),
             bindings,
             lookup_index: Arc::new(HashMap::new()),
             fast_pane_keys: false,
@@ -832,6 +866,7 @@ impl Keymap {
     }
 
     fn rebuild_lookup_index(&mut self) {
+        self.preview = native_preview::Cache::default();
         // Keep positions into the binding registry so cloned maps can update
         // descriptions without leaving lookup, help, and hints out of sync.
         let mut scopes = BindingScope::ALL.to_vec();
@@ -855,46 +890,14 @@ impl Keymap {
                     && !self.bindings.iter().any(|binding| {
                         scope_includes(scope, binding.scope) && binding.is_active_in(mode)
                     })
+                    && self.overrides.governing(mode, scope).is_empty()
                 {
                     continue;
                 }
-                let mut scoped = self
-                    .bindings
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, binding)| {
-                        scope != BindingScope::Global
-                            && binding.is_active_in(mode)
-                            && scope_includes(scope, binding.scope)
-                    })
-                    .map(|(index, _)| index)
-                    .collect::<Vec<_>>();
-                // Stable role order matches bindings_for_scope, with scoped
-                // bindings first and same-sequence globals hidden.
-                scoped.sort_by_key(|&index| self.bindings[index].role);
-                let shadowed = scoped
-                    .iter()
-                    .map(|&index| &self.bindings[index].sequence)
-                    .collect::<HashSet<_>>();
-                let mut global = self
-                    .bindings
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, binding)| {
-                        binding.visible_in(mode, scope)
-                            && binding.scope == BindingScope::Global
-                            && !shadowed.contains(&binding.sequence)
-                            && !(scope == BindingScope::DirectoryTree
-                                && shadowed
-                                    .iter()
-                                    .any(|sequence| binding.sequence.starts_with(sequence)))
-                    })
-                    .map(|(index, _)| index)
-                    .collect::<Vec<_>>();
-                global.sort_by_key(|&index| self.bindings[index].role);
+                let effective = effective::indices(&self.bindings, &self.overrides, mode, scope);
 
                 let mut sequences: HashMap<KeySequence, IndexedLookup> = HashMap::new();
-                for binding_index in scoped.into_iter().chain(global) {
+                for binding_index in effective {
                     let binding = &self.bindings[binding_index];
                     for prefix_len in 0..binding.sequence.len() {
                         sequences
@@ -912,6 +915,7 @@ impl Keymap {
             }
         }
         self.lookup_index = Arc::new(index);
+        self.terminal_input = terminal_input::Index::build(self);
     }
 
     pub fn with_namespaces(
@@ -958,6 +962,7 @@ impl Keymap {
         self.leader = leader;
         self.window = window;
         self.default_spellings = default_spellings;
+        self.terminal_input = terminal_input::Index::build(&self);
         self
     }
 
@@ -1043,37 +1048,9 @@ impl Keymap {
         mode: Mode,
         scope: BindingScope,
     ) -> impl Iterator<Item = &Binding> {
-        let mut bindings = Vec::new();
-        if scope != BindingScope::Global {
-            let mut scoped = self
-                .bindings
-                .iter()
-                .filter(|binding| {
-                    binding.is_active_in(mode) && scope_includes(scope, binding.scope)
-                })
-                .collect::<Vec<_>>();
-            scoped.sort_by_key(|binding| binding.role);
-            bindings.extend(scoped);
-        }
-        let mut global = self
-            .bindings
-            .iter()
-            .filter(|binding| {
-                binding.visible_in(mode, scope)
-                    && binding.scope == BindingScope::Global
-                    && (scope == BindingScope::Global
-                        || !self.bindings.iter().any(|scoped| {
-                            scoped.is_active_in(mode)
-                                && scope_includes(scope, scoped.scope)
-                                && (scoped.sequence == binding.sequence
-                                    || (scope == BindingScope::DirectoryTree
-                                        && binding.sequence.starts_with(&scoped.sequence)))
-                        }))
-            })
-            .collect::<Vec<_>>();
-        global.sort_by_key(|binding| binding.role);
-        bindings.extend(global);
-        bindings.into_iter()
+        effective::indices(&self.bindings, &self.overrides, mode, scope)
+            .into_iter()
+            .map(|index| &self.bindings[index])
     }
 
     /// The bindings a scope contributes on top of the global keymap.
@@ -1173,6 +1150,7 @@ impl Keymap {
             namespace.is_active_in(mode)
                 && ((!scope.is_merge_review() && namespace.scope == BindingScope::Global)
                     || scope_includes(scope, namespace.scope))
+                && self.has_prefix_in(mode, scope, &namespace.sequence)
         })
     }
 
@@ -1186,6 +1164,11 @@ impl Keymap {
             Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => Some(binding),
             Lookup::Prefix(_) | Lookup::NoMatch => None,
         }
+    }
+
+    pub(crate) fn list_key_is_configured(&self, scope: BindingScope, key: Key) -> bool {
+        self.overrides
+            .affects(Mode::List, scope, &KeySequence::from(key), false)
     }
 
     pub fn lookup(&self, mode: Mode, sequence: &KeySequence) -> Lookup<'_> {
@@ -1212,6 +1195,18 @@ impl Keymap {
             } => copy(exact) || continuations.iter().any(|binding| copy(binding)),
             Lookup::NoMatch => false,
         }
+    }
+
+    fn has_prefix_in(&self, mode: Mode, scope: BindingScope, sequence: &KeySequence) -> bool {
+        self.lookup_index
+            .get(&(mode, scope))
+            .or_else(|| {
+                (!scope.is_merge_review())
+                    .then(|| self.lookup_index.get(&(mode, BindingScope::Global)))
+                    .flatten()
+            })
+            .and_then(|sequences| sequences.get(sequence))
+            .is_some_and(|entry| entry.exact.is_none() && !entry.continuations.is_empty())
     }
 
     pub fn lookup_in(&self, mode: Mode, scope: BindingScope, sequence: &KeySequence) -> Lookup<'_> {
@@ -2785,7 +2780,7 @@ fn list_bindings() -> Vec<Binding> {
     let manager = |sequence: Key, target: BindingTarget| {
         Binding::implemented_in(LIST, BindingScope::SessionManager, sequence, target)
     };
-    vec![
+    let mut bindings = vec![
         list(Key::ctrl('n'), Command::ListNext),
         platform(Key::plain(KeyCode::Down), Command::ListNext),
         list(Key::ctrl('p'), Command::ListPrevious),
@@ -2804,7 +2799,31 @@ fn list_bindings() -> Vec<Binding> {
         manager(Key::ctrl('o'), Command::OpenSessionDirectory.into()),
         manager(Key::ctrl('e'), Command::OpenSessionDestinations.into()),
         manager(Key::ctrl('g'), ColonCommand::GitWorktrees.into()),
-    ]
+    ];
+    // These three former raw list actions accepted every modifier mask.
+    // Materialize the compatibility spellings so exact scoped overrides,
+    // validation and discovery all see the same effective bindings.
+    for (code, command) in [
+        (KeyCode::Enter, Command::ListAccept),
+        (KeyCode::Tab, Command::ListOpenActions),
+        (KeyCode::Backspace, Command::ListBackspace),
+    ] {
+        for bits in 0..64 {
+            let key = Key::new(code, Modifiers::from_bits(bits).expect("six-bit modifiers"));
+            let binding = if bits == 0 {
+                list(key, command)
+            } else {
+                platform(key, command)
+            };
+            if !bindings
+                .iter()
+                .any(|existing| existing.sequence == binding.sequence)
+            {
+                bindings.push(binding);
+            }
+        }
+    }
+    bindings
 }
 
 /// The four keys single-key pane movement claims, and where each one goes.
@@ -3784,11 +3803,6 @@ mod tests {
                     !matches!(key.code, KeyCode::Char(_))
                         || key.modifiers.contains(Modifiers::CONTROL),
                     "{keymap_name} list binding {} would take filter text",
-                    key.label()
-                );
-                assert!(
-                    !matches!(key.code, KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace),
-                    "{keymap_name} list binding {} is list grammar",
                     key.label()
                 );
             }

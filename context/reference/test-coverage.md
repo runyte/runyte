@@ -82,6 +82,26 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-10-30 — configurable UI actions
+
+Measured on `x86_64-unknown-linux-gnu` with Rust 1.97.1 and cargo-llvm-cov
+0.9.1 on `feat/configurable-ui-actions` for [#46](https://github.com/runyte/runyte/issues/46).
+The canonical root command passed with **162,153 of 175,350 lines (92.47%)**
+covered. The separate desktop command below passed with **3,676 of 7,259 lines
+(50.64%)** covered:
+
+```sh
+cargo llvm-cov --locked --package runyte-native --package runyte-desktop --package runyte-preview \
+  --ignore-filename-regex "$PWD/src/" --summary-only --fail-under-lines 40
+```
+
+Coverage includes effective UI/scoped/pointer bindings, remap/removal and owner
+rollback, physical approval and repeat admission, captured native targets,
+continuous media wheel actions and pointer cancellation. Local socket/process
+fixtures ran with the access they require. The root 89% and desktop 40% floors
+are unchanged. Linux results do not establish macOS/Windows acceptance or
+interactive GPU/window coverage.
+
 ## 2026-10-29 — MCP read and write permissions
 
 Measured on `x86_64-unknown-linux-gnu` with the uncommitted read and write

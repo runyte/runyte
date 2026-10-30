@@ -1,6 +1,6 @@
 ## Custom key bindings
 
-The `keys` section changes the keyboard. It has five parts:
+The `keys` section configures keyboard actions and pane gestures:
 
 | Key | What it does |
 | --- | --- |
@@ -9,6 +9,9 @@ The `keys` section changes the keyboard. It has five parts:
 | `keys.rebind` | Moves bindings Runyte already ships to other keys. |
 | `keys.bind` | Assigns named actions to keys, per mode. Also removes bindings. |
 | `keys.defaults` | `false` starts `bind` from an empty keyboard instead of Runyte's. See [Without the built-in keys](custom-key-bindings.md#without-the-built-in-keys). |
+| `keys.pointer` | Replaces editor, pane, media, and preview pointer gestures. |
+| `keys.ui` | Replaces actions in prompts, menus, overlays, confirmations, and native controls. |
+| `keys.scopes` | Assigns or removes actions in individual editor views and result lists. |
 
 - `keys` is read from the configuration file and from
   [`keybinds.d/`](configuration.md#themes-and-key-bindings-in-their-own-files) beside it; the
@@ -123,7 +126,451 @@ keys:
 - bind a command that has no default key,
 - move most direct single-key editing bindings.
 
+### View and list bindings
+
+`keys.scopes.<scope>.<mode>` assigns one supported action name to a key, or
+`null` to suppress that exact binding in that view. Other views and modes keep
+their bindings. Suppression also hides inherited bindings; it does not reveal
+the global action underneath, and does not remove longer sequences beginning
+with the same key.
+
+```yaml
+keys:
+  scopes:
+    markdown:
+      normal:
+        j: move-up
+        k: null
+    global:
+      list:
+        F9: list-next
+        Ctrl-n: null
+    session-manager:
+      list:
+        F8: list-previous
+```
+
+Editor scope names are `markdown`, `directory`, `directory-tree`, `settings`,
+`media`, `pdf-pages`, `help`, `commit-message`, `diff`, `workspace-search`,
+`terminal`, and the Git scopes: `git-status`, `git-branches`, `git-conflicts`,
+`git-conflict-file`, `git-conflict-markdown`, `git-merge-review`,
+`git-merge-detail`, `git-merge-input`, `git-worktrees`, `git-comparison`,
+`git-revision-diff`, `git-log`, `git-network`, `git-blame`, and `git-stash`.
+Ordinary editor scopes support `normal`, `select`, `insert`, and `replace`.
+The merge review scopes currently dispatch `normal` only. Terminal `replace`
+is unavailable. Terminal `insert` admits terminal-safe mode, pane, clipboard,
+and persistent-session actions. For example:
+
+```yaml
+keys:
+  scopes:
+    terminal:
+      insert:
+        F6: enter-normal-mode
+        Ctrl-4: null
+        'Ctrl-\': null
+        'F7 h': focus-window-left
+```
+
+Ordinary keys still reach the child. An assigned action claims its first key
+and any following sequence; an explicit persistent-session action also claims
+its key outside a persistent session and reports when unavailable. A `null`
+removes only the exact binding and its legacy capture policy. Longer surviving
+bindings still claim their prefix. Removing `Ctrl-w` alone therefore does not
+remove the window namespace. Unmodified Escape still reaches the child unless
+explicitly assigned. Global custom text-editing bindings remain excluded from
+Terminal Insert.
+
+Use `global.list` for ordinary result-list bindings and `session-manager.list`
+for overrides in the session manager. List bindings contain one key. List
+navigation actions are `list-next`, `list-previous`, `list-page-down`,
+`list-page-up`, `list-first`, `list-last`, `list-toggle-preview`,
+`list-clear-filter`, and `list-close`. Use `list-accept` to activate a row,
+`list-open-actions` to open its actions (or cycle tags / advance to the next row
+when no action menu applies), and `list-backspace` to delete the last filter
+character. These three actions do nothing in reports. Their inherited Enter,
+Tab and Backspace bindings accept every modifier combination, preserving the
+original behavior; scoped overrides replace or remove only the exact spelling.
+For example, `Enter: null` leaves `Shift-Enter` available. Empty-filter leader
+input follows the effective Escape action, including its removal. Nested action
+menus own their input separately. Numbered session choices remain structural
+input.
+
+`:help key-actions` includes the scoped action names and their modes.
+Actions must be supported by the selected view and mode. Scoped assignments
+currently take one action name, without arguments or action lists. Editor
+sequences may contain up to eight keys, including `Leader` and `Window`.
+Context-action Tab, overlay leader dismissal,
+and merge acknowledgment editing still belong to their existing input owners;
+assignments or removals that those handlers would bypass are rejected.
+
+Assignments apply simultaneously. Invalid scoped configuration rolls back the
+**whole `scopes` section**, while `bind`, `ui`, and `pointer` remain independent.
+A child override wins over inherited parents. If both Markdown and conflict-file
+scopes override the same key, `git-conflict-markdown` must decide explicitly,
+including by assigning `null`. Configuration fragments merge by scope, mode,
+and key. Existing scoped defaults remain with `keys.defaults: false`; that
+option still controls only global editor defaults.
+
 ### Binding actions
+
+Completion popup actions can be assigned separately from Insert/Replace editing:
+
+```yaml
+keys:
+  ui:
+    completion:
+      next: [Ctrl-j]
+      previous: [Ctrl-k]
+      accept: [Ctrl-y]
+```
+
+Each action list replaces all its default bindings. `[]` removes them; omitted
+actions retain defaults. UI actions are independent of `keys.defaults`.
+Configuration fragments merge by owner and action. A conflict with another
+effective action restores the owner's defaults with a diagnostic.
+
+| Completion action | Default keys | Effect |
+| --- | --- | --- |
+| `next` | Down, Ctrl-n | Select the next candidate |
+| `previous` | Up, Ctrl-p | Select the previous candidate |
+| `accept` | Tab | Insert the selected candidate |
+| `cancel` | Ctrl-c | Dismiss and consume the key |
+| `cancel-or-continue` | Esc | Dismiss; word completion and directory buffers pass the key to ordinary editing |
+| `dismiss-and-continue` | Enter | Dismiss and pass the key to ordinary editing |
+
+The continuation actions pass the **actual pressed key** once, including its
+modifiers. If remapped to F9, they run the underlying F9 binding, not the old
+Esc/Enter binding. They never synthesize input. UI bindings currently accept
+single strokes, with up to 32 aliases per action. Configured modifiers match
+exactly using the same character Shift normalization as editor bindings.
+Unchanged defaults retain their existing handling of additional modifiers.
+
+The `context-actions`, `path-actions`, and `program-actions` owners support `next`, `previous`,
+`accept`, and `cancel`. Context and path actions default to Down/j,
+Up/k/Shift-Tab, Enter, and Tab/Esc/Ctrl-c respectively. Program actions use
+Down/Ctrl-n and Up/Ctrl-p/Shift-Tab for navigation, Enter to accept, and
+Tab/Esc/Ctrl-c to cancel. The `path` popup supports `open-actions` (Tab) and
+`cancel` (Esc/Ctrl-c). These menu owners also inherit the effective leader as a
+cancel key. Reassigning or removing `cancel` removes that leader binding too.
+
+The nested `buffer-actions`, `terminal-actions`, and `session-actions` owners
+support `next`, `previous`, `accept`, `back`, and `cancel`. Their navigation uses
+Down/Ctrl-n and Up/Ctrl-p/Shift-Tab; Enter accepts, Tab goes back, and Esc/Ctrl-c
+cancels. Both back and cancel close the menu. They are separate actions because
+back, like acceptance, refuses a stale selected row; cancel can always dismiss
+that stale menu. This distinction follows the actions when remapped. These
+owners also inherit leader cancellation. Replacing cancel leaves back available;
+replace or remove both actions to change every dismissal key.
+
+For terminal and session actions requiring a second confirmation, the configured
+accept key both arms and confirms. Navigation disarms the confirmation; an
+unbound key does not. Acceptance still revalidates the captured target and
+requires the current presented frame where that gate applies.
+
+The `plugin-manager-actions` owner provides a transparent `cancel` action that
+returns from the plugin action list to the manager, preserving its filter and
+selection. Escape, Ctrl-c, and the empty-filter leader are its defaults. Other
+input continues through `global.list`. This return action takes precedence over
+scoped bindings in that list; hints and acceptance authority use the same order.
+Replacing or removing return bindings exposes any underlying scoped action:
+for example, removing this owner's cancel makes Escape perform `list-close`
+unless you also change Escape in `global.list`. Removing its inherited leader
+restores literal filter input without an implicit Escape translation.
+
+The `confirmation` owner supports `accept` and `cancel` for file and directory
+reloads, buffer and Git discard, and pull/rebase confirmation. Defaults are Enter
+and Esc/Ctrl-c. `stash-confirmation` has the same actions but defaults to Enter
+and Esc; Ctrl-c remains inert there. Both inherit leader cancellation only where
+the existing overlay allows it (for example, an underlying nonempty filter
+suppresses it). Replacing `cancel` also replaces inherited leader cancellation.
+A remapped acceptance still revalidates the captured file, repository, or other
+target, and requires the current presented frame wherever that check applies.
+
+The `text-confirmation` owner handles branch switching/deletion and worktree
+removal. It supports `accept`, `cancel`, `backspace`, `delete`, `move-left`,
+`move-right`, `move-start`, and `move-end`. Editing defaults are Backspace,
+Delete, Left, Right, Home, and End; prompt-style Ctrl-h/Ctrl-a aliases are not
+inherited. Text and pasted names remain structural input. Remapping acceptance
+does not bypass an exact-name requirement or change the authorization required
+by the captured operation. Untyped branch/worktree decisions use the same owner,
+but their editing actions remain inactive.
+
+The `filesystem-confirmation` owner supports `accept`, `cancel`, `next`,
+`previous`, `page-up`, `page-down`, `first`, and `last`. Enter applies the reviewed
+plan with trash deletion; Esc/Ctrl-c cancel. Navigation defaults are Down/Ctrl-n,
+Up/Ctrl-p, PageDown/Ctrl-d, PageUp/Ctrl-u, Home, and End. Plain `P` remains the
+structural permanent-deletion choice; Shift-P does not confirm it. An inherited
+leader takes precedence over that choice, and the hint reflects that precedence.
+Plugin-owned plans retain their host execution and captured approval checks.
+
+The `tree-destination` owner supports `accept` (Enter), `cancel` (Esc), and
+`backspace`. Plain pane digits remain structural and still select immediately
+when they identify one captured pane. `tree-delete` supports `cancel` (Enter or
+Esc); y/Y and n/N remain structural yes/no choices. Default tree-delete keys
+accept Shift/Meta/Hyper but ignore Control/Alt/Super; configured cancellation
+matches its exact authored modifiers. Neither tree owner adds a Ctrl-c alias.
+Both preserve conditional leader cancellation and captured targets.
+
+Merge-review controls use `keys.scopes.git-merge-review`, `git-merge-detail`,
+and `git-merge-input`. Acknowledgment editing uses `ui.merge-acknowledgment`
+with `backspace`, `delete`, `move-left`, and `move-right`. Literal text remains
+structural. Editing preserves the pending scoped key sequence and the existing
+cursor behavior. Removing an editing alias permits that key to be assigned in
+`git-merge-input`; configurations cannot advertise a scoped action hidden by
+an active editing binding.
+
+`ui.merge-prefix.reset-and-continue` defaults to Escape with any modifiers.
+It clears the pending review sequence, then resolves the same input through
+the scoped keymap. Other default cancellation aliases do not interrupt an
+unfinished sequence. Replacing or removing this action permits Escape inside
+configured review sequences. A reset key owned by the scoped input layer cannot be used after the
+first stroke of a sequence. Literal text and acknowledgment editing take precedence
+over prefix reset. Outside acknowledgment editing, the leader keeps
+its existing alias to the scoped Escape binding.
+
+Plugin input uses separate owners for each interaction:
+
+| Owner | Actions |
+| --- | --- |
+| `plugin-confirmation` | `accept`, `cancel` |
+| `plugin-picker` | `accept`, `cancel`, `next`, `previous`, `backspace` |
+| `plugin-form` | `accept`, `cancel`, `next`, `previous`, `backspace`, `delete`, `move-left`, `move-right`, `move-start`, `move-end` |
+| `plugin-choice` | `accept`, `cancel`, `next`, `previous`, `move-left`, `move-right`, `toggle-selection` |
+| `plugin-path-completion` | `accept`, `accept-or-continue`, `next`, `previous` |
+
+These owners do not inherit leader cancellation. Form text and picker filters
+remain literal input. Choice fields use plain Left/Right and Space by default;
+Space is the configurable `toggle-selection` action there. Text fields retain
+Space as text. Picker Backspace removes one character; form editing retains
+its grapheme-aware cursor and deletion behavior.
+
+Path completion takes precedence only while candidates are available.
+`accept` defaults to Tab; `accept-or-continue` defaults to Enter and completes
+an unfinished path, otherwise allowing the form to handle Enter. Completion
+Up/Down cycle candidates; modified navigation falls through to the form.
+Repeating Tab may complete a path, while repeating conditional completion or
+submission cannot submit a form. Remapped submission retains fresh-input,
+presented-frame, field-validation, and captured-context checks. Completion
+cannot lend submission authority to another input owner.
+
+The `provider-reload` owner supports `next`, `previous`, `accept`, and `cancel`;
+`provider-overwrite` supports `accept` and `cancel`. Both retain fresh physical
+approval and captured document checks. Reload defaults to plain Down/Tab and
+Up, exact Ctrl-n/Ctrl-p, and any-modifier BackTab; Shift-Tab remains inert.
+Enter accepts, Esc or exact Ctrl-c cancels, and the leader also cancels.
+When Enter is the leader, reload cancels while overwrite accepts, preserving
+its original precedence. Repeated acceptance cannot approve either dialog.
+
+The `context-review` owner controls permission-review navigation: `next`,
+`previous`, `toggle-selection`, `accept`, `cancel`, `first`, `last`, `page-up`,
+`page-down`, `half-page-up`, and `half-page-down`. Choice defaults are Down, Up,
+Tab/Shift-Tab/BackTab, Enter, and Esc. Scrolling inherits the approved normal-mode
+editor motions, with plain Home/End fallbacks. Configuring a scrolling action
+replaces its inherited motions as well; an empty list disables them. Removed
+motion sequences remain consumed so they cannot become permission choices.
+The single-key permission choices (1/2, r, x, n) remain structural. Remapped
+acceptance still requires fresh physical input and a fully presented review.
+
+
+The `session-directory` and `session-inventory` owners handle direct session
+navigation independently of `global.list`. They support `next`, `previous`,
+`page-up`, `page-down`, `first`, `last`, `accept`, `cancel`, and `backspace`.
+Directory navigation also supports `enter-directory`: Tab browses into the
+selected directory, while Enter opens it as a workspace. Inventory Tab has no
+action. These owners preserve literal filter text and do not inherit leader
+cancellation. Inventory cancellation returns to the session list with its
+selection preserved; directory cancellation restores the preceding editor mode.
+Report hints show only the available return action.
+
+```yaml
+keys:
+  ui:
+    context-actions:
+      next: [Ctrl-n]
+      previous: [Ctrl-p]
+    path:
+      open-actions: [F9]
+    program-actions:
+      accept: [F8]
+      cancel: [F9]
+    path-actions:
+      cancel: [F7]
+```
+
+Menu letters remain structural choices. Context menus reserve plain alphabetic
+choice keys other than j/k; path actions reserve r and s with any modifiers,
+preserving their existing choice handling. An inherited leader keeps its old
+cancellation precedence even if it matches a menu choice or navigation key.
+Changing `cancel` restores the covered key's ordinary meaning. Hints show only
+currently reachable shortcuts. Cancel in path actions returns to the path
+popup; cancel there closes it.
+
+Prompt owners are `command-prompt` (the command palette), `text-prompt`
+(search, rename, settings and other text entry), `path-prompt` (Finder path
+and directory-tree Move), and `program-prompt` (Open with). They do not inherit
+leader cancellation: literal characters, including spaces, remain text.
+
+All prompt owners support `accept`, `cancel`, `save`, `move-left`, `move-right`,
+`move-start`, `move-end`, `word-left`, `word-right`, `delete-backward`,
+`delete-forward`, `delete-word-backward`, `delete-to-start`, `delete-to-end`,
+and `backspace`. The defaults retain Ctrl-c/s/b/f/a/e, Alt-b/f, Ctrl-h/d/w/u/k,
+and Backspace respectively. `backspace` resets completion selection;
+`delete-backward` (Ctrl-h) preserves it. Non-command prompts additionally
+support `delete` (Delete), which resets completion selection;
+`delete-forward` (Ctrl-d) preserves it. The command palette's physical Delete
+key remains unbound by default.
+
+Command, path and program prompts support `next` (Down) and `previous`
+(Up/Shift-Tab). Command prompts also support `first`/`last` (Home/End) and
+`complete` (Tab). Path prompts support `complete` (Tab); program prompts
+support `open-actions` (Tab). Home/End in other prompts move the text cursor.
+Plain characters and literal control characters cannot be assigned as prompt
+actions. Defaults preserve their existing modifier rules; configured keys
+match exactly.
+
+```yaml
+keys:
+  ui:
+    command-prompt:
+      accept: [F9]
+      complete: [Ctrl-Space]
+    text-prompt:
+      cancel: [F10]
+```
+
+Accepting a command from an explicitly configured key retains the same native
+handoff eligibility as fresh Enter. Repeated or replayed input cannot acquire
+that authority. Existing modified-Enter defaults retain their original limits.
+
+The `file-picker` and `finder` owners support `accept`, `cancel`, `next`,
+`previous`, `page-up`, `page-down`, `first`, `last`, `move-left`, `move-right`,
+`move-start`, `move-end`, `backspace`, `delete-backward`, `delete`,
+`delete-word-backward`, `delete-to-end`, `split-horizontal`, `split-vertical`,
+and `toggle-preview`. `finder` also supports `toggle-mode` (plain Tab).
+File-picker Tab aliases `next`; modified Tab in Finder remains unbound.
+The existing Ctrl-s/Ctrl-v shortcuts open files horizontally/vertically;
+splits remain unavailable for buffer and terminal rows.
+
+These owners inherit leader cancellation only while the query is empty.
+Once text exists, the leader resumes its configured ordinary meaning. Replacing
+or removing `cancel` removes the inherited leader shortcut too. Literal filter
+characters remain structural input. Picker `delete-backward` (Ctrl-h) retains
+its existing ranking-publication behavior; `backspace` defers held ranking
+results until an action reads them.
+
+```yaml
+keys:
+  ui:
+    finder:
+      accept: [F8]
+      toggle-mode: [F9]
+      toggle-preview: [F10]
+    file-picker:
+      split-horizontal: [Ctrl-F8]
+      split-vertical: [Alt-F8]
+```
+
+Pane drag gestures can be changed independently of keyboard bindings:
+
+```yaml
+keys:
+  pointer:
+    pane-extend: [Ctrl-Alt-LeftDrag]
+    # pane-move: [Alt-LeftDrag]     # default
+    # pane-extend: [Shift-Alt-LeftDrag] # default
+```
+
+Each list replaces all gestures for that action; `[]` disables the action's
+pointer bindings. Omitted actions retain their defaults, including with
+`keys.defaults: false`. Modifiers match exactly. Pane gestures accept
+`LeftDrag`, `MiddleDrag`, and `RightDrag`, with optional `Ctrl-`, `Alt-`, `Shift-`, `Super-`, `Hyper-`, or
+`Meta-` modifiers. Shared pane borders retain resizing priority. The action is
+captured when the button is pressed and lasts through release, even when the
+modifiers or configuration change. Conflicting or invalid pane bindings
+retain both default pane gestures and produce a configuration diagnostic.
+Contextual help shows the effective gestures. Configuration fragments merge
+`pointer` by action; a later action list replaces the earlier list.
+
+The same section exposes other editor-owned pointer actions:
+
+| Actions | Accepted gestures | Default behavior |
+| --- | --- | --- |
+| `select`, `extend` | `LeftDrag`, `MiddleDrag`, `RightDrag` | Left selects; Shift-left extends the existing anchor |
+| `pane-resize`, `tree-resize` | Button drags | Left drag on the corresponding border |
+| `open-link` | `LeftClick`, `MiddleClick`, `RightClick` | Ctrl-left in the native window; Super-left on macOS |
+| `copy` | Button clicks | Right click inside the current selection copies it |
+| `scroll-up`, `scroll-down`, `scroll-left`, `scroll-right` | `WheelUp`, `WheelDown`, `WheelLeft`, `WheelRight` | Matching direction, three cells per host event |
+| `tree-select` | Button clicks | Left click selects the presented tree row |
+| `tree-open` | `LeftDoubleClick`, `MiddleDoubleClick`, `RightDoubleClick` | Two left clicks on the same presented row open it |
+| `session-activate` | Button clicks | Left click activates the presented session-strip entry |
+| `media-pan`, `media-region`, `media-auto-select` | Button drags | Middle/right or Alt-left pans; Shift-left selects a region; ordinary left selects PDF text, a wordless PDF region, or pans an image |
+| `media-toggle-zoom` | Button double clicks | Ordinary left double-click toggles image fit/zoom where automatic selection would pan |
+| `media-zoom`, `media-horizontal`, `media-scroll` | `Wheel` | Ctrl/Super zooms, otherwise Shift scrolls horizontally, otherwise pans or changes PDF pages at fit size |
+| `preview-select` | Button drags | Left selects text in a native document preview; an inactive preview first receives focus |
+| `preview-horizontal`, `preview-scroll` | `Wheel` | Shift scrolls horizontally; other modifiers retain ordinary two-axis scrolling |
+| `input-overflow-dismiss` | Button clicks | Left click dismisses the native input-loss banner |
+
+Drag bindings start on button-down and retain their button and target until
+release. Click bindings act on button-down. Prefix any gesture with the same
+exact modifiers as pane gestures. Defaults for ordinary clicks, resizing, and
+wheel movement accept all modifiers; default selection distinguishes Shift.
+An authored alias always matches only its written modifiers.
+
+```yaml
+keys:
+  pointer:
+    select: [LeftDrag]
+    extend: [Ctrl-LeftDrag]
+    open-link: [Alt-MiddleClick]
+    tree-open: [MiddleDoubleClick]
+```
+
+Selection and extension compete in one group, pane move and extension in
+another, and the four wheel directions in a third. Replace conflicting lists
+together; inheriting a conflicting alias is an error. An invalid group retains
+its defaults without discarding valid mappings in other groups. Each action
+accepts at most 192 aliases. Unknown action names reject the pointer section.
+
+Hit regions retain their precedence. Resizing owns matching border presses,
+pane gestures precede content actions, and link opening precedes live terminal
+mouse reporting. Inside the active selection, copying takes priority over
+selection; elsewhere the selection gesture can still place a caret. For
+unconditional right-button selection, configure `select: [RightDrag]` together
+with `copy: []`. Live terminal SGR reports retain their original physical
+buttons, modifiers, and wheel directions. Native media and preview gestures
+have their own input ownership.
+
+Native wheel bindings use continuous `Wheel` input, preserving trackpad deltas
+and zoom pivots. They do not use the host's directional wheel steps. Media drag
+actions compete in one group, media wheel actions in another, and preview wheel
+actions in a third. For example:
+
+```yaml
+keys:
+  pointer:
+    media-pan: [MiddleDrag]
+    media-region: [RightDrag]
+    media-auto-select: [LeftDrag]
+    media-zoom: [Alt-Wheel]
+    media-horizontal: [Shift-Wheel]
+    media-scroll: [Wheel]
+    preview-select: [MiddleDrag]
+```
+
+Native surfaces consume removed gestures rather than passing them to hidden
+source text. The factory preview right-click retains source-selection copying;
+replacing or removing `preview-select` also suppresses that fallback. A captured drag stays with its pane, page and document source;
+replacement or dismissal cancels the action while consuming its trailing release.
+Pane gestures still take priority. Remapped native drags follow their initiating
+button; effective factory gestures retain their existing multi-button behavior.
+
+Old-frame presses and wheel events are rejected after configuration reload.
+A drag already in progress keeps its captured action. Contextual help displays
+the effective pointer bindings, including removed actions as `unbound`.
+
+`Ctrl-Alt-LeftDrag` avoids terminals that reserve Shift for native selection.
+The terminal or window manager still needs to deliver the configured gesture.
 
 `keys.bind` has one map per mode: `normal`, `select`, `insert`, and
 `replace`. Each maps a key sequence to one of four values:
@@ -778,3 +1225,107 @@ with `{ command: name, argument: text }`.
 
 <!-- navigation -->
 [Contents](README.md) · [Previous: Configuration](configuration.md) · [Next: Themes](themes.md)
+
+`ui.macro-replay.cancel` stops cooperative macro replay. It defaults to Escape
+with any modifiers and exact Ctrl-c. While replay is running, other physical
+input remains ignored. Replacing this action removes both default aliases;
+`[]` disables keyboard cancellation. The leader does not add a cancellation
+alias. The progress message shows the effective keys.
+
+`ui.hover.accept` opens the full documentation buffer from a long hover popup
+(default: plain Enter). Short hovers and other keys retain dismissal followed
+by normal input handling. Command prompts, completion and pending key sequences
+retain precedence. Character operands and plain count digits remain structural.
+Hover hints show only reachable aliases. The hover owner adds no leader alias. `[]` removes the expansion shortcut.
+
+`ui.character-input.cancel` cancels a pending character operand, such as the
+character after `f` or either operand of `m r`. It defaults to Escape with any
+modifiers. Character keys, including modified characters, remain operands and
+cannot be assigned to cancellation. Named keys and function keys are available.
+Other non-character keys retain their existing “expected a character” result;
+removing cancellation does not make them valid operands. The owner adds no
+leader alias.
+
+`ui.grammar-prefix` supports `cancel` (Escape) and `back` (Backspace) while a
+Normal/Select key sequence is pending. Cancellation clears its count; backtracking
+keeps it. Both default keys accept all modifiers. The same key can still start a
+sequence when nothing is pending. Insert/Replace retain their existing prefix
+fallback behavior. Character operands use their separate owner above.
+
+`ui.key-hints` supports `next` and `previous`, defaulting to exact Ctrl-n/Ctrl-p
+and plain Down/Up. Default arrows yield to registered continuations; explicitly
+configured arrows own pending hint input. Window-prefix hints in Insert/Replace
+also support configured scrolling. Both frontends show effective scroll keys.
+
+Prefix controls and hint scrolling are validated together against the final
+binding map. Null removals can release conflicting bindings; released control
+keys can then appear inside configured sequences. If the final map still has a
+collision, both of these UI owners return to defaults and binding edits are
+compiled again against that policy. Other UI owners keep their configuration.
+A key cannot belong to both prefix control and hint scrolling. Merge reviews
+retain their separate scoped controls and do not pass through hint scrolling.
+
+`ui.context-launcher.open-actions` replaces the Normal/Select action-menu shortcut
+(default: plain Tab). Pending key sequences, character operands and the directory
+tree retain precedence; plain count digits remain structural. Replacing or
+removing the shortcut releases Tab for `keys.bind` and scoped assignments.
+Menu mnemonic letters retain their existing structural role.
+
+When no native action is available, the launcher keeps its existing fallback:
+without a ready language server it reports that no actions are available; with
+one it passes the actual pressed key to the editor keymap, retaining the count.
+For a remapped launcher, assign the desired editor fallback to that same key.
+It does not synthesize Tab. Help prose and action tables show the effective key.
+
+`ui.native-window` supports `font-increase`, `font-decrease`, and `paste-text`.
+These actions run in the desktop window and use the same effective bindings as
+its help. Defaults remain Ctrl-+/Ctrl-=, Ctrl--, and Ctrl-Shift-v (also Super-v
+on macOS). For example:
+
+```yaml
+keys:
+  ui:
+    native-window:
+      font-increase: [F8]
+      font-decrease: [F7]
+      paste-text: [Alt-v]
+```
+
+Plain text characters cannot be window shortcuts. Authored character chords yield
+to structural operands and text owned by an active prompt or menu. Factory
+shortcuts retain their historical precedence. Queued input keeps the bindings
+from the frame where it was captured; structural ownership is checked after
+preceding editor input has been processed. Document previews still receive
+navigation before window shortcuts, and pasting keeps its existing preview
+dismissal behavior.
+
+Native document previews use the supported navigation subset of effective
+`scopes.media.normal` bindings: movement and scrolling, pages and half-pages,
+document start/end, zoom, reset zoom, copy, and return to source. Only a single
+implemented semantic action executes locally. Action chains, plugin commands,
+and other commands continue through the source buffer's actual mode and scope.
+A Media-only unsupported command has no local preview meaning and is omitted
+from preview hints.
+
+`ui.native-preview` exposes `back`, `copy`, `keep-open-and-continue`, and
+`forward-pane`. Back defaults to Escape; copy also accepts the existing Ctrl/Super
+C variants. Keep-open retains the existing Space, colon, and Ctrl-w forwarding
+behavior. Forward-pane controls the compatibility Ctrl-arrow and fast-pane-key
+bypasses; effective source pane commands remain host-owned even with
+`forward-pane: []`. Plain count digits remain structural.
+
+Replacing Back or Copy removes its inherited Media aliases as well as its native
+compatibility aliases. Explicit Media assignments for that action remain. An
+explicit UI alias overrides local navigation at that key; a host-owned pane or
+prefix family takes precedence, and help omits masked aliases. If an authored
+source command shares a first key with preview navigation, that family returns
+to source from its first key so the complete command reaches the editor.
+
+Queued preview input retains the painted map and document identity. Returning to
+source preserves subsequent queued typing in that same pane and source; input
+for an unrelated replacement preview is discarded. A configured keep-open action
+that enters Insert/Replace or starts a character operand hands subsequent input
+to that editor interaction until it finishes. The preview map is limited to 512
+local/forwarding entries and 512 compatibility aliases. If it exceeds those
+limits, the preview reports this and input returns to source; it never installs
+a partial map.

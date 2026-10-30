@@ -10,6 +10,29 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct Target {
+    pub pane: usize,
+    pub source: usize,
+    pub generation: u64,
+}
+impl Target {
+    pub fn from_frame(frame: &FrameData) -> Option<Self> {
+        if !frame.media_input {
+            return None;
+        }
+        frame
+            .previews
+            .iter()
+            .find(|pane| pane.active)
+            .map(|pane| Self {
+                pane: pane.pane,
+                source: pane.document.source,
+                generation: pane.document.generation,
+            })
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Pane {
     pub pane: usize,
@@ -132,6 +155,7 @@ struct State {
     hidden: bool,
     zoom: f32,
     keys: runyte::keymap::KeySequence,
+    keys_bindings: Option<runyte::keymap::native_preview::Bindings>,
 }
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Navigation {
@@ -143,107 +167,323 @@ enum Navigation {
     Copy,
     Back,
     Prefix,
+    Forward,
+    DismissAndForward,
+    ForwardInput,
+    ForwardFocus,
 }
-fn navigation_command(target: runyte::keymap::BindingTarget, page: f64) -> Option<Navigation> {
-    use Navigation::*;
-    use runyte::{command::EditorCommand as C, keymap::BindingTarget};
-    let BindingTarget::Editor(command) = target else {
-        return None;
-    };
-    Some(match command {
-        C::MediaMoveDown | C::MoveDown | C::ScrollViewDown => Scroll(0.0, 40.0),
-        C::MediaMoveUp | C::MoveUp | C::ScrollViewUp => Scroll(0.0, -40.0),
-        C::MoveLeft | C::MediaPanLeft => Scroll(-40.0, 0.0),
-        C::MoveRight | C::MediaPanRight => Scroll(40.0, 0.0),
-        C::PageDown => Scroll(0.0, page * 0.9),
-        C::PageUp => Scroll(0.0, -page * 0.9),
-        C::HalfPageDown => Scroll(0.0, page * 0.5),
-        C::HalfPageUp => Scroll(0.0, -page * 0.5),
-        C::MoveFileStart => Top,
-        C::MoveFileEnd => Bottom,
-        C::MediaZoomIn => Zoom(1.2),
-        C::MediaZoomOut => Zoom(1.0 / 1.2),
-        C::MediaFit | C::MediaActualSize => ResetZoom,
-        C::MediaCopySelection => Copy,
-        C::MediaBack => Back,
-        _ => return None,
-    })
-}
-// Pane focus belongs to the editor even while a document owns navigation.
-fn editor_pane_key(key: KeyEvent) -> bool {
-    // These directional chords are resolved by the editor's configured keymap,
-    // not by the preview's built-in document-navigation subset.
-    if key.modifiers == KeyModifiers::CONTROL
-        && matches!(
-            key.code,
-            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
-        )
-    {
-        return true;
+fn navigation_action(action: runyte::keymap::native_preview::Action, page: f64) -> Navigation {
+    use runyte::keymap::native_preview::Action as A;
+    match action {
+        A::Down => Navigation::Scroll(0.0, 40.0),
+        A::Up => Navigation::Scroll(0.0, -40.0),
+        A::Left => Navigation::Scroll(-40.0, 0.0),
+        A::Right => Navigation::Scroll(40.0, 0.0),
+        A::PageDown => Navigation::Scroll(0.0, page * 0.9),
+        A::PageUp => Navigation::Scroll(0.0, -page * 0.9),
+        A::HalfPageDown => Navigation::Scroll(0.0, page * 0.5),
+        A::HalfPageUp => Navigation::Scroll(0.0, -page * 0.5),
+        A::Top => Navigation::Top,
+        A::Bottom => Navigation::Bottom,
+        A::ZoomIn => Navigation::Zoom(1.2),
+        A::ZoomOut => Navigation::Zoom(1.0 / 1.2),
+        A::ResetZoom => Navigation::ResetZoom,
+        A::Copy => Navigation::Copy,
+        A::Back => Navigation::Back,
+        A::Forward => Navigation::Forward,
+        A::ForwardInput => Navigation::ForwardInput,
+        A::ForwardFocus => Navigation::ForwardFocus,
+        A::DismissAndForward => Navigation::DismissAndForward,
     }
-    use runyte::{
-        command::{EditorCommand as C, Mode},
-        keymap::{BindingTarget, KeySequence, Lookup},
-    };
-    let Ok(Some(runyte::input::InputEvent::Key(stroke))) =
-        runyte::tui::input::convert_event(Event::Key(key))
-    else {
-        return false;
-    };
-    // The editor decides whether fast pane keys are enabled. Keep the native
-    // surface intact while forwarding them, just as for configured Ctrl-arrows.
-    if runyte::keymap::is_fast_pane_key(stroke) {
-        return true;
-    }
-    matches!(runyte::keymap::default_keymap().lookup(Mode::Normal, &KeySequence::new([stroke])),
-        Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. }
-        if matches!(binding.target, BindingTarget::Editor(C::FocusWindowLeft | C::FocusWindowRight | C::FocusWindowUp | C::FocusWindowDown | C::NextWindow)))
 }
-
-fn preview_navigation(
+fn effective_navigation(
     keys: &mut runyte::keymap::KeySequence,
     key: KeyEvent,
     page: f64,
+    bindings: &runyte::keymap::native_preview::Bindings,
 ) -> Option<Navigation> {
-    use runyte::keymap::{BindingScope, Lookup};
+    use runyte::keymap::native_preview::Lookup;
     let Ok(Some(runyte::input::InputEvent::Key(stroke))) =
         runyte::tui::input::convert_event(Event::Key(key))
     else {
         return None;
     };
+    if let Lookup::Action(
+        action @ (runyte::keymap::native_preview::Action::Forward
+        | runyte::keymap::native_preview::Action::ForwardInput
+        | runyte::keymap::native_preview::Action::ForwardFocus),
+    ) = bindings.lookup(&runyte::keymap::KeySequence::from(stroke))
+    {
+        keys.clear();
+        return Some(navigation_action(action, page));
+    }
     keys.push(stroke);
-    let found = match runyte::keymap::default_keymap().lookup_in(
-        runyte::command::Mode::Normal,
-        BindingScope::Media,
-        keys,
-    ) {
-        Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
-            navigation_command(binding.target, page)
-        }
-        Lookup::Prefix(bindings)
-            if bindings
-                .iter()
-                .any(|b| navigation_command(b.target, page).is_some()) =>
-        {
-            Some(Navigation::Prefix)
-        }
-        _ => None,
+    let found = match bindings.lookup(keys) {
+        Lookup::Action(action) => Some(navigation_action(action, page)),
+        Lookup::Prefix => Some(Navigation::Prefix),
+        Lookup::None => None,
     };
     if found != Some(Navigation::Prefix) {
         keys.clear();
     }
     found
 }
+#[cfg(test)]
+fn factory_bindings() -> runyte::keymap::native_preview::Bindings {
+    runyte::keymap::default_keymap().native_preview(
+        runyte::command::Mode::Normal,
+        runyte::keymap::BindingScope::Global,
+    )
+}
+#[cfg(test)]
+fn preview_navigation(
+    keys: &mut runyte::keymap::KeySequence,
+    key: KeyEvent,
+    page: f64,
+) -> Option<Navigation> {
+    let value = effective_navigation(keys, key, page, &factory_bindings());
+    // This historical unit helper tests only the local navigation subset.
+    value.filter(|value| {
+        !matches!(
+            value,
+            Navigation::Forward
+                | Navigation::ForwardInput
+                | Navigation::ForwardFocus
+                | Navigation::DismissAndForward
+        )
+    })
+}
+#[cfg(test)]
 fn navigation_hints(keys: &runyte::keymap::KeySequence) -> String {
-    use runyte::keymap::BindingScope;
-    runyte::keymap::default_keymap()
-        .bindings_for_scope(runyte::command::Mode::Normal, BindingScope::Media)
-        .filter(|b| b.sequence.starts_with(keys) && navigation_command(b.target, 1.0).is_some())
-        .map(|b| format!("{}: {}", b.sequence, b.target.description()))
-        .collect::<Vec<_>>()
-        .join(" · ")
+    factory_bindings().hints(keys)
+}
+#[cfg(test)]
+fn editor_pane_key(key: KeyEvent) -> bool {
+    let Ok(Some(runyte::input::InputEvent::Key(stroke))) =
+        runyte::tui::input::convert_event(Event::Key(key))
+    else {
+        return false;
+    };
+    matches!(
+        factory_bindings().lookup(&runyte::keymap::KeySequence::from(stroke)),
+        runyte::keymap::native_preview::Lookup::Action(
+            runyte::keymap::native_preview::Action::Forward
+                | runyte::keymap::native_preview::Action::ForwardFocus
+        )
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InputRoute {
+    Local,
+    Host,
+    Discard,
+}
+fn input_route(
+    captured: Option<Target>,
+    current: Option<Target>,
+    source: Option<(usize, usize)>,
+    eligible: bool,
+    handoff: Option<Target>,
+) -> InputRoute {
+    let Some(captured) = captured else {
+        return InputRoute::Host;
+    };
+    if source != Some((captured.pane, captured.source)) {
+        return InputRoute::Discard;
+    }
+    if handoff == Some(captured) && current.is_none_or(|current| current == captured) {
+        return InputRoute::Host;
+    }
+    if current != Some(captured) {
+        return InputRoute::Discard;
+    }
+    if eligible {
+        InputRoute::Local
+    } else {
+        InputRoute::Host
+    }
+}
+fn forwards_structural_input(
+    forwarded: &mut Option<Target>,
+    target: Option<Target>,
+    structural: bool,
+) -> bool {
+    if target.is_some() && *forwarded == target {
+        if structural {
+            return true;
+        }
+        *forwarded = None;
+    }
+    false
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Source {
+    Buffer(usize),
+    Terminal(u64),
+}
+fn focus_source(
+    buffer: Option<(usize, usize)>,
+    terminal: Option<(usize, u64)>,
+) -> Option<(usize, Source)> {
+    terminal
+        .map(|(pane, id)| (pane, Source::Terminal(id)))
+        .or_else(|| buffer.map(|(pane, id)| (pane, Source::Buffer(id))))
+}
+
+#[derive(Default)]
+struct InputOwnership {
+    handoff: Option<Target>,
+    forwarded: Option<Target>,
+    focus: Option<FocusHandoff>,
+}
+struct FocusHandoff {
+    origin: Target,
+    serial: Option<u64>,
+    destination: Option<(usize, Source)>,
+}
+impl InputOwnership {
+    #[cfg(test)]
+    fn route(
+        &mut self,
+        captured: Option<Target>,
+        current: Option<Target>,
+        source: Option<(usize, usize)>,
+        eligible: bool,
+        structural: bool,
+    ) -> InputRoute {
+        self.route_with_terminal(captured, current, source, None, (eligible, structural))
+    }
+    fn route_with_terminal(
+        &mut self,
+        captured: Option<Target>,
+        current: Option<Target>,
+        source: Option<(usize, usize)>,
+        terminal: Option<(usize, u64)>,
+        (eligible, structural): (bool, bool),
+    ) -> InputRoute {
+        if let Some(focus) = &self.focus {
+            if captured.is_some_and(|captured| captured != focus.origin) {
+                self.focus = None;
+            } else if let Some(destination) = focus.destination {
+                if focus_source(source, terminal) == Some(destination) {
+                    // None may come from an older command overlay or plain
+                    // pane painted before the focus command was processed.
+                    // It does not prove the destination has been painted.
+                    if captured == Some(focus.origin) {
+                        return InputRoute::Host;
+                    }
+                } else {
+                    // Closing the destination can return to the original preview.
+                    // Retire the exception, then apply ordinary target validation.
+                    self.focus = None;
+                }
+            }
+        }
+        let route = input_route(captured, current, source, eligible, self.handoff);
+        if route == InputRoute::Local
+            && forwards_structural_input(&mut self.forwarded, captured, structural)
+        {
+            InputRoute::Host
+        } else {
+            route
+        }
+    }
+    fn forward(&mut self, target: Option<Target>, authored: bool, structural: bool) {
+        if authored || !structural {
+            self.forwarded = target;
+        }
+    }
+    fn back(&mut self, target: Option<Target>) {
+        self.handoff = target;
+    }
+    fn forward_focus(&mut self, origin: Target) {
+        self.focus = Some(FocusHandoff {
+            origin,
+            serial: None,
+            destination: None,
+        });
+    }
+    fn observe_host_key(
+        &mut self,
+        key: KeyEvent,
+        captured: Option<Target>,
+        current: Option<Target>,
+        eligible: bool,
+        bindings: &runyte::keymap::native_preview::Bindings,
+    ) {
+        use runyte::keymap::native_preview::{Action, Lookup};
+        if captured.is_none()
+            && eligible
+            && let Some(origin) = current
+            && let Ok(Some(runyte::input::InputEvent::Key(stroke))) =
+                runyte::tui::input::convert_event(Event::Key(key))
+            && bindings.lookup(&runyte::keymap::KeySequence::from(stroke))
+                == Lookup::Action(Action::ForwardFocus)
+        {
+            // Input captured from an older overlay still goes to the host.
+            // Record the current host-owned focus action so later input from
+            // the intervening preview paint can follow its acknowledgement.
+            self.forward_focus(origin);
+        }
+    }
+}
+impl Views {
+    pub(super) fn focus_forwarded_serial(&mut self, serial: u64) {
+        if let Some(focus) = &mut self.ownership.focus
+            && focus.serial.is_none()
+        {
+            focus.serial = Some(serial);
+        }
+    }
+    pub(super) fn acknowledge_focus(
+        &mut self,
+        attachment: u64,
+        serial: u64,
+        source: Option<(usize, usize)>,
+        terminal: Option<(usize, u64)>,
+    ) {
+        if self.attachment != attachment {
+            self.ownership.focus = None;
+            return;
+        }
+        self.ownership
+            .acknowledge_focus_source(serial, focus_source(source, terminal));
+    }
+}
+impl InputOwnership {
+    #[cfg(test)]
+    fn acknowledge_focus(&mut self, serial: u64, source: Option<(usize, usize)>) {
+        self.acknowledge_focus_source(serial, focus_source(source, None));
+    }
+    fn acknowledge_focus_source(&mut self, serial: u64, source: Option<(usize, Source)>) {
+        if let Some(focus) = &mut self.focus
+            && focus.destination.is_none()
+            && focus.serial.is_some_and(|sent| serial >= sent)
+        {
+            if let Some(destination) = source
+                && destination.0 != focus.origin.pane
+            {
+                focus.destination = Some(destination);
+            } else {
+                self.focus = None;
+            }
+        }
+    }
 }
 impl State {
+    fn navigation(
+        &mut self,
+        key: KeyEvent,
+        page: f64,
+        bindings: &runyte::keymap::native_preview::Bindings,
+    ) -> Option<Navigation> {
+        if self.keys_bindings.as_ref() != Some(bindings) {
+            self.keys.clear();
+            self.keys_bindings = Some(bindings.clone());
+        }
+        effective_navigation(&mut self.keys, key, page, bindings)
+    }
     fn clamp_scroll(&mut self) {
         if let Some(Ok(output)) = &self.output {
             for (offset, maximum) in self.scroll.iter_mut().zip(output.reply.max_scroll) {
@@ -268,6 +508,7 @@ pub(super) struct Views {
     dismissed: HashMap<usize, u64>,
     worker: Option<(mpsc::SyncSender<Job>, mpsc::Receiver<Done>)>,
     attachment: u64,
+    ownership: InputOwnership,
 }
 /// The palette the layer around a page should follow. Authored HTML and SVG
 /// keep their own appearance and leave unpainted pixels transparent, so they
@@ -431,9 +672,7 @@ fn render_request(
                 .map(|c| if c.is_control() { ' ' } else { c })
                 .collect();
             *helper = None;
-            return Err(format!(
-                "{error}; helper {status:?}: {diagnostic}. Escape returns to source"
-            ));
+            return Err(format!("{error}; helper {status:?}: {diagnostic}"));
         }
     };
     // GPUI's RenderImage stores BGRA, while Vello CPU supplies premultiplied RGBA.
@@ -458,6 +697,9 @@ enum PointerResult {
 }
 
 impl Views {
+    pub(super) fn pointer_visible(&self, pane: usize) -> bool {
+        self.states.get(&pane).is_some_and(|state| !state.hidden)
+    }
     pub(super) fn cancel_drag(&mut self) {
         for state in self.states.values_mut() {
             state.dragging = false;
@@ -625,6 +867,13 @@ impl NativeView {
         &mut self,
         window: &mut Window,
     ) -> Option<std::rc::Rc<FrameData>> {
+        let attachment = self.frame.as_ref()?.attachment;
+        if self.previews.attachment != attachment {
+            self.previews = Views {
+                attachment,
+                ..Default::default()
+            };
+        }
         if self.frame.as_ref()?.previews.is_empty() {
             self.previews.states.clear();
             self.previews.worker = None;
@@ -651,6 +900,7 @@ impl NativeView {
                     cancel: Some(Arc::new(AtomicBool::new(false))),
                     zoom: 1.0,
                     keys: Default::default(),
+                    keys_bindings: None,
                     request: None,
                     output: None,
                     cache: None,
@@ -751,6 +1001,14 @@ impl NativeView {
                 .h(px(area.height as f32 * self.metrics.height))
                 .overflow_hidden()
                 .bg(rgb(colours.ground));
+            let back = frame
+                .preview_bindings
+                .label(runyte::keymap::native_preview::Action::Back);
+            let back_hint = if back == "unbound" {
+                String::new()
+            } else {
+                format!(" {back} returns to source")
+            };
             layer = match displayed {
                 Some(Ok(output)) => {
                     images.push(output.image.clone());
@@ -772,13 +1030,13 @@ impl NativeView {
                     div()
                         .p_4()
                         .text_color(rgb(colours.error))
-                        .child(error.clone()),
+                        .child(format!("{error}{back_hint}")),
                 ),
                 None => layer.child(
                     div()
                         .p_4()
                         .text_color(rgb(colours.text))
-                        .child("Preparing document preview… Escape returns to source"),
+                        .child(format!("Preparing document preview…{back_hint}")),
                 ),
             };
             if state.selection.is_some()
@@ -796,6 +1054,18 @@ impl NativeView {
                         .child(format!("Link: {link} (navigation disabled)")),
                 );
             }
+            if frame.preview_bindings.unavailable {
+                layer = layer.child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .right_0()
+                        .bg(rgb(colours.ground))
+                        .text_color(rgb(colours.link))
+                        .child("Preview keymap exceeds its limit; input returns to source"),
+                );
+            }
             if !state.keys.is_empty() {
                 layer = layer.child(
                     div()
@@ -805,7 +1075,13 @@ impl NativeView {
                         .right_0()
                         .bg(rgb(colours.ground))
                         .text_color(rgb(colours.link))
-                        .child(navigation_hints(&state.keys)),
+                        .child(
+                            state
+                                .keys_bindings
+                                .as_ref()
+                                .unwrap_or(&frame.preview_bindings)
+                                .hints(&state.keys),
+                        ),
                 );
             }
             root = root.child(layer);
@@ -856,6 +1132,7 @@ impl NativeView {
     pub(super) fn preview_scroll(
         &mut self,
         event: &ScrollWheelEvent,
+        input: &NativeInput,
         cx: &mut Context<Self>,
     ) -> bool {
         let Some(pane) = self.preview_at(event.position) else {
@@ -864,9 +1141,23 @@ impl NativeView {
         if !self.frame.as_ref().is_some_and(|f| f.media_input) {
             return true;
         }
+        use runyte::keymap::pointer_actions::{Action, Trigger};
+        let Some(pointer) = super::pointer::event(input) else {
+            return true;
+        };
+        let Some(action) = [Action::PreviewHorizontal, Action::PreviewScroll]
+            .into_iter()
+            .find(|action| {
+                input
+                    .pointer_bindings
+                    .matches(*action, Trigger::Wheel, pointer.modifiers)
+            })
+        else {
+            return true;
+        };
         let delta = event.delta.pixel_delta(px(self.metrics.height));
         let state = self.previews.states.get_mut(&pane.pane).unwrap();
-        if event.modifiers.shift {
+        if action == Action::PreviewHorizontal {
             state.scroll[0] =
                 (state.scroll[0] - f64::from(f32::from(delta.y) / state.zoom)).max(0.0);
         } else {
@@ -880,28 +1171,78 @@ impl NativeView {
         cx.notify();
         true
     }
-    pub(super) fn preview_key(&mut self, key: KeyEvent, cx: &mut Context<Self>) -> bool {
+    pub(super) fn preview_key(
+        &mut self,
+        key: KeyEvent,
+        input: &NativeInput,
+        window_bindings: &runyte::keymap::native_window::Bindings,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(frame) = &self.frame else {
             return false;
         };
-        if !frame.media_input {
-            return false;
+        if frame.attachment != input.attachment {
+            return true;
         }
-        let Some(pane) = frame
+        let current = frame
             .previews
             .iter()
-            .find(|p| p.active && self.previews.states.get(&p.pane).is_some_and(|s| !s.hidden))
-        else {
-            return false;
+            .find(|pane| pane.active)
+            .map(|pane| Target {
+                pane: pane.pane,
+                source: pane.document.source,
+                generation: pane.document.generation,
+            });
+        match self.previews.ownership.route_with_terminal(
+            input.preview_target,
+            current,
+            frame.preview_source,
+            frame.preview_terminal,
+            (frame.media_input, frame.preview_structural),
+        ) {
+            InputRoute::Host => {
+                self.previews.ownership.observe_host_key(
+                    key,
+                    input.preview_target,
+                    current,
+                    frame.media_input,
+                    &frame.preview_bindings,
+                );
+                return false;
+            }
+            InputRoute::Discard => return true,
+            InputRoute::Local => (),
+        }
+        let Some(pane) = frame.previews.iter().find(|pane| pane.active) else {
+            return true;
         };
-        let state = self.previews.states.get_mut(&pane.pane).unwrap();
-        if editor_pane_key(key) {
-            state.keys.clear();
+        let Some(state) = self
+            .previews
+            .states
+            .get_mut(&pane.pane)
+            .filter(|state| !state.hidden && state.generation == pane.document.generation)
+        else {
+            return true;
+        };
+        let page = f64::from(pane.body.height as f32 * self.metrics.height / state.zoom);
+        let navigation = state.navigation(key, page, &input.preview_bindings);
+        if matches!(
+            navigation,
+            Some(Navigation::Forward | Navigation::ForwardInput | Navigation::ForwardFocus)
+        ) {
+            if navigation == Some(Navigation::ForwardFocus)
+                && let Some(origin) = input.preview_target
+            {
+                self.previews.ownership.forward_focus(origin);
+            }
+            self.previews.ownership.forward(
+                input.preview_target,
+                navigation == Some(Navigation::ForwardInput),
+                frame.preview_structural,
+            );
             cx.notify();
             return false;
         }
-        let page = f64::from(pane.body.height as f32 * self.metrics.height / state.zoom);
-        let navigation = preview_navigation(&mut state.keys, key, page);
         match navigation {
             Some(Navigation::Scroll(x, y)) => {
                 state.scroll[0] = (state.scroll[0] + x).max(0.0);
@@ -932,12 +1273,27 @@ impl NativeView {
             Some(Navigation::Prefix) => (),
             _ => (),
         }
-        if navigation.is_some() && navigation != Some(Navigation::Back) {
+        if navigation.is_some()
+            && !matches!(
+                navigation,
+                Some(Navigation::Back | Navigation::DismissAndForward)
+            )
+        {
             state.clamp_scroll();
             cx.notify();
             return true;
         }
-        if key.code == KeyCode::Esc || navigation == Some(Navigation::Back) {
+        let fallback = match runyte::tui::input::convert_event(Event::Key(key)) {
+            Ok(Some(runyte::input::InputEvent::Key(stroke))) => {
+                input.preview_bindings.fallback_action(stroke)
+            }
+            _ => None,
+        };
+        if navigation == Some(Navigation::Back)
+            || navigation.is_none()
+                && fallback == Some(runyte::keymap::native_preview::Action::Back)
+        {
+            self.previews.ownership.back(input.preview_target);
             self.bridge
                 .dismiss_preview(frame.attachment, pane.pane, pane.document.generation);
             state.cancel();
@@ -960,10 +1316,7 @@ impl NativeView {
             cx.notify();
             return true;
         }
-        if matches!(key.code, KeyCode::Char('c' | 'C'))
-            && (key.modifiers.contains(KeyModifiers::CONTROL)
-                || key.modifiers.contains(KeyModifiers::SUPER))
-        {
+        if navigation.is_none() && fallback == Some(runyte::keymap::native_preview::Action::Copy) {
             if let Some(Ok(output)) = &state.output {
                 cx.write_to_clipboard(ClipboardItem::new_string(output.reply.selected.clone()));
             }
@@ -971,16 +1324,31 @@ impl NativeView {
         }
         if let Ok(Some(runyte::input::InputEvent::Key(stroke))) =
             runyte::tui::input::convert_event(Event::Key(key))
-            && runyte::keymap::native_window::lookup(stroke).is_some_and(|b| {
-                matches!(b.action, runyte::keymap::native_window::Action::FontSize(_))
+            && window_bindings.lookup(stroke).is_some_and(|action| {
+                matches!(action, runyte::keymap::native_window::Action::FontSize(_))
             })
         {
             return false;
         }
-        // Editor leaders retain registry dispatch. Any other key returns to the source first.
-        if !matches!(key.code, KeyCode::Char(':' | ' '))
-            && !(key.code == KeyCode::Char('w') && key.modifiers.contains(KeyModifiers::CONTROL))
+        if matches!(
+            fallback,
+            Some(
+                runyte::keymap::native_preview::Action::Forward
+                    | runyte::keymap::native_preview::Action::ForwardInput
+            )
+        ) && navigation != Some(Navigation::DismissAndForward)
         {
+            self.previews.ownership.forward(
+                input.preview_target,
+                fallback == Some(runyte::keymap::native_preview::Action::ForwardInput),
+                frame.preview_structural,
+            );
+            return false;
+        }
+        if navigation == Some(Navigation::DismissAndForward)
+            || fallback != Some(runyte::keymap::native_preview::Action::Forward)
+        {
+            self.previews.ownership.back(input.preview_target);
             self.bridge
                 .dismiss_preview(frame.attachment, pane.pane, pane.document.generation);
             state.cancel();

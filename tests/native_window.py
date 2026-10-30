@@ -149,6 +149,7 @@ existing=set(children(x.XDefaultRootWindow(d)))
 env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None)
 # A harness started from a Runyte terminal must not hand its parent context to the fixture.
 for inherited in [key for key in env if key.startswith('RUNYTE_') and key != 'RUNYTE_NATIVE_PAINT_TIMING']:env.pop(inherited)
+env['RUNYTE_INPUT_TRACE']=str(storage/'input.log')
 env['XDG_CONFIG_HOME']=str(storage/'config');env['XDG_RUNTIME_DIR']=str(storage/'runtime');env['SHELL']='/bin/sh';env['XDG_CACHE_HOME']=str(storage/'cache');env['RUNYTE_ALL_HOSTS_DIR']=str(storage/'all-hosts')
 if args.paint_styles:
     # Leave the cursor in a blank cell beside an italic icon, without a shell prompt.
@@ -173,7 +174,11 @@ if not args.mux:launch.append(str(root/'notes.txt'))
 p=subprocess.Popen(launch,cwd=root,env=env,stdout=log,stderr=log)
 try:
     win=None
-    for _ in range(100):
+    # Software Vulkan initialization on a cold CI runner can outlast ten
+    # seconds. Use the same bounded readiness budget as window mapping below.
+    window_started = time.monotonic()
+    window_deadline = window_started + 30
+    while time.monotonic() < window_deadline:
         if p.poll() is not None:raise RuntimeError('editor exited '+str(p.returncode)+' '+(root/'window.log').read_text()[-3000:])
         for w in children(x.XDefaultRootWindow(d)):
             if w not in existing and name(w)==b'Runyte':
@@ -182,7 +187,7 @@ try:
                 if ww.value>100 and hh.value>100:win=w;break
         if win:break
         time.sleep(.1)
-    assert win,'no window found'
+    assert win, f'no window found after {time.monotonic() - window_started:.1f}s'
     for attempt in range(300):
         if p.poll() is not None:
             raise RuntimeError((root/'window.log').read_text())
@@ -339,8 +344,12 @@ try:
         # as preview navigation or dismissing the retained capture.
         command('hsplit plain.txt',burst=True);key('Up',ctrl=True);time.sleep(.6)
         wait_pixel(350,200,0x0099aa,'persistent command burst dismissed preview')
-        key('Down',ctrl=True);command('quit');time.sleep(.5)
+        key('Down',ctrl=True);command('quit')
+        # q belongs to the restored preview, not the command prompt or plain
+        # pane that may still be painted while the host finishes closing it.
+        wait_pixel(600,400,0x0099aa,'closing the plain pane did not restore the preview')
         key('q')
+        wait_pixel(600,400,source_background,'source preview did not dismiss before workspace attach')
         command('session-attach '+str(destination));time.sleep(1)
         command('open other.html');command('preview');time.sleep(1)
         wait_pixel(600,400,0xee00ee,'destination workspace did not preview')
@@ -922,8 +931,9 @@ except Exception:
         try:
             with diagnostic.open('rb') as stream:
                 stream.seek(0, os.SEEK_END)
-                stream.seek(max(0, stream.tell() - 32768))
-                tail = stream.read(32768).decode(errors='replace')
+                limit = 131072 if diagnostic.name == 'input.log' else 32768
+                stream.seek(max(0, stream.tell() - limit))
+                tail = stream.read(limit).decode(errors='replace')
             print('Fixture log:', diagnostic.relative_to(storage), '\n' + tail, flush=True)
         except OSError as error:
             print('Could not read fixture log:', error, flush=True)

@@ -100,8 +100,14 @@ pub struct Store {
     db: Connection,
     _directory: Directory,
 }
+mod bootstrap;
+
 impl Store {
     pub fn open(root: &Path) -> Result<Self> {
+        Self::open_with_private_sidecars(root, cfg!(windows))
+    }
+
+    fn open_with_private_sidecars(root: &Path, private_sidecars: bool) -> Result<Self> {
         ensure!(root.is_absolute(), "channel storage root must be absolute");
         let parent = root
             .parent()
@@ -118,6 +124,11 @@ impl Store {
             parent,
             Path::new(root.file_name().context("invalid storage root")?),
         )?;
+        // Declare the admission guard before the connection so failures close
+        // SQLite before releasing the bootstrap lock.
+        let _admission = private_sidecars
+            .then(|| bootstrap::acquire(&directory))
+            .transpose()?;
         // Precreate the database privately. Admit existing SQLite sidecars too;
         // no file may be a symlink, hard link, special file or foreign-owned file.
         for name in [
@@ -165,6 +176,15 @@ impl Store {
                 Err(e) => return Err(e.into()),
             }
         }
+        if private_sidecars {
+            // SQLite may open the rollback journal while acquiring its first
+            // write transaction. Supply private ownership before it opens, and
+            // re-admit it after BEGIN in case empty-database recovery removed it.
+            bootstrap::ensure_file(&directory, "agent-channels.sqlite3-journal")?;
+        }
+        if private_sidecars && directory.open_read(OsStr::new(FILE))?.metadata()?.len() > 0 {
+            bootstrap::sidecars(&directory)?;
+        }
         directory.sync()?;
         let mut db = Connection::open_with_flags(
             root.join(FILE),
@@ -173,9 +193,32 @@ impl Store {
                 | OpenFlags::SQLITE_OPEN_NOFOLLOW,
         )?;
         db.busy_timeout(Duration::from_millis(100))?;
+        if private_sidecars {
+            bootstrap::persist_wal(&db)?;
+            let mode: String = db.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
+            if mode != "wal" {
+                db.pragma_update(None, "journal_mode", "TRUNCATE")?;
+            }
+        }
         db.pragma_update(None, "foreign_keys", true)?;
         db.pragma_update(None, "synchronous", "FULL")?;
-        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if private_sidecars {
+            // Read-only recovery may delete a nonempty abandoned journal next
+            // to an empty database. Restore private ownership before BEGIN can
+            // write the initial database page and open its journal.
+            let _: i64 = db
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .context("recover channel database before initialization")?;
+            bootstrap::ensure_file(&directory, "agent-channels.sqlite3-journal")?;
+        }
+        let tx = db
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .context("begin channel database initialization")?;
+        if private_sidecars {
+            // BEGIN has completed recovery, including removal of a journal
+            // belonging to an empty database. Create it before the first write.
+            bootstrap::ensure_file(&directory, "agent-channels.sqlite3-journal")?;
+        }
         let version: i64 = tx.pragma_query_value(None, "user_version", |r| r.get(0))?;
         let application: i64 = tx.pragma_query_value(None, "application_id", |r| r.get(0))?;
         ensure!(
@@ -193,6 +236,9 @@ impl Store {
             tx.pragma_update(None, "application_id", APPLICATION)?;
         }
         tx.commit()?;
+        if private_sidecars {
+            bootstrap::sidecars(&directory)?;
+        }
         db.pragma_update(None, "journal_mode", "WAL")?;
         db.pragma_update(None, "synchronous", "FULL")?;
         // A finite ceiling rejects writes rather than evicting history. This

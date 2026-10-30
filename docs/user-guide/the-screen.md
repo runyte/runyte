@@ -324,6 +324,11 @@ Mouse support needs a terminal with mouse reporting and `editor.mouse: true`
 | Right-click a selection | Copy all selections to the system clipboard, like `Space c y` |
 | Double-click a directory tree row | Toggle the directory or open the file, like Enter |
 
+Pane move/extend gestures are configurable through
+[`keys.pointer`](custom-key-bindings.md#binding-actions). Defaults above are
+unchanged. For terminals that reserve Shift for native selection, assign
+`pane-extend: [Ctrl-Alt-LeftDrag]` under `keys.pointer`.
+
 - **Autoscroll** follows visual rows, including soft wrapping and collapsed
   folds. Move back inside the pane or release the button to stop.
 - **Right-click copy** leaves the selections alone and reports

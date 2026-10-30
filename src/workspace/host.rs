@@ -213,6 +213,8 @@ struct PreparedFrame {
     geometry: FrameGeometry,
     id: FrameId,
     pointer_compatible_since: FrameId,
+    gesture_compatible_since: FrameId,
+    pointer_bindings: crate::keymap::pointer_actions::Bindings,
     view: PreparedView,
 }
 
@@ -1371,22 +1373,8 @@ impl WorkspaceHost {
                     }
                 })
                 .collect::<Vec<_>>();
-            let arrows_are_free = key_hints.scrolls_with_arrow_in(
-                crate::input::KeyCode::Up,
-                mode,
-                self.app.key_binding_scope(),
-                self.app.keymap(),
-            ) && key_hints.scrolls_with_arrow_in(
-                crate::input::KeyCode::Down,
-                mode,
-                self.app.key_binding_scope(),
-                self.app.keymap(),
-            );
-            let scroll_keys = if arrows_are_free {
-                "Ctrl-n/p ↑/↓"
-            } else {
-                "Ctrl-n/p"
-            };
+            let scroll_keys =
+                key_hints.scroll_key_label(mode, self.app.key_binding_scope(), self.app.keymap());
             let sequence = if key_hints.is_pending() {
                 format!("{} …", key_hints.display_pending())
             } else {
@@ -1400,7 +1388,10 @@ impl WorkspaceHost {
                 legend: Vec::new(),
                 actions: vec![
                     crate::snapshot::OverlayAction::new(scroll_keys, "scroll"),
-                    crate::snapshot::OverlayAction::new("Esc", "dismiss"),
+                    crate::snapshot::OverlayAction::new(
+                        key_hints.cancel_key_label(mode, self.app.keymap()),
+                        "dismiss",
+                    ),
                 ],
                 title: format!("Keys: {sequence}"),
                 query: String::new(),
@@ -1424,10 +1415,18 @@ impl WorkspaceHost {
             .as_ref()
             .filter(|prepared| prepared.view == view)
             .map_or(id, |prepared| prepared.pointer_compatible_since);
+        let pointer_bindings = self.app.keymap().pointer().clone();
+        let gesture_compatible_since = self
+            .prepared
+            .as_ref()
+            .filter(|prepared| prepared.pointer_bindings == pointer_bindings)
+            .map_or(id, |prepared| prepared.gesture_compatible_since);
         self.prepared = Some(PreparedFrame {
             geometry,
             id,
             pointer_compatible_since,
+            gesture_compatible_since,
+            pointer_bindings,
             view,
         });
         if self.app.plugins.deferred_presentation {
@@ -1586,33 +1585,53 @@ impl WorkspaceHost {
                 frame,
                 repetitions,
             } => {
+                if matches!(event.kind, crate::input::PointerEventKind::Up(_))
+                    && self.app.consume_cancelled_pane_pointer(event)
+                {
+                    return Ok(HostInputOutcome::AppliedWithoutVisualChange);
+                }
                 let pane_release = matches!(event.kind, crate::input::PointerEventKind::Up(_))
                     && self.app.pointer_pane_drag_active();
                 // Selection/resize release needs no coordinates. A pane drop
                 // does, and must publish a frame that removes its outline.
                 if matches!(event.kind, crate::input::PointerEventKind::Up(_))
                     && !pane_release
-                    && self.app.cancel_pointer_drag()
+                    && self.app.release_pointer_drag(event)
                 {
                     return Ok(HostInputOutcome::AppliedWithoutVisualChange);
                 }
                 let Some(prepared) = self.prepared.as_ref() else {
                     if pane_release {
-                        self.app.cancel_pointer_drag();
+                        self.app.cancel_pane_drop(event);
                         return Ok(HostInputOutcome::Applied);
                     }
                     return Ok(HostInputOutcome::IgnoredStaleFrame);
                 };
+                if let crate::input::PointerEventKind::Down(button) = event.kind
+                    && (frame < prepared.gesture_compatible_since
+                        || &prepared.pointer_bindings != self.app.keymap().pointer())
+                {
+                    self.app.discard_pointer_gesture(button);
+                    return Ok(HostInputOutcome::IgnoredStaleFrame);
+                }
+                if matches!(
+                    event.kind,
+                    crate::input::PointerEventKind::ScrollUp
+                        | crate::input::PointerEventKind::ScrollDown
+                        | crate::input::PointerEventKind::ScrollLeft
+                        | crate::input::PointerEventKind::ScrollRight
+                ) && (frame < prepared.gesture_compatible_since
+                    || &prepared.pointer_bindings != self.app.keymap().pointer())
+                {
+                    return Ok(HostInputOutcome::IgnoredStaleFrame);
+                }
                 let continued_selection = self.app.pointer_selection_drag_active()
-                    && matches!(
-                        event.kind,
-                        crate::input::PointerEventKind::Drag(crate::input::PointerButton::Left)
-                    );
+                    && self.app.pointer_drag_matches(event);
                 if (frame < prepared.pointer_compatible_since && !continued_selection)
                     || frame > prepared.id
                 {
                     if pane_release {
-                        self.app.cancel_pointer_drag();
+                        self.app.cancel_pane_drop(event);
                         return Ok(HostInputOutcome::Applied);
                     }
                     return Ok(HostInputOutcome::IgnoredStaleFrame);
@@ -2501,6 +2520,213 @@ mod tests {
             HostInputOutcome::IgnoredStaleFrame
         );
         assert_eq!(&host.app().active().selection, &after_compatible_input);
+    }
+
+    #[test]
+    fn pointer_wheel_rejects_a_captured_map_replaced_without_geometry_changes() {
+        let mut host = host();
+        host.app_mut().buffers[0].apply(&Transaction::insert(0, "abcdef\n".repeat(100)));
+        let first = host.prepare_frame(geometry());
+        let pane = host.app().active_pane;
+        let source = first.editor.pane(pane).unwrap().area;
+        let event = PointerEvent {
+            kind: PointerEventKind::ScrollUp,
+            column: source.x + 4,
+            row: source.y + 3,
+            modifiers: Modifiers::NONE,
+        };
+        let section =
+            serde_yaml::from_str("pointer: {scroll-up: [WheelDown], scroll-down: [WheelUp]}")
+                .unwrap();
+        let configured =
+            crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+        assert!(configured.errors.is_empty());
+        host.app_mut().set_keymap(configured.keymap);
+        for prepared in [false, true] {
+            if prepared {
+                host.prepare_frame(geometry());
+            }
+            assert_eq!(
+                host.execute(HostCommand::Pointer {
+                    event,
+                    frame: first.id,
+                    repetitions: 1
+                })
+                .unwrap(),
+                HostInputOutcome::IgnoredStaleFrame
+            );
+            assert_eq!(host.app().active().scroll_row, 0);
+        }
+        let frame = host.prepare_frame(geometry()).id;
+        host.execute(HostCommand::Pointer {
+            event,
+            frame,
+            repetitions: 1,
+        })
+        .unwrap();
+        assert!(host.app().active().scroll_row > 0);
+    }
+
+    #[test]
+    fn nonleft_cancelled_and_stale_press_tails_remain_owned_at_host_boundary() {
+        for (stale, release_case) in [(false, 0), (true, 0), (false, 1), (false, 2)] {
+            let mut host = host();
+            host.app_mut()
+                .execute(
+                    CommandInvocation::editor(
+                        EditorCommand::SplitVertical,
+                        CommandExecutionContext::default(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let section = serde_yaml::from_str("pointer: {pane-move: [RightDrag]}").unwrap();
+            let configured =
+                crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+            assert!(configured.errors.is_empty());
+            host.app_mut().set_keymap(configured.keymap);
+            let pane = host.app().active_pane;
+            let terminal = host.app.terminals.insert_test_session(80, 24);
+            host.app.panes.get_mut(&pane).unwrap().terminal = Some(terminal);
+            host.app
+                .apply_terminal_output(crate::terminal::TerminalOutput::Bytes {
+                    id: terminal,
+                    bytes: b"\x1b[?1003h\x1b[?1006h".to_vec(),
+                });
+            let first = host.prepare_frame(geometry());
+            let source = first.editor.pane(pane).unwrap().area;
+            let event = PointerEvent {
+                kind: PointerEventKind::Down(PointerButton::Right),
+                column: source.x + source.width / 2,
+                row: source.y + source.height / 2,
+                modifiers: Modifiers::NONE,
+            };
+            if stale {
+                host.app_mut()
+                    .set_keymap(std::sync::Arc::new(crate::keymap::default_keymap().clone()));
+                host.prepare_frame(geometry());
+            }
+            let generation = host.app.terminals.get(terminal).unwrap().input_generation();
+            host.execute(HostCommand::Pointer {
+                event,
+                frame: first.id,
+                repetitions: 1,
+            })
+            .unwrap();
+            for kind in [
+                PointerEventKind::Up(PointerButton::Left),
+                PointerEventKind::Up(PointerButton::Middle),
+                PointerEventKind::Drag(PointerButton::Right),
+                PointerEventKind::Up(PointerButton::Right),
+            ] {
+                let mut frame = host.prepare_frame(geometry()).id;
+                if kind == PointerEventKind::Up(PointerButton::Left) {
+                    if release_case == 1 {
+                        frame = FrameId::from_raw(frame.get() + 1);
+                    }
+                    if release_case == 2 {
+                        host.prepared = None;
+                    }
+                }
+                host.execute(HostCommand::Pointer {
+                    event: PointerEvent { kind, ..event },
+                    frame,
+                    repetitions: 1,
+                })
+                .unwrap();
+            }
+            assert_eq!(
+                host.app.terminals.get(terminal).unwrap().input_generation(),
+                generation,
+                "stale={stale}, release_case={release_case}"
+            );
+            assert!(!host.app().pointer_pane_drag_active());
+        }
+    }
+
+    #[test]
+    fn pointer_configuration_reload_rejects_old_presses_but_preserves_captured_drags() {
+        for press_before_reload in [false, true] {
+            let mut host = host();
+            host.app_mut()
+                .execute(
+                    CommandInvocation::editor(
+                        EditorCommand::SplitVertical,
+                        CommandExecutionContext::default(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let pane = host.app().active_pane;
+            let first = host.prepare_frame(geometry());
+            let source = first.editor.pane(pane).unwrap().area;
+            let press = PointerEvent {
+                kind: PointerEventKind::Down(PointerButton::Left),
+                column: source.x + source.width / 2,
+                row: source.y + source.height / 2,
+                modifiers: Modifiers::ALT,
+            };
+            if press_before_reload {
+                host.execute(HostCommand::Pointer {
+                    event: press,
+                    frame: first.id,
+                    repetitions: 1,
+                })
+                .unwrap();
+                assert!(host.app().pointer_pane_drag_active());
+            }
+            let section =
+                serde_yaml::from_str("pointer: {pane-move: [], pane-extend: []}").unwrap();
+            let configured =
+                crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+            host.app_mut().set_keymap(configured.keymap);
+            let second = host.prepare_frame(geometry());
+            if !press_before_reload {
+                assert_eq!(
+                    host.execute(HostCommand::Pointer {
+                        event: press,
+                        frame: first.id,
+                        repetitions: 1
+                    })
+                    .unwrap(),
+                    HostInputOutcome::IgnoredStaleFrame
+                );
+            }
+            let drag = PointerEvent {
+                kind: PointerEventKind::Drag(PointerButton::Left),
+                column: 40,
+                row: 0,
+                modifiers: Modifiers::NONE,
+            };
+            host.execute(HostCommand::Pointer {
+                event: drag,
+                frame: second.id,
+                repetitions: 1,
+            })
+            .unwrap();
+            let preview = host.prepare_frame(geometry());
+            assert_eq!(preview.editor.pane_drop.is_some(), press_before_reload);
+            host.execute(HostCommand::Pointer {
+                event: PointerEvent {
+                    kind: PointerEventKind::Up(PointerButton::Left),
+                    ..drag
+                },
+                frame: preview.id,
+                repetitions: 1,
+            })
+            .unwrap();
+            assert!(!host.app().pointer_pane_drag_active());
+            if !press_before_reload {
+                assert_eq!(
+                    host.prepare_frame(geometry())
+                        .editor
+                        .pane(pane)
+                        .unwrap()
+                        .area,
+                    source
+                );
+            }
+        }
     }
 
     #[test]

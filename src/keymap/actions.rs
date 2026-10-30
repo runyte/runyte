@@ -166,7 +166,7 @@ pub fn mode_name(mode: Mode) -> &'static str {
     }
 }
 
-fn mode_slice(mode: Mode) -> &'static [Mode] {
+pub(super) fn mode_slice(mode: Mode) -> &'static [Mode] {
     match mode {
         Mode::Normal => &[Mode::Normal],
         Mode::Select => &[Mode::Select],
@@ -465,7 +465,11 @@ pub(super) fn without_defaults(mut keymap: Keymap) -> Keymap {
 /// terminal's `Ctrl-w v` does once the global pane moves are gone. Such a
 /// namespace from `namespaces` is named again for those views alone, so help
 /// and key hints still describe the prefix their keys begin.
-pub(super) fn name_scoped_prefixes(mut keymap: Keymap, namespaces: &[BindingNamespace]) -> Keymap {
+pub(super) fn name_scoped_prefixes(
+    mut keymap: Keymap,
+    namespaces: &[BindingNamespace],
+    defer_policy: bool,
+) -> Keymap {
     let mut named = keymap.namespaces.clone();
     for namespace in namespaces {
         for &mode in namespace.modes {
@@ -495,7 +499,14 @@ pub(super) fn name_scoped_prefixes(mut keymap: Keymap, namespaces: &[BindingName
         }
     }
     if named.len() > keymap.namespaces.len()
-        && validate::validate(&keymap.bindings, &named, &keymap.context_actions).is_empty()
+        && validate::with_input_policy(
+            &keymap.bindings,
+            &named,
+            &keymap.context_actions,
+            &keymap.overrides,
+            (!defer_policy).then_some(keymap.ui()),
+        )
+        .is_empty()
     {
         keymap.namespaces = named;
         keymap.rebuild_lookup_index();
@@ -577,7 +588,26 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
             })
             .collect::<Result<Vec<_>, _>>()?,
     );
-    if is_reserved(mode, &sequence) {
+    if sequence.as_slice().iter().enumerate().any(|(index, key)| {
+        (index == 0
+            && matches!(mode, Mode::Normal | Mode::Select)
+            && key.modifiers.is_empty()
+            && (matches!(key.code, KeyCode::Char('1'..='9'))
+                || (key.code == KeyCode::Tab
+                    && base
+                        .ui()
+                        .lookup(super::ui::Owner::ContextLauncher, *key)
+                        .is_some())))
+            || (!value.is_null()
+                && index > 0
+                && if matches!(mode, Mode::Normal | Mode::Select) {
+                    base.ui()
+                        .lookup(super::ui::Owner::GrammarPrefix, *key)
+                        .is_some()
+                } else {
+                    matches!(key.code, KeyCode::Escape | KeyCode::Backspace)
+                })
+    }) {
         return Err(
             "sequence uses a reserved count, context-action, or prefix-cancellation key".into(),
         );
@@ -618,7 +648,12 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
     })
 }
 
-pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<String>) -> Keymap {
+pub(super) fn apply(
+    section: Option<&Value>,
+    base: Keymap,
+    errors: &mut Vec<String>,
+    defer_policy: bool,
+) -> Keymap {
     let Some(section) = section else {
         return base;
     };
@@ -737,10 +772,12 @@ pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<Stri
         }
         let snapshot = drop_stale_aliases(&mut candidate.bindings);
         candidate.namespaces = prune_namespaces(candidate.namespaces, &snapshot);
-        let violations = validate::validate(
+        let violations = validate::with_input_policy(
             &candidate.bindings,
             &candidate.namespaces,
             &candidate.context_actions,
+            &candidate.overrides,
+            (!defer_policy).then_some(candidate.ui()),
         );
         if violations.is_empty() {
             candidate.rebuild_lookup_index();
@@ -890,6 +927,7 @@ pub fn reference() -> String {
             );
         }
     }
+    out.push_str(&super::scopes::reference());
     out
 }
 

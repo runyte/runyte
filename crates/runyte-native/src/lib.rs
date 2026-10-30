@@ -18,6 +18,7 @@ mod input_routing;
 mod interactions;
 mod media;
 pub mod pdf;
+mod pointer;
 mod preview;
 mod viewport;
 
@@ -124,6 +125,12 @@ struct FrameData {
     cursor: Option<ratatui::layout::Position>,
     overlays: Vec<runyte::layout::Rect>,
     media_input: bool,
+    pointer_bindings: runyte::keymap::pointer_actions::Bindings,
+    window_bindings: runyte::keymap::native_window::Bindings,
+    preview_bindings: runyte::keymap::native_preview::Bindings,
+    preview_source: Option<(usize, usize)>,
+    preview_terminal: Option<(usize, u64)>,
+    preview_structural: bool,
     routing_serial: u64,
     metadata_paths: Vec<PathBuf>,
 }
@@ -164,6 +171,11 @@ pub(crate) struct NativeInput {
     event: Event,
     presented: Option<runyte::workspace::FrameId>,
     presentation_only: bool,
+    pointer_target: Option<pointer::Target>,
+    pointer_bindings: runyte::keymap::pointer_actions::Bindings,
+    window_bindings: runyte::keymap::native_window::Bindings,
+    preview_bindings: runyte::keymap::native_preview::Bindings,
+    preview_target: Option<preview::Target>,
     routing_serial: u64,
 }
 struct PendingMediaRequest {
@@ -205,9 +217,20 @@ struct Bridge {
     media: Mutex<Vec<MediaPane>>,
     previews: Mutex<Vec<preview::Pane>>,
     painted_media: Mutex<Vec<MediaPane>>,
+    painted_pointer_surfaces: Mutex<Vec<pointer::Surface>>,
+    painted_pointer_bindings: Mutex<runyte::keymap::pointer_actions::Bindings>,
+    painted_window_bindings: Mutex<runyte::keymap::native_window::Bindings>,
+    painted_preview_bindings: Mutex<runyte::keymap::native_preview::Bindings>,
+    painted_preview_target: Mutex<Option<preview::Target>>,
     overlays: Mutex<Vec<runyte::layout::Rect>>,
     default_colors: Mutex<(u32, u32)>,
     media_input: AtomicBool,
+    pointer_bindings: Mutex<runyte::keymap::pointer_actions::Bindings>,
+    window_bindings: Mutex<runyte::keymap::native_window::Bindings>,
+    preview_bindings: Mutex<runyte::keymap::native_preview::Bindings>,
+    preview_source: Mutex<Option<(usize, usize)>>,
+    preview_terminal: Mutex<Option<(usize, u64)>>,
+    preview_structural: AtomicBool,
     dequeued_serial: AtomicU64,
     remote_serial: AtomicU64,
     metadata_paths: Mutex<Vec<PathBuf>>,
@@ -242,6 +265,11 @@ impl Bridge {
             event,
             presented: *self.presented.lock().unwrap(),
             presentation_only: false,
+            pointer_target: None,
+            pointer_bindings: self.painted_pointer_bindings.lock().unwrap().clone(),
+            window_bindings: self.painted_window_bindings.lock().unwrap().clone(),
+            preview_bindings: self.painted_preview_bindings.lock().unwrap().clone(),
+            preview_target: *self.painted_preview_target.lock().unwrap(),
             routing_serial: 0,
         }
     }
@@ -328,6 +356,14 @@ pub(crate) fn capture_media(
 
 fn capture_snapshot_media(snapshot: &runyte::workspace::HostFrame, counts: &[media::PageCount]) {
     let Some(bridge) = BRIDGE.get() else { return };
+    *bridge.pointer_bindings.lock().unwrap() = snapshot.editor.pointer_bindings.clone();
+    *bridge.window_bindings.lock().unwrap() = snapshot.editor.window_bindings.clone();
+    *bridge.preview_bindings.lock().unwrap() = snapshot.editor.preview_bindings.clone();
+    *bridge.preview_source.lock().unwrap() = snapshot.editor.preview_source;
+    *bridge.preview_terminal.lock().unwrap() = snapshot.editor.preview_terminal;
+    bridge
+        .preview_structural
+        .store(snapshot.editor.preview_structural, Ordering::Release);
     let (background, foreground) = runyte::ui::native_default_colors(&snapshot.editor.theme);
     *bridge.default_colors.lock().unwrap() = (
         rgb_value(background, FALLBACK_BACKGROUND),
@@ -456,6 +492,7 @@ pub(crate) fn begin_attachment() {
     bridge.preview_dismissals.lock().unwrap().clear();
     bridge.media.lock().unwrap().clear();
     bridge.painted_media.lock().unwrap().clear();
+    bridge.painted_pointer_surfaces.lock().unwrap().clear();
     *bridge.presented.lock().unwrap() = None;
 }
 
@@ -566,6 +603,12 @@ impl Surface {
                     previews: bridge.previews.lock().unwrap().clone(),
                     overlays: bridge.overlays.lock().unwrap().clone(),
                     media_input: bridge.media_input.load(Ordering::Acquire),
+                    pointer_bindings: bridge.pointer_bindings.lock().unwrap().clone(),
+                    window_bindings: bridge.window_bindings.lock().unwrap().clone(),
+                    preview_bindings: bridge.preview_bindings.lock().unwrap().clone(),
+                    preview_source: *bridge.preview_source.lock().unwrap(),
+                    preview_terminal: *bridge.preview_terminal.lock().unwrap(),
+                    preview_structural: bridge.preview_structural.load(Ordering::Acquire),
                     routing_serial: if snapshot_area.is_some() {
                         bridge.remote_serial.load(Ordering::Acquire)
                     } else {
@@ -737,9 +780,20 @@ pub(crate) fn launch(
         media: Mutex::new(Vec::new()),
         previews: Mutex::new(Vec::new()),
         painted_media: Mutex::new(Vec::new()),
+        painted_pointer_surfaces: Mutex::new(Vec::new()),
+        painted_pointer_bindings: Mutex::new(Default::default()),
+        painted_window_bindings: Mutex::new(Default::default()),
+        painted_preview_bindings: Mutex::new(Default::default()),
+        painted_preview_target: Mutex::new(None),
         overlays: Mutex::new(Vec::new()),
         default_colors: Mutex::new((FALLBACK_BACKGROUND, FALLBACK_FOREGROUND)),
         media_input: AtomicBool::new(true),
+        pointer_bindings: Mutex::new(Default::default()),
+        window_bindings: Mutex::new(Default::default()),
+        preview_bindings: Mutex::new(Default::default()),
+        preview_source: Mutex::new(None),
+        preview_terminal: Mutex::new(None),
+        preview_structural: AtomicBool::new(false),
         dequeued_serial: AtomicU64::new(0),
         remote_serial: AtomicU64::new(0),
         metadata_paths: Mutex::new(Vec::new()),
@@ -835,6 +889,7 @@ struct NativeView {
     glyphs: std::rc::Rc<std::cell::RefCell<cells::GlyphCache>>,
     media: media::Loader,
     previews: preview::Views,
+    local_pointer: Option<pointer::Capture>,
     routing: input_routing::Queue<input_routing::Action>,
     preview_routing_ready: bool,
     composition: String,
@@ -917,6 +972,7 @@ impl NativeView {
             geometry_requests,
             media: media::Loader::new(bridge.clone()),
             previews: preview::Views::default(),
+            local_pointer: None,
             routing: input_routing::Queue::default(),
             preview_routing_ready: false,
             bridge,
@@ -969,7 +1025,12 @@ impl NativeView {
         });
     }
 
-    fn window_shortcut(&mut self, key: KeyEvent, cx: &mut Context<Self>) -> Option<Option<Event>> {
+    fn window_shortcut(
+        &mut self,
+        key: KeyEvent,
+        bindings: &runyte::keymap::native_window::Bindings,
+        cx: &mut Context<Self>,
+    ) -> Option<Option<Event>> {
         let Some(runyte::input::InputEvent::Key(key)) =
             runyte::tui::input::convert_event(Event::Key(key))
                 .ok()
@@ -977,8 +1038,8 @@ impl NativeView {
         else {
             return None;
         };
-        let binding = runyte::keymap::native_window::lookup(key)?;
-        match binding.action {
+        let action = bindings.lookup(key)?;
+        match action {
             runyte::keymap::native_window::Action::FontSize(delta) => {
                 self.requested = CellMetrics::new(
                     (self.requested.font_size as i32 + i32::from(delta)).clamp(8, 48) as usize,
@@ -1054,7 +1115,7 @@ impl Render for NativeView {
                 let input = mouse_event(
                     view.metrics,
                     event.position,
-                    crossterm::event::MouseEventKind::Drag(crossterm::event::MouseButton::Left),
+                    input_routing::pointer_motion(event.pressed_button),
                     event.modifiers,
                 );
                 view.queue_input(input, input_routing::Action::Move(event.clone()), cx);
@@ -1273,6 +1334,34 @@ impl Render for NativeView {
         }
         self.painted_images = painted_images;
         self.schedule_animation(animation_deadline, window, cx);
+        let pointer_surfaces: Vec<_> = frame.as_ref().map_or_else(Vec::new, |frame| {
+            let media = frame.media.iter().map(|pane| pointer::Surface {
+                body: pane.body,
+                target: pointer::Target::Media {
+                    pane: pane.pane,
+                    path: pane.path.clone(),
+                    page: pane.page,
+                    source: self
+                        .viewports
+                        .get(&(pane.pane, pane.path.clone()))
+                        .filter(|view| view.page == pane.page)
+                        .and_then(viewport::Viewport::source),
+                },
+            });
+            let previews = frame.previews.iter().map(|pane| pointer::Surface {
+                body: pane.body,
+                target: pointer::Target::Preview(preview::Target {
+                    pane: pane.pane,
+                    source: pane.document.source,
+                    generation: pane.document.generation,
+                }),
+            });
+            media.chain(previews).collect()
+        });
+        let bindings = frame
+            .as_ref()
+            .map(|frame| frame.pointer_bindings.clone())
+            .unwrap_or_default();
         let entity = cx.entity();
         let bridge = self.bridge.clone();
         let focus = self.focus.clone();
@@ -1313,6 +1402,15 @@ impl Render for NativeView {
                         } else {
                             Vec::new()
                         };
+                        *bridge.painted_pointer_surfaces.lock().unwrap() = pointer_surfaces.clone();
+                        *bridge.painted_pointer_bindings.lock().unwrap() =
+                            frame.pointer_bindings.clone();
+                        *bridge.painted_window_bindings.lock().unwrap() =
+                            frame.window_bindings.clone();
+                        *bridge.painted_preview_bindings.lock().unwrap() =
+                            frame.preview_bindings.clone();
+                        *bridge.painted_preview_target.lock().unwrap() =
+                            preview::Target::from_frame(frame);
                         let previous =
                             std::mem::replace(&mut *bridge.presented.lock().unwrap(), frame.id);
                         if previous != frame.id || previous_attachment != frame.attachment {
@@ -1322,6 +1420,11 @@ impl Render for NativeView {
                                 event: Event::FocusGained,
                                 presented: frame.id,
                                 presentation_only: true,
+                                pointer_target: None,
+                                pointer_bindings: frame.pointer_bindings.clone(),
+                                window_bindings: frame.window_bindings.clone(),
+                                preview_bindings: frame.preview_bindings.clone(),
+                                preview_target: preview::Target::from_frame(frame),
                                 routing_serial: 0,
                             });
                         }
@@ -1332,24 +1435,35 @@ impl Render for NativeView {
             .size_full(),
         );
         if self.bridge.input.overflowed() {
-            surface = surface.child(
-                div()
-                    .absolute()
-                    .top(px(0.))
-                    .right(px(0.))
-                    .bg(rgb(0x8b1a1a))
-                    .text_color(rgb(0xffffff))
-                    .px_2()
-                    .child("Some input was lost. Click to dismiss.")
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|view, _: &MouseDownEvent, _, cx| {
-                            view.bridge.input.dismiss_overflow();
+            let mut banner = div()
+                .absolute()
+                .top(px(0.))
+                .right(px(0.))
+                .bg(rgb(0x8b1a1a))
+                .text_color(rgb(0xffffff))
+                .px_2()
+                .child(pointer::overflow_hint(&bindings));
+            for button in [MouseButton::Left, MouseButton::Middle, MouseButton::Right] {
+                let bindings = bindings.clone();
+                banner = banner.on_mouse_down(
+                    button,
+                    cx.listener(move |view, event: &MouseDownEvent, _, cx| {
+                        let physical = mouse_event(
+                            view.metrics,
+                            event.position,
+                            crossterm::event::MouseEventKind::Down(
+                                input_routing::native_pointer_button(event.button),
+                            ),
+                            event.modifiers,
+                        );
+                        if pointer::dismiss_overflow(&view.bridge.input, &bindings, physical) {
                             cx.stop_propagation();
                             cx.notify();
-                        }),
-                    ),
-            );
+                        }
+                    }),
+                );
+            }
+            surface = surface.child(banner);
         }
         surface
     }
@@ -1427,11 +1541,20 @@ const SCROLL_GESTURE_GAP: std::time::Duration = std::time::Duration::from_millis
 /// within a gesture.
 #[derive(Default, Debug)]
 struct ScrollAccumulator {
+    policy: Option<[Option<runyte::keymap::pointer_actions::Action>; 4]>,
     /// Pending scroll events per axis; positive scrolls left or up.
     events: Point<f32>,
     last: Option<std::time::Instant>,
 }
 impl ScrollAccumulator {
+    fn set_policy(&mut self, policy: [Option<runyte::keymap::pointer_actions::Action>; 4]) {
+        if self.policy.is_some_and(|previous| previous != policy) {
+            self.events = Point::default();
+            self.last = None;
+        }
+        self.policy = Some(policy);
+    }
+
     /// The delta in scroll events, and whether it is mainly vertical. The axis
     /// is judged on the raw delta: cells are narrower than they are tall, so
     /// converted horizontal motion would outweigh the same vertical motion.

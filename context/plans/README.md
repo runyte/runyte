@@ -56,6 +56,11 @@ Proposed work:
 
 The retained completed records cover:
 
+- [Configurable UI actions](completed/PLAN_CONFIGURABLE_UI_ACTIONS.md): shared,
+  scoped keyboard and pointer actions, structural input boundaries, captured
+  native ownership, and effective bindings across terminal and native surfaces
+  ([#46](https://github.com/runyte/runyte/issues/46), [PR #47](https://github.com/runyte/runyte/pull/47));
+
 - [Agent channel](completed/PLAN_AGENT_CHANNEL.md): the implemented
   workspace-scoped conversation through `runyte mcp`, with verified participant
   identity, direct messages, unread indicators and the person's read-only view

@@ -3,9 +3,9 @@
 use super::{
     MediaPane, NativeView,
     media::Page,
-    viewport::{Drag, Selection, Viewport},
+    viewport::{Selection, Viewport},
 };
-use gpui::{Context, MouseButton, MouseDownEvent, MouseMoveEvent, Pixels, Point, ScrollWheelEvent};
+use gpui::{Context, MouseDownEvent, MouseMoveEvent, Pixels, Point, ScrollWheelEvent};
 use runyte::media::ViewAction;
 use std::sync::Arc;
 
@@ -49,7 +49,7 @@ impl NativeView {
             pane.body.height as f32 * self.metrics.height,
         ]
     }
-    fn focus_media(&self, pane: &MediaPane, delta: i32) {
+    pub(super) fn focus_media(&self, pane: &MediaPane, delta: i32) {
         let mut requests = self.bridge.media_pointer.lock().unwrap();
         if requests.len() < 256 {
             requests.push((
@@ -68,6 +68,7 @@ impl NativeView {
     pub(super) fn media_mouse_down(
         &mut self,
         event: &MouseDownEvent,
+        input: &super::NativeInput,
         cx: &mut Context<Self>,
     ) -> bool {
         if self
@@ -82,6 +83,24 @@ impl NativeView {
         let Some(pane) = self.media_at(event.position) else {
             return false;
         };
+        use runyte::keymap::pointer_actions::Action;
+        let Some(pointer) = super::pointer::event(input) else {
+            return true;
+        };
+        let action = [
+            Action::MediaPan,
+            Action::MediaRegion,
+            Action::MediaAutoSelect,
+        ]
+        .into_iter()
+        .find(|action| input.pointer_bindings.press(*action, pointer));
+        let toggle = event.click_count == 2
+            && input
+                .pointer_bindings
+                .press(Action::MediaToggleZoom, pointer);
+        if action.is_none() && !toggle {
+            return true;
+        }
         self.focus_media(&pane, 0);
         let Some(Ok(page)) = self.media.get(&pane.path, pane.page) else {
             return true;
@@ -94,42 +113,19 @@ impl NativeView {
             .or_insert_with(|| Viewport::new(pane.page));
         view.show_page(pane.page);
         view.show_source(&page);
-        let document = view
-            .document_point(point, [page.width, page.height], area)
-            .map(|v| v.clamp(0., 1.));
-        view.message.clear();
-        view.drag = if event.button == MouseButton::Middle
-            || event.button == MouseButton::Right
-            || event.modifiers.alt
-        {
-            Some(Drag::Pan(point))
-        } else if event.modifiers.shift
-            || (pane
-                .path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
-                && page.words.is_empty())
-        {
-            view.selection = Some(Selection::Region(document, document));
-            Some(Drag::Region(document))
-        } else if let Some(word) = Viewport::nearest_word(&page, document) {
-            view.selection = Some(Selection::Text(word, word));
-            Some(Drag::Text(word))
-        } else {
-            if event.click_count == 2 {
-                view.zoom_at(
-                    if view.zoom <= 1.01 {
-                        2.
-                    } else {
-                        1. / view.zoom
-                    },
-                    point,
-                    [page.width, page.height],
-                    area,
-                );
-            }
-            Some(Drag::Pan(point))
-        };
+        view.begin_pointer(
+            action,
+            toggle,
+            point,
+            super::viewport::PointerSurface {
+                page: &page,
+                area,
+                pdf: pane
+                    .path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf")),
+            },
+        );
         cx.notify();
         true
     }
@@ -181,26 +177,7 @@ impl NativeView {
             view.drag = None;
             return true;
         }
-        let document = view
-            .document_point(point, [page.width, page.height], area)
-            .map(|v| v.clamp(0., 1.));
-        match view.drag {
-            Some(Drag::Pan(previous)) => {
-                view.pan(
-                    [point[0] - previous[0], point[1] - previous[1]],
-                    [page.width, page.height],
-                    area,
-                );
-                view.drag = Some(Drag::Pan(point));
-            }
-            Some(Drag::Text(start)) => {
-                if let Some(end) = Viewport::nearest_word(&page, document) {
-                    view.selection = Some(Selection::Text(start, end));
-                }
-            }
-            Some(Drag::Region(start)) => view.selection = Some(Selection::Region(start, document)),
-            None => {}
-        }
+        view.move_pointer(point, &page, area);
         cx.notify();
         true
     }
@@ -223,6 +200,7 @@ impl NativeView {
     pub(super) fn media_scroll(
         &mut self,
         event: &ScrollWheelEvent,
+        input: &super::NativeInput,
         cx: &mut Context<Self>,
     ) -> bool {
         if self
@@ -240,8 +218,24 @@ impl NativeView {
         let Some(Ok(page)) = self.media.get(&pane.path, pane.page) else {
             return true;
         };
+        use runyte::keymap::pointer_actions::{Action, Trigger};
+        let Some(pointer) = super::pointer::event(input) else {
+            return true;
+        };
+        let Some(action) = [
+            Action::MediaZoom,
+            Action::MediaHorizontal,
+            Action::MediaScroll,
+        ]
+        .into_iter()
+        .find(|action| {
+            input
+                .pointer_bindings
+                .matches(*action, Trigger::Wheel, pointer.modifiers)
+        }) else {
+            return true;
+        };
         let delta = event.delta.pixel_delta(gpui::px(self.metrics.height));
-        let mut delta = [f32::from(delta.x), f32::from(delta.y)];
         let area = self.media_area(&pane);
         let point = self.local(&pane, event.position);
         let view = self
@@ -250,31 +244,22 @@ impl NativeView {
             .or_insert_with(|| Viewport::new(pane.page));
         view.show_page(pane.page);
         view.show_source(&page);
-        if event.modifiers.control || event.modifiers.platform {
-            view.zoom_at(
-                (delta[1] * 0.008).exp().clamp(0.5, 2.),
-                point,
-                [page.width, page.height],
+        let pages = view.pointer_scroll(
+            action,
+            [f32::from(delta.x), f32::from(delta.y)],
+            point,
+            super::viewport::PointerSurface {
+                page: &page,
                 area,
-            );
-        } else if view.zoom <= 1.01
-            && !event.modifiers.shift
-            && pane
-                .path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))
-        {
-            view.scroll_y += delta[1];
-            let pages = (view.scroll_y / 60.).trunc() as i32;
-            if pages != 0 {
-                view.scroll_y -= pages as f32 * 60.;
-                self.focus_media(&pane, -pages.clamp(-10, 10));
-            }
-        } else {
-            if event.modifiers.shift && delta[0] == 0. {
-                delta = [delta[1], 0.];
-            }
-            view.pan(delta, [page.width, page.height], area);
+                pdf: pane
+                    .path
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf")),
+            },
+            &input.pointer_bindings,
+        );
+        if pages != 0 {
+            self.focus_media(&pane, pages);
         }
         cx.notify();
         true
@@ -398,9 +383,13 @@ impl NativeView {
                         Selection::Text(0, page.words.len() - 1)
                     })
                 }
-                ViewAction::CopySelection => {
-                    copy_selection(view, &page, &mut self.image_clipboard, cx)
-                }
+                ViewAction::CopySelection => copy_selection(
+                    view,
+                    &page,
+                    &mut self.image_clipboard,
+                    &self.frame.as_ref().unwrap().pointer_bindings,
+                    cx,
+                ),
             }
         }
     }
@@ -410,6 +399,7 @@ fn copy_selection(
     view: &mut Viewport,
     page: &Arc<Page>,
     clipboard: &mut Option<arboard::Clipboard>,
+    bindings: &runyte::keymap::pointer_actions::Bindings,
     cx: &mut Context<NativeView>,
 ) {
     if let Some(text) = view.selected_text(page) {
@@ -433,7 +423,15 @@ fn copy_selection(
             Err(error) => format!("Copy failed: {error}"),
         };
     } else {
-        view.message = "Select PDF text or Shift-drag an image region first".into();
+        let action = runyte::keymap::pointer_actions::Action::MediaRegion;
+        view.message = if bindings.is_default(action) {
+            "Select PDF text or Shift-drag an image region first".into()
+        } else {
+            format!(
+                "Select PDF text or use {} to select an image region first",
+                bindings.label(action)
+            )
+        };
     }
 }
 

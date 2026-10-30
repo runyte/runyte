@@ -31,17 +31,30 @@ impl Drop for Fixture {
 fn options(args: &[&str]) -> Result<Option<Options>> {
     parse(args.iter().map(OsString::from))
 }
+fn write_owned_fixture(path: &Path, bytes: &[u8]) {
+    #[cfg(windows)]
+    if !path.exists() {
+        use std::io::Write;
+        // An elevated token's default owner may be Administrators. These
+        // fixtures model user-owned content, not the foreign-owner refusal.
+        crate::windows_fs::create_private_file(path)
+            .unwrap()
+            .write_all(bytes)
+            .unwrap();
+        return;
+    }
+    fs::write(path, bytes).unwrap();
+}
 fn record(path: &Path, installed: Option<Release>, pending: Option<Release>) {
-    fs::write(
-        path.join(METADATA),
-        serde_json::to_vec(&Metadata {
+    write_owned_fixture(
+        &path.join(METADATA),
+        &serde_json::to_vec(&Metadata {
             schema: 1,
             installed,
             pending,
         })
         .unwrap(),
-    )
-    .unwrap();
+    );
 }
 fn old() -> Release {
     Release {
@@ -145,7 +158,7 @@ fn unmanaged_files_are_only_adopted_when_identical() {
     let f = Fixture::new();
     let path = f.skill();
     fs::create_dir_all(&path).unwrap();
-    fs::write(path.join(PAYLOAD), b"other skill").unwrap();
+    write_owned_fixture(&path.join(PAYLOAD), b"other skill");
     assert!(manage(&f.0, &path, Action::Install).is_err());
     assert!(!path.join(METADATA).exists());
     fs::write(path.join(PAYLOAD), SKILL).unwrap();

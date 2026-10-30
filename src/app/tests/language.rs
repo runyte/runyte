@@ -3362,6 +3362,170 @@ fn word_completion_geometry() -> FrameGeometry {
     }
 }
 
+fn configurable_completion(source: CompletionSource, keys: &str) -> App {
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "abc");
+    app.mode = Mode::Insert;
+    let section = serde_yaml::from_str(keys).unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+    app.completion = Some(CompletionState {
+        items: ["alpha", "beta"]
+            .into_iter()
+            .map(|name| Completion {
+                label: name.into(),
+                filter_text: None,
+                sort_text: None,
+                detail: String::new(),
+                kind: "word",
+                insert: name.into(),
+                edit: None,
+                additional: Vec::new(),
+            })
+            .collect(),
+        selected: 0,
+        buffer: 0,
+        anchor: 0,
+        filter: String::new(),
+        source,
+        explicit_session: None,
+    });
+    app
+}
+
+#[test]
+fn completion_actions_remap_navigation_acceptance_and_live_hints() {
+    let mut app = configurable_completion(
+        CompletionSource::Word,
+        "ui: {completion: {next: [F6], previous: [F7], accept: [F8]}}",
+    );
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert!(
+        app.completion.is_none(),
+        "removed popup binding falls through to ordinary movement"
+    );
+    let mut app = configurable_completion(
+        CompletionSource::Word,
+        "ui: {completion: {next: [F6], previous: [F7], accept: [F8]}}",
+    );
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.completion.as_ref().unwrap().selected, 1);
+    let overlays = app.overlay_snapshots();
+    let completion = overlays
+        .iter()
+        .find(|o| o.kind == crate::snapshot::OverlayKind::Completion)
+        .unwrap();
+    assert!(
+        completion
+            .actions
+            .iter()
+            .any(|a| a.key_hint == "F8" && a.label == "accept")
+    );
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert_eq!(app.completion.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.completion.is_none());
+    assert!(text(&app).contains("alpha"));
+}
+
+#[test]
+fn completion_conditional_dismissal_forwards_the_actual_key_once() {
+    for source in [
+        CompletionSource::Word,
+        CompletionSource::Language,
+        CompletionSource::Path,
+    ] {
+        let mut app = configurable_completion(
+            source,
+            "ui: {completion: {cancel-or-continue: [F9]}}\nbind: {insert: {F9: insert-newline}}",
+        );
+        key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+        assert!(app.completion.is_none());
+        assert_eq!(
+            text(&app).matches('\n').count(),
+            usize::from(source == CompletionSource::Word)
+        );
+        assert_eq!(app.mode, Mode::Insert);
+    }
+    let mut app = configurable_completion(
+        CompletionSource::Word,
+        "bind: {insert: {Esc: insert-newline}}",
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(text(&app).matches('\n').count(), 1);
+    assert_eq!(app.mode, Mode::Insert);
+}
+
+#[test]
+fn completion_removal_has_no_hidden_old_handler_and_defaults_keep_modifier_policies() {
+    let mut app = configurable_completion(
+        CompletionSource::Language,
+        "ui: {completion: {cancel: [], accept: [], next: [], previous: []}}",
+    );
+    for stroke in [
+        KeyStroke::ctrl('c'),
+        KeyStroke::plain(KeyCode::Tab),
+        KeyStroke::plain(KeyCode::Down),
+    ] {
+        assert!(!app.handle_completion_key(stroke));
+        assert_eq!(app.completion.as_ref().unwrap().selected, 0);
+    }
+    let mut app = configurable_completion(CompletionSource::Language, "{}");
+    key(&mut app, KeyCode::Down, Modifiers::ALT | Modifiers::SHIFT);
+    assert_eq!(app.completion.as_ref().unwrap().selected, 1);
+    key(
+        &mut app,
+        KeyCode::Char('p'),
+        Modifiers::CONTROL | Modifiers::ALT,
+    );
+    assert_eq!(app.completion.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::Tab, Modifiers::CONTROL);
+    assert!(app.completion.is_none());
+    assert!(text(&app).contains("alpha"));
+}
+
+#[test]
+fn completion_forwarding_does_not_synthesize_old_keys_or_consume_literal_text() {
+    for source in [
+        CompletionSource::Word,
+        CompletionSource::Language,
+        CompletionSource::Path,
+    ] {
+        let mut app = configurable_completion(
+            source,
+            "ui: {completion: {dismiss-and-continue: [F9]}}\nbind: {insert: {F9: insert-newline}}",
+        );
+        key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+        assert!(app.completion.is_none());
+        assert_eq!(text(&app).matches('\n').count(), 1);
+        assert!(!text(&app).contains("alpha"));
+    }
+    let mut app = configurable_completion(
+        CompletionSource::Path,
+        "ui: {completion: {cancel-or-continue: [F9]}}\nbind: {insert: {F9: insert-newline}}",
+    );
+    app.buffers[0].kind = BufferKind::Directory;
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    assert!(app.completion.is_none());
+    assert_eq!(text(&app).matches('\n').count(), 1);
+
+    let mut app = configurable_completion(CompletionSource::Language, "{}");
+    key(
+        &mut app,
+        KeyCode::Char('c'),
+        Modifiers::CONTROL | Modifiers::ALT,
+    );
+    assert!(app.completion.is_none());
+    assert_eq!(text(&app), "abc");
+    let mut app =
+        configurable_completion(CompletionSource::Word, "ui: {completion: {accept: [F9]}}");
+    press(&mut app, 'z');
+    app.handle_input(InputEvent::Text("世界".into())).unwrap();
+    assert!(text(&app).contains("z世界"));
+    assert!(!text(&app).contains("alpha"));
+}
+
 #[test]
 fn word_completion_triggers_after_the_minimum_and_orders_own_buffer_first() {
     let root = temporary("word-completion-trigger");

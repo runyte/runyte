@@ -3,6 +3,13 @@
 //! Pane-local document coordinates shared by drawing, hit testing and copying.
 use super::media::Page;
 
+#[derive(Clone, Copy)]
+pub struct PointerSurface<'a> {
+    pub page: &'a Page,
+    pub area: [f32; 2],
+    pub pdf: bool,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Selection {
     Text(usize, usize),
@@ -19,6 +26,7 @@ pub struct Viewport {
     source: Option<(Option<std::time::SystemTime>, u64)>,
     pub zoom: f32,
     pub scroll_y: f32,
+    pointer_bindings: Option<runyte::keymap::pointer_actions::Bindings>,
     pub center: [f32; 2],
     pub selection: Option<Selection>,
     pub drag: Option<Drag>,
@@ -26,6 +34,154 @@ pub struct Viewport {
     pub playback: super::animation::Playback,
 }
 impl Viewport {
+    pub fn source(&self) -> Option<(Option<std::time::SystemTime>, u64)> {
+        self.source
+    }
+
+    /// Resolve the content-dependent subtype once, retaining the resulting
+    /// document anchor in Drag rather than re-reading modifiers on movement.
+    pub fn begin_pointer(
+        &mut self,
+        action: Option<runyte::keymap::pointer_actions::Action>,
+        toggle: bool,
+        point: [f32; 2],
+        surface: PointerSurface<'_>,
+    ) {
+        let PointerSurface { page, area, pdf } = surface;
+        use runyte::keymap::pointer_actions::Action;
+        let document = self
+            .document_point(point, [page.width, page.height], area)
+            .map(|v| v.clamp(0., 1.));
+        self.drag = None;
+        if action.is_none() && !toggle {
+            return;
+        }
+        self.message.clear();
+        self.drag = match action {
+            Some(Action::MediaPan) => Some(Drag::Pan(point)),
+            Some(Action::MediaRegion) => {
+                self.selection = Some(Selection::Region(document, document));
+                Some(Drag::Region(document))
+            }
+            Some(Action::MediaAutoSelect) if pdf && page.words.is_empty() => {
+                self.selection = Some(Selection::Region(document, document));
+                Some(Drag::Region(document))
+            }
+            Some(Action::MediaAutoSelect) => {
+                if let Some(word) = Self::nearest_word(page, document) {
+                    self.selection = Some(Selection::Text(word, word));
+                    Some(Drag::Text(word))
+                } else {
+                    if toggle {
+                        self.zoom_at(
+                            if self.zoom <= 1.01 {
+                                2.
+                            } else {
+                                1. / self.zoom
+                            },
+                            point,
+                            [page.width, page.height],
+                            area,
+                        );
+                    }
+                    Some(Drag::Pan(point))
+                }
+            }
+            _ => None,
+        };
+        // A separately remapped double-click may be used without a drag alias.
+        // Keep the same image-only fallback domain as the factory action.
+        if action != Some(Action::MediaAutoSelect)
+            && toggle
+            && !(pdf && page.words.is_empty())
+            && Self::nearest_word(page, document).is_none()
+        {
+            self.zoom_at(
+                if self.zoom <= 1.01 {
+                    2.
+                } else {
+                    1. / self.zoom
+                },
+                point,
+                [page.width, page.height],
+                area,
+            );
+        }
+    }
+
+    pub fn move_pointer(&mut self, point: [f32; 2], page: &Page, area: [f32; 2]) {
+        let document = self
+            .document_point(point, [page.width, page.height], area)
+            .map(|v| v.clamp(0., 1.));
+        match self.drag {
+            Some(Drag::Pan(previous)) => {
+                self.pan(
+                    [point[0] - previous[0], point[1] - previous[1]],
+                    [page.width, page.height],
+                    area,
+                );
+                self.drag = Some(Drag::Pan(point));
+            }
+            Some(Drag::Text(start)) => {
+                if let Some(end) = Self::nearest_word(page, document) {
+                    self.selection = Some(Selection::Text(start, end));
+                }
+            }
+            Some(Drag::Region(start)) => self.selection = Some(Selection::Region(start, document)),
+            None => {}
+        }
+    }
+
+    /// Native wheel movement remains continuous. PDF paging retains its
+    /// remainder across ordinary modifier changes, but never across remaps.
+    pub fn pointer_scroll(
+        &mut self,
+        action: runyte::keymap::pointer_actions::Action,
+        mut delta: [f32; 2],
+        point: [f32; 2],
+        surface: PointerSurface<'_>,
+        bindings: &runyte::keymap::pointer_actions::Bindings,
+    ) -> i32 {
+        let PointerSurface { page, area, pdf } = surface;
+        use runyte::keymap::pointer_actions::Action;
+        if self.pointer_bindings.as_ref().is_some_and(|previous| {
+            [
+                Action::MediaZoom,
+                Action::MediaHorizontal,
+                Action::MediaScroll,
+            ]
+            .into_iter()
+            .any(|action| !previous.same_action(bindings, action))
+        }) {
+            self.scroll_y = 0.;
+        }
+        self.pointer_bindings = Some(bindings.clone());
+        match action {
+            Action::MediaZoom => self.zoom_at(
+                (delta[1] * 0.008).exp().clamp(0.5, 2.),
+                point,
+                [page.width, page.height],
+                area,
+            ),
+            Action::MediaScroll if self.zoom <= 1.01 && pdf => {
+                self.scroll_y += delta[1];
+                let pages = (self.scroll_y / 60.).trunc() as i32;
+                if pages != 0 {
+                    self.scroll_y -= pages as f32 * 60.;
+                    return -pages.clamp(-10, 10);
+                }
+            }
+            Action::MediaHorizontal | Action::MediaScroll => {
+                if action == Action::MediaHorizontal && delta[0] == 0. {
+                    delta = [delta[1], 0.];
+                }
+                self.pan(delta, [page.width, page.height], area);
+            }
+            _ => {}
+        }
+        0
+    }
+
     /// Media returns to fit before cancelling selection or leaving the preview.
     pub fn back(&mut self) -> bool {
         self.drag = None;
@@ -60,6 +216,7 @@ impl Viewport {
             source: None,
             zoom: 1.,
             scroll_y: 0.,
+            pointer_bindings: None,
             center: [0.5; 2],
             selection: None,
             drag: None,
@@ -325,3 +482,7 @@ mod back_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/viewport_pointer.rs"]
+mod pointer_tests;

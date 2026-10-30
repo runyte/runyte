@@ -16,20 +16,19 @@ use super::{
     GeneratedViewIdentity, GrammarContext, GrammarNotice, GrammarOutput, HOVER_PEEK_ROWS, HashSet,
     HelpInvocation, InputEvent, InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence,
     KeyStroke, Keymap, LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers,
-    Motion, Offset, Path, PathBuf, PathHint, PickerTarget, PointerButton, PointerDrag,
-    PointerEvent, PointerEventKind, PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu,
+    Motion, Offset, Path, PathBuf, PathHint, PickerTarget, PointerDrag, PointerEvent,
+    PointerEventKind, PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu,
     ProgramChoice, PromptKind, Range, RangeIntent, RequestKind, Result, SearchMode, SearchQuery,
     Selection, SelectionSemantics, SettingId, SettingType, SettingValue, SignatureContext,
     StashScope, SyntaxObject, SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard,
     TextObjectPart, Transaction, ViewAlignment, VimMotion, VimOperator, VimRangeTarget,
     VimTextObject, buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path,
     external_open, hint_is_not_before, hover_content_rows, is_path_separator,
-    is_path_token_boundary, is_terminal_normal_key, is_word, is_word_completion_character,
-    keymap_for, mapped_applied_path, operative_span, persistent_session_availability, pointer_pane,
-    pointer_resize_pair, prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert,
-    prompt_left, prompt_right, prompt_word_backward, prompt_word_forward, quote_path_hint,
-    rect_contains, resolve_command, resolved_operation_path, row_characters,
-    unclosed_or_complete_quoted_path,
+    is_path_token_boundary, is_word, is_word_completion_character, keymap_for, mapped_applied_path,
+    operative_span, persistent_session_availability, pointer_pane, pointer_resize_pair,
+    prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert, prompt_left, prompt_right,
+    prompt_word_backward, prompt_word_forward, quote_path_hint, rect_contains, resolve_command,
+    resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
 };
 
 /// How soon a second left press on the same directory tree entry must follow
@@ -81,45 +80,6 @@ impl App {
                         || !self.config.indentation.files.is_empty(),
                 ),
         );
-    }
-
-    /// Whether this key moves between panes on its own right now.
-    ///
-    /// A terminal in Insert mode owns every key its child could want, so a key
-    /// only reaches Runyte when something above names it. `Ctrl-w` is named
-    /// there permanently; these four join it exactly while the option is on.
-    fn is_persistent_navigation_key(&self, key: KeyStroke) -> bool {
-        if !self.persistent_session {
-            return false;
-        }
-        let navigation = |binding: &crate::keymap::Binding| {
-            matches!(
-                binding.target,
-                crate::keymap::BindingTarget::Editor(
-                    EditorCommand::NextRunningSession
-                        | EditorCommand::PreviousRunningSession
-                        | EditorCommand::PreviousSession
-                )
-            )
-        };
-        match self
-            .keymap
-            .lookup_in(self.mode, self.key_binding_scope(), &KeySequence::from(key))
-        {
-            crate::keymap::Lookup::Exact(binding) => navigation(binding),
-            crate::keymap::Lookup::Prefix(bindings) => {
-                bindings.iter().any(|binding| navigation(binding))
-            }
-            crate::keymap::Lookup::ExactAndPrefix {
-                exact,
-                continuations,
-            } => navigation(exact) || continuations.iter().any(|binding| navigation(binding)),
-            crate::keymap::Lookup::NoMatch => false,
-        }
-    }
-
-    fn is_fast_pane_key(&self, key: KeyStroke) -> bool {
-        self.config.editor.fast_pane_keys && crate::keymap::is_fast_pane_key(key)
     }
 
     /// Replaces the host clipboard boundary. Primarily useful to deterministic
@@ -718,16 +678,86 @@ impl App {
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
         let previous = self.plugin_physical_input;
-        self.plugin_physical_input = matches!(
-            input,
-            InputEvent::Key(KeyStroke {
-                code: KeyCode::Enter,
-                modifiers: Modifiers::NONE,
-            })
-        );
-        let result = self.handle_frontend_input(input, true);
+        self.plugin_physical_input = self.fresh_physical_approval_key(&input);
+        let result = self.handle_frontend_input(input, true, true);
         self.plugin_physical_input = previous;
         result
+    }
+
+    /// The generic list receives input only after every covering owner. Keep
+    /// approval classification on that same ownership boundary.
+    pub(super) fn list_input_active(&self) -> bool {
+        self.list_layer_input_active() && self.list_menu_ui_owner().is_none()
+    }
+
+    pub(super) fn list_layer_input_active(&self) -> bool {
+        self.list.is_some()
+            && self.macro_replay.is_none()
+            && !self.context_overlay_active()
+            && self.plugins.input.is_none()
+            && self.plugins.provider_reload.is_none()
+            && self.plugins.provider_overwrite.is_none()
+            && !self.session_inventory_open()
+            && !self.session_directory_chooser_open()
+            && self.merge_ui.review.is_none()
+            && self.directory_tree_delete.is_none()
+            && self.directory_tree_destination.is_none()
+            && self.fs_confirmation.is_none()
+            && self.directory_reload_confirmation.is_none()
+            && self.file_reload_confirmation.is_none()
+            && self.git_discard_confirmation.is_none()
+            && self.git_stash_confirmation.is_none()
+            && self.git_branch_switch.is_none()
+            && self.git_branch_deletion.is_none()
+            && self.git_pull_rebase.is_none()
+            && self.git_worktree_removal.is_none()
+            && self.buffer_discard_confirmation.is_none()
+            && self.context_action_menu.is_none()
+            && self.program_action_menu.is_none()
+            && self.path_action_menu.is_none()
+            && self.path_popup.is_none()
+            && self.picker.is_none()
+    }
+
+    pub(super) fn fresh_physical_approval_key(&self, input: &InputEvent) -> bool {
+        let InputEvent::Key(key) = input else {
+            return false;
+        };
+        let plain_enter = key.code == KeyCode::Enter && key.modifiers.is_empty();
+        if self.list_input_active() {
+            return match self.list_input_action(*key) {
+                Some(super::language_workflows::ListInputAction::Target {
+                    target: crate::keymap::BindingTarget::Editor(EditorCommand::ListAccept),
+                    registry_key,
+                }) => {
+                    plain_enter
+                        || self
+                            .keymap
+                            .list_key_is_configured(self.list_binding_scope(), registry_key)
+                }
+                _ => false,
+            };
+        }
+
+        if self.mode == Mode::Command
+            && !self.has_input_overlay()
+            && !self.context_overlay_active()
+            && self.jump.is_none()
+            && self.macro_replay.is_none()
+            && !self.session_inventory_open()
+            && !self.session_directory_chooser_open()
+        {
+            use crate::keymap::ui::Action;
+            let owner = self.prompt_ui_owner();
+            self.keymap.ui().lookup(owner, *key) == Some(Action::Accept)
+                && (plain_enter
+                    || self
+                        .keymap
+                        .ui()
+                        .explicitly_configured(owner, Action::Accept))
+        } else {
+            plain_enter
+        }
     }
 
     /// Applies an operating-system key repeat through the ordinary input
@@ -742,14 +772,40 @@ impl App {
                 modifiers: Modifiers::NONE,
             })
         );
+        let repeated_context_accept =
+            matches!(&input, InputEvent::Key(key) if self.context_accept_key(*key));
+        let provider_owner = self.provider_ui_owner();
+        let repeated_provider_accept =
+            matches!(&input, InputEvent::Key(key) if self.provider_repeat_suppressed(*key));
+        let plugin_owned = !self.context_overlay_active()
+            && provider_owner.is_none()
+            && self.macro_replay.is_none()
+            && self.plugins.input.is_some();
+        let approval = if self.context_overlay_active() {
+            !repeated_context_accept
+        } else if provider_owner.is_some() {
+            !repeated_provider_accept
+        } else {
+            !repeated_enter
+        };
         let previous = self.plugin_physical_input;
         self.plugin_physical_input = false;
-        let result = self.handle_frontend_input(input, !repeated_enter);
+        let result = self.handle_frontend_input(input, approval, false);
         self.plugin_physical_input = previous;
-        if repeated_enter && result.is_ok() {
+        if result.is_ok() && repeated_provider_accept {
+            match provider_owner {
+                Some(crate::keymap::ui::Owner::ProviderReload) => {
+                    self.retain_provider_reload_after_repeat()
+                }
+                Some(crate::keymap::ui::Owner::ProviderOverwrite) => {
+                    self.retain_provider_overwrite_after_repeat()
+                }
+                _ => {}
+            }
+        } else if result.is_ok() && provider_owner.is_none() && !plugin_owned && repeated_enter {
             // The repeat invalidated every earlier invocation, but this
             // retained surface still belongs to the same visible interaction.
-            // A later fresh Enter must be able to approve it.
+            // A later fresh acceptance must be able to approve it.
             if let Some(surface) = self.plugins.input.as_mut() {
                 surface.context.foreground = self.plugins.foreground_generation;
             }
@@ -759,7 +815,12 @@ impl App {
         result
     }
 
-    fn handle_frontend_input(&mut self, input: InputEvent, approval: bool) -> Result<()> {
+    fn handle_frontend_input(
+        &mut self,
+        input: InputEvent,
+        approval: bool,
+        fresh: bool,
+    ) -> Result<()> {
         if self.context_overlay_active() {
             self.handle_context_input(input, approval);
             return Ok(());
@@ -776,7 +837,10 @@ impl App {
             self.cancel_pointer_drag_preserving_pane_release();
         }
         if self.macro_replay.is_some() {
-            if is_macro_replay_cancel(&input) {
+            if matches!(&input, InputEvent::Key(key) if self.keymap.ui().lookup(
+                crate::keymap::ui::Owner::MacroReplay, *key,
+            ) == Some(crate::keymap::ui::Action::Cancel))
+            {
                 self.cancel_macro_replay();
             } else {
                 self.macro_replay_progress_status();
@@ -806,9 +870,9 @@ impl App {
         }
         if self.plugins.input.is_some() {
             self.last_interaction = Instant::now();
-            if approval {
-                self.handle_plugin_input(input);
-            }
+            let previous = self.plugin_physical_input;
+            self.handle_plugin_input(input, fresh);
+            self.plugin_physical_input = previous;
             return Ok(());
         }
         self.handle_input_inner(input, false)
@@ -927,17 +991,28 @@ impl App {
         view: &PreparedView,
         repetitions: u16,
     ) -> Result<PointerOutcome> {
-        if self.pointer_link_pressed {
+        use crate::keymap::pointer_actions::{Action as PointerAction, Trigger};
+        let bindings = self.keymap.pointer().clone();
+        let press = |action| bindings.press(action, event);
+        let scroll = bindings.wheel(event);
+        if let Some(button) = self.pointer_link_pressed {
             match event.kind {
-                PointerEventKind::Up(PointerButton::Left) => {
-                    self.pointer_link_pressed = false;
+                PointerEventKind::Up(released) if released == button => {
+                    self.pointer_link_pressed = None;
                     return Ok(PointerOutcome::Unchanged);
                 }
-                PointerEventKind::Drag(PointerButton::Left) => {
+                PointerEventKind::Drag(pressed) if pressed == button => {
                     return Ok(PointerOutcome::Unchanged);
                 }
-                PointerEventKind::Down(PointerButton::Left) => {
-                    self.pointer_link_pressed = false;
+                PointerEventKind::Drag(_) | PointerEventKind::Up(_)
+                    if button != crate::input::PointerButton::Left =>
+                {
+                    return Ok(PointerOutcome::Unchanged);
+                }
+                PointerEventKind::Down(pressed)
+                    if button != crate::input::PointerButton::Left || pressed == button =>
+                {
+                    self.pointer_link_pressed = None
                 }
                 _ => {}
             }
@@ -979,7 +1054,7 @@ impl App {
             return Ok(PointerOutcome::Unchanged);
         }
         self.plugins.foreground_generation += 1;
-        if !matches!(event.kind, PointerEventKind::Drag(PointerButton::Left)) {
+        if !self.pointer_drag_matches(event) {
             self.pointer_autoscroll = None;
         }
         // Any press ends a pending tree double click; only a second press on
@@ -999,12 +1074,12 @@ impl App {
         }
         if matches!(self.pointer_drag, Some(PointerDrag::DirectoryTreeResize)) {
             match event.kind {
-                PointerEventKind::Drag(PointerButton::Left) => self.resize_tree(
+                PointerEventKind::Drag(_) if self.pointer_drag_matches(event) => self.resize_tree(
                     i32::from(event.column) - i32::from(view.geometry.editor.x) + 1,
                     view.geometry.editor.width,
                 ),
                 PointerEventKind::Up(_) => {
-                    self.cancel_pointer_drag();
+                    self.release_pointer_drag(event);
                 }
                 _ => {}
             }
@@ -1028,10 +1103,29 @@ impl App {
                 self.report_input_feedback();
             }
             match event.kind {
-                PointerEventKind::Down(PointerButton::Left) => {
-                    if event.column == area.x.saturating_add(area.width).saturating_sub(1) {
-                        self.pointer_drag = Some(PointerDrag::DirectoryTreeResize);
+                PointerEventKind::Down(button)
+                    if press(PointerAction::TreeResize)
+                        || press(PointerAction::TreeSelect)
+                        || bindings.matches(
+                            PointerAction::TreeOpen,
+                            Trigger::double_click(button),
+                            event.modifiers,
+                        ) =>
+                {
+                    if press(PointerAction::TreeResize)
+                        && event.column == area.x.saturating_add(area.width).saturating_sub(1)
+                    {
+                        self.begin_pointer_drag(PointerDrag::DirectoryTreeResize, button);
                         return Ok(PointerOutcome::Changed);
+                    }
+                    if !press(PointerAction::TreeSelect)
+                        && !bindings.matches(
+                            PointerAction::TreeOpen,
+                            Trigger::double_click(button),
+                            event.modifiers,
+                        )
+                    {
+                        return Ok(PointerOutcome::Unchanged);
                     }
                     if event.row <= area.y {
                         return Ok(PointerOutcome::Unchanged);
@@ -1043,18 +1137,32 @@ impl App {
                     let mut double_click = false;
                     if let Some(selected) = view.tree_rows.get(row) {
                         let now = self.last_interaction;
-                        double_click = previous_tree_click.is_some_and(|(path, at)| {
-                            &path == selected
-                                && now.saturating_duration_since(at) <= TREE_DOUBLE_CLICK_INTERVAL
-                        });
-                        self.directory_tree.selected = selected.clone();
+                        double_click = bindings.matches(
+                            PointerAction::TreeOpen,
+                            Trigger::double_click(button),
+                            event.modifiers,
+                        ) && previous_tree_click.is_some_and(
+                            |(path, at, previous_button, previous_bindings)| {
+                                &path == selected
+                                    && previous_button == button
+                                    && previous_bindings == bindings
+                                    && now.saturating_duration_since(at)
+                                        <= TREE_DOUBLE_CLICK_INTERVAL
+                            },
+                        );
+                        if press(PointerAction::TreeSelect) || double_click {
+                            self.directory_tree.selected = selected.clone();
+                        }
                         // A third press starts a new pair rather than
                         // toggling a directory straight back.
                         if !double_click {
-                            self.directory_tree_click = Some((selected.clone(), now));
+                            self.directory_tree_click =
+                                Some((selected.clone(), now, button, bindings.clone()));
                         }
                     }
-                    self.enter_directory_tree();
+                    if press(PointerAction::TreeSelect) || double_click {
+                        self.enter_directory_tree();
+                    }
                     if double_click {
                         // Reported here rather than returned: a persistent
                         // host publishes no frame for a failed pointer event,
@@ -1071,26 +1179,51 @@ impl App {
                         self.refresh_navigator();
                     }
                 }
-                PointerEventKind::ScrollUp => self
+                _ if scroll == Some(PointerAction::ScrollUp) => self
                     .directory_tree
                     .select_relative(-3 * isize::try_from(repetitions).unwrap_or(isize::MAX / 3)),
-                PointerEventKind::ScrollDown => self
+                _ if scroll == Some(PointerAction::ScrollDown) => self
                     .directory_tree
                     .select_relative(3 * isize::try_from(repetitions).unwrap_or(isize::MAX / 3)),
                 _ => {}
             }
             return Ok(PointerOutcome::Changed);
         }
+        if self.handle_pane_drag(event, view) {
+            self.invalidate_all_partial_guards();
+            self.status_error = false;
+            return Ok(PointerOutcome::Changed);
+        }
+        // A native preview owns its visible surface independently of source
+        // selection or link bindings. Its border still belongs to pane resizing.
         if self.native_media
-            && event.kind == PointerEventKind::Down(PointerButton::Left)
-            && event.modifiers
-                == if cfg!(target_os = "macos") {
-                    Modifiers::SUPER
-                } else {
-                    Modifiers::CONTROL
-                }
+            && press(PointerAction::PreviewSelect)
+            && !(press(PointerAction::Resize)
+                && pointer_resize_pair(view, event.column, event.row).is_some())
+            && let Some(pane_id) = pointer_pane(view, event.column, event.row)
+            && view.pane(pane_id).is_some_and(|pane| {
+                event.column >= pane.body.x
+                    && event.column < pane.body.x.saturating_add(pane.body.width)
+                    && event.row >= pane.body.y
+                    && event.row < pane.body.y.saturating_add(pane.body.height)
+            })
+            && self
+                .document_previews
+                .get(&pane_id)
+                .is_some_and(|preview| preview.source == self.panes[&pane_id].buffer)
         {
-            self.pointer_link_pressed = true;
+            self.invalidate_all_partial_guards();
+            self.grammar.reset();
+            self.jump = None;
+            self.activate_pane_from_pointer(pane_id);
+            self.pointer_drag = None;
+            return Ok(PointerOutcome::Changed);
+        }
+        if self.native_media && press(PointerAction::OpenLink) {
+            let PointerEventKind::Down(button) = event.kind else {
+                unreachable!("link press")
+            };
+            self.pointer_link_pressed = Some(button);
             self.invalidate_all_partial_guards();
             self.grammar.reset();
             self.jump = None;
@@ -1110,14 +1243,18 @@ impl App {
             });
             if attempted {
                 let outcome = state.outcome(self, CommandOutcomeHint::Infer);
-                let spelling = if cfg!(target_os = "macos") {
-                    "Cmd-left-click"
+                let spelling = if bindings.is_default(PointerAction::OpenLink) {
+                    if cfg!(target_os = "macos") {
+                        "Cmd-left-click".to_owned()
+                    } else {
+                        "Ctrl-left-click".to_owned()
+                    }
                 } else {
-                    "Ctrl-left-click"
+                    bindings.label(PointerAction::OpenLink)
                 };
                 self.action_feedback = None;
                 self.report_completed_action(
-                    spelling,
+                    &spelling,
                     "Open the file or web link under the pointer",
                     outcome,
                 );
@@ -1128,13 +1265,8 @@ impl App {
             self.refresh_navigator();
             return Ok(PointerOutcome::Changed);
         }
-        if self.handle_pane_drag(event, view) {
-            self.invalidate_all_partial_guards();
-            self.status_error = false;
-            return Ok(PointerOutcome::Changed);
-        }
         let active_pane = self.active_pane;
-        let selection_drag = self.pointer_selection_drag_active()
+        let selection_drag = self.pointer_drag.is_some()
             && matches!(
                 event.kind,
                 PointerEventKind::Drag(_) | PointerEventKind::Up(_)
@@ -1150,8 +1282,71 @@ impl App {
         }
         self.invalidate_all_partial_guards();
         self.status_error = false;
+        if press(PointerAction::SessionActivate)
+            && let Some(strip) = &view.session_strip
+            && event.row.checked_add(1) == Some(view.geometry.editor.y)
+            && event.column >= view.geometry.editor.x
+        {
+            if self.jump.take().is_some() {
+                self.status("jump cancelled");
+                self.report_input_feedback();
+            }
+            self.grammar.reset();
+            self.pointer_drag = None;
+            let column = usize::from(event.column - view.geometry.editor.x);
+            if let Some(label) = strip
+                .snapshot
+                .layout(view.geometry.editor.width)
+                .entries
+                .iter()
+                .find(|label| label.cells.contains(&column))
+                && let Some(selection) = strip.targets.get(label.index)
+                && {
+                    #[cfg(windows)]
+                    {
+                        self.current_native_publication.as_ref() != Some(selection)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        selection.project_root() != self.project_root
+                    }
+                }
+                && self.request_selected_workspace_switch(selection.clone())
+            {
+                self.workspace_switch.as_mut().unwrap().running_only = true;
+            }
+            return Ok(PointerOutcome::Changed);
+        }
+        if press(PointerAction::Resize)
+            && let Some((first, second, axis)) = pointer_resize_pair(view, event.column, event.row)
+        {
+            if self.jump.take().is_some() {
+                self.status("jump cancelled");
+                self.report_input_feedback();
+            }
+            self.grammar.reset();
+            let PointerEventKind::Down(button) = event.kind else {
+                unreachable!("resize press")
+            };
+            self.begin_pointer_drag(
+                PointerDrag::Resize {
+                    first,
+                    second,
+                    axis,
+                    last_column: event.column,
+                    last_row: event.row,
+                },
+                button,
+            );
+            return Ok(PointerOutcome::Changed);
+        }
+
         match event.kind {
-            PointerEventKind::Down(PointerButton::Left) => {
+            PointerEventKind::Down(button)
+                if (press(PointerAction::Select) || press(PointerAction::Extend))
+                    && !(press(PointerAction::Copy)
+                        && self.pointer_over_active_selection(view, event.column, event.row)) =>
+            {
                 if self.jump.take().is_some() {
                     self.status("jump cancelled");
                     self.report_input_feedback();
@@ -1159,47 +1354,6 @@ impl App {
                 // A pointer press cancels any modal prefix/operator/register
                 // state before it establishes a new spatial interaction.
                 self.grammar.reset();
-                if let Some(strip) = &view.session_strip
-                    && event.row.checked_add(1) == Some(view.geometry.editor.y)
-                    && event.column >= view.geometry.editor.x
-                {
-                    self.pointer_drag = None;
-                    let column = usize::from(event.column - view.geometry.editor.x);
-                    if let Some(label) = strip
-                        .snapshot
-                        .layout(view.geometry.editor.width)
-                        .entries
-                        .iter()
-                        .find(|label| label.cells.contains(&column))
-                        && let Some(selection) = strip.targets.get(label.index)
-                        && {
-                            #[cfg(windows)]
-                            {
-                                self.current_native_publication.as_ref() != Some(selection)
-                            }
-                            #[cfg(not(windows))]
-                            {
-                                selection.project_root() != self.project_root
-                            }
-                        }
-                        && self.request_selected_workspace_switch(selection.clone())
-                    {
-                        self.workspace_switch.as_mut().unwrap().running_only = true;
-                    }
-                    return Ok(PointerOutcome::Changed);
-                }
-                if let Some((first, second, axis)) =
-                    pointer_resize_pair(view, event.column, event.row)
-                {
-                    self.pointer_drag = Some(PointerDrag::Resize {
-                        first,
-                        second,
-                        axis,
-                        last_column: event.column,
-                        last_row: event.row,
-                    });
-                    return Ok(PointerOutcome::Changed);
-                }
                 let Some(pane_id) = pointer_pane(view, event.column, event.row) else {
                     self.pointer_drag = None;
                     return Ok(PointerOutcome::Changed);
@@ -1225,7 +1379,7 @@ impl App {
                     let screen_row = usize::from(event.row - view.pane(pane_id).unwrap().body.y);
                     let screen_column =
                         usize::from(event.column - view.pane(pane_id).unwrap().body.x);
-                    let extend = event.modifiers.contains(Modifiers::SHIFT);
+                    let extend = press(PointerAction::Extend);
                     let Some(offset) = self.terminals.get(terminal).and_then(|session| {
                         session.review_offset_at_view_cell(rows, screen_row, screen_column)
                     }) else {
@@ -1243,11 +1397,14 @@ impl App {
                     if let Some(session) = self.terminals.get_mut(terminal) {
                         session.set_review_selection(anchor, offset);
                     }
-                    self.pointer_drag = Some(PointerDrag::TerminalSelection {
-                        pane: pane_id,
-                        terminal,
-                        anchor,
-                    });
+                    self.begin_pointer_drag(
+                        PointerDrag::TerminalSelection {
+                            pane: pane_id,
+                            terminal,
+                            anchor,
+                        },
+                        button,
+                    );
                     self.mode = if anchor == offset {
                         Mode::Normal
                     } else {
@@ -1260,7 +1417,7 @@ impl App {
                 // press leaves behind. A Shift-click is extending a selection
                 // rather than placing an Insert caret, so its head addresses a
                 // character even when the pane was in Insert mode.
-                let extend = event.modifiers.contains(Modifiers::SHIFT);
+                let extend = press(PointerAction::Extend);
                 let insert = matches!(self.mode, Mode::Insert | Mode::Replace) && !extend;
                 let Some(offset) =
                     self.pointer_offset(view, pane_id, event.column, event.row, insert)
@@ -1279,11 +1436,15 @@ impl App {
                 let pane = self.panes.get_mut(&pane_id).unwrap();
                 pane.replace_selection(selection);
                 pane.mark_selection_semantics(semantics);
-                self.pointer_drag = Some(PointerDrag::Selection {
-                    pane: pane_id,
-                    buffer: pane.buffer,
-                    anchor,
-                });
+                let buffer_id = pane.buffer;
+                self.begin_pointer_drag(
+                    PointerDrag::Selection {
+                        pane: pane_id,
+                        buffer: buffer_id,
+                        anchor,
+                    },
+                    button,
+                );
                 if extend && anchor != offset {
                     self.mode = Mode::Select;
                 } else if matches!(previous_mode, Mode::Insert | Mode::Replace) {
@@ -1301,113 +1462,124 @@ impl App {
                 }
                 self.dismiss_popups();
             }
-            PointerEventKind::Drag(PointerButton::Left) => match self.pointer_drag {
-                Some(PointerDrag::Selection {
-                    pane,
-                    buffer,
-                    anchor,
-                }) => {
-                    if self
-                        .panes
-                        .get(&pane)
-                        .is_none_or(|candidate| candidate.buffer != buffer)
-                    {
-                        self.pointer_drag = None;
-                        return Ok(PointerOutcome::Changed);
+            PointerEventKind::Drag(_) if self.pointer_drag_matches(event) => {
+                match self.pointer_drag {
+                    Some(PointerDrag::Selection {
+                        pane,
+                        buffer,
+                        anchor,
+                    }) => {
+                        if self
+                            .panes
+                            .get(&pane)
+                            .is_none_or(|candidate| candidate.buffer != buffer)
+                        {
+                            self.pointer_drag = None;
+                            return Ok(PointerOutcome::Changed);
+                        }
+                        // A drag builds a selection whatever mode it started in,
+                        // and a selection covers characters.
+                        self.update_pointer_autoscroll(event, view);
+                        let Some(offset) =
+                            self.pointer_drag_offset(view, pane, event.column, event.row)
+                        else {
+                            return Ok(PointerOutcome::Changed);
+                        };
+                        self.activate_pane(pane);
+                        let (selection, semantics) = self.pointer_selection(anchor, offset);
+                        let candidate = self.panes.get_mut(&pane).unwrap();
+                        candidate.replace_selection(selection);
+                        candidate.mark_selection_semantics(semantics);
+                        candidate.preserve_scroll = true;
+                        self.mode = if anchor == offset {
+                            Mode::Normal
+                        } else {
+                            Mode::Select
+                        };
                     }
-                    // A drag builds a selection whatever mode it started in,
-                    // and a selection covers characters.
-                    self.update_pointer_autoscroll(event, view);
-                    let Some(offset) =
-                        self.pointer_drag_offset(view, pane, event.column, event.row)
-                    else {
-                        return Ok(PointerOutcome::Changed);
-                    };
-                    self.activate_pane(pane);
-                    let (selection, semantics) = self.pointer_selection(anchor, offset);
-                    let candidate = self.panes.get_mut(&pane).unwrap();
-                    candidate.replace_selection(selection);
-                    candidate.mark_selection_semantics(semantics);
-                    candidate.preserve_scroll = true;
-                    self.mode = if anchor == offset {
-                        Mode::Normal
-                    } else {
-                        Mode::Select
-                    };
-                }
-                Some(PointerDrag::TerminalSelection {
-                    pane,
-                    terminal,
-                    anchor,
-                }) => {
-                    if self.terminal_of_pane(pane) != Some(terminal) {
-                        self.pointer_drag = None;
-                        return Ok(PointerOutcome::Changed);
+                    Some(PointerDrag::TerminalSelection {
+                        pane,
+                        terminal,
+                        anchor,
+                    }) => {
+                        if self.terminal_of_pane(pane) != Some(terminal) {
+                            self.pointer_drag = None;
+                            return Ok(PointerOutcome::Changed);
+                        }
+                        let Some(prepared) = view.pane(pane) else {
+                            self.pointer_drag = None;
+                            return Ok(PointerOutcome::Changed);
+                        };
+                        if !rect_contains(prepared.body, event.column, event.row) {
+                            return Ok(PointerOutcome::Changed);
+                        }
+                        let screen_row = usize::from(event.row.saturating_sub(prepared.body.y));
+                        let screen_column =
+                            usize::from(event.column.saturating_sub(prepared.body.x));
+                        let Some(offset) = self.terminals.get(terminal).and_then(|session| {
+                            session.review_offset_at_view_cell(
+                                usize::from(prepared.body.height),
+                                screen_row,
+                                screen_column,
+                            )
+                        }) else {
+                            return Ok(PointerOutcome::Changed);
+                        };
+                        self.activate_pane(pane);
+                        if let Some(session) = self.terminals.get_mut(terminal) {
+                            session.set_review_selection(anchor, offset);
+                        }
+                        self.mode = if anchor == offset {
+                            Mode::Normal
+                        } else {
+                            Mode::Select
+                        };
                     }
-                    let Some(prepared) = view.pane(pane) else {
-                        self.pointer_drag = None;
-                        return Ok(PointerOutcome::Changed);
-                    };
-                    if !rect_contains(prepared.body, event.column, event.row) {
-                        return Ok(PointerOutcome::Changed);
-                    }
-                    let screen_row = usize::from(event.row.saturating_sub(prepared.body.y));
-                    let screen_column = usize::from(event.column.saturating_sub(prepared.body.x));
-                    let Some(offset) = self.terminals.get(terminal).and_then(|session| {
-                        session.review_offset_at_view_cell(
-                            usize::from(prepared.body.height),
-                            screen_row,
-                            screen_column,
-                        )
-                    }) else {
-                        return Ok(PointerOutcome::Changed);
-                    };
-                    self.activate_pane(pane);
-                    if let Some(session) = self.terminals.get_mut(terminal) {
-                        session.set_review_selection(anchor, offset);
-                    }
-                    self.mode = if anchor == offset {
-                        Mode::Normal
-                    } else {
-                        Mode::Select
-                    };
-                }
-                Some(PointerDrag::Resize {
-                    first,
-                    second,
-                    axis,
-                    last_column,
-                    last_row,
-                }) => {
-                    let cells = match axis {
-                        Axis::Horizontal => i32::from(event.column) - i32::from(last_column),
-                        Axis::Vertical => i32::from(event.row) - i32::from(last_row),
-                    };
-                    let delta = cells.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
-                    if delta != 0 {
-                        self.layout
-                            .resize_between_cells(first, second, view.layout_area(), delta);
-                    }
-                    self.pointer_drag = Some(PointerDrag::Resize {
+                    Some(PointerDrag::Resize {
                         first,
                         second,
                         axis,
-                        last_column: event.column,
-                        last_row: event.row,
-                    });
+                        last_column,
+                        last_row,
+                    }) => {
+                        let cells = match axis {
+                            Axis::Horizontal => i32::from(event.column) - i32::from(last_column),
+                            Axis::Vertical => i32::from(event.row) - i32::from(last_row),
+                        };
+                        let delta = cells.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+                        if delta != 0 {
+                            self.layout.resize_between_cells(
+                                first,
+                                second,
+                                view.layout_area(),
+                                delta,
+                            );
+                        }
+                        self.pointer_drag = Some(PointerDrag::Resize {
+                            first,
+                            second,
+                            axis,
+                            last_column: event.column,
+                            last_row: event.row,
+                        });
+                    }
+                    Some(PointerDrag::DirectoryTreeResize) => {
+                        unreachable!("tree drag is handled before pane input")
+                    }
+                    Some(PointerDrag::MovePane { .. }) => {
+                        unreachable!("pane moves are handled before pane input")
+                    }
+                    None => {}
                 }
-                Some(PointerDrag::DirectoryTreeResize) => {
-                    unreachable!("tree drag is handled before pane input")
-                }
-                Some(PointerDrag::MovePane { .. }) => {
-                    unreachable!("pane moves are handled before pane input")
-                }
-                None => {}
-            },
-            PointerEventKind::Up(_) => {
-                self.cancel_pointer_drag();
             }
-            PointerEventKind::ScrollUp | PointerEventKind::ScrollDown => {
+            PointerEventKind::Up(_) => {
+                self.release_pointer_drag(event);
+            }
+            _ if matches!(
+                scroll,
+                Some(PointerAction::ScrollUp | PointerAction::ScrollDown)
+            ) =>
+            {
                 let Some(pane) = pointer_pane(view, event.column, event.row) else {
                     return Ok(PointerOutcome::Changed);
                 };
@@ -1421,14 +1593,14 @@ impl App {
                     && let Some(session) = self.terminals.get_mut(id)
                 {
                     let lines = 3usize.saturating_mul(usize::from(repetitions));
-                    if event.kind == PointerEventKind::ScrollUp {
+                    if scroll == Some(PointerAction::ScrollUp) {
                         session.scroll_back(lines);
                     } else {
                         session.scroll_forward(lines);
                     }
                     return Ok(PointerOutcome::Changed);
                 }
-                let direction = if event.kind == PointerEventKind::ScrollUp {
+                let direction = if scroll == Some(PointerAction::ScrollUp) {
                     -1
                 } else {
                     1
@@ -1437,7 +1609,11 @@ impl App {
                     self.scroll_pane(pane, direction);
                 }
             }
-            PointerEventKind::ScrollLeft | PointerEventKind::ScrollRight => {
+            _ if matches!(
+                scroll,
+                Some(PointerAction::ScrollLeft | PointerAction::ScrollRight)
+            ) =>
+            {
                 let Some(pane) = pointer_pane(view, event.column, event.row) else {
                     return Ok(PointerOutcome::Changed);
                 };
@@ -1465,7 +1641,7 @@ impl App {
                 if prefix_width > 0 || !soft_wrap || overflow {
                     let candidate = self.panes.get_mut(&pane).unwrap();
                     let columns = 3usize.saturating_mul(usize::from(repetitions));
-                    if event.kind == PointerEventKind::ScrollLeft {
+                    if scroll == Some(PointerAction::ScrollLeft) {
                         let text_columns = columns.min(candidate.scroll_col);
                         candidate.scroll_col -= text_columns;
                         candidate.row_prefix_scroll = candidate
@@ -1484,8 +1660,15 @@ impl App {
                     candidate.preserve_scroll = true;
                 }
             }
-            PointerEventKind::Down(PointerButton::Right) => {
+            PointerEventKind::Down(button) if press(PointerAction::Copy) => {
                 self.pointer_drag = None;
+                if !bindings.is_default(PointerAction::Copy)
+                    || press(PointerAction::Select)
+                    || press(PointerAction::Extend)
+                {
+                    self.pane_pointer_owned = true;
+                    self.pane_pointer_button = Some(button);
+                }
                 if !self.pointer_over_active_selection(view, event.column, event.row) {
                     return Ok(PointerOutcome::Changed);
                 }
@@ -1502,14 +1685,16 @@ impl App {
                     outcome = CommandOutcome::Status("yanked to system clipboard".to_owned());
                 }
                 self.report_completed_action(
-                    "right mouse click",
+                    &if bindings.is_default(PointerAction::Copy) {
+                        "right mouse click".to_owned()
+                    } else {
+                        bindings.label(PointerAction::Copy)
+                    },
                     "Yank to the system clipboard",
                     outcome,
                 );
             }
-            PointerEventKind::Down(PointerButton::Middle)
-            | PointerEventKind::Drag(PointerButton::Middle | PointerButton::Right)
-            | PointerEventKind::Moved => {}
+            _ => {}
         }
         Ok(PointerOutcome::Changed)
     }
@@ -1920,11 +2105,13 @@ impl App {
         // and nested action menus each retain their existing cancellation
         // semantics. Exact-text confirmations are the exception because a
         // branch or path can legitimately contain a space.
-        if key.canonical_for_binding() == self.keymap.leader()
+        let legacy_key = if key.canonical_for_binding() == self.keymap.leader()
             && self.space_dismisses_input_overlay()
         {
-            key = KeyStroke::new(KeyCode::Escape, Modifiers::NONE);
-        }
+            KeyStroke::new(KeyCode::Escape, Modifiers::NONE)
+        } else {
+            key
+        };
         if self.merge_ui.review.is_some() {
             return self.handle_merge_review_key(key);
         }
@@ -1983,6 +2170,7 @@ impl App {
         if self.list.is_some() {
             return self.handle_list_key(key);
         }
+        key = legacy_key;
         // Live jump labels own the keyboard: every key either names a label or
         // dismisses them.
         if self.jump.is_some() {
@@ -1990,18 +2178,9 @@ impl App {
         }
         // A hover popup is a one-shot overlay: the next keystroke dismisses it
         // and is then handled normally, so reading documentation never eats an
-        // edit. Long documentation advertises Enter as the one exception: it
+        // edit. Long documentation has an acceptance action as the exception: it
         // opens the complete text as a reusable read-only buffer.
-        if matches!(key.code, KeyCode::Enter)
-            && key.modifiers.is_empty()
-            && self.mode != Mode::Command
-            && self.completion.is_none()
-            && self.grammar.pending_sequence().is_empty()
-            && self
-                .hover
-                .as_ref()
-                .is_some_and(|hover| hover.lines.len() > self.hover_visible_rows())
-        {
+        if self.hover_accepts_key(key) {
             let text = self.hover.take().unwrap().lines.join("\n");
             self.open_virtual_page(
                 GeneratedViewIdentity::Documentation,
@@ -2013,25 +2192,25 @@ impl App {
         }
         self.hover = None;
 
-        // A terminal in Insert mode owns every key except Ctrl-\\, the
-        // registered effective window prefix, and the single-key pane moves
-        // while those are configured on. Pending prefix suffixes continue through
-        // the same declarative grammar as every other view.
+        // A pending sequence is already owned by the editor grammar.
         if self.mode == Mode::Insert
             && let Some(id) = self.active_terminal()
             && self.grammar.pending_sequence().is_empty()
-            && !is_terminal_normal_key(key)
-            && key.canonical_for_binding() != self.keymap.window_prefix()
-            && !self.is_fast_pane_key(key)
-            && !self.is_persistent_navigation_key(key)
-            && !self.keymap.terminal_clipboard_key(key)
+            && self.keymap.terminal_input_route(
+                key,
+                self.persistent_session,
+                self.config.editor.fast_pane_keys,
+            ) == crate::keymap::terminal_input::Route::Child
         {
             return self.handle_terminal_key(id, key);
         }
 
-        if key.code == KeyCode::Tab
+        if self
+            .keymap
+            .ui()
+            .lookup(crate::keymap::ui::Owner::ContextLauncher, key)
+            == Some(crate::keymap::ui::Action::OpenActions)
             && !self.directory_tree.focused
-            && key.modifiers.is_empty()
             && matches!(self.mode, Mode::Normal | Mode::Select)
             && self.grammar.pending_sequence().is_empty()
             && self.grammar.awaiting_character().is_none()
@@ -2056,7 +2235,7 @@ impl App {
         }
     }
 
-    fn space_dismisses_input_overlay(&self) -> bool {
+    pub(super) fn space_dismisses_input_overlay(&self) -> bool {
         if self.exact_confirmation_accepts_space() {
             return false;
         }
@@ -2104,6 +2283,38 @@ impl App {
                 .git_worktree_removal
                 .as_ref()
                 .is_some_and(|confirmation| confirmation.typed())
+    }
+
+    pub(crate) fn hover_accepts_key(&self, key: KeyStroke) -> bool {
+        use crate::keymap::ui::{Action, Owner};
+        self.keymap.ui().lookup(Owner::Hover, key) == Some(Action::Accept)
+            && !self.has_input_overlay()
+            && self.jump.is_none()
+            && self.mode != Mode::Command
+            && self.completion.is_none()
+            && self.grammar.pending_sequence().is_empty()
+            // Character operands remain structural, including modified characters.
+            && !(matches!(key.code, KeyCode::Char(_))
+                && (self.grammar.awaiting_character().is_some()
+                    || (matches!(self.mode, Mode::Insert | Mode::Replace)
+                        && !key.modifiers.intersects(
+                            Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER,
+                        ))))
+            && self.hover.as_ref().is_some_and(|hover| {
+                hover.lines.len() > self.hover_visible_rows()
+            })
+    }
+
+    pub(crate) fn hover_accept_label(&self) -> String {
+        use crate::keymap::ui::{Action, Owner};
+        self.keymap
+            .ui()
+            .reachable_label(Owner::Hover, Action::Accept, None, |key| {
+                self.macro_replay.is_none()
+                    && self.hover_accepts_key(key)
+                    && !(key.canonical_for_binding() == self.keymap.leader()
+                        && self.space_dismisses_input_overlay())
+            })
     }
 
     pub(super) fn hover_visible_rows(&self) -> usize {
@@ -3248,61 +3459,94 @@ impl App {
         self.normalize_buffer(buffer_id);
     }
 
+    pub(super) fn confirmation_ui_owner(&self) -> Option<crate::keymap::ui::Owner> {
+        use crate::keymap::ui::Owner;
+        if self.context_overlay_active()
+            || self.plugins.input.is_some()
+            || self.plugins.provider_reload.is_some()
+            || self.plugins.provider_overwrite.is_some()
+            || self.session_inventory_open()
+            || self.session_directory_chooser_open()
+            || self.merge_ui.review.is_some()
+        {
+            return None;
+        }
+        if self.directory_tree_delete.is_some() {
+            return Some(Owner::TreeDelete);
+        }
+        if self.directory_tree_destination.is_some() {
+            return Some(Owner::TreeDestination);
+        }
+        if self.fs_confirmation.is_some() {
+            return Some(Owner::FilesystemConfirmation);
+        }
+        if self.directory_reload_confirmation.is_some()
+            || self.file_reload_confirmation.is_some()
+            || self.git_discard_confirmation.is_some()
+        {
+            return Some(Owner::Confirmation);
+        }
+        if self.git_stash_confirmation.is_some() {
+            return Some(Owner::StashConfirmation);
+        }
+        if self.git_branch_switch.is_some() || self.git_branch_deletion.is_some() {
+            return Some(Owner::TextConfirmation);
+        }
+        if self.git_pull_rebase.is_some() {
+            return Some(Owner::Confirmation);
+        }
+        if self.git_worktree_removal.is_some() {
+            return Some(Owner::TextConfirmation);
+        }
+        self.buffer_discard_confirmation
+            .map(|_| Owner::Confirmation)
+    }
+
+    pub(super) fn confirmation_action(&self, key: KeyStroke) -> Option<crate::keymap::ui::Action> {
+        self.keymap.ui().lookup_with_leader(
+            self.confirmation_ui_owner()?,
+            key,
+            self.space_dismisses_input_overlay(),
+        )
+    }
+
+    pub(super) fn filesystem_permanent_choice(&self, key: KeyStroke) -> bool {
+        self.confirmation_ui_owner() == Some(crate::keymap::ui::Owner::FilesystemConfirmation)
+            && self.confirmation_action(key).is_none()
+            && key.code == KeyCode::Char('P')
+            && key.modifiers.is_empty()
+    }
+
     fn handle_fs_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        use crate::keymap::ui::Action;
+        match self.confirmation_action(key) {
+            Some(Action::Cancel) => {
                 self.fs_confirmation = None;
                 self.status("filesystem plan cancelled");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.fs_confirmation = None;
-                self.status("filesystem plan cancelled");
-            }
-            (KeyCode::Enter, _) => self.apply_fs_confirmation(DeletionMode::Trash),
-            (KeyCode::Char('P'), modifiers) if modifiers.is_empty() => {
-                self.apply_fs_confirmation(DeletionMode::Permanent);
-            }
-            (KeyCode::Down, _) => {
+            Some(Action::Accept) => self.apply_fs_confirmation(DeletionMode::Trash),
+            Some(
+                action @ (Action::Next
+                | Action::Previous
+                | Action::PageDown
+                | Action::PageUp
+                | Action::First
+                | Action::Last),
+            ) => {
                 let confirmation = self.fs_confirmation.as_mut().unwrap();
                 let last = confirmation.plan.operations().len().saturating_sub(1);
-                confirmation.selected = confirmation.selected.saturating_add(1).min(last);
+                confirmation.selected = match action {
+                    Action::Next => confirmation.selected.saturating_add(1).min(last),
+                    Action::Previous => confirmation.selected.saturating_sub(1),
+                    Action::PageDown => confirmation.selected.saturating_add(10).min(last),
+                    Action::PageUp => confirmation.selected.saturating_sub(10),
+                    Action::First => 0,
+                    Action::Last => last,
+                    _ => unreachable!(),
+                };
             }
-            (KeyCode::Char('n'), _) if control => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                let last = confirmation.plan.operations().len().saturating_sub(1);
-                confirmation.selected = confirmation.selected.saturating_add(1).min(last);
-            }
-            (KeyCode::Up, _) => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                confirmation.selected = confirmation.selected.saturating_sub(1);
-            }
-            (KeyCode::Char('p'), _) if control => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                confirmation.selected = confirmation.selected.saturating_sub(1);
-            }
-            (KeyCode::PageDown, _) => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                let last = confirmation.plan.operations().len().saturating_sub(1);
-                confirmation.selected = confirmation.selected.saturating_add(10).min(last);
-            }
-            (KeyCode::Char('d'), _) if control => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                let last = confirmation.plan.operations().len().saturating_sub(1);
-                confirmation.selected = confirmation.selected.saturating_add(10).min(last);
-            }
-            (KeyCode::PageUp, _) => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                confirmation.selected = confirmation.selected.saturating_sub(10);
-            }
-            (KeyCode::Char('u'), _) if control => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                confirmation.selected = confirmation.selected.saturating_sub(10);
-            }
-            (KeyCode::Home, _) => self.fs_confirmation.as_mut().unwrap().selected = 0,
-            (KeyCode::End, _) => {
-                let confirmation = self.fs_confirmation.as_mut().unwrap();
-                confirmation.selected = confirmation.plan.operations().len().saturating_sub(1);
+            None if self.filesystem_permanent_choice(key) => {
+                self.apply_fs_confirmation(DeletionMode::Permanent)
             }
             _ => {}
         }
@@ -3310,16 +3554,12 @@ impl App {
     }
 
     fn handle_directory_reload_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        match self.confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 self.directory_reload_confirmation = None;
                 self.status("directory refresh cancelled");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.directory_reload_confirmation = None;
-                self.status("directory refresh cancelled");
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let Some(confirmation) = self.directory_reload_confirmation.take() else {
                     return Ok(());
                 };
@@ -3343,16 +3583,12 @@ impl App {
     }
 
     fn handle_git_discard_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        match self.confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 self.git_discard_confirmation = None;
                 self.status("discard cancelled; nothing was changed");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.git_discard_confirmation = None;
-                self.status("discard cancelled; nothing was changed");
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let Some(confirmation) = self.git_discard_confirmation.take() else {
                     return Ok(());
                 };
@@ -3364,16 +3600,13 @@ impl App {
     }
 
     fn handle_branch_deletion_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        let action = self.confirmation_action(key);
+        match action {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 self.git_branch_deletion = None;
                 self.status("delete cancelled; the branch is still there");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.git_branch_deletion = None;
-                self.status("delete cancelled; the branch is still there");
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let valid = self
                     .git_branch_deletion
                     .as_ref()
@@ -3403,7 +3636,12 @@ impl App {
                 if let Some(confirmation) = self.git_branch_deletion.as_mut()
                     && confirmation.typed()
                 {
-                    edit_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, key);
+                    edit_confirmation_text(
+                        &mut confirmation.input,
+                        &mut confirmation.cursor,
+                        action,
+                        key,
+                    );
                     self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
                 }
             }
@@ -3412,18 +3650,14 @@ impl App {
     }
 
     fn handle_branch_switch_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        let action = self.confirmation_action(key);
+        match action {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 if let Some(confirmation) = self.git_branch_switch.take() {
                     self.status(confirmation.action.cancelled_message());
                 }
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                if let Some(confirmation) = self.git_branch_switch.take() {
-                    self.status(confirmation.action.cancelled_message());
-                }
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let valid = self
                     .git_branch_switch
                     .as_ref()
@@ -3439,7 +3673,12 @@ impl App {
             }
             _ => {
                 if let Some(confirmation) = self.git_branch_switch.as_mut() {
-                    edit_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, key);
+                    edit_confirmation_text(
+                        &mut confirmation.input,
+                        &mut confirmation.cursor,
+                        action,
+                        key,
+                    );
                     self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
                 }
             }
@@ -3448,10 +3687,9 @@ impl App {
     }
 
     fn handle_pull_rebase_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        let cancelled = match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => true,
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => true,
-            (KeyCode::Enter, _) => {
+        let cancelled = match self.confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => true,
+            Some(crate::keymap::ui::Action::Accept) => {
                 if self.git_pull_rebase.take().is_some() {
                     self.rebase_onto_upstream();
                 }
@@ -3471,8 +3709,9 @@ impl App {
     }
 
     fn handle_worktree_removal_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        let action = self.confirmation_action(key);
+        match action {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 let Some(confirmation) = self.git_worktree_removal.take() else {
                     return Ok(());
                 };
@@ -3481,16 +3720,7 @@ impl App {
                     crate::git::display_path(&confirmation.plan.path)
                 ));
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                let Some(confirmation) = self.git_worktree_removal.take() else {
-                    return Ok(());
-                };
-                self.status(format!(
-                    "remove cancelled; worktree {} was kept and no branch was deleted",
-                    crate::git::display_path(&confirmation.plan.path)
-                ));
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let valid = self
                     .git_worktree_removal
                     .as_ref()
@@ -3524,7 +3754,12 @@ impl App {
                 if let Some(confirmation) = self.git_worktree_removal.as_mut()
                     && confirmation.typed()
                 {
-                    edit_confirmation_text(&mut confirmation.input, &mut confirmation.cursor, key);
+                    edit_confirmation_text(
+                        &mut confirmation.input,
+                        &mut confirmation.cursor,
+                        action,
+                        key,
+                    );
                     self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
                 }
             }
@@ -3533,16 +3768,12 @@ impl App {
     }
 
     fn handle_buffer_discard_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        match self.confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 self.buffer_discard_confirmation = None;
                 self.status("discard cancelled");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.buffer_discard_confirmation = None;
-                self.status("discard cancelled");
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let Some(buffer) = self.buffer_discard_confirmation.take() else {
                     return Ok(());
                 };
@@ -3554,16 +3785,12 @@ impl App {
     }
 
     fn handle_file_reload_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match (key.code, key.modifiers) {
-            (KeyCode::Escape, _) => {
+        match self.confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 self.file_reload_confirmation = None;
                 self.status("reload cancelled");
             }
-            (KeyCode::Char('c'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
-                self.file_reload_confirmation = None;
-                self.status("reload cancelled");
-            }
-            (KeyCode::Enter, _) => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let Some(mut confirmation) = self.file_reload_confirmation.take() else {
                     return Ok(());
                 };
@@ -3966,30 +4193,30 @@ impl App {
         self.active_server_capabilities().is_some()
     }
 
+    pub(crate) fn prompt_ui_owner(&self) -> crate::keymap::ui::Owner {
+        use crate::keymap::ui::Owner;
+        match self.prompt_kind {
+            PromptKind::Command => Owner::CommandPrompt,
+            PromptKind::ExternalProgram => Owner::ProgramPrompt,
+            PromptKind::FinderPath
+            | PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) => Owner::PathPrompt,
+            _ => Owner::TextPrompt,
+        }
+    }
+
     fn handle_command(&mut self, key: KeyStroke) -> Result<()> {
         if self.prompt_kind != PromptKind::Command {
             return self.handle_search_prompt(key);
         }
-        if key.modifiers.contains(Modifiers::CONTROL) {
-            return self.handle_prompt_control(key);
-        }
-        if key.modifiers.contains(Modifiers::ALT) {
-            match key.code {
-                KeyCode::Char('b') => {
-                    self.command_cursor = prompt_word_backward(&self.command, self.command_cursor);
-                }
-                KeyCode::Char('f') => {
-                    self.command_cursor = prompt_word_forward(&self.command, self.command_cursor);
-                }
-                _ => {}
-            }
+        use crate::keymap::ui::Action;
+        let action = self.keymap.ui().lookup(self.prompt_ui_owner(), key);
+        if let Some(action) = action
+            && self.handle_prompt_action(action)?
+        {
             return Ok(());
         }
-        match key.code {
-            KeyCode::Escape => {
-                self.close_prompt();
-            }
-            KeyCode::Enter => {
+        match action {
+            Some(Action::Accept) => {
                 if self
                     .matching_path_hints()
                     .is_some_and(|hints| self.palette_enter_accepts_path_hint(&hints))
@@ -4074,24 +4301,21 @@ impl App {
                     self.mode = mode;
                 }
             }
-            KeyCode::Backspace => {
-                prompt_backspace(&mut self.command, &mut self.command_cursor);
-                self.command_selection = 0;
-            }
-            KeyCode::Up | KeyCode::BackTab => self.select_previous_command(),
-            KeyCode::Down => self.select_next_command(),
-            KeyCode::Home => self.command_selection = 0,
-            KeyCode::End => {
+            Some(Action::Previous) => self.select_previous_command(),
+            Some(Action::Next) => self.select_next_command(),
+            Some(Action::First) => self.command_selection = 0,
+            Some(Action::Last) => {
                 self.command_selection = self.command_hint_count().saturating_sub(1);
             }
-            KeyCode::Tab => self.complete_selected_command(),
-            KeyCode::Left => {
-                self.command_cursor = prompt_left(&self.command, self.command_cursor);
-            }
-            KeyCode::Right => {
-                self.command_cursor = prompt_right(&self.command, self.command_cursor);
-            }
-            KeyCode::Char(ch) => {
+            Some(Action::Complete) => self.complete_selected_command(),
+            None if matches!(key.code, KeyCode::Char(_))
+                && !key
+                    .modifiers
+                    .intersects(Modifiers::CONTROL | Modifiers::ALT) =>
+            {
+                let KeyCode::Char(ch) = key.code else {
+                    unreachable!()
+                };
                 prompt_insert(&mut self.command, self.command_cursor, ch);
                 self.command_cursor += 1;
                 self.command_selection = 0;
@@ -4101,10 +4325,26 @@ impl App {
         Ok(())
     }
 
+    pub(crate) fn picker_ui_owner(&self) -> crate::keymap::ui::Owner {
+        if self.finder.is_some() {
+            crate::keymap::ui::Owner::Finder
+        } else {
+            crate::keymap::ui::Owner::FilePicker
+        }
+    }
+
     fn handle_picker(&mut self, key: KeyStroke) -> Result<()> {
-        if key.code == KeyCode::Escape
-            || key.code == KeyCode::Char('c') && key.modifiers.contains(Modifiers::CONTROL)
-        {
+        use crate::keymap::ui::Action;
+        let owner = self.picker_ui_owner();
+        let leader_active = self
+            .picker
+            .as_ref()
+            .is_some_and(|picker| picker.query.is_empty());
+        let action = self
+            .keymap
+            .ui()
+            .lookup_with_leader(owner, key, leader_active);
+        if action == Some(Action::Cancel) {
             self.close_file_picker();
             return Ok(());
         }
@@ -4113,44 +4353,43 @@ impl App {
         // moving the selection, opening a row, switching mode — and reads it
         // as the ranker last left it, so nothing is accepted from a list that
         // has already been answered.
-        if !edits_picker_query(key) {
+        if !edits_picker_query(key, action) {
             self.publish_paced_picker_rows();
         }
 
-        if self.finder.is_some() && key.code == KeyCode::Tab && key.modifiers.is_empty() {
+        if action == Some(Action::ToggleMode) {
             self.toggle_finder_mode();
             return Ok(());
         }
         if self.finder.is_some() {
-            return self.handle_resource_picker(key);
+            return self.handle_resource_picker(key, action);
         }
 
         let page = 10;
-        let control = key.modifiers.contains(Modifiers::CONTROL);
         let mut selection_changed = false;
         let mut query_changed = false;
-        let result: Result<Option<PickerTarget>> = match (key.code, key.modifiers) {
-            (KeyCode::Char('p'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+        let result: Result<Option<PickerTarget>> = match action {
+            Some(Action::Previous) => {
                 self.picker.as_mut().unwrap().up();
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::Char('n'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::Next) => {
                 self.picker.as_mut().unwrap().down();
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::Char('u'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::PageUp) => {
                 self.picker.as_mut().unwrap().page_up(page);
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::Char('d'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::PageDown) => {
                 self.picker.as_mut().unwrap().page_down(page);
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::Char('s'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::SplitHorizontal) => {
                 let target = self.picker.as_ref().and_then(FilePicker::selected_target);
                 if let Some(target) = target {
                     self.close_file_picker();
@@ -4160,7 +4399,7 @@ impl App {
                 }
                 return Ok(());
             }
-            (KeyCode::Char('v'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::SplitVertical) => {
                 let target = self.picker.as_ref().and_then(FilePicker::selected_target);
                 if let Some(target) = target {
                     self.close_file_picker();
@@ -4170,58 +4409,30 @@ impl App {
                 }
                 return Ok(());
             }
-            (KeyCode::Char('t'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::TogglePreview) => {
                 let picker = self.picker.as_mut().unwrap();
                 picker.show_preview = !picker.show_preview;
                 Ok(None)
             }
-            (KeyCode::Down | KeyCode::Tab, _) => {
-                self.picker.as_mut().unwrap().down();
-                selection_changed = true;
-                Ok(None)
-            }
-            (KeyCode::Up | KeyCode::BackTab, _) => {
-                self.picker.as_mut().unwrap().up();
-                selection_changed = true;
-                Ok(None)
-            }
-            (KeyCode::PageUp, _) => {
-                self.picker.as_mut().unwrap().page_up(page);
-                selection_changed = true;
-                Ok(None)
-            }
-            (KeyCode::PageDown, _) => {
-                self.picker.as_mut().unwrap().page_down(page);
-                selection_changed = true;
-                Ok(None)
-            }
-            (KeyCode::Home, _) => {
+            Some(Action::First) => {
                 self.picker.as_mut().unwrap().first();
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::End, _) => {
+            Some(Action::Last) => {
                 self.picker.as_mut().unwrap().last();
                 selection_changed = true;
                 Ok(None)
             }
-            (KeyCode::Left, _) => {
+            Some(Action::MoveLeft) => {
                 self.picker.as_mut().unwrap().query_left();
                 Ok(None)
             }
-            (KeyCode::Char('b'), _) if control => {
-                self.picker.as_mut().unwrap().query_left();
-                Ok(None)
-            }
-            (KeyCode::Right, _) => {
+            Some(Action::MoveRight) => {
                 self.picker.as_mut().unwrap().query_right();
                 Ok(None)
             }
-            (KeyCode::Char('f'), _) if control => {
-                self.picker.as_mut().unwrap().query_right();
-                Ok(None)
-            }
-            (KeyCode::Backspace, _) => {
+            Some(Action::Backspace) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4232,7 +4443,7 @@ impl App {
                 selection_changed = query_changed;
                 Ok(None)
             }
-            (KeyCode::Char('h'), _) if control => {
+            Some(Action::DeleteBackward) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4243,7 +4454,7 @@ impl App {
                 selection_changed = query_changed;
                 Ok(None)
             }
-            (KeyCode::Delete, _) => {
+            Some(Action::Delete) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
                 if self.file_scanner.is_some() {
@@ -4254,7 +4465,7 @@ impl App {
                 selection_changed = query_changed;
                 Ok(None)
             }
-            (KeyCode::Char('w'), _) if control => {
+            Some(Action::DeleteWordBackward) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4265,7 +4476,7 @@ impl App {
                 selection_changed = query_changed;
                 Ok(None)
             }
-            (KeyCode::Char('k'), _) if control => {
+            Some(Action::DeleteToEnd) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
                 if self.file_scanner.is_some() {
@@ -4276,21 +4487,24 @@ impl App {
                 selection_changed = query_changed;
                 Ok(None)
             }
-            (KeyCode::Char('a'), _) if control => {
+            Some(Action::MoveStart) => {
                 self.picker.as_mut().unwrap().query_cursor = 0;
                 Ok(None)
             }
-            (KeyCode::Char('e'), _) if control => {
+            Some(Action::MoveEnd) => {
                 let picker = self.picker.as_mut().unwrap();
                 picker.query_cursor = picker.query.chars().count();
                 Ok(None)
             }
-            (KeyCode::Enter, _) => Ok(self.picker.as_ref().and_then(FilePicker::selected_target)),
-            (KeyCode::Char(character), _)
-                if !key
+            Some(Action::Accept) => Ok(self.picker.as_ref().and_then(FilePicker::selected_target)),
+            None if matches!(key.code, KeyCode::Char(_))
+                && !key
                     .modifiers
                     .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER) =>
             {
+                let KeyCode::Char(character) = key.code else {
+                    unreachable!()
+                };
                 if self.file_scanner.is_some() {
                     self.picker
                         .as_mut()
@@ -4321,42 +4535,36 @@ impl App {
         Ok(())
     }
 
-    fn handle_resource_picker(&mut self, key: KeyStroke) -> Result<()> {
+    fn handle_resource_picker(
+        &mut self,
+        key: KeyStroke,
+        action: Option<crate::keymap::ui::Action>,
+    ) -> Result<()> {
+        use crate::keymap::ui::Action;
         let page = 10;
-        let control = key.modifiers.contains(Modifiers::CONTROL);
         let mut query_changed = false;
-        match (key.code, key.modifiers) {
-            (KeyCode::Char('p'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+        match action {
+            Some(Action::Previous) => {
                 self.finder.as_mut().unwrap().up();
             }
-            (KeyCode::Char('n'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::Next) => {
                 self.finder.as_mut().unwrap().down();
             }
-            (KeyCode::Char('u'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::PageUp) => {
                 self.finder.as_mut().unwrap().page_up(page);
             }
-            (KeyCode::Char('d'), modifiers) if modifiers.contains(Modifiers::CONTROL) => {
+            Some(Action::PageDown) => {
                 self.finder.as_mut().unwrap().page_down(page);
             }
-            (KeyCode::Down, _) => self.finder.as_mut().unwrap().down(),
-            (KeyCode::Up | KeyCode::BackTab, _) => self.finder.as_mut().unwrap().up(),
-            (KeyCode::PageUp, _) => self.finder.as_mut().unwrap().page_up(page),
-            (KeyCode::PageDown, _) => self.finder.as_mut().unwrap().page_down(page),
-            (KeyCode::Home, _) => self.finder.as_mut().unwrap().first(),
-            (KeyCode::End, _) => self.finder.as_mut().unwrap().last(),
-            (KeyCode::Left, _) => {
+            Some(Action::First) => self.finder.as_mut().unwrap().first(),
+            Some(Action::Last) => self.finder.as_mut().unwrap().last(),
+            Some(Action::MoveLeft) => {
                 self.picker.as_mut().unwrap().query_left();
             }
-            (KeyCode::Char('b'), _) if control => {
-                self.picker.as_mut().unwrap().query_left();
-            }
-            (KeyCode::Right, _) => {
+            Some(Action::MoveRight) => {
                 self.picker.as_mut().unwrap().query_right();
             }
-            (KeyCode::Char('f'), _) if control => {
-                self.picker.as_mut().unwrap().query_right();
-            }
-            (KeyCode::Backspace, _) => {
+            Some(Action::Backspace) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4365,7 +4573,7 @@ impl App {
                     picker.backspace_query();
                 }
             }
-            (KeyCode::Char('h'), _) if control => {
+            Some(Action::DeleteBackward) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4374,7 +4582,7 @@ impl App {
                     picker.backspace_query();
                 }
             }
-            (KeyCode::Delete, _) => {
+            Some(Action::Delete) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
                 if self.file_scanner.is_some() {
@@ -4383,7 +4591,7 @@ impl App {
                     picker.delete_query();
                 }
             }
-            (KeyCode::Char('w'), _) if control => {
+            Some(Action::DeleteWordBackward) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor > 0;
                 if self.file_scanner.is_some() {
@@ -4392,7 +4600,7 @@ impl App {
                     picker.delete_query_word();
                 }
             }
-            (KeyCode::Char('k'), _) if control => {
+            Some(Action::DeleteToEnd) => {
                 let picker = self.picker.as_mut().unwrap();
                 query_changed = picker.query_cursor < picker.query.chars().count();
                 if self.file_scanner.is_some() {
@@ -4401,14 +4609,14 @@ impl App {
                     picker.delete_query_end();
                 }
             }
-            (KeyCode::Char('a'), _) if control => {
+            Some(Action::MoveStart) => {
                 self.picker.as_mut().unwrap().query_cursor = 0;
             }
-            (KeyCode::Char('e'), _) if control => {
+            Some(Action::MoveEnd) => {
                 let picker = self.picker.as_mut().unwrap();
                 picker.query_cursor = picker.query.chars().count();
             }
-            (KeyCode::Char('s'), _) if control => {
+            Some(Action::SplitHorizontal) => {
                 let target = self
                     .finder
                     .as_ref()
@@ -4422,7 +4630,7 @@ impl App {
                 }
                 return Ok(());
             }
-            (KeyCode::Char('v'), _) if control => {
+            Some(Action::SplitVertical) => {
                 let target = self
                     .finder
                     .as_ref()
@@ -4436,11 +4644,11 @@ impl App {
                 }
                 return Ok(());
             }
-            (KeyCode::Char('t'), _) if control => {
+            Some(Action::TogglePreview) => {
                 let picker = self.picker.as_mut().unwrap();
                 picker.show_preview = !picker.show_preview;
             }
-            (KeyCode::Enter, _) => {
+            Some(Action::Accept) => {
                 if let (Some(finder), Some(picker)) = (self.finder.as_ref(), self.picker.as_ref())
                     && let Some(target) = finder.selected_target(picker)
                 {
@@ -4448,11 +4656,14 @@ impl App {
                 }
                 return Ok(());
             }
-            (KeyCode::Char(character), _)
-                if !key
+            None if matches!(key.code, KeyCode::Char(_))
+                && !key
                     .modifiers
                     .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER) =>
             {
+                let KeyCode::Char(character) = key.code else {
+                    unreachable!()
+                };
                 if self.file_scanner.is_some() {
                     self.picker
                         .as_mut()
@@ -5059,6 +5270,9 @@ impl App {
             Command::JumpForwardBuffer => self.jump_in(false, true),
             Command::NewBuffer => self.open_scratch_buffer(),
             Command::OpenNavigator => self.open_navigator(),
+            Command::ListAccept | Command::ListOpenActions | Command::ListBackspace => {
+                self.run_list_owned_action(command)?;
+            }
             Command::ListNext
             | Command::ListPrevious
             | Command::ListPageDown
@@ -5130,24 +5344,15 @@ impl App {
     }
 
     fn handle_search_prompt(&mut self, key: KeyStroke) -> Result<()> {
-        if key.modifiers.contains(Modifiers::CONTROL) {
-            return self.handle_prompt_control(key);
-        }
-        if key.modifiers.contains(Modifiers::ALT) {
-            match key.code {
-                KeyCode::Char('b') => {
-                    self.command_cursor = prompt_word_backward(&self.command, self.command_cursor);
-                }
-                KeyCode::Char('f') => {
-                    self.command_cursor = prompt_word_forward(&self.command, self.command_cursor);
-                }
-                _ => {}
-            }
+        use crate::keymap::ui::Action;
+        let action = self.keymap.ui().lookup(self.prompt_ui_owner(), key);
+        if let Some(action) = action
+            && self.handle_prompt_action(action)?
+        {
             return Ok(());
         }
-        match key.code {
-            KeyCode::Escape => self.close_prompt(),
-            KeyCode::Enter => {
+        match action {
+            Some(Action::Accept) => {
                 let kind = self.prompt_kind;
                 if kind == PromptKind::FinderPath
                     && self
@@ -5390,38 +5595,24 @@ impl App {
                     self.report_completed_action(spelling, description, outcome);
                 }
             }
-            KeyCode::Backspace => {
-                prompt_backspace(&mut self.command, &mut self.command_cursor);
-                self.command_selection = 0;
-            }
-            KeyCode::Delete => {
-                prompt_delete(&mut self.command, self.command_cursor);
-                self.command_selection = 0;
-            }
-            KeyCode::Left => self.command_cursor = prompt_left(&self.command, self.command_cursor),
-            KeyCode::Right => {
-                self.command_cursor = prompt_right(&self.command, self.command_cursor);
-            }
-            KeyCode::Home => self.command_cursor = 0,
-            KeyCode::End => self.command_cursor = self.command.chars().count(),
-            KeyCode::Up | KeyCode::BackTab if self.prompt_kind == PromptKind::ExternalProgram => {
+            Some(Action::Previous) if self.prompt_kind == PromptKind::ExternalProgram => {
                 self.command_selection = self.command_selection.saturating_sub(1);
             }
-            KeyCode::Down if self.prompt_kind == PromptKind::ExternalProgram => {
+            Some(Action::Next) if self.prompt_kind == PromptKind::ExternalProgram => {
                 let last = self.matching_program_choices().len().saturating_sub(1);
                 self.command_selection = (self.command_selection + 1).min(last);
             }
-            KeyCode::Tab if self.prompt_kind == PromptKind::ExternalProgram => {
+            Some(Action::OpenActions) if self.prompt_kind == PromptKind::ExternalProgram => {
                 self.open_program_actions();
             }
-            KeyCode::Up | KeyCode::BackTab
+            Some(Action::Previous)
                 if self.prompt_kind == PromptKind::FinderPath
                     || self.prompt_kind
                         == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) =>
             {
                 self.command_selection = self.command_selection.saturating_sub(1);
             }
-            KeyCode::Down
+            Some(Action::Next)
                 if self.prompt_kind == PromptKind::FinderPath
                     || self.prompt_kind
                         == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) =>
@@ -5431,14 +5622,21 @@ impl App {
                     .map_or(0, |hints| hints.len().saturating_sub(1));
                 self.command_selection = (self.command_selection + 1).min(last);
             }
-            KeyCode::Tab
+            Some(Action::Complete)
                 if self.prompt_kind == PromptKind::FinderPath
                     || self.prompt_kind
                         == PromptKind::DirectoryTreeAction(super::TreePromptAction::Move) =>
             {
                 self.complete_selected_finder_path();
             }
-            KeyCode::Char(ch) => {
+            None if matches!(key.code, KeyCode::Char(_))
+                && !key
+                    .modifiers
+                    .intersects(Modifiers::CONTROL | Modifiers::ALT) =>
+            {
+                let KeyCode::Char(ch) = key.code else {
+                    unreachable!()
+                };
                 prompt_insert(&mut self.command, self.command_cursor, ch);
                 self.command_cursor += 1;
                 self.command_selection = 0;
@@ -5526,24 +5724,24 @@ impl App {
     }
 
     fn handle_program_action_key(&mut self, key: KeyStroke) -> Result<()> {
-        let control = key.modifiers.contains(Modifiers::CONTROL);
-        match (key.code, control) {
-            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) | (KeyCode::Tab, _) => {
+        use crate::keymap::ui::{Action, Owner};
+        match self.keymap.ui().lookup(Owner::ProgramActions, key) {
+            Some(Action::Cancel) => {
                 self.program_action_menu = None;
             }
-            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => {
+            Some(Action::Next) => {
                 let menu = self.program_action_menu.as_mut().unwrap();
                 if !menu.actions.is_empty() {
                     menu.selected = (menu.selected + 1) % menu.actions.len();
                 }
             }
-            (KeyCode::Up, _) | (KeyCode::Char('p'), true) | (KeyCode::BackTab, _) => {
+            Some(Action::Previous) => {
                 let menu = self.program_action_menu.as_mut().unwrap();
                 if !menu.actions.is_empty() {
                     menu.selected = (menu.selected + menu.actions.len() - 1) % menu.actions.len();
                 }
             }
-            (KeyCode::Enter, _) => {
+            Some(Action::Accept) => {
                 let chosen = self.program_action_menu.as_ref().and_then(|menu| {
                     menu.selected_action()
                         .map(|action| (menu.choice.clone(), action))
@@ -5582,40 +5780,56 @@ impl App {
         }
     }
 
-    fn handle_prompt_control(&mut self, key: KeyStroke) -> Result<()> {
-        match key.code {
-            KeyCode::Char('c') => self.close_prompt(),
-            KeyCode::Char('s') => return self.save(None, false),
-            KeyCode::Char('b') => {
-                self.command_cursor = prompt_left(&self.command, self.command_cursor);
+    /// Execute editing actions without synthesizing their old key spellings.
+    fn handle_prompt_action(&mut self, action: crate::keymap::ui::Action) -> Result<bool> {
+        use crate::keymap::ui::Action;
+        match action {
+            Action::Cancel => self.close_prompt(),
+            Action::Save => {
+                self.save(None, false)?;
             }
-            KeyCode::Char('f') => {
-                self.command_cursor = prompt_right(&self.command, self.command_cursor);
+            Action::MoveLeft => {
+                self.command_cursor = prompt_left(&self.command, self.command_cursor)
             }
-            KeyCode::Char('a') => self.command_cursor = 0,
-            KeyCode::Char('e') => self.command_cursor = self.command.chars().count(),
-            KeyCode::Char('w') => {
+            Action::MoveRight => {
+                self.command_cursor = prompt_right(&self.command, self.command_cursor)
+            }
+            Action::MoveStart => self.command_cursor = 0,
+            Action::MoveEnd => self.command_cursor = self.command.chars().count(),
+            Action::WordLeft => {
+                self.command_cursor = prompt_word_backward(&self.command, self.command_cursor)
+            }
+            Action::WordRight => {
+                self.command_cursor = prompt_word_forward(&self.command, self.command_cursor)
+            }
+            Action::DeleteWordBackward => {
                 let start = prompt_word_backward(&self.command, self.command_cursor);
                 prompt_delete_range(&mut self.command, start, self.command_cursor);
                 self.command_cursor = start;
             }
-            KeyCode::Char('u') => {
+            Action::DeleteToStart => {
                 prompt_delete_range(&mut self.command, 0, self.command_cursor);
                 self.command_cursor = 0;
             }
-            KeyCode::Char('k') => {
+            Action::DeleteToEnd => {
                 let end = self.command.chars().count();
                 prompt_delete_range(&mut self.command, self.command_cursor, end);
             }
-            KeyCode::Char('h') => {
+            Action::Backspace | Action::DeleteBackward => {
                 prompt_backspace(&mut self.command, &mut self.command_cursor);
+                if action == Action::Backspace {
+                    self.command_selection = 0;
+                }
             }
-            KeyCode::Char('d') => {
+            Action::Delete | Action::DeleteForward => {
                 prompt_delete(&mut self.command, self.command_cursor);
+                if action == Action::Delete {
+                    self.command_selection = 0;
+                }
             }
-            _ => {}
+            _ => return Ok(false),
         }
-        Ok(())
+        Ok(true)
     }
 
     pub(super) fn open_prompt(&mut self, kind: PromptKind) {
@@ -6908,59 +7122,57 @@ impl App {
     }
 }
 
-fn is_macro_replay_cancel(input: &InputEvent) -> bool {
-    matches!(
-        input,
-        InputEvent::Key(KeyStroke {
-            code: KeyCode::Escape,
-            ..
-        })
-    ) || matches!(input, InputEvent::Key(key) if *key == KeyStroke::ctrl('c'))
-}
-
 /// Whether a key in a picker only edits its query.
 ///
 /// Query editing is the one thing a picker does that does not read the list,
 /// so it is also the only thing that may run against rows the ranker has
 /// already replaced. Caret movement is counted with the rest: publishing a
 /// held answer before it costs nothing and keeps the rule one line long.
-fn edits_picker_query(key: KeyStroke) -> bool {
-    let control = key.modifiers.contains(Modifiers::CONTROL);
-    match key.code {
-        KeyCode::Backspace | KeyCode::Delete => true,
-        KeyCode::Char('w' | 'k') if control => true,
-        KeyCode::Char(_) => !key
+fn edits_picker_query(key: KeyStroke, action: Option<crate::keymap::ui::Action>) -> bool {
+    use crate::keymap::ui::Action;
+    matches!(
+        action,
+        Some(Action::Backspace | Action::Delete | Action::DeleteWordBackward | Action::DeleteToEnd)
+    ) || (action.is_none()
+        && matches!(key.code, KeyCode::Char(_))
+        && !key
             .modifiers
-            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER),
-        _ => false,
-    }
+            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER))
 }
 
-fn edit_confirmation_text(input: &mut String, cursor: &mut usize, key: KeyStroke) {
+fn edit_confirmation_text(
+    input: &mut String,
+    cursor: &mut usize,
+    action: Option<crate::keymap::ui::Action>,
+    key: KeyStroke,
+) {
+    use crate::keymap::ui::Action;
     let mut characters = input.chars().collect::<Vec<_>>();
     *cursor = (*cursor).min(characters.len());
-    match (key.code, key.modifiers) {
-        (KeyCode::Char(character), modifiers)
-            if !modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT) =>
+    match (action, key.code) {
+        (None, KeyCode::Char(character))
+            if !key
+                .modifiers
+                .intersects(Modifiers::CONTROL | Modifiers::ALT) =>
         {
             characters.insert(*cursor, character);
             *cursor += 1;
         }
-        (KeyCode::Backspace, _) if *cursor > 0 => {
+        (Some(Action::Backspace), _) if *cursor > 0 => {
             let start = crate::grapheme::str_previous(input, *cursor);
             characters.drain(start..*cursor);
             *cursor = start;
         }
-        (KeyCode::Delete, _) if *cursor < characters.len() => {
+        (Some(Action::Delete), _) if *cursor < characters.len() => {
             let end = crate::grapheme::str_next(input, *cursor);
             characters.drain(*cursor..end);
         }
-        (KeyCode::Left, _) => *cursor = crate::grapheme::str_previous(input, *cursor),
-        (KeyCode::Right, _) => {
+        (Some(Action::MoveLeft), _) => *cursor = crate::grapheme::str_previous(input, *cursor),
+        (Some(Action::MoveRight), _) => {
             *cursor = crate::grapheme::str_next(input, *cursor).min(characters.len());
         }
-        (KeyCode::Home, _) => *cursor = 0,
-        (KeyCode::End, _) => *cursor = characters.len(),
+        (Some(Action::MoveStart), _) => *cursor = 0,
+        (Some(Action::MoveEnd), _) => *cursor = characters.len(),
         _ => return,
     }
     *input = characters.into_iter().collect();

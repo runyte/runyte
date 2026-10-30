@@ -319,8 +319,8 @@ The `Space t` namespace is labelled **Terminals** and carries no capability:
 its one command that needs a pane showing a terminal reports that itself, and
 `Space t s` is meant to be reached from a pane that is showing a document.
 
-Mouse input is grammar-independent application input rather than a hidden key
-binding table. Left click on a session-strip entry switches to that running
+Mouse input is grammar-independent application input. Its editor-owned actions
+resolve through the shared `keys.pointer` registry; the following describes defaults. Left click on a session-strip entry switches to that running
 persistent session, including unnumbered sessions, through the same guarded
 attachment path as keyboard navigation. Left click in a pane focuses/places, Shift-click extends, left drag
 selects, wheel events scroll the pane under the pointer, and a drag on a shared
@@ -340,6 +340,24 @@ neighbours close like `:wc`; remaining neighbours resize to fill the editor.
 The drop outline previews the final rectangle, and Escape cancels either gesture.
 Shared borders retain ordinary resizing. Both gestures belong to the editor
 even over a terminal requesting mouse reports or a native document preview.
+`keys.pointer.pane-move` and `pane-extend` replace their exact modifier aliases;
+left, middle and right drags are supported. The initiating button and action
+remain captured across configuration reloads and modifier changes. Selection,
+extension, pane/tree resizing, copying, native link opening, wheel directions,
+tree row selection/opening and session-strip activation have effective pointer
+actions in the same registry. Their hit-region precedence is preserved; live
+terminal SGR reports stay raw. Config-only reload rejects old-frame presses and
+wheel events while captured drags retain their semantic action and button.
+
+Native media and document-preview pointer actions also resolve through
+`keys.pointer`: `media-pan`, `media-region`, `media-auto-select`,
+`media-toggle-zoom`, `media-zoom`, `media-horizontal`, `media-scroll`,
+`preview-select`, `preview-horizontal`, and `preview-scroll`. The native input-loss
+banner exposes `input-overflow-dismiss`. Their factory
+modifier precedence and content-dependent selection remain unchanged. Native
+wheel aliases use continuous `Wheel` deltas; host wheel directions remain
+separate actions. Native captures include pane/page/source identity, and inactive
+preview focus does not depend on the source editor's selection or link bindings.
 
 | Sequence | Helix command | Runyte command | Status | Notes |
 | --- | --- | --- | --- | --- |
@@ -778,16 +796,28 @@ share the registry. Native mouse mappings are documented in the user guide.
 
 Native window font controls use `keymap::native_window`: Ctrl-plus/Ctrl-equals
 increase and Ctrl-minus decreases the window-local font size. Ctrl-Shift-v
-pastes system clipboard text as literal frontend input. These reserved window
-controls are not editor commands, are not remappable, and their help and
-execution read the same registry. They apply while overlays or terminals own
-input. Ctrl-Shift-c (`Ctrl-C` in configured key spellings) is a shared registry
+pastes system clipboard text as literal frontend input. These window controls
+are shared configurable UI actions under `keys.ui.native-window`, and their help
+and execution read the same effective registry. Factory controls retain their
+precedence while overlays or terminals own input; authored character chords yield
+to structural operands and text owners. Painted input captures its binding map,
+while current structural eligibility is checked after preceding host input. Ctrl-Shift-c (`Ctrl-C` in configured key spellings) is a shared registry
 binding for clipboard yank in Normal/Select/Insert/Replace and Terminal Insert;
 media scopes copy the native selection. Ordinary Ctrl-c stays child input.
 On macOS, Cmd-c (`Cmd-c` or `Super-c` in configuration) is also bound to clipboard yank in text and
 terminal review, and to native selection copy in media. Cmd-v (`Cmd-v` or `Super-v`) is
 an additional native-window literal-paste shortcut; Ctrl-Shift-v remains
 available. These Command aliases do not change other Command keys.
+
+Native document previews project the supported single semantic navigation actions
+from effective Media Normal bindings. Source mode/scope owns forwarded commands;
+chains and unsupported Media-only commands never execute partially in the preview.
+`keys.ui.native-preview` configures native Back, Copy, keep-open forwarding and
+compatibility pane bypasses. Current source/pane/generation eligibility is separate
+from captured bindings. Back and intentional dismissal preserve queued same-source
+typing; unrelated replacement targets do not inherit it. Prefix state belongs to
+its captured map. Bounded projections report an oversized map and return input to
+source atomically. See [custom bindings](../../docs/user-guide/custom-key-bindings.md).
 
 Key labels use `Cmd` for the Command modifier on macOS and `Super` elsewhere.
 Both modifier spellings parse on every platform, including in configured
@@ -835,11 +865,12 @@ the caret fits; vertical scrolling is unchanged.
 
 ### MCP permission review
 
-The native MCP permission review keeps Up/Down and Tab/Shift-Tab for the
+By default, the native MCP permission review uses Up/Down and Tab/Shift-Tab for the
 Reject/Apply permissions choices regardless of content length. Its scrolling
 dispatch reads the active Normal-mode registry's page, half-page and
 file-start/end commands (`Ctrl-b/f`, `Ctrl-u/d`, `gg`/`ge` by default), without
 executing other editor commands or configured action chains. Home/End remain
 review aliases; pointer input neither scrolls nor approves. Enter applies the
 selected choice only through the existing native presentation checks; Escape
-closes without applying. The footer resolves its motion spellings through the same registry.
+closes without applying. `keys.ui.context-review` can replace these review actions;
+its footer and dispatch use the effective bindings and the same motion registry.

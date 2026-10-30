@@ -7,7 +7,6 @@ use crate::{
     config::{Color as RunyteColor, Theme, ThemeAppearance},
     diff::Change,
     git::{CountKind, DiffLine, LineChange},
-    input::KeyCode,
     key_hints::{KeyHintRow, KeyHintState, key_hint_description, key_hint_keys, key_hint_layout},
     layout::Rect,
     snapshot::{
@@ -1041,8 +1040,16 @@ fn draw_setting_prompt(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rec
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " {} · {constraint} · Enter save · Esc cancel ",
-            descriptor.key
+            " {} · {constraint} · {} save · {} cancel ",
+            descriptor.key,
+            app.keymap().ui().label(
+                crate::keymap::ui::Owner::TextPrompt,
+                crate::keymap::ui::Action::Accept
+            ),
+            app.keymap().ui().label(
+                crate::keymap::ui::Owner::TextPrompt,
+                crate::keymap::ui::Action::Cancel
+            )
         ))
         .style(
             Style::default()
@@ -2260,6 +2267,10 @@ fn draw_fs_confirmation(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
     let Some(confirmation) = &app.fs_confirmation else {
         return;
     };
+    let actions = app.filesystem_confirmation_actions();
+    if actions.is_empty() {
+        return;
+    }
     let area = to_tui_rect(centered(editor_area, 88, 80, 30, 8));
     if area.width < 3 || area.height < 3 {
         return;
@@ -2326,7 +2337,28 @@ fn draw_fs_confirmation(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
     if footer_height > 0 {
         frame.render_widget(
             Paragraph::new(
-                "↑/↓ review · Enter apply (trash deletes) · P permanently delete · Esc cancel",
+                [
+                    "review operations",
+                    "apply with trash",
+                    "apply with permanent deletion",
+                    "cancel",
+                ]
+                .iter()
+                .filter_map(|label| actions.iter().find(|a| a.label == *label))
+                .map(|a| {
+                    format!(
+                        "{} {}",
+                        a.key_hint,
+                        match a.label.as_str() {
+                            "review operations" => "review",
+                            "apply with trash" => "apply (trash deletes)",
+                            "apply with permanent deletion" => "permanently delete",
+                            _ => "cancel",
+                        }
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" · "),
             )
             .style(Style::default().fg(app.theme.muted)),
             footer,
@@ -3635,9 +3667,19 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         String::new()
     };
     let (found, candidates) = app.picker_progress_counts();
+    let preview_key = app.keymap().ui().label_with_leader(
+        app.picker_ui_owner(),
+        crate::keymap::ui::Action::TogglePreview,
+        picker.query.is_empty(),
+    );
+    let mode_key = app.keymap().ui().label_with_leader(
+        app.picker_ui_owner(),
+        crate::keymap::ui::Action::ToggleMode,
+        picker.query.is_empty(),
+    );
     let title = if app.finder.is_some() {
         format!(
-            " Finder · Files · {} · {found}/{candidates} matched{}{} · Tab buffers + terminals · Ctrl-t preview ",
+            " Finder · Files · {} · {found}/{candidates} matched{}{} · {mode_key} buffers + terminals · {preview_key} preview ",
             picker.root.display(),
             skipped,
             if picker.limited {
@@ -3648,7 +3690,7 @@ fn draw_picker(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
         )
     } else {
         format!(
-            " {} · {} · {found}/{candidates} matched{}{} · Ctrl-t preview ",
+            " {} · {} · {found}/{candidates} matched{}{} · {preview_key} preview ",
             picker.kind.title(),
             picker.root.display(),
             skipped,
@@ -3824,6 +3866,16 @@ fn draw_resource_finder(
         .as_ref()
         .map_or(String::new(), |error| format!(" · scan failed: {error}"));
     let (found, candidates) = app.picker_progress_counts();
+    let preview_key = app.keymap().ui().label_with_leader(
+        app.picker_ui_owner(),
+        crate::keymap::ui::Action::TogglePreview,
+        picker.query.is_empty(),
+    );
+    let mode_key = app.keymap().ui().label_with_leader(
+        app.picker_ui_owner(),
+        crate::keymap::ui::Action::ToggleMode,
+        picker.query.is_empty(),
+    );
     // Three keys open this overlay over three different scopes, so a finder
     // that is not the ordinary project one says which it is.
     let scope = picker
@@ -3833,7 +3885,7 @@ fn draw_resource_finder(
         .borders(Borders::ALL)
         .border_style(Style::default().fg(app.theme.accent))
         .title(format!(
-            " Finder · {}{} · {found}/{candidates} matched{}{}{} · Tab {} · Ctrl-t preview ",
+            " Finder · {}{} · {found}/{candidates} matched{}{}{} · {mode_key} {} · {preview_key} preview ",
             finder.mode.title(),
             scope,
             skipped,
@@ -4289,29 +4341,56 @@ fn draw_list(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect) {
     // The filter reads on the query line under the title, where every other
     // surface that owns a typed query keeps it. The title stays the surface's
     // name, its counts, and the keys that act on it.
-    let mut hints = Vec::new();
-    if picker.has_tags() {
-        hints.push(format!("Tab {}", picker.tag_label()));
-    }
-    if let Some(action) = &picker.primary_action {
-        hints.push(format!("Enter {action}"));
-    }
-    if let Some((key, action)) = &picker.secondary_action {
-        hints.push(format!("{key} {action}"));
-    }
-    if preview_layout && !picker.has_key_legend() {
-        hints.push("Ctrl-t preview".to_owned());
-    }
-    if picker.purpose == crate::picker::ListPurpose::Report {
-        hints.push("↑/↓ scroll".to_owned());
-    }
-    hints.push(if picker.purpose == crate::picker::ListPurpose::Report {
-        "Esc dismiss".to_owned()
-    } else if picker.has_key_legend() {
-        "Esc close".to_owned()
+    use crate::command::EditorCommand;
+    let keys = |action| app.list_action_keys(action);
+    let hints = if let Some(actions) = app.session_navigation_actions() {
+        actions
+            .into_iter()
+            .map(|action| format!("{} {}", action.key_hint, action.label))
+            .collect::<Vec<_>>()
     } else {
-        "Esc cancel".to_owned()
-    });
+        let mut hints = Vec::new();
+        if picker.has_tags() {
+            hints.push(format!(
+                "{} {}",
+                keys(EditorCommand::ListOpenActions),
+                picker.tag_label()
+            ));
+        }
+        if let Some(action) = &picker.primary_action {
+            hints.push(format!("{} {action}", keys(EditorCommand::ListAccept)));
+        }
+        if let Some((key, action)) = &picker.secondary_action {
+            let key = if key == "Tab" {
+                keys(EditorCommand::ListOpenActions)
+            } else {
+                key.clone()
+            };
+            hints.push(format!("{key} {action}"));
+        }
+        if preview_layout && !picker.has_key_legend() {
+            hints.push(format!(
+                "{} preview",
+                keys(EditorCommand::ListTogglePreview)
+            ));
+        }
+        if picker.purpose == crate::picker::ListPurpose::Report {
+            hints.push(format!("{} scroll", app.list_scroll_keys()));
+        }
+        if let Some(keys) = app.plugin_manager_return_keys() {
+            hints.push(format!("{keys} back"));
+        }
+        if let Some(close) = app.list_close_keys() {
+            hints.push(if picker.purpose == crate::picker::ListPurpose::Report {
+                format!("{close} dismiss")
+            } else if picker.has_key_legend() {
+                format!("{close} close")
+            } else {
+                format!("{close} cancel")
+            });
+        }
+        hints
+    };
     let title = format!(" {} · {} ", picker.title, hints.join(" · "));
     let block = Block::default()
         .borders(Borders::ALL)
@@ -4684,7 +4763,21 @@ fn draw_completion(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.accent))
-                .title(format!(" {title} · ↑/↓ Ctrl-n/p · Tab accept ")),
+                .title(format!(
+                    " {title} · {} / {} · {} accept ",
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::Completion,
+                        crate::keymap::ui::Action::Previous
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::Completion,
+                        crate::keymap::ui::Action::Next
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::Completion,
+                        crate::keymap::ui::Action::Accept
+                    )
+                )),
         )
         .style(
             Style::default()
@@ -4795,7 +4888,8 @@ fn draw_hover(
         .collect::<Vec<_>>();
     let omitted = state.lines.len().saturating_sub(visible_rows);
     let title = if omitted > 0 {
-        format!(" Documentation · {omitted} more · Enter full view · other key dismisses ")
+        let accept = app.hover_accept_label();
+        format!(" Documentation · {omitted} more · {accept} full view · other key dismisses ")
     } else {
         " Documentation · any key dismisses and continues ".to_owned()
     };
@@ -4931,11 +5025,26 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.accent))
-                .title(if app.command.trim_start().starts_with(':') {
-                    " Plugin commands · ↑/↓ select · Tab complete "
-                } else {
-                    " Commands by category · ↑/↓ select · Tab complete "
-                }),
+                .title(format!(
+                    " {} · {}/{} select · {} complete ",
+                    if app.command.trim_start().starts_with(':') {
+                        "Plugin commands"
+                    } else {
+                        "Commands by category"
+                    },
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::CommandPrompt,
+                        crate::keymap::ui::Action::Previous
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::CommandPrompt,
+                        crate::keymap::ui::Action::Next
+                    ),
+                    app.keymap().ui().label(
+                        crate::keymap::ui::Owner::CommandPrompt,
+                        crate::keymap::ui::Action::Complete
+                    ),
+                )),
         )
         .style(
             Style::default()
@@ -4975,8 +5084,15 @@ fn draw_program_hints(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect
 
     let items = if choices.is_empty() {
         vec![
-            ListItem::new("No matching programs · type one and press Enter")
-                .style(Style::default().fg(app.theme.muted)),
+            ListItem::new(format!(
+                "No matching programs · type one and press {}",
+                app.keymap().ui().compact_label(
+                    crate::keymap::ui::Owner::ProgramPrompt,
+                    crate::keymap::ui::Action::Accept,
+                    1
+                )
+            ))
+            .style(Style::default().fg(app.theme.muted)),
         ]
     } else {
         choices
@@ -5003,7 +5119,29 @@ fn draw_program_hints(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rect
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.accent))
-                .title(" Open with · Enter open · ↑/↓ select · Tab actions "),
+                .title(format!(
+                    " Open with · {} open · {}/{} select · {} actions ",
+                    app.keymap().ui().compact_label(
+                        crate::keymap::ui::Owner::ProgramPrompt,
+                        crate::keymap::ui::Action::Accept,
+                        1
+                    ),
+                    app.keymap().ui().compact_label(
+                        crate::keymap::ui::Owner::ProgramPrompt,
+                        crate::keymap::ui::Action::Previous,
+                        1
+                    ),
+                    app.keymap().ui().compact_label(
+                        crate::keymap::ui::Owner::ProgramPrompt,
+                        crate::keymap::ui::Action::Next,
+                        1
+                    ),
+                    app.keymap().ui().compact_label(
+                        crate::keymap::ui::Owner::ProgramPrompt,
+                        crate::keymap::ui::Action::OpenActions,
+                        1
+                    ),
+                )),
         )
         .style(
             Style::default()
@@ -5046,8 +5184,18 @@ fn draw_program_actions(frame: &mut Frame<'_>, app: &TuiApp<'_>, parent: Rect) {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(app.theme.accent))
                 .title(format!(
-                    " {} · Enter select · Tab/Esc back ",
-                    menu.choice.program
+                    " {} · {} select · {} back ",
+                    menu.choice.program,
+                    app.keymap().ui().compact_label(
+                        crate::keymap::ui::Owner::ProgramActions,
+                        crate::keymap::ui::Action::Accept,
+                        1
+                    ),
+                    app.keymap().ui().compact_label(
+                        crate::keymap::ui::Owner::ProgramActions,
+                        crate::keymap::ui::Action::Cancel,
+                        2
+                    )
                 )),
         )
         .style(
@@ -5137,12 +5285,9 @@ fn draw_key_hints(
         layout.height,
     );
     let range = if rows.len() > visible.len() {
-        let arrows_are_free =
-            key_hints.scrolls_with_arrow_in(KeyCode::Up, mode, scope, app.keymap())
-                && key_hints.scrolls_with_arrow_in(KeyCode::Down, mode, scope, app.keymap());
-        let arrows = if arrows_are_free { " ↑/↓" } else { "" };
+        let scroll_keys = key_hints.scroll_key_label(mode, scope, app.keymap());
         format!(
-            " {}-{}/{} Ctrl-n/p{arrows}",
+            " {}-{}/{} {scroll_keys}",
             layout.offset + 1,
             layout.offset + visible.len(),
             rows.len()
@@ -10267,6 +10412,28 @@ mod tests {
                 .ends_with("界面.rs"),
             "left truncation should retain a wide-character basename"
         );
+    }
+
+    #[test]
+    fn standalone_picker_titles_follow_configured_owner_actions() {
+        let mut config = Config::default();
+        config.merge_keys_source("ui: {finder: {toggle-mode: [F9], toggle-preview: [F10]}, file-picker: {toggle-preview: [F11]}}").unwrap();
+        let mut app = App::new(config, None).unwrap();
+        app.picker = Some(crate::file_picker::FilePicker::new(
+            1,
+            std::path::PathBuf::from("/project"),
+            crate::file_picker::ScanScope::ignoring("/project"),
+        ));
+        app.finder = Some(crate::finder::ResourceFinder::new(
+            crate::finder::FinderMode::Names,
+        ));
+        let screen = rendered(&mut app, 160, 28);
+        assert!(screen.contains("F9 contents"), "{screen}");
+        assert!(screen.contains("F10 preview"), "{screen}");
+        assert!(!screen.contains("Ctrl-t preview"));
+        app.finder = None;
+        let screen = rendered(&mut app, 160, 28);
+        assert!(screen.contains("F11 preview"), "{screen}");
     }
 
     #[test]

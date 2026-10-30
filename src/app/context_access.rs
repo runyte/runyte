@@ -8,7 +8,7 @@
 use super::App;
 use crate::{
     command::{EditorCommand as Command, Mode},
-    input::{InputEvent, KeyCode, Modifiers},
+    input::{InputEvent, KeyCode, KeyStroke},
     keymap::{Binding, BindingTarget, KeySequence, Lookup},
     snapshot::*,
     workspace::context::wire::Permission,
@@ -427,19 +427,14 @@ impl App {
         };
         let key = key.canonical_for_binding();
         let enough_room = self.context_ui.width >= 80 && self.context_ui.height >= 22;
-        // Choice keys retain their meaning even when the text overflows.
-        // Only approved motion commands from the live registry can scroll;
-        // configured action chains and arbitrary editor commands cannot run.
-        let choice = matches!(
-            key.code,
-            KeyCode::Up
-                | KeyCode::Down
-                | KeyCode::Tab
-                | KeyCode::BackTab
-                | KeyCode::Enter
-                | KeyCode::Escape
-        );
-        if !choice {
+        use crate::keymap::ui::{Action, ContextReviewRoute};
+        let route = self.keymap.ui().context_review_route(key);
+        let action = match route {
+            ContextReviewRoute::Owned(action) | ContextReviewRoute::ReviewThenFallback(action) => {
+                action
+            }
+        };
+        if matches!(route, ContextReviewRoute::ReviewThenFallback(_)) {
             pending.push(key);
             let binding = match self.keymap().lookup(Mode::Normal, &pending) {
                 Lookup::Exact(binding) => Some(binding),
@@ -456,16 +451,16 @@ impl App {
                 Lookup::NoMatch => None,
             };
             if let Some(command) = binding.and_then(review_motion) {
-                let top = match command {
-                    Command::PageUp => surface.top.saturating_sub(rows),
-                    Command::PageDown => surface.top.saturating_add(rows),
-                    Command::HalfPageUp => surface.top.saturating_sub((rows / 2).max(1)),
-                    Command::HalfPageDown => surface.top.saturating_add((rows / 2).max(1)),
-                    Command::MoveFileStart => 0,
-                    Command::MoveFileEnd => usize::MAX,
-                    _ => unreachable!(),
-                };
-                surface.scroll_to(top, rows);
+                let action = review_action(command);
+                // Replaced inherited motions still own their old keys. They
+                // cannot fall through into structural revoke or option input.
+                if !self
+                    .keymap
+                    .ui()
+                    .explicitly_configured(crate::keymap::ui::Owner::ContextReview, action)
+                {
+                    surface.scroll_to(review_top(action, surface.top, rows), rows);
+                }
                 self.context_ui.surface = Some(surface);
                 return;
             }
@@ -474,32 +469,32 @@ impl App {
                 return;
             }
         }
-        if key.code == KeyCode::BackTab
-            || (key.code == KeyCode::Tab && key.modifiers == Modifiers::SHIFT)
-        {
-            surface.accept_selected = !surface.accept_selected;
-            self.context_ui.surface = Some(surface);
-            return;
-        }
-        if !key.modifiers.is_empty() {
-            self.context_ui.surface = Some(surface);
-            return;
-        }
-        match key.code {
-            KeyCode::Escape => return,
-            KeyCode::Tab => surface.accept_selected = !surface.accept_selected,
-            KeyCode::Up => surface.accept_selected = false,
-            KeyCode::Down => surface.accept_selected = true,
-            KeyCode::Home => surface.scroll_to(0, rows),
-            KeyCode::End => surface.scroll_to(usize::MAX, rows),
-            KeyCode::Char('x') => {
+        match (action, key.code) {
+            (Some(Action::Cancel), _) => return,
+            (Some(Action::ToggleSelection), _) => {
+                surface.accept_selected = !surface.accept_selected
+            }
+            (Some(Action::Previous), _) => surface.accept_selected = false,
+            (Some(Action::Next), _) => surface.accept_selected = true,
+            (
+                Some(
+                    action @ (Action::First
+                    | Action::Last
+                    | Action::PageUp
+                    | Action::PageDown
+                    | Action::HalfPageUp
+                    | Action::HalfPageDown),
+                ),
+                _,
+            ) => surface.scroll_to(review_top(action, surface.top, rows), rows),
+            (None, KeyCode::Char('x')) if key.modifiers.is_empty() => {
                 self.context_ui.decision = Some(Decision::Revoke(surface.grant.identity));
                 return;
             }
-            KeyCode::Char('r') => {
+            (None, KeyCode::Char('r')) if key.modifiers.is_empty() => {
                 surface.grant.remember = !surface.grant.remember;
             }
-            KeyCode::Char('n') => {
+            (None, KeyCode::Char('n')) if key.modifiers.is_empty() => {
                 if let Some(index) = self
                     .context_ui
                     .identities
@@ -513,13 +508,13 @@ impl App {
                     return;
                 }
             }
-            KeyCode::Char(character @ '1'..='2') => {
+            (None, KeyCode::Char(character @ '1'..='2')) if key.modifiers.is_empty() => {
                 toggle(
                     &mut surface.grant.permissions,
                     PERMISSIONS[character as usize - '1' as usize],
                 );
             }
-            KeyCode::Enter if approval => {
+            (Some(Action::Accept), _) if approval => {
                 let accepted = surface.accept_selected
                     && enough_room
                     && surface.fully_reviewed()
@@ -547,6 +542,126 @@ impl App {
         self.context_ui.surface = Some(surface);
     }
 
+    pub(super) fn context_accept_key(&self, key: KeyStroke) -> bool {
+        self.context_overlay_active()
+            && self.keymap.ui().context_review_route(key)
+                == crate::keymap::ui::ContextReviewRoute::Owned(Some(
+                    crate::keymap::ui::Action::Accept,
+                ))
+    }
+
+    fn context_structural_key(&self, key: KeyStroke) -> bool {
+        use crate::keymap::ui::ContextReviewRoute;
+        let key = key.canonical_for_binding();
+        if !key.modifiers.is_empty()
+            || !matches!(key.code, KeyCode::Char('x' | 'r' | 'n' | '1' | '2'))
+            || self
+                .context_ui
+                .surface
+                .as_ref()
+                .is_none_or(|s| !s.pending_keys.is_empty())
+            || !matches!(
+                self.keymap.ui().context_review_route(key),
+                ContextReviewRoute::ReviewThenFallback(None)
+            )
+        {
+            return false;
+        }
+        match self.keymap.lookup(Mode::Normal, &KeySequence::from(key)) {
+            Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
+                review_motion(binding).is_none()
+            }
+            Lookup::Prefix(bindings) => !bindings
+                .iter()
+                .any(|binding| review_motion(binding).is_some()),
+            Lookup::NoMatch => true,
+        }
+    }
+
+    pub(super) fn context_input_requires_presented_approval(&self, key: KeyStroke) -> bool {
+        self.context_accept_key(key)
+            || (key.canonical_for_binding().code == KeyCode::Char('x')
+                && self.context_structural_key(key))
+    }
+
+    fn context_review_motion_keys(&self, command: Command) -> String {
+        use crate::keymap::ui::{Action, ContextReviewRoute, Owner};
+        let fallback = match command {
+            Command::MoveFileStart => Some(Action::First),
+            Command::MoveFileEnd => Some(Action::Last),
+            _ => None,
+        };
+        let action = review_action(command);
+        if self
+            .keymap
+            .ui()
+            .explicitly_configured(Owner::ContextReview, action)
+        {
+            return self
+                .keymap
+                .ui()
+                .compact_label(Owner::ContextReview, action, 1);
+        }
+        for binding in self.keymap.bindings_for_mode(Mode::Normal) {
+            if review_motion(binding) != Some(command) {
+                continue;
+            }
+            let keys = binding.sequence.as_slice();
+            let mut reachable = false;
+            for (index, key) in keys.iter().enumerate() {
+                if matches!(
+                    self.keymap.ui().context_review_route(*key),
+                    ContextReviewRoute::Owned(_)
+                ) {
+                    break;
+                }
+                match self.keymap.lookup(
+                    Mode::Normal,
+                    &KeySequence::new(keys[..=index].iter().copied()),
+                ) {
+                    Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
+                        reachable =
+                            index + 1 == keys.len() && review_motion(binding) == Some(command);
+                        break;
+                    }
+                    Lookup::Prefix(bindings)
+                        if bindings.iter().any(|b| review_motion(b).is_some()) => {}
+                    _ => break,
+                }
+            }
+            if reachable {
+                return binding.sequence.to_string();
+            }
+        }
+        if let Some(action) = fallback {
+            // The plain Home/End fallbacks run only after the narrow motion
+            // registry has declined the key, exactly as in dispatch.
+            let code = if action == Action::First {
+                KeyCode::Home
+            } else {
+                KeyCode::End
+            };
+            let key = KeyStroke::plain(code);
+            if self.keymap.ui().context_review_route(key)
+                == ContextReviewRoute::ReviewThenFallback(Some(action))
+            {
+                let idle = match self.keymap.lookup(Mode::Normal, &KeySequence::from(key)) {
+                    Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
+                        review_motion(binding).is_none()
+                    }
+                    Lookup::Prefix(bindings) => {
+                        !bindings.iter().any(|b| review_motion(b).is_some())
+                    }
+                    Lookup::NoMatch => true,
+                };
+                if idle {
+                    return key.label();
+                }
+            }
+        }
+        "unbound".into()
+    }
+
     pub(crate) fn context_overlay(&self) -> Option<OverlaySnapshot> {
         let surface = self.context_ui.surface.as_ref()?;
         let mut rows = Vec::new();
@@ -555,11 +670,18 @@ impl App {
             remember,
             ..
         } = &surface.grant;
+        let structural_label = |character: char| {
+            if self.context_structural_key(KeyStroke::char(character)) {
+                character.to_string()
+            } else {
+                "unbound".into()
+            }
+        };
         for (index, permission) in PERMISSIONS.iter().enumerate() {
             rows.push(review_row(
                 format!(
                     "{} [{}] {}",
-                    index + 1,
+                    structural_label(char::from_digit((index + 1) as u32, 10).unwrap()),
                     if permissions.contains(permission) {
                         "x"
                     } else {
@@ -575,13 +697,22 @@ impl App {
                 vec![0],
             ));
         }
+        let remember_text = format!(
+            "{} [{}] Remember for this workspace; ",
+            structural_label('r'),
+            if *remember { "x" } else { " " }
+        );
+        let revoke_text = format!("{} Revoke; ", structural_label('x'));
+        let next_text = format!("{} Next identity", structural_label('n'));
+        let emphasis = vec![
+            0,
+            remember_text.chars().count(),
+            remember_text.chars().count() + revoke_text.chars().count(),
+        ];
         rows.push(review_row(
-            format!(
-                "r [{}] Remember for this workspace; x Revoke; n Next identity",
-                if *remember { "x" } else { " " }
-            ),
+            format!("{remember_text}{revoke_text}{next_text}"),
             Vec::new(),
-            vec![0, 35, 45],
+            emphasis,
         ));
         rows.push(review_row(String::new(), Vec::new(), Vec::new()));
         let view_rows = surface.view_rows(self.context_ui.view_height());
@@ -604,10 +735,13 @@ impl App {
         let scrollable = total > view_rows;
         if scrollable {
             let text = format!(
-                "Lines {}–{} of {total} · {}",
+                "Lines {}–{} of {total} · {}/{} scroll · {}/{} first/last",
                 top + 1,
                 (top + view_rows).min(total),
-                self.key_text("{binding:Ctrl-u}/{binding:Ctrl-d} scroll · {binding:g g}/{binding:g e} first/last"),
+                self.context_review_motion_keys(Command::HalfPageUp),
+                self.context_review_motion_keys(Command::HalfPageDown),
+                self.context_review_motion_keys(Command::MoveFileStart),
+                self.context_review_motion_keys(Command::MoveFileEnd),
             );
             let end = text.chars().count();
             rows.push(review_row(text, (0..end).collect(), Vec::new()));
@@ -635,10 +769,28 @@ impl App {
         } else {
             None
         };
+        use crate::keymap::ui::{Action, Owner};
+        let label = |action| {
+            self.keymap
+                .ui()
+                .compact_label(Owner::ContextReview, action, 1)
+        };
+        let choices = [Action::Previous, Action::Next, Action::ToggleSelection]
+            .into_iter()
+            .map(label)
+            .filter(|label| label != "unbound")
+            .collect::<Vec<_>>();
+        let choices = if choices == ["Up", "Down", "Tab"] {
+            "↑/↓/Tab".into()
+        } else if choices.is_empty() {
+            "unbound".into()
+        } else {
+            choices.join("/")
+        };
         let actions = vec![
-            OverlayAction::new("↑/↓/Tab", "choose"),
-            OverlayAction::new("Enter", "apply choice"),
-            OverlayAction::new("Esc", "reject"),
+            OverlayAction::new(choices, "choose"),
+            OverlayAction::new(label(Action::Accept), "apply choice"),
+            OverlayAction::new(label(Action::Cancel), "reject"),
         ];
         Some(OverlaySnapshot {
             kind: OverlayKind::Confirmation,
@@ -682,6 +834,32 @@ fn review_row(label: String, muted: Vec<usize>, emphasis: Vec<usize>) -> Overlay
         detail_emphasis: Vec::new(),
         tints: Vec::new(),
         elide_from: None,
+    }
+}
+
+fn review_action(command: Command) -> crate::keymap::ui::Action {
+    use crate::keymap::ui::Action;
+    match command {
+        Command::PageUp => Action::PageUp,
+        Command::PageDown => Action::PageDown,
+        Command::HalfPageUp => Action::HalfPageUp,
+        Command::HalfPageDown => Action::HalfPageDown,
+        Command::MoveFileStart => Action::First,
+        Command::MoveFileEnd => Action::Last,
+        _ => unreachable!("only approved review motions reach this conversion"),
+    }
+}
+
+fn review_top(action: crate::keymap::ui::Action, top: usize, rows: usize) -> usize {
+    use crate::keymap::ui::Action;
+    match action {
+        Action::PageUp => top.saturating_sub(rows),
+        Action::PageDown => top.saturating_add(rows),
+        Action::HalfPageUp => top.saturating_sub((rows / 2).max(1)),
+        Action::HalfPageDown => top.saturating_add((rows / 2).max(1)),
+        Action::First => 0,
+        Action::Last => usize::MAX,
+        _ => unreachable!("only scrolling actions reach review_top"),
     }
 }
 

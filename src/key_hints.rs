@@ -9,7 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     command::{CommandCapability, EditorCommand, Mode},
-    input::{KeyCode, KeyStroke, Modifiers},
+    input::{KeyCode, KeyStroke},
     keymap::{
         Binding, BindingAvailability, BindingNamespace, BindingRole, BindingScope, BindingTarget,
         Key, KeySequence, Keymap, Lookup,
@@ -538,6 +538,70 @@ impl KeyHintState {
         matches!(keymap.lookup_in(mode, scope, &candidate), Lookup::NoMatch)
     }
 
+    fn scroll_action(
+        &self,
+        key: KeyStroke,
+        mode: Mode,
+        scope: BindingScope,
+        keymap: &Keymap,
+    ) -> Option<crate::keymap::ui::Action> {
+        use crate::keymap::ui::Owner;
+        if !self.is_pending() {
+            return None;
+        }
+        if let Some(action) = keymap.ui().unconditional_hint_action(key) {
+            return Some(action);
+        }
+        let action = keymap.ui().lookup(Owner::KeyHints, key)?;
+        (key.modifiers.is_empty() && self.scrolls_with_arrow_in(key.code, mode, scope, keymap))
+            .then_some(action)
+    }
+
+    pub(crate) fn cancel_key_label(&self, mode: Mode, keymap: &Keymap) -> String {
+        if matches!(mode, Mode::Normal | Mode::Select) {
+            keymap.ui().label(
+                crate::keymap::ui::Owner::GrammarPrefix,
+                crate::keymap::ui::Action::Cancel,
+            )
+        } else {
+            "Esc".into()
+        }
+    }
+
+    pub(crate) fn scroll_key_label(
+        &self,
+        mode: Mode,
+        scope: BindingScope,
+        keymap: &Keymap,
+    ) -> String {
+        use crate::keymap::ui::{Action, Owner};
+        if !keymap
+            .ui()
+            .explicitly_configured(Owner::KeyHints, Action::Next)
+            && !keymap
+                .ui()
+                .explicitly_configured(Owner::KeyHints, Action::Previous)
+        {
+            let arrows = self.scrolls_with_arrow_in(KeyCode::Up, mode, scope, keymap)
+                && self.scrolls_with_arrow_in(KeyCode::Down, mode, scope, keymap);
+            return if arrows {
+                "Ctrl-n/p ↑/↓"
+            } else {
+                "Ctrl-n/p"
+            }
+            .into();
+        }
+        [Action::Next, Action::Previous]
+            .map(|action| {
+                keymap
+                    .ui()
+                    .reachable_label(Owner::KeyHints, action, None, |key| {
+                        self.scroll_action(key, mode, scope, keymap) == Some(action)
+                    })
+            })
+            .join(" / ")
+    }
+
     /// Low-level mutation retained for callers that reconstruct state.
     pub fn push(&mut self, key: Key) {
         self.dismiss_transient();
@@ -617,24 +681,32 @@ impl KeyHintState {
             return HintEventResult::Forward;
         }
 
-        let scroll_down = if self.is_pending()
-            && key.modifiers == Modifiers::CONTROL
-            && matches!(key.code, KeyCode::Char('n') | KeyCode::Char('p'))
-        {
-            Some(key.code == KeyCode::Char('n'))
-        } else if key.modifiers.is_empty()
-            && self.scrolls_with_arrow_in(key.code, mode, scope, keymap)
-        {
-            Some(key.code == KeyCode::Down)
-        } else {
-            None
-        };
+        let scroll_down = self
+            .scroll_action(key, mode, scope, keymap)
+            .map(|action| action == crate::keymap::ui::Action::Next);
         if let Some(down) = scroll_down {
             self.scroll(down);
             return HintEventResult::Consumed;
         }
 
-        if key.code == KeyCode::Escape {
+        let prefix_action = if matches!(mode, Mode::Normal | Mode::Select) {
+            self.is_pending()
+                .then(|| {
+                    keymap
+                        .ui()
+                        .lookup(crate::keymap::ui::Owner::GrammarPrefix, key)
+                })
+                .flatten()
+        } else {
+            // Insert/Replace preserve their existing observation behavior;
+            // their grammar uses fallback/reprocessing, not modal cancellation.
+            match key.code {
+                KeyCode::Escape => Some(crate::keymap::ui::Action::Cancel),
+                KeyCode::Backspace => Some(crate::keymap::ui::Action::Back),
+                _ => None,
+            }
+        };
+        if prefix_action == Some(crate::keymap::ui::Action::Cancel) {
             self.clear();
             return HintEventResult::Forward;
         }
@@ -651,7 +723,7 @@ impl KeyHintState {
         self.counting = false;
 
         self.dismiss_transient();
-        if key.code == KeyCode::Backspace && self.pending.len() > 1 {
+        if prefix_action == Some(crate::keymap::ui::Action::Back) && self.pending.len() > 1 {
             self.pending.pop();
             self.reset_scroll();
             return HintEventResult::Forward;
@@ -725,6 +797,24 @@ impl KeyHintState {
             .collect::<Vec<_>>();
         rows.extend(fold_undeclared_prefixes(&self.pending, continuations));
         rows.extend(namespaces.into_iter().map(KeyHintRow::from_namespace));
+        // Aliases belong to the effective view: a child can suppress or change
+        // the alias without changing what siblings advertise.
+        for row in &mut rows {
+            if let Some(alias) = &row.alias {
+                let valid = row
+                    .alias_modes
+                    .unwrap_or(std::slice::from_ref(&mode))
+                    .iter()
+                    .all(|&alias_mode| {
+                        matches!(keymap.lookup_in(alias_mode, scope, alias), Lookup::Exact(binding)
+                        if Some(binding.target) == row.target && binding.is_plain_action())
+                    });
+                if !valid {
+                    row.alias = None;
+                    row.alias_modes = None;
+                }
+            }
+        }
         collapse_session_hints(&mut rows, &self.pending);
         rows.sort_by(|left, right| {
             left.role
@@ -773,11 +863,12 @@ impl KeyHintState {
 
 #[cfg(test)]
 mod tests {
+    use crate::input::Modifiers;
     use std::time::{Duration, Instant};
 
     use crate::{
         command::{COMMANDS, ColonCommand, CommandId, EditorCommand, Mode},
-        input::{KeyCode, KeyStroke, Modifiers},
+        input::{KeyCode, KeyStroke},
         keymap::{
             Binding, BindingAvailability, BindingRole, BindingScope, BindingTarget, Key,
             KeySequence, Keymap, default_keymap,
@@ -885,7 +976,7 @@ mod tests {
                 CommandId::Editor(_) | CommandId::Plugin(_) => None,
             }))
             .collect::<Vec<_>>();
-        assert_eq!(targets.len(), 432, "the command inventory changed");
+        assert_eq!(targets.len(), 435, "the command inventory changed");
         for target in targets {
             let mut row = KeyHintRow {
                 sequence: KeySequence::default(),

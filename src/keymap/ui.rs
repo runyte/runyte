@@ -1,0 +1,1136 @@
+// SPDX-License-Identifier: MPL-2.0
+//! Shared semantic UI actions. Owners execute actions without rewriting input;
+//! literal input and structural option identifiers retain their own meaning.
+
+mod confirmation;
+mod context_review;
+mod grammar;
+mod plugin_input;
+mod provider;
+pub(crate) use context_review::Route as ContextReviewRoute;
+mod merge;
+mod picker;
+pub(crate) use merge::Input as MergeInput;
+mod prompt;
+mod session_navigation;
+
+use crate::input::{KeyCode, KeyStroke, Modifiers};
+use serde_yaml::Value;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, OnceLock};
+
+#[cfg(test)]
+#[path = "../tests/ui_bindings.rs"]
+mod tests;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Owner {
+    Completion,
+    ContextActions,
+    Path,
+    PathActions,
+    ProgramActions,
+    PluginManagerActions,
+    BufferActions,
+    TerminalActions,
+    SessionActions,
+    CommandPrompt,
+    TextPrompt,
+    PathPrompt,
+    ProgramPrompt,
+    FilePicker,
+    Finder,
+    SessionDirectory,
+    SessionInventory,
+    Confirmation,
+    StashConfirmation,
+    TextConfirmation,
+    FilesystemConfirmation,
+    TreeDestination,
+    TreeDelete,
+    ContextReview,
+    ProviderReload,
+    ProviderOverwrite,
+    PluginConfirmation,
+    PluginPicker,
+    PluginForm,
+    PluginChoice,
+    PluginPathCompletion,
+    MergeAcknowledgment,
+    MergePrefix,
+    MacroReplay,
+    Hover,
+    CharacterInput,
+    ContextLauncher,
+    NativeWindow,
+    NativePreview,
+    GrammarPrefix,
+    KeyHints,
+}
+
+impl Owner {
+    const ALL: [Self; 41] = [
+        Self::Completion,
+        Self::ContextActions,
+        Self::Path,
+        Self::PathActions,
+        Self::ProgramActions,
+        Self::PluginManagerActions,
+        Self::BufferActions,
+        Self::TerminalActions,
+        Self::SessionActions,
+        Self::CommandPrompt,
+        Self::TextPrompt,
+        Self::PathPrompt,
+        Self::ProgramPrompt,
+        Self::FilePicker,
+        Self::Finder,
+        Self::SessionDirectory,
+        Self::SessionInventory,
+        Self::Confirmation,
+        Self::StashConfirmation,
+        Self::TextConfirmation,
+        Self::FilesystemConfirmation,
+        Self::TreeDestination,
+        Self::TreeDelete,
+        Self::ContextReview,
+        Self::ProviderReload,
+        Self::ProviderOverwrite,
+        Self::PluginConfirmation,
+        Self::PluginPicker,
+        Self::PluginForm,
+        Self::PluginChoice,
+        Self::PluginPathCompletion,
+        Self::MergeAcknowledgment,
+        Self::MergePrefix,
+        Self::MacroReplay,
+        Self::Hover,
+        Self::CharacterInput,
+        Self::ContextLauncher,
+        Self::NativeWindow,
+        Self::NativePreview,
+        Self::GrammarPrefix,
+        Self::KeyHints,
+    ];
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Completion => "completion",
+            Self::ContextActions => "context-actions",
+            Self::Path => "path",
+            Self::PathActions => "path-actions",
+            Self::ProgramActions => "program-actions",
+            Self::PluginManagerActions => "plugin-manager-actions",
+            Self::BufferActions => "buffer-actions",
+            Self::TerminalActions => "terminal-actions",
+            Self::SessionActions => "session-actions",
+            Self::CommandPrompt => "command-prompt",
+            Self::TextPrompt => "text-prompt",
+            Self::PathPrompt => "path-prompt",
+            Self::ProgramPrompt => "program-prompt",
+            Self::FilePicker => "file-picker",
+            Self::Finder => "finder",
+            Self::SessionDirectory => "session-directory",
+            Self::SessionInventory => "session-inventory",
+            Self::Confirmation => "confirmation",
+            Self::StashConfirmation => "stash-confirmation",
+            Self::TextConfirmation => "text-confirmation",
+            Self::FilesystemConfirmation => "filesystem-confirmation",
+            Self::TreeDestination => "tree-destination",
+            Self::TreeDelete => "tree-delete",
+            Self::ContextReview => "context-review",
+            Self::ProviderReload => "provider-reload",
+            Self::ProviderOverwrite => "provider-overwrite",
+            Self::PluginConfirmation => "plugin-confirmation",
+            Self::PluginPicker => "plugin-picker",
+            Self::PluginForm => "plugin-form",
+            Self::PluginChoice => "plugin-choice",
+            Self::PluginPathCompletion => "plugin-path-completion",
+            Self::MergeAcknowledgment => "merge-acknowledgment",
+            Self::MergePrefix => "merge-prefix",
+            Self::MacroReplay => "macro-replay",
+            Self::Hover => "hover",
+            Self::CharacterInput => "character-input",
+            Self::ContextLauncher => "context-launcher",
+            Self::NativeWindow => "native-window",
+            Self::NativePreview => "native-preview",
+            Self::GrammarPrefix => "grammar-prefix",
+            Self::KeyHints => "key-hints",
+        }
+    }
+    pub fn is_confirmation(self) -> bool {
+        matches!(
+            self,
+            Self::Confirmation
+                | Self::StashConfirmation
+                | Self::TextConfirmation
+                | Self::FilesystemConfirmation
+                | Self::TreeDestination
+                | Self::TreeDelete
+        )
+    }
+    pub fn is_session_navigation(self) -> bool {
+        matches!(self, Self::SessionDirectory | Self::SessionInventory)
+    }
+    pub fn is_list_menu(self) -> bool {
+        matches!(
+            self,
+            Self::BufferActions | Self::TerminalActions | Self::SessionActions
+        )
+    }
+    pub fn is_picker(self) -> bool {
+        matches!(self, Self::FilePicker | Self::Finder)
+    }
+    pub fn is_prompt(self) -> bool {
+        matches!(
+            self,
+            Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt
+        )
+    }
+    pub(crate) fn is_provider(self) -> bool {
+        matches!(self, Self::ProviderReload | Self::ProviderOverwrite)
+    }
+    pub(crate) fn is_plugin_input(self) -> bool {
+        matches!(
+            self,
+            Self::PluginConfirmation
+                | Self::PluginPicker
+                | Self::PluginForm
+                | Self::PluginChoice
+                | Self::PluginPathCompletion
+        )
+    }
+    fn inherits_leader(self) -> bool {
+        !matches!(
+            self,
+            Self::Completion
+                | Self::ContextReview
+                | Self::MergeAcknowledgment
+                | Self::MergePrefix
+                | Self::MacroReplay
+                | Self::Hover
+                | Self::CharacterInput
+                | Self::ContextLauncher
+                | Self::NativeWindow
+                | Self::NativePreview
+                | Self::GrammarPrefix
+                | Self::KeyHints
+        ) && !self.is_plugin_input()
+            && !self.is_prompt()
+            && !self.is_session_navigation()
+    }
+    fn actions(self) -> &'static [Action] {
+        use Action::*;
+        match self {
+            Self::Completion => &[
+                Next,
+                Previous,
+                Accept,
+                Cancel,
+                CancelOrContinue,
+                DismissAndContinue,
+            ],
+            Self::ContextActions | Self::PathActions | Self::ProgramActions => {
+                &[Next, Previous, Accept, Cancel]
+            }
+            Self::BufferActions | Self::TerminalActions | Self::SessionActions => {
+                &[Next, Previous, Accept, Back, Cancel]
+            }
+            Self::Path => &[OpenActions, Cancel],
+            Self::MergeAcknowledgment => &[Backspace, Delete, MoveLeft, MoveRight],
+            Self::MergePrefix => &[ResetAndContinue],
+            Self::MacroReplay | Self::CharacterInput => &[Cancel],
+            Self::Hover => &[Accept],
+            Self::ContextLauncher => &[OpenActions],
+            Self::NativeWindow => &[FontIncrease, FontDecrease, PasteText],
+            Self::NativePreview => &[Back, Copy, KeepOpenAndContinue, ForwardPane],
+            Self::GrammarPrefix => &[Cancel, Back],
+            Self::KeyHints => &[Next, Previous],
+            Self::PluginConfirmation => &[Accept, Cancel],
+            Self::PluginPicker => &[Accept, Cancel, Next, Previous, Backspace],
+            Self::PluginForm => &[
+                Accept, Cancel, Next, Previous, Backspace, Delete, MoveLeft, MoveRight, MoveStart,
+                MoveEnd,
+            ],
+            Self::PluginChoice => &[
+                Accept,
+                Cancel,
+                Next,
+                Previous,
+                MoveLeft,
+                MoveRight,
+                ToggleSelection,
+            ],
+            Self::PluginPathCompletion => &[Accept, AcceptOrContinue, Next, Previous],
+            Self::ProviderReload => &[Next, Previous, Accept, Cancel],
+            Self::ProviderOverwrite => &[Accept, Cancel],
+            Self::ContextReview => &[
+                Next,
+                Previous,
+                ToggleSelection,
+                Accept,
+                Cancel,
+                First,
+                Last,
+                PageUp,
+                PageDown,
+                HalfPageUp,
+                HalfPageDown,
+            ],
+            Self::PluginManagerActions => &[Cancel],
+            Self::Confirmation
+            | Self::StashConfirmation
+            | Self::TextConfirmation
+            | Self::FilesystemConfirmation
+            | Self::TreeDestination
+            | Self::TreeDelete => confirmation::actions(self),
+            Self::FilePicker | Self::Finder => picker::actions(self),
+            Self::SessionDirectory | Self::SessionInventory => session_navigation::actions(self),
+            Self::CommandPrompt | Self::TextPrompt | Self::PathPrompt | Self::ProgramPrompt => {
+                prompt::actions(self)
+            }
+        }
+    }
+    pub(crate) fn structural(self, key: KeyStroke) -> bool {
+        match self {
+            Self::MergePrefix | Self::MacroReplay | Self::GrammarPrefix | Self::KeyHints => false,
+            Self::CharacterInput => matches!(key.code, KeyCode::Char(_)),
+            Self::NativeWindow => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control() || !key.modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER))
+            }
+            Self::Hover | Self::ContextLauncher | Self::NativePreview => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control() || (c.is_ascii_digit() && key.modifiers.is_empty()))
+            }
+            Self::MergeAcknowledgment => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control() || key.modifiers.is_empty())
+            }
+            Self::ProviderReload | Self::ProviderOverwrite | Self::PluginConfirmation => false,
+            Self::PluginChoice => false,
+            Self::PluginPicker | Self::PluginForm | Self::PluginPathCompletion => {
+                key.modifiers.is_empty() && matches!(key.code, KeyCode::Char(_))
+            }
+            Self::ContextReview => {
+                key.modifiers.is_empty()
+                    && matches!(key.code, KeyCode::Char('x' | 'r' | 'n' | '1' | '2'))
+            }
+            Self::ContextActions => {
+                key.modifiers.is_empty()
+                    && matches!(key.code, KeyCode::Char(c) if c.is_ascii_alphabetic() && !matches!(c, 'j' | 'k'))
+            }
+            // This menu historically matches its choice character regardless
+            // of modifiers. Preserve that broader structural input policy.
+            Self::PathActions => matches!(key.code, KeyCode::Char('r' | 's')),
+            Self::Completion
+            | Self::Path
+            | Self::ProgramActions
+            | Self::BufferActions
+            | Self::TerminalActions => false,
+            Self::FilesystemConfirmation => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+                    || key.code == KeyCode::Char('P') && key.modifiers.is_empty()
+            }
+            Self::TreeDestination => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+                    || matches!(key.code, KeyCode::Char('0'..='9')) && key.modifiers.is_empty()
+            }
+            Self::TreeDelete => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+                    || matches!(key.code, KeyCode::Char('y' | 'Y' | 'n' | 'N'))
+                        && !key
+                            .modifiers
+                            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
+            }
+            Self::Confirmation | Self::StashConfirmation => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+            }
+            Self::SessionActions => matches!(key.code, KeyCode::Char(c) if c.is_control()),
+            Self::FilePicker | Self::Finder | Self::PluginManagerActions => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+                    || matches!(key.code, KeyCode::Char(_))
+                        && !key
+                            .modifiers
+                            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)
+            }
+            Self::CommandPrompt
+            | Self::TextPrompt
+            | Self::PathPrompt
+            | Self::ProgramPrompt
+            | Self::SessionDirectory
+            | Self::SessionInventory
+            | Self::TextConfirmation => {
+                matches!(key.code, KeyCode::Char(c) if c.is_control())
+                    || matches!(key.code, KeyCode::Char(_))
+                        && !key
+                            .modifiers
+                            .intersects(Modifiers::CONTROL | Modifiers::ALT)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Action {
+    Copy,
+    KeepOpenAndContinue,
+    ForwardPane,
+    FontIncrease,
+    FontDecrease,
+    PasteText,
+    ResetAndContinue,
+    Next,
+    Previous,
+    Accept,
+    AcceptOrContinue,
+    Cancel,
+    CancelOrContinue,
+    DismissAndContinue,
+    OpenActions,
+    Back,
+    Save,
+    MoveLeft,
+    MoveRight,
+    MoveStart,
+    MoveEnd,
+    WordLeft,
+    WordRight,
+    DeleteBackward,
+    DeleteForward,
+    DeleteWordBackward,
+    DeleteToStart,
+    DeleteToEnd,
+    Backspace,
+    Delete,
+    First,
+    Last,
+    Complete,
+    PageUp,
+    PageDown,
+    SplitVertical,
+    SplitHorizontal,
+    TogglePreview,
+    ToggleMode,
+    EnterDirectory,
+    ToggleSelection,
+    HalfPageUp,
+    HalfPageDown,
+}
+
+impl Action {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Copy => "copy",
+            Self::KeepOpenAndContinue => "keep-open-and-continue",
+            Self::ForwardPane => "forward-pane",
+            Self::FontIncrease => "font-increase",
+            Self::FontDecrease => "font-decrease",
+            Self::PasteText => "paste-text",
+            Self::ResetAndContinue => "reset-and-continue",
+            Self::Next => "next",
+            Self::Previous => "previous",
+            Self::Accept => "accept",
+            Self::AcceptOrContinue => "accept-or-continue",
+            Self::Cancel => "cancel",
+            Self::CancelOrContinue => "cancel-or-continue",
+            Self::DismissAndContinue => "dismiss-and-continue",
+            Self::OpenActions => "open-actions",
+            Self::Back => "back",
+            Self::Save => "save",
+            Self::MoveLeft => "move-left",
+            Self::MoveRight => "move-right",
+            Self::MoveStart => "move-start",
+            Self::MoveEnd => "move-end",
+            Self::WordLeft => "word-left",
+            Self::WordRight => "word-right",
+            Self::DeleteBackward => "delete-backward",
+            Self::DeleteForward => "delete-forward",
+            Self::DeleteWordBackward => "delete-word-backward",
+            Self::DeleteToStart => "delete-to-start",
+            Self::DeleteToEnd => "delete-to-end",
+            Self::Backspace => "backspace",
+            Self::Delete => "delete",
+            Self::First => "first",
+            Self::Last => "last",
+            Self::Complete => "complete",
+            Self::PageUp => "page-up",
+            Self::PageDown => "page-down",
+            Self::SplitVertical => "split-vertical",
+            Self::SplitHorizontal => "split-horizontal",
+            Self::TogglePreview => "toggle-preview",
+            Self::ToggleMode => "toggle-mode",
+            Self::EnterDirectory => "enter-directory",
+            Self::ToggleSelection => "toggle-selection",
+            Self::HalfPageUp => "half-page-up",
+            Self::HalfPageDown => "half-page-down",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct OwnerBindings {
+    keys: Arc<HashMap<KeyStroke, Action>>,
+    labels: Arc<HashMap<Action, Vec<String>>>,
+    configured: std::collections::HashSet<Action>,
+    without_leader: Option<Box<OwnerBindings>>,
+    inherited_leader: Option<KeyStroke>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Bindings {
+    owners: HashMap<Owner, OwnerBindings>,
+    window: OnceLock<super::native_window::Bindings>,
+}
+
+impl Default for Bindings {
+    fn default() -> Self {
+        static DEFAULTS: LazyLock<Bindings> =
+            LazyLock::new(|| Bindings::with_leader(KeyStroke::char(' ')));
+        DEFAULTS.clone()
+    }
+}
+
+impl Bindings {
+    fn legacy() -> &'static Self {
+        static DEFAULTS: LazyLock<Bindings> = LazyLock::new(|| {
+            let owners = Owner::ALL
+                .into_iter()
+                .map(|owner| {
+                    let mut keys = HashMap::new();
+                    for bits in 0..64 {
+                        let modifiers = Modifiers::from_bits(bits).expect("six-bit modifiers");
+                        for code in [
+                            KeyCode::Escape,
+                            KeyCode::Down,
+                            KeyCode::Up,
+                            KeyCode::Tab,
+                            KeyCode::BackTab,
+                            KeyCode::Enter,
+                            KeyCode::Char('c'),
+                            KeyCode::Char('n'),
+                            KeyCode::Char('p'),
+                            KeyCode::Char('j'),
+                            KeyCode::Char('k'),
+                            KeyCode::PageUp,
+                            KeyCode::PageDown,
+                            KeyCode::Char('v'),
+                            KeyCode::Char('V'),
+                            KeyCode::Char('C'),
+                            KeyCode::Char('l'),
+                            KeyCode::Char(':'),
+                            KeyCode::Char('+'),
+                            KeyCode::Char('='),
+                            KeyCode::Char('-'),
+                            KeyCode::Char('t'),
+                            KeyCode::Backspace,
+                            KeyCode::Delete,
+                            KeyCode::Home,
+                            KeyCode::End,
+                            KeyCode::Left,
+                            KeyCode::Right,
+                            KeyCode::Char('s'),
+                            KeyCode::Char('b'),
+                            KeyCode::Char('f'),
+                            KeyCode::Char('a'),
+                            KeyCode::Char('e'),
+                            KeyCode::Char('w'),
+                            KeyCode::Char('u'),
+                            KeyCode::Char('h'),
+                            KeyCode::Char('d'),
+                            KeyCode::Char(' '),
+                        ] {
+                            let key = KeyStroke::new(code, modifiers);
+                            if let Some(action) = legacy_action(owner, key) {
+                                keys.insert(key.canonical_for_binding(), action);
+                            }
+                        }
+                    }
+                    let labels = owner
+                        .actions()
+                        .iter()
+                        .map(|&action| {
+                            (
+                                action,
+                                legacy_labels(owner, action)
+                                    .iter()
+                                    .map(|s| (*s).to_owned())
+                                    .collect(),
+                            )
+                        })
+                        .collect();
+                    (
+                        owner,
+                        OwnerBindings {
+                            keys: Arc::new(keys),
+                            labels: Arc::new(labels),
+                            configured: Default::default(),
+                            without_leader: None,
+                            inherited_leader: None,
+                        },
+                    )
+                })
+                .collect();
+            Bindings {
+                owners,
+                window: OnceLock::new(),
+            }
+        });
+        &DEFAULTS
+    }
+    fn with_leader(leader: KeyStroke) -> Self {
+        let mut defaults = Self::legacy().clone();
+        for (&owner, bindings) in &mut defaults.owners {
+            if owner.inherits_leader() {
+                bindings.add_owner_leader(owner, leader);
+            }
+        }
+        defaults
+    }
+    pub fn explicitly_configured(&self, owner: Owner, action: Action) -> bool {
+        self.owners[&owner].configured.contains(&action)
+    }
+    pub fn lookup(&self, owner: Owner, key: KeyStroke) -> Option<Action> {
+        self.lookup_with_leader(owner, key, true)
+    }
+    pub fn lookup_with_leader(
+        &self,
+        owner: Owner,
+        key: KeyStroke,
+        leader_active: bool,
+    ) -> Option<Action> {
+        let bindings = self.owner_bindings(owner, leader_active);
+        let canonical = key.canonical_for_binding();
+        let action = bindings.keys.get(&canonical).copied()?;
+        if (owner.is_provider()
+            || owner.is_plugin_input()
+            || matches!(owner, Owner::MacroReplay | Owner::KeyHints))
+            && !bindings.configured.contains(&action)
+            && bindings.inherited_leader != Some(canonical)
+        {
+            return bindings.keys.get(&key).copied();
+        }
+        Some(action)
+    }
+    pub(crate) fn keys(&self, owner: Owner) -> impl Iterator<Item = (KeyStroke, Action)> + '_ {
+        self.owners[&owner]
+            .keys
+            .iter()
+            .filter_map(move |(&key, &action)| {
+                (self.lookup(owner, key) == Some(action)).then_some((key, action))
+            })
+    }
+    pub fn native_window(&self) -> &super::native_window::Bindings {
+        self.window.get_or_init(|| {
+            let mut entries = self.owners[&Owner::NativeWindow]
+                .keys
+                .iter()
+                .map(|(key, action)| {
+                    (
+                        *key,
+                        match action {
+                            Action::FontIncrease => super::native_window::Action::FontSize(1),
+                            Action::FontDecrease => super::native_window::Action::FontSize(-1),
+                            Action::PasteText => super::native_window::Action::PasteText,
+                            _ => unreachable!("native window owner action"),
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            entries.sort_by_key(|(key, _)| key.label());
+            entries.dedup_by_key(|(key, _)| *key);
+            // Factory aliases may include raw spellings with the same canonical
+            // key. The window's historical matcher is canonical.
+            let mut canonical = std::collections::HashMap::new();
+            for (key, action) in entries {
+                canonical.insert(key.canonical_for_binding(), action);
+            }
+            super::native_window::Bindings::from_entries(canonical.into_iter().collect())
+                .expect("bounded compiled window bindings")
+                .with_policy(
+                    [
+                        (Action::FontIncrease, 1),
+                        (Action::FontDecrease, 2),
+                        (Action::PasteText, 4),
+                    ]
+                    .into_iter()
+                    .filter(|(action, _)| self.explicitly_configured(Owner::NativeWindow, *action))
+                    .map(|(_, bit)| bit)
+                    .sum(),
+                    0,
+                )
+                .expect("window provenance")
+        })
+    }
+
+    pub(crate) fn named_label(&self, source: &str) -> Result<String, String> {
+        let (owner, action) = source.split_once('.').ok_or("expected UI owner.action")?;
+        let owner = Owner::ALL
+            .into_iter()
+            .find(|candidate| candidate.name() == owner)
+            .ok_or_else(|| format!("unknown UI owner {owner:?}"))?;
+        let action = owner
+            .actions()
+            .iter()
+            .copied()
+            .find(|candidate| candidate.name() == action)
+            .ok_or_else(|| format!("unknown UI action {action:?}"))?;
+        Ok(self.label(owner, action))
+    }
+
+    pub fn label(&self, owner: Owner, action: Action) -> String {
+        self.label_with_leader(owner, action, true)
+    }
+    /// Compact titles name a bounded subset of effective aliases; the full
+    /// action legend can still use `label` to show every authored spelling.
+    pub fn compact_label(&self, owner: Owner, action: Action, aliases: usize) -> String {
+        self.compact_label_with_leader(owner, action, aliases, true)
+    }
+    pub fn compact_label_with_leader(
+        &self,
+        owner: Owner,
+        action: Action,
+        aliases: usize,
+        leader_active: bool,
+    ) -> String {
+        self.owner_bindings(owner, leader_active)
+            .labels
+            .get(&action)
+            .filter(|keys| !keys.is_empty())
+            .map_or_else(
+                || "unbound".into(),
+                |keys| keys[..keys.len().min(aliases.max(1))].join("/"),
+            )
+    }
+    pub fn label_with_leader(&self, owner: Owner, action: Action, leader_active: bool) -> String {
+        self.owner_bindings(owner, leader_active)
+            .labels
+            .get(&action)
+            .filter(|keys| !keys.is_empty())
+            .map_or_else(|| "unbound".into(), |keys| keys.join("/"))
+    }
+    /// Select a label reachable through a layered owner's actual routing.
+    pub(crate) fn reachable_label(
+        &self,
+        owner: Owner,
+        action: Action,
+        preferred: Option<KeyStroke>,
+        reachable: impl Fn(KeyStroke) -> bool,
+    ) -> String {
+        let bindings = self.owner_bindings(owner, true);
+        let valid = |key| self.lookup(owner, key) == Some(action) && reachable(key);
+        if let Some(key) = preferred.filter(|key| valid(*key)) {
+            return key.label();
+        }
+        if let Some(label) = bindings.labels.get(&action).and_then(|labels| {
+            labels
+                .iter()
+                .find(|label| KeyStroke::parse(label).is_ok_and(&valid))
+        }) {
+            return label.clone();
+        }
+        let mut aliases = bindings
+            .keys
+            .iter()
+            .filter(|(_, found)| **found == action)
+            .map(|(key, _)| *key)
+            .filter(|key| valid(*key))
+            .map(|key| key.label())
+            .collect::<Vec<_>>();
+        aliases.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
+        aliases
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| "unbound".into())
+    }
+    pub fn dismissal_label(&self, owner: Owner) -> String {
+        let actions: &[Action] = if owner.is_list_menu() {
+            &[Action::Back, Action::Cancel]
+        } else {
+            &[Action::Cancel]
+        };
+        let labels = actions
+            .iter()
+            .map(|&action| self.label(owner, action))
+            .filter(|label| label != "unbound")
+            .collect::<Vec<_>>();
+        if labels.is_empty() {
+            "unbound".to_owned()
+        } else {
+            labels.join("/")
+        }
+    }
+    fn owner_bindings(&self, owner: Owner, leader_active: bool) -> &OwnerBindings {
+        let bindings = &self.owners[&owner];
+        if !leader_active {
+            bindings.without_leader.as_deref().unwrap_or(bindings)
+        } else {
+            bindings
+        }
+    }
+}
+
+impl OwnerBindings {
+    fn add_owner_leader(&mut self, owner: Owner, leader: KeyStroke) {
+        // Overwrite historically accepts Enter before checking cancellation.
+        if owner == Owner::ProviderOverwrite
+            && self.keys.get(&leader.canonical_for_binding()) == Some(&Action::Accept)
+        {
+            return;
+        }
+        self.add_leader(leader);
+    }
+    fn add_leader(&mut self, leader: KeyStroke) {
+        self.without_leader = Some(Box::new(self.clone()));
+        let leader = leader.canonical_for_binding();
+        self.inherited_leader = Some(leader);
+        // The old frontend rewrote the effective leader to Escape before
+        // owner dispatch. Preserve that precedence for inherited cancel only.
+        Arc::make_mut(&mut self.keys).insert(leader, Action::Cancel);
+        let labels = Arc::make_mut(&mut self.labels);
+        for (&action, keys) in labels.iter_mut() {
+            keys.retain(|source| {
+                KeyStroke::parse(source)
+                    .is_ok_and(|key| self.keys.get(&key.canonical_for_binding()) == Some(&action))
+            });
+        }
+        // A default spelling can stand for a legacy modifier family. If
+        // leader masks its usual spelling, advertise a surviving exact key
+        // rather than claiming that the entire action is unbound.
+        for (&action, labels) in labels.iter_mut() {
+            if labels.is_empty() {
+                let mut alternatives = self
+                    .keys
+                    .iter()
+                    .filter(|(_, found)| **found == action)
+                    .map(|(key, _)| key.label())
+                    .filter(|label| {
+                        KeyStroke::parse(label).is_ok_and(|key| {
+                            self.keys.get(&key.canonical_for_binding()) == Some(&action)
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                alternatives.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
+                if let Some(label) = alternatives.into_iter().next() {
+                    labels.push(label);
+                }
+            }
+        }
+        let cancel = labels.entry(Action::Cancel).or_default();
+        if !cancel.iter().any(|source| {
+            KeyStroke::parse(source).is_ok_and(|key| key.canonical_for_binding() == leader)
+        }) {
+            cancel.push(leader.label());
+        }
+    }
+}
+
+fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
+    use Action::*;
+    if matches!(owner, Owner::GrammarPrefix | Owner::KeyHints) {
+        return grammar::legacy_action(owner, key);
+    }
+    if owner == Owner::NativePreview {
+        return super::native_preview::legacy_ui(key);
+    }
+    if owner == Owner::NativeWindow {
+        return super::native_window::lookup(key).map(|binding| match binding.action {
+            super::native_window::Action::FontSize(1) => FontIncrease,
+            super::native_window::Action::FontSize(-1) => FontDecrease,
+            super::native_window::Action::PasteText => PasteText,
+            _ => unreachable!("factory window action"),
+        });
+    }
+    if owner == Owner::ContextLauncher {
+        return (key == KeyStroke::plain(KeyCode::Tab)).then_some(OpenActions);
+    }
+    if owner == Owner::CharacterInput {
+        return (key.code == KeyCode::Escape).then_some(Cancel);
+    }
+    if owner == Owner::Hover {
+        return (key == KeyStroke::plain(KeyCode::Enter)).then_some(Accept);
+    }
+    if owner == Owner::MacroReplay {
+        return (key.code == KeyCode::Escape || key == KeyStroke::ctrl('c')).then_some(Cancel);
+    }
+    if matches!(owner, Owner::MergeAcknowledgment | Owner::MergePrefix) {
+        return merge::legacy_action(owner, key);
+    }
+    if owner.is_plugin_input() {
+        return plugin_input::legacy_action(owner, key);
+    }
+    if owner.is_provider() {
+        return provider::legacy_action(owner, key);
+    }
+    if owner == Owner::ContextReview {
+        return context_review::legacy_action(key);
+    }
+    if owner.is_confirmation() {
+        return confirmation::legacy_action(owner, key);
+    }
+    if owner.is_session_navigation() {
+        return session_navigation::legacy_action(owner, key);
+    }
+    if owner.is_prompt() {
+        return prompt::legacy_action(owner, key);
+    }
+    if owner.is_picker() {
+        return picker::legacy_action(owner, key);
+    }
+    let control = key.modifiers.contains(Modifiers::CONTROL);
+    if owner == Owner::Completion {
+        return match (key.code, control) {
+            (KeyCode::Escape, _) => Some(CancelOrContinue),
+            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => Some(Next),
+            (KeyCode::Up, _) | (KeyCode::Char('p'), true) => Some(Previous),
+            (KeyCode::Tab, _) => Some(Accept),
+            (KeyCode::Enter, _) => Some(DismissAndContinue),
+            (KeyCode::Char('c'), true) => Some(Cancel),
+            _ => None,
+        };
+    }
+    if owner.is_list_menu() && key.code == KeyCode::Tab {
+        return Some(Back);
+    }
+    if owner == Owner::ProgramActions || owner.is_list_menu() {
+        return match (key.code, control) {
+            (KeyCode::Escape | KeyCode::Tab, _) | (KeyCode::Char('c'), true) => Some(Cancel),
+            (KeyCode::Down, _) | (KeyCode::Char('n'), true) => Some(Next),
+            (KeyCode::Up | KeyCode::BackTab, _) | (KeyCode::Char('p'), true) => Some(Previous),
+            (KeyCode::Enter, _) => Some(Accept),
+            _ => None,
+        };
+    }
+    if owner == Owner::PluginManagerActions {
+        return match (key.code, control) {
+            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => Some(Cancel),
+            _ => None,
+        };
+    }
+    if owner == Owner::Path {
+        return match (key.code, control) {
+            (KeyCode::Tab, _) => Some(OpenActions),
+            (KeyCode::Escape, _) | (KeyCode::Char('c'), true) => Some(Cancel),
+            _ => None,
+        };
+    }
+    match (key.code, control) {
+        (KeyCode::Escape | KeyCode::Tab, _) | (KeyCode::Char('c'), true) => Some(Cancel),
+        (KeyCode::Down | KeyCode::Char('j'), false) => Some(Next),
+        (KeyCode::Up | KeyCode::Char('k'), false) | (KeyCode::BackTab, _) => Some(Previous),
+        (KeyCode::Enter, false) => Some(Accept),
+        _ => None,
+    }
+}
+
+fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner == Owner::NativePreview {
+        return match action {
+            Action::Back => &["Esc"],
+            Action::Copy => &["Ctrl-c", "Super-c"],
+            Action::KeepOpenAndContinue => &["Space", ":", "Ctrl-w"],
+            Action::ForwardPane => &[
+                "Ctrl-Left",
+                "Ctrl-Right",
+                "Ctrl-Up",
+                "Ctrl-Down",
+                "Ctrl-h",
+                "Ctrl-j",
+                "Ctrl-k",
+                "Ctrl-l",
+            ],
+            _ => &[],
+        };
+    }
+    if owner == Owner::NativeWindow {
+        return match action {
+            Action::FontIncrease => &["Ctrl-+", "Ctrl-="],
+            Action::FontDecrease => &["Ctrl--"],
+            Action::PasteText => {
+                if cfg!(target_os = "macos") {
+                    &["Super-v", "Ctrl-V"]
+                } else {
+                    &["Ctrl-V"]
+                }
+            }
+            _ => &[],
+        };
+    }
+    if owner == Owner::ContextLauncher {
+        return &["Tab"];
+    }
+    if matches!(owner, Owner::GrammarPrefix | Owner::KeyHints) {
+        return grammar::labels(owner, action);
+    }
+    if owner == Owner::CharacterInput {
+        return &["Esc"];
+    }
+    if owner == Owner::Hover {
+        return &["Enter"];
+    }
+    if owner == Owner::MacroReplay {
+        return &["Esc", "Ctrl-c"];
+    }
+    if matches!(owner, Owner::MergeAcknowledgment | Owner::MergePrefix) {
+        return merge::labels(action);
+    }
+    if owner.is_plugin_input() {
+        return plugin_input::labels(owner, action);
+    }
+    if owner.is_provider() {
+        return provider::labels(action);
+    }
+    if owner == Owner::ContextReview {
+        return context_review::labels(action);
+    }
+    if owner.is_confirmation() {
+        return confirmation::labels(owner, action);
+    }
+    if owner.is_session_navigation() {
+        return session_navigation::labels(action);
+    }
+    if owner.is_prompt() {
+        return prompt::labels(owner, action);
+    }
+    if owner.is_picker() {
+        return picker::labels(owner, action);
+    }
+    use Action::*;
+    if owner.is_list_menu() {
+        return match action {
+            Next => &["Down", "Ctrl-n"],
+            Previous => &["Up", "Ctrl-p", "BackTab"],
+            Accept => &["Enter"],
+            Back => &["Tab"],
+            Cancel => &["Esc", "Ctrl-c"],
+            _ => &[],
+        };
+    }
+    match (owner, action) {
+        (Owner::Completion, Next) => &["Down", "Ctrl-n"],
+        (Owner::Completion, Previous) => &["Up", "Ctrl-p"],
+        (Owner::Completion, Accept) => &["Tab"],
+        (Owner::Completion, Cancel) => &["Ctrl-c"],
+        (Owner::Completion, CancelOrContinue) => &["Esc"],
+        (Owner::Completion, DismissAndContinue) => &["Enter"],
+        (Owner::ProgramActions, Next) => &["Down", "Ctrl-n"],
+        (Owner::ProgramActions, Previous) => &["Up", "Ctrl-p", "BackTab"],
+        (_, Next) => &["Down", "j"],
+        (_, Previous) => &["Up", "k", "BackTab"],
+        (_, Accept) => &["Enter"],
+        (Owner::Path | Owner::PluginManagerActions, Cancel) => &["Esc", "Ctrl-c"],
+        (_, Cancel) => &["Tab", "Esc", "Ctrl-c"],
+        (_, OpenActions) => &["Tab"],
+        _ => &[],
+    }
+}
+
+pub(super) fn compile(
+    section: Option<&Value>,
+    leader: KeyStroke,
+    errors: &mut Vec<String>,
+) -> Bindings {
+    let mut result = if leader == KeyStroke::char(' ') {
+        Bindings::default()
+    } else {
+        Bindings::with_leader(leader)
+    };
+    let Some(section) = section else {
+        return result;
+    };
+    result.window = OnceLock::new();
+    let Some(owners) = section.as_mapping() else {
+        errors.push("ui rejected: expected owner mappings".into());
+        return result;
+    };
+    if owners.len() > 64 {
+        errors.push("ui rejected: too many owners".into());
+        return result;
+    }
+    for (name, mapping) in owners {
+        let Some(owner) = Owner::ALL
+            .into_iter()
+            .find(|owner| Some(owner.name()) == name.as_str())
+        else {
+            errors.push("ui rejected: unknown owner".into());
+            continue;
+        };
+        let parsed = (|| -> Result<OwnerBindings, String> {
+            let mapping = mapping.as_mapping().ok_or("expected action mappings")?;
+            if mapping.len() > owner.actions().len() {
+                return Err("too many actions".into());
+            }
+            let mut assignments = HashMap::new();
+            for (name, value) in mapping {
+                let action = owner
+                    .actions()
+                    .iter()
+                    .copied()
+                    .find(|a| Some(a.name()) == name.as_str())
+                    .ok_or("unknown action")?;
+                let keys = value
+                    .as_sequence()
+                    .ok_or("expected a list of keys; use [] to unbind")?;
+                if keys.len() > 32 {
+                    return Err("at most 32 keys per action".into());
+                }
+                let mut parsed = Vec::new();
+                for key in keys {
+                    let source = key.as_str().ok_or("keys must be strings")?;
+                    if source.len() > 64 {
+                        return Err("key spelling exceeds 64 bytes".into());
+                    }
+                    let key = KeyStroke::parse(source)?.canonical_for_binding();
+                    if owner.structural(key) {
+                        return Err("key belongs to structural text or a menu choice".into());
+                    }
+                    if parsed.contains(&key) {
+                        return Err("duplicate normalized key".into());
+                    }
+                    parsed.push(key);
+                }
+                assignments.insert(action, parsed);
+            }
+            // Start without the leader overlay: removing/reassigning cancel
+            // restores any legacy movement/choice that leader used to cover.
+            let mut candidate = Bindings::legacy().owners[&owner].clone();
+            Arc::make_mut(&mut candidate.keys)
+                .retain(|_, action| !assignments.contains_key(action));
+            let inherited_leader =
+                owner.inherits_leader() && !assignments.contains_key(&Action::Cancel);
+            if inherited_leader
+                && assignments.iter().any(|(action, keys)| {
+                    !(owner == Owner::ProviderOverwrite && *action == Action::Accept)
+                        && keys
+                            .iter()
+                            .any(|key| *key == leader.canonical_for_binding())
+                })
+            {
+                return Err("overlapping action bindings".into());
+            }
+            candidate.configured = assignments.keys().copied().collect();
+            for (action, keys) in assignments {
+                Arc::make_mut(&mut candidate.labels)
+                    .insert(action, keys.iter().map(|key| key.label()).collect());
+                for key in keys {
+                    if Arc::make_mut(&mut candidate.keys)
+                        .insert(key, action)
+                        .is_some()
+                    {
+                        return Err("overlapping action bindings".into());
+                    }
+                }
+            }
+            if inherited_leader {
+                candidate.add_owner_leader(owner, leader);
+            }
+            Ok(candidate)
+        })();
+        match parsed {
+            Ok(candidate) => {
+                result.owners.insert(owner, candidate);
+            }
+            Err(error) => errors.push(format!(
+                "ui.{} rejected: {error}; defaults retained",
+                owner.name()
+            )),
+        }
+    }
+    result
+}

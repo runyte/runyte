@@ -749,3 +749,95 @@ fn action_presentation_groups_labels_and_hides_discovery_without_revoking_primar
         plugin::HostMessage::Application(api::HostMessage::Request { .. })
     ));
 }
+
+#[test]
+fn configured_prompt_acceptance_preserves_plugin_handoff_authority_for_fresh_input_only() {
+    for (configured, spelling, fresh) in [
+        (false, "Enter", true),
+        (false, "Shift-Enter", false),
+        (true, "Ctrl-F9", true),
+    ] {
+        for delivery in ["fresh", "repeat", "replay"] {
+            let value = model(&["row"]);
+            let (mut app, buffer, projection) = fixture(value.clone());
+            let mut receiver = commands(&mut app, buffer, value, projection);
+            if configured {
+                let compiled = crate::keymap::configured::compile(
+                    &serde_yaml::from_str("ui: {command-prompt: {accept: [Ctrl-F9]}}").unwrap(),
+                    &app.keymap,
+                );
+                assert!(compiled.errors.is_empty());
+                app.keymap = compiled.keymap;
+            }
+            app.open_prompt_with_value(PromptKind::Command, "plugin.test.refresh".into());
+            let input = InputEvent::Key(KeyStroke::parse(spelling).unwrap());
+            match delivery {
+                "fresh" => app.handle_input(input).unwrap(),
+                "repeat" => app.handle_repeated_input(input).unwrap(),
+                "replay" => app.handle_replayed_input(input).unwrap(),
+                _ => unreachable!(),
+            }
+            assert!(
+                receiver.try_recv().is_ok(),
+                "{configured} {spelling} {delivery}: {}",
+                app.status
+            );
+            let requests = &app.plugins.instances[&0].application.requests;
+            assert_eq!(requests.len(), 1);
+            assert_eq!(
+                requests.values().next().unwrap().native_handoff_allowed,
+                !cfg!(windows) || (fresh && delivery == "fresh"),
+                "{configured} {spelling} {delivery}"
+            );
+            assert!(!app.plugin_physical_input);
+        }
+    }
+}
+#[test]
+fn configured_list_acceptance_preserves_plugin_handoff_authority_for_fresh_input_only() {
+    for (configured, spelling, fresh) in [
+        (None, "Enter", true),
+        (None, "Shift-Enter", false),
+        (Some("Ctrl-F9"), "Ctrl-F9", true),
+        (Some("Shift-Enter"), "Shift-Enter", true),
+        (Some("Esc"), "Space", true),
+    ] {
+        for delivery in ["fresh", "repeat", "replay"] {
+            let value = model(&["row"]);
+            let (mut app, buffer, projection) = fixture(value.clone());
+            let mut receiver = commands(&mut app, buffer, value, projection);
+            if let Some(binding) = configured {
+                let compiled = crate::keymap::configured::compile(
+                    &serde_yaml::from_str(&format!(
+                        "scopes: {{global: {{list: {{'{binding}': list-accept}}}}}}"
+                    ))
+                    .unwrap(),
+                    &app.keymap,
+                );
+                assert!(compiled.errors.is_empty());
+                app.keymap = compiled.keymap;
+            }
+            assert!(app.open_plugin_actions());
+            let input = InputEvent::Key(KeyStroke::parse(spelling).unwrap());
+            match delivery {
+                "fresh" => app.handle_input(input).unwrap(),
+                "repeat" => app.handle_repeated_input(input).unwrap(),
+                "replay" => app.handle_replayed_input(input).unwrap(),
+                _ => unreachable!(),
+            }
+            assert!(
+                receiver.try_recv().is_ok(),
+                "{configured:?} {spelling} {delivery}: {}",
+                app.status
+            );
+            let requests = &app.plugins.instances[&0].application.requests;
+            assert_eq!(requests.len(), 1);
+            assert_eq!(
+                requests.values().next().unwrap().native_handoff_allowed,
+                !cfg!(windows) || (fresh && delivery == "fresh"),
+                "{configured:?} {spelling} {delivery}"
+            );
+            assert!(!app.plugin_physical_input);
+        }
+    }
+}

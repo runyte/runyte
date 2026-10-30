@@ -7,6 +7,68 @@ use crate::config::DEFAULT_THEME;
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn pointer_action_fragments_merge_and_export_without_losing_removal() {
+    let root = Root::new();
+    root.write(
+        "config.yaml",
+        "keys: {pointer: {pane-move: [Alt-LeftDrag], pane-extend: [Shift-Alt-LeftDrag]}}\n",
+    );
+    root.write(
+        "keybinds.d/pointer.yaml",
+        "pointer: {pane-extend: [Ctrl-Alt-LeftDrag]}\n",
+    );
+    root.write("keybinds.d/z.yaml", "pointer: {pane-move: []}\n");
+    let config = root.load().unwrap();
+    let expected = config.keys.clone().unwrap();
+    assert_eq!(
+        expected["pointer"]["pane-move"]
+            .as_sequence()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        expected["pointer"]["pane-extend"][0].as_str(),
+        Some("Ctrl-Alt-LeftDrag")
+    );
+    let exported = Root::new();
+    for (path, contents) in config.to_files(Path::new("config.yaml")).unwrap() {
+        exported.write(path.to_str().unwrap(), &contents);
+    }
+    assert_eq!(exported.load().unwrap().keys.unwrap(), expected);
+}
+
+#[test]
+fn ui_action_fragments_merge_by_owner_and_action_and_round_trip() {
+    let root = Root::new();
+    root.write(
+        "config.yaml",
+        "keys: {ui: {completion: {accept: [F8], next: [F6]}}}\n",
+    );
+    root.write(
+        "keybinds.d/ui.yaml",
+        "ui: {completion: {next: [], previous: [F7]}}\n",
+    );
+    let config = root.load().unwrap();
+    let expected = config.keys.clone().unwrap();
+    assert_eq!(
+        expected["ui"]["completion"]["accept"][0].as_str(),
+        Some("F8")
+    );
+    assert!(
+        expected["ui"]["completion"]["next"]
+            .as_sequence()
+            .unwrap()
+            .is_empty()
+    );
+    let exported = Root::new();
+    for (path, contents) in config.to_files(Path::new("config.yaml")).unwrap() {
+        exported.write(path.to_str().unwrap(), &contents);
+    }
+    assert_eq!(exported.load().unwrap().keys.unwrap(), expected);
+}
+
 /// A fresh directory holding `config.yaml` and its two fragment directories.
 struct Root(PathBuf);
 

@@ -207,6 +207,16 @@ impl EditorDamageFrame {
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.pane_drop != next.editor.pane_drop
+            || base.editor.pointer_bindings != next.editor.pointer_bindings
+            || base.editor.window_bindings != next.editor.window_bindings
+            || base.editor.window_authored != next.editor.window_authored
+            || base.editor.window_guard != next.editor.window_guard
+            || base.editor.preview_bindings != next.editor.preview_bindings
+            || base.editor.preview_fallback != next.editor.preview_fallback
+            || base.editor.preview_source != next.editor.preview_source
+            || base.editor.preview_terminal != next.editor.preview_terminal
+            || base.editor.preview_structural != next.editor.preview_structural
+            || base.editor.preview_unavailable != next.editor.preview_unavailable
             || base.editor.directory_tree != next.editor.directory_tree
             || base.editor.panes.len() != next.editor.panes.len()
         {
@@ -356,6 +366,16 @@ impl TerminalDamageFrame {
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.pane_drop != next.editor.pane_drop
+            || base.editor.pointer_bindings != next.editor.pointer_bindings
+            || base.editor.window_bindings != next.editor.window_bindings
+            || base.editor.window_authored != next.editor.window_authored
+            || base.editor.window_guard != next.editor.window_guard
+            || base.editor.preview_bindings != next.editor.preview_bindings
+            || base.editor.preview_fallback != next.editor.preview_fallback
+            || base.editor.preview_source != next.editor.preview_source
+            || base.editor.preview_terminal != next.editor.preview_terminal
+            || base.editor.preview_structural != next.editor.preview_structural
+            || base.editor.preview_unavailable != next.editor.preview_unavailable
             || base.editor.directory_tree != next.editor.directory_tree
             || base.editor.panes.len() != next.editor.panes.len()
         {
@@ -578,8 +598,74 @@ pub struct EditorSnapshot {
     pub directory_tree: Option<DirectoryTreeSnapshot>,
     pub panes: Vec<PaneSnapshot>,
     pub pane_drop: Option<Rect>,
+    pub pointer_bindings: [[u64; 14]; 26],
+    pub window_bindings: Vec<WindowBinding>,
+    pub window_authored: u8,
+    pub window_guard: u8,
+    pub preview_bindings: Vec<PreviewBinding>,
+    pub preview_fallback: Vec<PreviewBinding>,
+    pub preview_source: Option<(usize, usize)>,
+    pub preview_terminal: Option<(usize, u64)>,
+    pub preview_structural: bool,
+    pub preview_unavailable: bool,
     pub status: StatusSnapshot,
     pub session_strip: Option<SessionStripSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WindowBinding {
+    pub key: super::input::KeyStroke,
+    pub action: WindowAction,
+}
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum WindowAction {
+    FontIncrease,
+    FontDecrease,
+    PasteText,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreviewBinding {
+    pub keys: Vec<super::input::KeyStroke>,
+    pub action: u8,
+}
+impl PreviewBinding {
+    fn decode(
+        self,
+        canonical: bool,
+    ) -> Result<
+        (
+            crate::keymap::KeySequence,
+            crate::keymap::native_preview::Action,
+        ),
+        String,
+    > {
+        use crate::keymap::native_preview::Action;
+        if self.keys.is_empty()
+            || self.keys.len() > 8
+            || self
+                .keys
+                .iter()
+                .any(|key| crate::input::Modifiers::from_bits(key.modifiers).is_none())
+        {
+            return Err("invalid preview keys".into());
+        }
+        let action = Action::ALL
+            .get(usize::from(self.action))
+            .copied()
+            .ok_or("invalid preview action")?;
+        let keys = self
+            .keys
+            .into_iter()
+            .map(crate::input::KeyStroke::from)
+            .collect::<Vec<_>>();
+        if canonical && keys.iter().any(|key| *key != key.canonical_for_binding()) {
+            return Err("noncanonical preview key".into());
+        }
+        Ok((crate::keymap::KeySequence::new(keys), action))
+    }
 }
 
 impl From<core::EditorSnapshot> for EditorSnapshot {
@@ -593,6 +679,49 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
             directory_tree: value.directory_tree.map(Into::into),
             panes: value.panes.into_iter().map(Into::into).collect(),
             pane_drop: value.pane_drop.map(Into::into),
+            pointer_bindings: *value.pointer_bindings.masks(),
+            preview_bindings: value
+                .preview_bindings
+                .entries()
+                .iter()
+                .map(|(keys, action)| PreviewBinding {
+                    keys: keys.as_slice().iter().copied().map(Into::into).collect(),
+                    action: *action as u8,
+                })
+                .collect(),
+            preview_fallback: value
+                .preview_bindings
+                .fallback()
+                .iter()
+                .map(|(key, action)| PreviewBinding {
+                    keys: vec![(*key).into()],
+                    action: *action as u8,
+                })
+                .collect(),
+            preview_source: value.preview_source,
+            preview_terminal: value.preview_terminal,
+            preview_structural: value.preview_structural,
+            preview_unavailable: value.preview_bindings.unavailable,
+            window_authored: value.window_bindings.authored(),
+            window_guard: value.window_bindings.guard(),
+            window_bindings: value
+                .window_bindings
+                .entries()
+                .iter()
+                .map(|(key, action)| WindowBinding {
+                    key: (*key).into(),
+                    action: match action {
+                        crate::keymap::native_window::Action::FontSize(1) => {
+                            WindowAction::FontIncrease
+                        }
+                        crate::keymap::native_window::Action::FontSize(-1) => {
+                            WindowAction::FontDecrease
+                        }
+                        crate::keymap::native_window::Action::PasteText => WindowAction::PasteText,
+                        _ => unreachable!("validated window action"),
+                    },
+                })
+                .collect(),
             status: value.status.into(),
             session_strip: value.session_strip.map(Into::into),
         }
@@ -602,7 +731,75 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
 impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
     type Error = String;
     fn try_from(value: EditorSnapshot) -> Result<Self, Self::Error> {
+        use crate::keymap::native_preview::Bindings as Preview;
+        if value.preview_bindings.len() > Preview::MAX_ENTRIES
+            || value.preview_fallback.len() > Preview::MAX_FALLBACK
+        {
+            return Err("too many preview bindings".into());
+        }
+        let entries = value
+            .preview_bindings
+            .into_iter()
+            .map(|binding| binding.decode(true))
+            .collect::<Result<Vec<_>, _>>()?;
+        let fallback = value
+            .preview_fallback
+            .into_iter()
+            .map(|binding| {
+                if binding.keys.len() != 1 {
+                    return Err("invalid preview fallback key".into());
+                }
+                // Decode validates the action and modifier bits, but fallback retains
+                // the raw Shift spelling instead of registry canonicalization.
+                let key = crate::input::KeyStroke::from(binding.keys[0]);
+                let (_, action) = binding.decode(false)?;
+                Ok((key, action))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if value.preview_unavailable && (!entries.is_empty() || !fallback.is_empty()) {
+            return Err("unavailable preview map must be empty".into());
+        }
+        let mut preview_bindings = Preview::from_entries(entries, fallback)?;
+        preview_bindings.unavailable = value.preview_unavailable;
+        let pointer_bindings =
+            crate::keymap::pointer_actions::Bindings::from_masks(value.pointer_bindings)
+                .ok_or("invalid pointer bindings")?;
+        if value.window_bindings.len() > crate::keymap::native_window::Bindings::MAX_ENTRIES {
+            return Err("too many window bindings".into());
+        }
+        let window_bindings = crate::keymap::native_window::Bindings::from_entries(
+            value
+                .window_bindings
+                .into_iter()
+                .map(|binding| {
+                    if crate::input::Modifiers::from_bits(binding.key.modifiers).is_none() {
+                        return Err("invalid window key modifiers".to_owned());
+                    }
+                    Ok((
+                        binding.key.into(),
+                        match binding.action {
+                            WindowAction::FontIncrease => {
+                                crate::keymap::native_window::Action::FontSize(1)
+                            }
+                            WindowAction::FontDecrease => {
+                                crate::keymap::native_window::Action::FontSize(-1)
+                            }
+                            WindowAction::PasteText => {
+                                crate::keymap::native_window::Action::PasteText
+                            }
+                        },
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        )?;
+        let window_bindings =
+            window_bindings.with_policy(value.window_authored, value.window_guard)?;
         Ok(Self {
+            preview_bindings,
+            preview_source: value.preview_source,
+            preview_terminal: value.preview_terminal,
+            preview_structural: value.preview_structural,
+            window_bindings,
             geometry: value.geometry.into(),
             theme: value.theme.into(),
             terminal_theme_colors: value.terminal_theme_colors,
@@ -615,6 +812,7 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
                 .map(TryInto::try_into)
                 .collect::<Result<_, _>>()?,
             pane_drop: value.pane_drop.map(Into::into),
+            pointer_bindings,
             status: value.status.into(),
             session_strip: value.session_strip.map(TryInto::try_into).transpose()?,
         })
@@ -1010,6 +1208,16 @@ mod tests {
                 directory_tree: None,
                 session_strip: None,
                 pane_drop: None,
+                pointer_bindings: *crate::keymap::pointer_actions::Bindings::default().masks(),
+                window_bindings: Vec::new(),
+                window_authored: 0,
+                window_guard: 0,
+                preview_bindings: Vec::new(),
+                preview_fallback: Vec::new(),
+                preview_source: None,
+                preview_terminal: None,
+                preview_structural: false,
+                preview_unavailable: false,
                 geometry: FrameGeometry::default(),
                 theme: theme.into(),
                 terminal_theme_colors: true,
@@ -1251,6 +1459,206 @@ mod tests {
         let wire = serde_json::to_vec(&next).unwrap();
         let decoded: HostFrame = serde_json::from_slice(&wire).unwrap();
         assert_eq!(decoded.editor.pane_drop, next.editor.pane_drop);
+    }
+
+    #[test]
+    fn changed_pane_bindings_require_a_full_frame_and_round_trip() {
+        let base = terminal_frame(1, 1, 'x');
+        let mut next = base.clone();
+        next.id = FrameId::from_raw(2);
+        next.editor.pointer_bindings[0][3] = 0;
+        next.editor.pointer_bindings[0][4] = 1;
+        next.editor.pointer_bindings[1][3] = 1 << 6;
+        next.editor.pointer_bindings[1][5] = 1 << 7;
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        let wire = serde_json::to_vec(&next).unwrap();
+        let decoded: HostFrame = serde_json::from_slice(&wire).unwrap();
+        let editor: core::EditorSnapshot = decoded.editor.try_into().unwrap();
+        assert_eq!(editor.pointer_bindings.pane_gestures().move_pane, [0, 1, 0]);
+        assert_eq!(
+            editor.pointer_bindings.pane_gestures().extend_pane,
+            [1 << 6, 0, 1 << 7]
+        );
+        next.editor.pointer_bindings[0][3] = 1 << 6;
+        assert!(core::EditorSnapshot::try_from(next.editor).is_err());
+    }
+
+    #[test]
+    fn nonpane_pointer_maps_force_full_publication_and_reject_invalid_owner_masks() {
+        use crate::keymap::pointer_actions::{Action, Trigger};
+        let base = terminal_frame(1, 1, 'x');
+        let mut next = base.clone();
+        next.editor.pointer_bindings[Action::Copy as usize] = [0; 14];
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        let decoded: HostFrame =
+            serde_json::from_slice(&serde_json::to_vec(&next).unwrap()).unwrap();
+        let editor: core::EditorSnapshot = decoded.editor.try_into().unwrap();
+        assert_eq!(editor.pointer_bindings.label(Action::Copy), "unbound");
+        let mut invalid = next.editor.clone();
+        invalid.pointer_bindings[Action::Select as usize][Trigger::WheelUp as usize] = 1;
+        assert!(core::EditorSnapshot::try_from(invalid).is_err());
+        next.editor.pointer_bindings[Action::Extend as usize][Trigger::LeftDrag as usize] |= 1;
+        assert!(core::EditorSnapshot::try_from(next.editor).is_err());
+    }
+
+    #[test]
+    fn window_bindings_force_full_publication_and_validate_the_wire_projection() {
+        let base = terminal_frame(1, 1, 'x');
+        let mut next = base.clone();
+        let binding = WindowBinding {
+            key: crate::input::KeyStroke::plain(crate::input::KeyCode::Function(8)).into(),
+            action: WindowAction::FontIncrease,
+        };
+        next.editor.window_bindings = vec![binding];
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        let decoded: HostFrame =
+            serde_json::from_slice(&serde_json::to_vec(&next).unwrap()).unwrap();
+        let editor = core::EditorSnapshot::try_from(decoded.editor).unwrap();
+        assert_eq!(
+            editor
+                .window_bindings
+                .lookup(crate::input::KeyStroke::plain(
+                    crate::input::KeyCode::Function(8)
+                )),
+            Some(crate::keymap::native_window::Action::FontSize(1))
+        );
+        assert_eq!(EditorSnapshot::from(editor).window_bindings, vec![binding]);
+        for entries in [
+            vec![binding; 2],
+            vec![binding; 97],
+            vec![WindowBinding {
+                key: super::super::input::KeyStroke {
+                    modifiers: 128,
+                    ..binding.key
+                },
+                ..binding
+            }],
+            vec![WindowBinding {
+                key: crate::input::KeyStroke::char('x').into(),
+                ..binding
+            }],
+        ] {
+            let mut editor = next.editor.clone();
+            editor.window_bindings = entries;
+            assert!(core::EditorSnapshot::try_from(editor).is_err());
+        }
+        let mut wire = serde_json::to_value(&next).unwrap();
+        wire["editor"]["window_bindings"][0]["action"] = serde_json::json!("Unknown");
+        assert!(serde_json::from_value::<HostFrame>(wire).is_err());
+    }
+
+    #[test]
+    fn preview_projection_round_trip_and_policy_changes_require_full_frames() {
+        use crate::{
+            input::{KeyCode, KeyStroke},
+            keymap::{
+                KeySequence,
+                native_preview::{Action, Bindings},
+            },
+        };
+        let base = terminal_frame(1, 1, 'x');
+        let mut next = base.clone();
+        let map = Bindings::from_entries(
+            vec![(
+                KeySequence::from(KeyStroke::plain(KeyCode::Function(8))),
+                Action::ZoomIn,
+            )],
+            vec![(KeyStroke::plain(KeyCode::Escape), Action::Back)],
+        )
+        .unwrap();
+        let mut editor = core::EditorSnapshot::try_from(next.editor).unwrap();
+        editor.preview_bindings = map.clone();
+        editor.preview_source = Some((2, 7));
+        next.editor = editor.into();
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        let decoded: HostFrame =
+            serde_json::from_slice(&serde_json::to_vec(&next).unwrap()).unwrap();
+        let decoded = core::EditorSnapshot::try_from(decoded.editor).unwrap();
+        assert_eq!(decoded.preview_bindings, map);
+        assert_eq!(decoded.preview_source, Some((2, 7)));
+        let mut terminal_change = next.clone();
+        terminal_change.editor.preview_terminal = Some((3, 19));
+        assert!(TerminalDamageFrame::between(&next, &terminal_change).is_none());
+        assert!(EditorDamageFrame::between(&next, &terminal_change).is_none());
+        let decoded: HostFrame =
+            serde_json::from_slice(&serde_json::to_vec(&terminal_change).unwrap()).unwrap();
+        assert_eq!(
+            core::EditorSnapshot::try_from(decoded.editor)
+                .unwrap()
+                .preview_terminal,
+            Some((3, 19))
+        );
+        for mutation in 0..5 {
+            let mut editor = next.editor.clone();
+            match mutation {
+                0 => editor.preview_bindings[0].action = 255,
+                1 => editor.preview_bindings[0].keys[0].modifiers = 128,
+                2 => editor
+                    .preview_bindings
+                    .push(editor.preview_bindings[0].clone()),
+                3 => editor.preview_fallback[0]
+                    .keys
+                    .push(KeyStroke::char('x').into()),
+                4 => editor.preview_bindings[0].keys = vec![KeyStroke::char('x').into(); 9],
+                _ => unreachable!(),
+            }
+            assert!(core::EditorSnapshot::try_from(editor).is_err());
+        }
+        let mut source_change = next.clone();
+        source_change.editor.preview_source = Some((2, 8));
+        assert!(TerminalDamageFrame::between(&next, &source_change).is_none());
+        assert!(EditorDamageFrame::between(&next, &source_change).is_none());
+    }
+
+    #[test]
+    fn preview_wire_budget_leaves_room_for_terminal_geometry() {
+        use crate::input::{KeyCode, KeyStroke, Modifiers};
+        use crate::keymap::{
+            KeySequence,
+            native_preview::{Action, Bindings},
+        };
+        let entries = (0..Bindings::MAX_ENTRIES)
+            .map(|index| {
+                let mut keys = vec![
+                    KeyStroke::new(
+                        KeyCode::Char('\u{10ffff}'),
+                        Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER
+                    );
+                    8
+                ];
+                keys[0] = KeyStroke::plain(KeyCode::Function((index % 256) as u8));
+                keys[1] = KeyStroke::plain(KeyCode::Function((index / 256) as u8));
+                (KeySequence::new(keys), Action::Down)
+            })
+            .collect();
+        let fallback = (0..Bindings::MAX_FALLBACK)
+            .map(|index| {
+                (
+                    KeyStroke::new(
+                        KeyCode::Function((index / 64) as u8),
+                        Modifiers::from_bits((index % 64) as u8).unwrap(),
+                    ),
+                    Action::Forward,
+                )
+            })
+            .collect();
+        let map = Bindings::from_entries(entries, fallback).unwrap();
+        let mut editor = core::EditorSnapshot::try_from(terminal_frame(1, 1, 'x').editor).unwrap();
+        editor.preview_bindings = map;
+        let editor = EditorSnapshot::from(editor);
+        assert!(serde_json::to_vec(&editor).unwrap().len() < 256 * 1024);
+        let mut oversized = editor.clone();
+        oversized
+            .preview_bindings
+            .push(oversized.preview_bindings[0].clone());
+        assert!(core::EditorSnapshot::try_from(oversized).is_err());
+        let mut unavailable = editor;
+        unavailable.preview_unavailable = true;
+        assert!(core::EditorSnapshot::try_from(unavailable).is_err());
     }
 
     #[test]

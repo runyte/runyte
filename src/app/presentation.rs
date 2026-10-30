@@ -838,6 +838,102 @@ impl App {
         self.quit_directory_handoff = enabled;
     }
 
+    /// Effective list spellings, preferring authored primary bindings over
+    /// compatibility aliases. A surviving alias is shown when primaries were
+    /// removed, so the label never claims an available action is unbound.
+    pub(crate) fn list_action_keys(&self, command: crate::command::EditorCommand) -> String {
+        use crate::keymap::{BindingRole, BindingTarget};
+        let target = BindingTarget::Editor(command);
+        let bindings = self
+            .keymap
+            .bindings_for_scope(Mode::List, self.list_binding_scope())
+            .filter(|binding| {
+                binding.target == target
+                    && self.list_binding_for(binding.sequence.as_slice()[0]) == Some(target)
+            })
+            .collect::<Vec<_>>();
+        let mut primary = bindings
+            .iter()
+            .filter(|binding| binding.role == BindingRole::Primary)
+            .map(|binding| binding.sequence.to_string())
+            .collect::<Vec<_>>();
+        let leader = self.keymap.leader();
+        if primary.is_empty()
+            && self.list_leader_active(leader)
+            && self.list_binding_for(leader) == Some(target)
+            && !primary.contains(&leader.label())
+        {
+            primary.push(leader.label());
+        }
+        if !primary.is_empty() {
+            primary.join("/")
+        } else {
+            bindings.first().map_or_else(
+                || "unbound".to_owned(),
+                |binding| binding.sequence.to_string(),
+            )
+        }
+    }
+
+    pub(crate) fn list_close_keys(&self) -> Option<String> {
+        let keys = self.list_action_keys(crate::command::EditorCommand::ListClose);
+        (!self.plugin_manager_actions_open() || keys != "unbound").then_some(keys)
+    }
+
+    pub(crate) fn list_scroll_keys(&self) -> String {
+        use crate::{
+            command::EditorCommand,
+            input::{KeyCode, KeyStroke},
+            keymap::BindingTarget,
+        };
+        [
+            (KeyCode::Up, EditorCommand::ListPrevious, "↑"),
+            (KeyCode::Down, EditorCommand::ListNext, "↓"),
+        ]
+        .into_iter()
+        .map(|(key, action, label)| {
+            if self.list_binding_for(KeyStroke::plain(key)) == Some(BindingTarget::Editor(action)) {
+                label.to_owned()
+            } else {
+                self.list_action_keys(action)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+    }
+
+    /// Direct session views own input before ordinary list bindings.
+    pub(crate) fn session_navigation_actions(&self) -> Option<Vec<crate::snapshot::OverlayAction>> {
+        use crate::{
+            keymap::ui::{Action, Owner},
+            snapshot::OverlayAction,
+        };
+        let owner = self.session_navigation_ui_owner()?;
+        let picker = self.list.as_ref()?;
+        let label = |action| self.keymap.ui().label(owner, action);
+        let mut actions = Vec::new();
+        if picker.purpose != crate::picker::ListPurpose::Report {
+            if let Some(action) = &picker.primary_action {
+                actions.push(OverlayAction::new(label(Action::Accept), action));
+            }
+            if owner == Owner::SessionDirectory {
+                actions.push(OverlayAction::new(
+                    label(Action::EnterDirectory),
+                    "browse directory",
+                ));
+            }
+        }
+        actions.push(OverlayAction::new(
+            label(Action::Cancel),
+            if owner == Owner::SessionInventory {
+                "back"
+            } else {
+                "cancel"
+            },
+        ));
+        Some(actions)
+    }
+
     /// The keys the open list's legend names, in the order it names them.
     ///
     /// Read from the same registry `handle_list_key` dispatches through, so
@@ -852,6 +948,29 @@ impl App {
         let Some(picker) = self.list.as_ref().filter(|list| list.has_key_legend()) else {
             return Vec::new();
         };
+        if let Some(owner) = self.session_navigation_ui_owner() {
+            use crate::keymap::ui::Action;
+            if picker.purpose == crate::picker::ListPurpose::Report {
+                return Vec::new();
+            }
+            return [
+                (Action::Next, Action::Previous, "move"),
+                (Action::PageDown, Action::PageUp, "page"),
+                (Action::First, Action::Last, "first/last"),
+            ]
+            .into_iter()
+            .map(|(first, second, label)| {
+                crate::snapshot::OverlayAction::new(
+                    format!(
+                        "{}/{}",
+                        self.keymap.ui().label(owner, first),
+                        self.keymap.ui().label(owner, second)
+                    ),
+                    label,
+                )
+            })
+            .collect();
+        }
         let scope = self.list_binding_scope();
         let capabilities = self.command_capabilities();
         let filtering = !picker.filter.is_empty();
@@ -861,7 +980,8 @@ impl App {
             legend.push(("1-9".to_owned(), "attach"));
         }
         for binding in self.keymap.bindings_for_scope(Mode::List, scope) {
-            if binding.role != BindingRole::Primary
+            if self.list_binding_for(binding.sequence.as_slice()[0]) != Some(binding.target)
+                || binding.role != BindingRole::Primary
                 || binding.availability != BindingAvailability::Implemented
                 || binding.target.id().platform_unavailable().is_some()
                 || binding.target.id().capability().is_some_and(|capability| {
@@ -1037,7 +1157,12 @@ impl App {
         );
         let mut text = document.text().to_owned();
         if self.native_media {
-            text.push_str(&crate::keymap::native_window::help());
+            text.push_str(&self.native_window_bindings().help());
+            text.push_str(
+                &self
+                    .keymap()
+                    .native_preview_help(self.mode, self.key_binding_scope()),
+            );
         }
         let existing = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_help()).then_some(index)
@@ -1521,7 +1646,7 @@ impl App {
     /// moving its selection remain queueable while an asynchronous frontend
     /// catches up; accepting the decision requires its current painted frame.
     pub fn input_requires_presented_approval(&self, input: &crate::input::InputEvent) -> bool {
-        use crate::input::{InputEvent, KeyCode, Modifiers};
+        use crate::input::{InputEvent, KeyCode};
 
         let pending = self.context_overlay_active()
             || self.plugins.input.is_some()
@@ -1550,25 +1675,74 @@ impl App {
         let InputEvent::Key(key) = input else {
             return matches!(input, InputEvent::Pointer(_));
         };
-        if let Some(review) = &self.merge_ui.review {
-            // Merge approval uses configured bindings. Only the editing keys
-            // consumed before that registry lookup can bypass presentation.
-            return !(review.input_focused()
-                && match key.code {
-                    KeyCode::Char(_) => {
-                        key.modifiers.is_empty() || key.modifiers == Modifiers::SHIFT
-                    }
-                    KeyCode::Backspace | KeyCode::Delete | KeyCode::Left | KeyCode::Right => true,
-                    _ => false,
-                });
+        if self.context_overlay_active() {
+            return self.context_input_requires_presented_approval(*key);
+        }
+        if self.provider_ui_owner().is_some() {
+            return self.provider_accept_key(*key);
+        }
+        if self.plugins.input.is_some() {
+            return self.macro_replay.is_none()
+                && self.plugin_input_requires_presented_approval(*key);
+        }
+        if self.merge_ui.review.is_some() {
+            return matches!(
+                self.merge_input_route(*key),
+                crate::keymap::ui::MergeInput::Scoped { .. }
+            );
+        }
+        if self.list_layer_input_active()
+            && self.list_input_action(*key)
+                == Some(super::language_workflows::ListInputAction::ReturnToManager)
+        {
+            return false;
+        }
+        if self.list_layer_input_active()
+            && let Some(owner) = self.list_menu_ui_owner()
+        {
+            use crate::keymap::ui::{Action, Owner};
+            let armed = match owner {
+                Owner::TerminalActions => self
+                    .terminal_action_menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.close_armed),
+                Owner::SessionActions => self
+                    .session_action_menu
+                    .as_ref()
+                    .is_some_and(|menu| menu.force_armed),
+                _ => false,
+            };
+            if armed {
+                return self.keymap.ui().lookup(owner, *key) == Some(Action::Accept);
+            }
+        }
+        if self.list_input_active()
+            && self
+                .list_actions
+                .iter()
+                .any(|action| matches!(action, super::ListAction::LspTrust { .. }))
+        {
+            return self.list_binding_for(*key)
+                == Some(crate::keymap::BindingTarget::Editor(
+                    crate::command::EditorCommand::ListAccept,
+                ));
+        }
+        if let Some(owner) = self.confirmation_ui_owner() {
+            use crate::keymap::ui::{Action, Owner};
+            return match owner {
+                Owner::TreeDestination => false,
+                Owner::TreeDelete => self.tree_delete_choice(*key) == Some(true),
+                Owner::FilesystemConfirmation => {
+                    self.confirmation_action(*key) == Some(Action::Accept)
+                        || self.filesystem_permanent_choice(*key)
+                }
+                _ => self.confirmation_action(*key) == Some(Action::Accept),
+            };
         }
         if key.code == KeyCode::Escape {
             return false;
         }
         key.code == KeyCode::Enter
-            || (self.directory_tree_delete.is_some()
-                && matches!(key.code, KeyCode::Char('y' | 'Y')))
-            || (self.fs_confirmation.is_some() && key.code == KeyCode::Char('P'))
             || (self.context_overlay_active() && key.code == KeyCode::Char('x'))
     }
 
@@ -1603,33 +1777,126 @@ impl App {
         self.settings_view.is_some()
     }
 
+    pub(crate) fn filesystem_confirmation_actions(&self) -> Vec<crate::snapshot::OverlayAction> {
+        use crate::keymap::ui::{Action, Owner};
+        use crate::snapshot::OverlayAction;
+        if self.confirmation_ui_owner() != Some(Owner::FilesystemConfirmation) {
+            return vec![];
+        }
+        let label = |action| {
+            self.keymap.ui().compact_label_with_leader(
+                Owner::FilesystemConfirmation,
+                action,
+                1,
+                self.space_dismisses_input_overlay(),
+            )
+        };
+        let previous = label(Action::Previous);
+        let next = label(Action::Next);
+        let navigation = if previous == "Up" && next == "Down" {
+            "↑/↓".into()
+        } else {
+            format!("{previous}/{next}")
+        };
+        let mut actions = vec![OverlayAction::new(
+            label(Action::Accept),
+            "apply with trash",
+        )];
+        if self.filesystem_permanent_choice(crate::input::KeyStroke::char('P')) {
+            actions.push(OverlayAction::new("P", "apply with permanent deletion"));
+        }
+        actions.push(OverlayAction::new(navigation, "review operations"));
+        actions.push(OverlayAction::new(label(Action::Cancel), "cancel"));
+        actions
+    }
+
+    pub(super) fn status_confirmation(&mut self) {
+        if let Some(confirmation) = self.confirmation_overlay() {
+            self.status(confirmation.message);
+        }
+    }
+
+    pub(super) fn confirmation_keys(&self) -> (String, String) {
+        use crate::keymap::ui::{Action, Owner};
+        let owner = self.confirmation_ui_owner().unwrap_or(Owner::Confirmation);
+        let label = |action| {
+            self.keymap.ui().compact_label_with_leader(
+                owner,
+                action,
+                1,
+                self.space_dismisses_input_overlay(),
+            )
+        };
+        let cancel = label(Action::Cancel);
+        (
+            label(Action::Accept),
+            if cancel == "Esc" {
+                "Escape".into()
+            } else {
+                cancel
+            },
+        )
+    }
+
+    pub(super) fn confirmation_message(&self, message: &str) -> String {
+        let (accept, cancel) = self.confirmation_keys();
+        format!("{message}\n{accept} confirms.\n{cancel} cancels.")
+    }
+
     /// Describes the one pending yes/no decision without borrowing the status
     /// line. Service feedback and action echoes may change while a decision is
     /// open; its popup must continue to name the exact operation Enter accepts.
     fn confirmation_overlay(&self) -> Option<ConfirmationOverlay> {
-        if let Some(confirmation) = &self.plugins.provider_overwrite {
+        let (accept_key, cancel_key) = self.confirmation_keys();
+        if let Some(confirmation) = &self.plugins.provider_overwrite
+            && self.provider_ui_owner() == Some(crate::keymap::ui::Owner::ProviderOverwrite)
+        {
             return Some(ConfirmationOverlay {
                 title: "Overwrite remote document",
                 accept: "overwrite remote document",
-                message: confirmation.message(),
+                message: confirmation.message(
+                    &self.keymap.ui().compact_label(
+                        crate::keymap::ui::Owner::ProviderOverwrite,
+                        crate::keymap::ui::Action::Accept,
+                        1,
+                    ),
+                    &{
+                        let label = self.keymap.ui().compact_label(
+                            crate::keymap::ui::Owner::ProviderOverwrite,
+                            crate::keymap::ui::Action::Cancel,
+                            1,
+                        );
+                        if label == "Esc" {
+                            "Escape".into()
+                        } else {
+                            label
+                        }
+                    },
+                ),
                 input: None,
             });
         }
-        if let Some(menu) = &self.terminal_action_menu
-            && menu.close_armed
-            && menu.selected_action() == Some(super::TerminalAction::ForceKill)
-            && let Some(session) = self.terminals.get(menu.id).filter(|session| session.live())
+        if self.context_overlay_active()
+            || self.plugins.input.is_some()
+            || self.plugins.provider_reload.is_some()
+            || self.session_inventory_open()
+            || self.session_directory_chooser_open()
+            || self.merge_ui.review.is_some()
+            || self.directory_tree_delete.is_some()
+            || self.directory_tree_destination.is_some()
+            || self.fs_confirmation.is_some()
         {
+            return None;
+        }
+        if let Some(confirmation) = &self.directory_reload_confirmation {
             return Some(ConfirmationOverlay {
-                title: "Force kill terminal",
-                accept: "force kill",
-                message: format!(
-                    "Force kill {}{} and discard its retained output?\nThe terminal process group will be killed. Unsaved work in the program will be lost.\nEnter confirms.\nEscape cancels.",
-                    session.display_name(),
-                    session
-                        .number()
-                        .map_or_else(String::new, |number| format!(" (#{number})"))
-                ),
+                title: "Discard directory edits",
+                accept: if confirmation.destination.is_some() {
+                    "discard and open"
+                } else {
+                    "discard and refresh"
+                },
+                message: confirmation.message(&accept_key, &cancel_key),
                 input: None,
             });
         }
@@ -1642,31 +1909,9 @@ impl App {
                         .external_file_status()
                         .is_stale(),
                     self.keymap(),
+                    &accept_key,
+                    &cancel_key,
                 ),
-                input: None,
-            });
-        }
-        if let Some(confirmation) = &self.directory_reload_confirmation {
-            return Some(ConfirmationOverlay {
-                title: "Discard directory edits",
-                accept: if confirmation.destination.is_some() {
-                    "discard and open"
-                } else {
-                    "discard and refresh"
-                },
-                message: confirmation.message(),
-                input: None,
-            });
-        }
-        if let Some(buffer) = self.buffer_discard_confirmation {
-            let name = self
-                .buffers
-                .get(buffer)
-                .map_or_else(|| "buffer".to_owned(), Buffer::display_name);
-            return Some(ConfirmationOverlay {
-                title: "Discard buffer changes",
-                accept: "discard changes",
-                message: format!("Discard changes to {name}?\nEnter confirms.\nEscape cancels."),
                 input: None,
             });
         }
@@ -1674,7 +1919,7 @@ impl App {
             return Some(ConfirmationOverlay {
                 title: "Discard Git changes",
                 accept: "discard changes",
-                message: confirmation.message(),
+                message: confirmation.message(&accept_key, &cancel_key),
                 input: None,
             });
         }
@@ -1687,7 +1932,7 @@ impl App {
             return Some(ConfirmationOverlay {
                 title,
                 accept,
-                message: confirmation.message.clone(),
+                message: self.confirmation_message(&confirmation.message),
                 input: None,
             });
         }
@@ -1695,7 +1940,7 @@ impl App {
             return Some(ConfirmationOverlay {
                 title: "Switch branch",
                 accept: "switch branches",
-                message: confirmation.action.message(),
+                message: confirmation.action.message(&cancel_key),
                 input: Some((confirmation.input.clone(), confirmation.cursor)),
             });
         }
@@ -1703,7 +1948,7 @@ impl App {
             return Some(ConfirmationOverlay {
                 title: "Delete branch",
                 accept: "delete branch",
-                message: confirmation.message(),
+                message: confirmation.message(&accept_key, &cancel_key),
                 input: confirmation
                     .typed()
                     .then(|| (confirmation.input.clone(), confirmation.cursor)),
@@ -1713,20 +1958,60 @@ impl App {
             return Some(ConfirmationOverlay {
                 title: "Replay commits",
                 accept: "replay commits",
-                message: confirmation.message(),
+                message: confirmation.message(&accept_key, &cancel_key),
                 input: None,
             });
         }
-        self.git_worktree_removal
-            .as_ref()
-            .map(|confirmation| ConfirmationOverlay {
+        if let Some(confirmation) = &self.git_worktree_removal {
+            return Some(ConfirmationOverlay {
                 title: "Remove worktree",
                 accept: "remove worktree",
-                message: confirmation.message(),
+                message: confirmation.message(&accept_key, &cancel_key),
                 input: confirmation
                     .typed()
                     .then(|| (confirmation.input.clone(), confirmation.cursor)),
-            })
+            });
+        }
+        if let Some(buffer) = self.buffer_discard_confirmation {
+            let name = self
+                .buffers
+                .get(buffer)
+                .map_or_else(|| "buffer".to_owned(), Buffer::display_name);
+            return Some(ConfirmationOverlay {
+                title: "Discard buffer changes",
+                accept: "discard changes",
+                message: self.confirmation_message(&format!("Discard changes to {name}?")),
+                input: None,
+            });
+        }
+        if let Some(menu) = &self.terminal_action_menu
+            && self.list_layer_input_active()
+            && self.list_menu_ui_owner() == Some(crate::keymap::ui::Owner::TerminalActions)
+            && menu.close_armed
+            && menu.selected_action() == Some(super::TerminalAction::ForceKill)
+            && let Some(session) = self.terminals.get(menu.id).filter(|session| session.live())
+        {
+            return Some(ConfirmationOverlay {
+                title: "Force kill terminal",
+                accept: "force kill",
+                message: format!(
+                    "Force kill {}{} and discard its retained output?\nThe terminal process group will be killed. Unsaved work in the program will be lost.\n{} confirms.\n{} cancels.",
+                    session.display_name(),
+                    session
+                        .number()
+                        .map_or_else(String::new, |number| format!(" (#{number})")),
+                    self.keymap.ui().label(
+                        crate::keymap::ui::Owner::TerminalActions,
+                        crate::keymap::ui::Action::Accept
+                    ),
+                    self.keymap
+                        .ui()
+                        .dismissal_label(crate::keymap::ui::Owner::TerminalActions),
+                ),
+                input: None,
+            });
+        }
+        None
     }
 
     pub(crate) fn native_prompt_input_rejected(&self) -> bool {
@@ -1845,24 +2130,11 @@ impl App {
                         OverlayAction::new("Esc", "cancel"),
                     ],
                 ),
-                OverlayKind::Path => (
+                OverlayKind::Path | OverlayKind::PathActions => (
                     OverlayPurpose::Info,
                     OverlayInput::None,
                     OverlayLayout::Standard,
-                    vec![
-                        OverlayAction::new("Tab", "actions"),
-                        OverlayAction::new("Esc", "close"),
-                    ],
-                ),
-                OverlayKind::PathActions => (
-                    OverlayPurpose::Info,
-                    OverlayInput::None,
-                    OverlayLayout::Standard,
-                    vec![
-                        OverlayAction::new("j/k, ↑/↓, or Shift-Tab", "select"),
-                        OverlayAction::new("mnemonic/Enter", "copy"),
-                        OverlayAction::new("Tab/Esc", "back"),
-                    ],
+                    Vec::new(), // Filled from the effective owning UI map below.
                 ),
                 OverlayKind::Prompt => (
                     OverlayPurpose::Input,
@@ -1877,10 +2149,7 @@ impl App {
                     OverlayPurpose::Context,
                     OverlayInput::None,
                     OverlayLayout::Anchored,
-                    vec![
-                        OverlayAction::new("Enter", "accept"),
-                        OverlayAction::new("Esc", "dismiss"),
-                    ],
+                    Vec::new(),
                 ),
                 OverlayKind::Signature | OverlayKind::Hover => (
                     OverlayPurpose::Context,
@@ -2025,15 +2294,35 @@ impl App {
             );
             overlay.purpose = OverlayPurpose::Choice;
             overlay.input = OverlayInput::None;
+            use crate::keymap::ui::{Action, Owner};
+            let label = |action| {
+                self.keymap
+                    .ui()
+                    .compact_label(Owner::ProviderReload, action, 2)
+            };
+            let select =
+                if label(Action::Previous) == "Up/BackTab" && label(Action::Next) == "Down/Tab" {
+                    "↑/↓ or Tab".into()
+                } else {
+                    format!("{}/{}", label(Action::Previous), label(Action::Next))
+                };
             overlay.actions = vec![
-                OverlayAction::new("↑/↓ or Tab", "select"),
-                OverlayAction::new("Enter", "choose"),
-                OverlayAction::new("Esc", "cancel"),
+                OverlayAction::new(select, "select"),
+                OverlayAction::new(label(Action::Accept), "choose"),
+                OverlayAction::new(
+                    self.keymap
+                        .ui()
+                        .compact_label(Owner::ProviderReload, Action::Cancel, 1),
+                    "cancel",
+                ),
             ];
             overlays.push(overlay);
         }
-        if let Some(confirmation) = &self.fs_confirmation {
-            overlays.push(bounded(
+        if let Some(confirmation) = &self.fs_confirmation
+            && self.confirmation_ui_owner()
+                == Some(crate::keymap::ui::Owner::FilesystemConfirmation)
+        {
+            let mut overlay = bounded(
                 OverlayKind::FilesystemConfirmation,
                 format!(
                     "Filesystem plan{} · {}",
@@ -2053,10 +2342,38 @@ impl App {
                     .map(|(index, line)| row(index, line, ""))
                     .collect(),
                 Some(confirmation.selected),
-                Some("Enter apply · P permanently delete · Esc cancel".to_owned()),
-            ));
+                None,
+            );
+            overlay.actions = self.filesystem_confirmation_actions();
+            overlay.message = Some(
+                overlay
+                    .actions
+                    .iter()
+                    .filter(|a| a.label != "review operations")
+                    .map(|a| {
+                        format!(
+                            "{} {}",
+                            a.key_hint,
+                            match a.label.as_str() {
+                                "apply with trash" => "apply",
+                                "apply with permanent deletion" => "permanently delete",
+                                _ => "cancel",
+                            }
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · "),
+            );
+            overlays.push(overlay);
         }
         if let Some(picker) = &self.picker {
+            use crate::keymap::ui::Action;
+            let owner = self.picker_ui_owner();
+            let label = |action| {
+                self.keymap
+                    .ui()
+                    .label_with_leader(owner, action, picker.query.is_empty())
+            };
             if let Some(finder) = &self.finder {
                 // The header carries paced counts instead of saying whether a
                 // scan is running: a word that appears and goes on every
@@ -2130,28 +2447,33 @@ impl App {
                 snapshot.actions = if picker.ranking && !self.held_rank_releases_rows() {
                     Vec::new()
                 } else {
-                    vec![OverlayAction::new("Enter", "open")]
+                    vec![OverlayAction::new(label(Action::Accept), "open")]
                 };
                 if matches!(finder.selected_target(picker), Some(FinderTarget::File(_))) {
-                    snapshot
-                        .actions
-                        .push(OverlayAction::new("Ctrl-s", "open file horizontally"));
-                    snapshot
-                        .actions
-                        .push(OverlayAction::new("Ctrl-v", "open file vertically"));
+                    snapshot.actions.push(OverlayAction::new(
+                        label(Action::SplitHorizontal),
+                        "open file horizontally",
+                    ));
+                    snapshot.actions.push(OverlayAction::new(
+                        label(Action::SplitVertical),
+                        "open file vertically",
+                    ));
                 }
                 snapshot.actions.push(OverlayAction::new(
-                    "Tab",
+                    label(Action::ToggleMode),
                     if finder.mode == crate::finder::FinderMode::Names {
                         "contents"
                     } else {
                         "names"
                     },
                 ));
+                snapshot.actions.push(OverlayAction::new(
+                    label(Action::TogglePreview),
+                    "toggle preview",
+                ));
                 snapshot
                     .actions
-                    .push(OverlayAction::new("Ctrl-t", "toggle preview"));
-                snapshot.actions.push(OverlayAction::new("Esc", "cancel"));
+                    .push(OverlayAction::new(label(Action::Cancel), "cancel"));
                 snapshot.show_preview = picker.show_preview;
                 if let Some(item) = finder.selected_item() {
                     snapshot.preview_title = Some(match item.kind {
@@ -2210,6 +2532,11 @@ impl App {
                     (!picker.matches.is_empty()).then_some(picker.selected - row_offset),
                     picker.error.clone(),
                 );
+                snapshot.actions = vec![
+                    OverlayAction::new(label(Action::Accept), "open"),
+                    OverlayAction::new(label(Action::TogglePreview), "toggle preview"),
+                    OverlayAction::new(label(Action::Cancel), "cancel"),
+                ];
                 snapshot.row_offset = row_offset;
                 snapshot.total_rows = total_rows;
                 snapshot.omitted_rows = total_rows.saturating_sub(ROW_LIMIT);
@@ -2221,19 +2548,21 @@ impl App {
                 snapshot.preview = Some(file_overlay_preview(picker.preview.as_ref()));
                 if picker.ranking && !self.held_rank_releases_rows() {
                     snapshot.actions = vec![
-                        OverlayAction::new("Ctrl-t", "toggle preview"),
-                        OverlayAction::new("Esc", "cancel"),
+                        OverlayAction::new(label(Action::TogglePreview), "toggle preview"),
+                        OverlayAction::new(label(Action::Cancel), "cancel"),
                     ];
                 }
                 if self.finder.is_some() {
-                    snapshot
-                        .actions
-                        .insert(1, OverlayAction::new("Tab", "buffers + terminals"));
+                    snapshot.actions.insert(
+                        1,
+                        OverlayAction::new(label(Action::ToggleMode), "buffers + terminals"),
+                    );
                 }
                 overlays.push(snapshot);
             }
         }
         if let Some(picker) = &self.list {
+            use crate::command::EditorCommand;
             let visible = picker.visible_indices();
             let report = picker.purpose == ListPurpose::Report;
             let report_offset = picker.report_offset.min(visible.len().saturating_sub(1));
@@ -2338,33 +2667,61 @@ impl App {
             } else {
                 OverlayLayout::Standard
             };
-            snapshot.actions.clear();
-            if picker.has_tags() {
-                snapshot
-                    .actions
-                    .push(OverlayAction::new("Tab", picker.tag_label()));
-            }
-            if let Some(action) = &picker.primary_action {
-                snapshot.actions.push(OverlayAction::new("Enter", action));
-            }
-            if let Some((key, action)) = &picker.secondary_action {
-                snapshot.actions.push(OverlayAction::new(key, action));
-            }
-            if picker.purpose == ListPurpose::Report {
-                snapshot.actions.push(OverlayAction::new("↑/↓", "scroll"));
-                snapshot.actions.push(OverlayAction::new("Esc", "dismiss"));
-            } else if picker.has_key_legend() {
-                // Everything past the keys needed to use the list at all is
-                // the legend's to name.
-                snapshot.actions.push(OverlayAction::new("Esc", "close"));
+            if let Some(actions) = self.session_navigation_actions() {
+                snapshot.actions = actions;
                 snapshot.legend = self.list_legend();
             } else {
-                if picker.has_preview() {
+                snapshot.actions.clear();
+                if picker.has_tags() {
+                    snapshot.actions.push(OverlayAction::new(
+                        self.list_action_keys(EditorCommand::ListOpenActions),
+                        picker.tag_label(),
+                    ));
+                }
+                if let Some(action) = &picker.primary_action {
+                    snapshot.actions.push(OverlayAction::new(
+                        self.list_action_keys(EditorCommand::ListAccept),
+                        action,
+                    ));
+                }
+                if let Some((key, action)) = &picker.secondary_action {
+                    snapshot.actions.push(OverlayAction::new(
+                        if key == "Tab" {
+                            self.list_action_keys(EditorCommand::ListOpenActions)
+                        } else {
+                            key.clone()
+                        },
+                        action,
+                    ));
+                }
+                if let Some(keys) = self.plugin_manager_return_keys() {
+                    snapshot.actions.push(OverlayAction::new(keys, "back"));
+                }
+                if picker.purpose == ListPurpose::Report {
                     snapshot
                         .actions
-                        .push(OverlayAction::new("Ctrl-t", "toggle preview"));
+                        .push(OverlayAction::new(self.list_scroll_keys(), "scroll"));
+                    if let Some(keys) = self.list_close_keys() {
+                        snapshot.actions.push(OverlayAction::new(keys, "dismiss"));
+                    }
+                } else if picker.has_key_legend() {
+                    // Everything past the keys needed to use the list at all is
+                    // the legend's to name.
+                    if let Some(keys) = self.list_close_keys() {
+                        snapshot.actions.push(OverlayAction::new(keys, "close"));
+                    }
+                    snapshot.legend = self.list_legend();
+                } else {
+                    if picker.has_preview() {
+                        snapshot.actions.push(OverlayAction::new(
+                            self.list_action_keys(EditorCommand::ListTogglePreview),
+                            "toggle preview",
+                        ));
+                    }
+                    if let Some(keys) = self.list_close_keys() {
+                        snapshot.actions.push(OverlayAction::new(keys, "cancel"));
+                    }
                 }
-                snapshot.actions.push(OverlayAction::new("Esc", "cancel"));
             }
             if picker.has_preview() {
                 snapshot.show_preview = picker.show_preview;
@@ -2388,15 +2745,20 @@ impl App {
                 OverlayKind::BufferActions,
                 format!("Actions · {}", self.active_buffer().display_name()),
                 "",
-                context_action_rows(&menu.actions, &self.command_capabilities()),
+                context_action_rows(
+                    &menu.actions,
+                    &self.command_capabilities(),
+                    self.keymap.ui(),
+                ),
                 Some(menu.selected),
                 None,
             );
-            snapshot.actions = vec![
-                OverlayAction::new("j/k, ↑/↓, or Shift-Tab", "select"),
-                OverlayAction::new("mnemonic/Enter", "run"),
-                OverlayAction::new("Tab/Esc/Ctrl-c", "cancel"),
-            ];
+            snapshot.actions = menu_action_hints(
+                self.keymap.ui(),
+                crate::keymap::ui::Owner::ContextActions,
+                "run",
+                "cancel",
+            );
             overlays.push(snapshot);
         }
         if let Some(popup) = &self.path_popup {
@@ -2408,7 +2770,19 @@ impl App {
                         .map(|action| {
                             row(
                                 action.mnemonic().to_string(),
-                                action.mnemonic().to_string(),
+                                if self
+                                    .keymap
+                                    .ui()
+                                    .lookup(
+                                        crate::keymap::ui::Owner::PathActions,
+                                        crate::input::KeyStroke::char(action.mnemonic()),
+                                    )
+                                    .is_some()
+                                {
+                                    String::new()
+                                } else {
+                                    action.mnemonic().to_string()
+                                },
                                 action.label(),
                             )
                         })
@@ -2417,17 +2791,26 @@ impl App {
                 ),
                 None => (OverlayKind::Path, Vec::new(), None),
             };
-            overlays.push(bounded(
-                kind,
-                "Path",
-                "",
-                rows,
-                selected,
-                Some(popup.path.clone()),
-            ));
+            let mut snapshot = bounded(kind, "Path", "", rows, selected, Some(popup.path.clone()));
+            use crate::keymap::ui::{Action, Owner};
+            snapshot.actions = if self.path_action_menu.is_some() {
+                menu_action_hints(self.keymap.ui(), Owner::PathActions, "copy", "back")
+            } else {
+                vec![
+                    OverlayAction::new(
+                        self.keymap.ui().label(Owner::Path, Action::OpenActions),
+                        "actions",
+                    ),
+                    OverlayAction::new(
+                        self.keymap.ui().label(Owner::Path, Action::Cancel),
+                        "close",
+                    ),
+                ]
+            };
+            overlays.push(snapshot);
         }
         if let Some(menu) = &self.buffer_action_menu {
-            overlays.push(bounded(
+            let mut snapshot = bounded(
                 OverlayKind::BufferActions,
                 self.buffers
                     .get(menu.buffer)
@@ -2439,7 +2822,14 @@ impl App {
                     .collect(),
                 Some(menu.selected),
                 None,
-            ));
+            );
+            snapshot.actions = menu_action_hints(
+                self.keymap.ui(),
+                crate::keymap::ui::Owner::BufferActions,
+                "choose",
+                "back",
+            );
+            overlays.push(snapshot);
         }
         #[cfg(any(unix, windows))]
         if let Some(menu) = &self.session_action_menu {
@@ -2492,7 +2882,7 @@ impl App {
                 }
                 rows.push(result);
             }
-            overlays.push(bounded(
+            let mut snapshot = bounded(
                 OverlayKind::BufferActions,
                 self.workspace_row_index(&menu.selection)
                     .ok()
@@ -2503,10 +2893,17 @@ impl App {
                 rows,
                 selected,
                 None,
-            ));
+            );
+            snapshot.actions = menu_action_hints(
+                self.keymap.ui(),
+                crate::keymap::ui::Owner::SessionActions,
+                "choose",
+                "back",
+            );
+            overlays.push(snapshot);
         }
         if let Some(menu) = &self.terminal_action_menu {
-            overlays.push(bounded(
+            let mut snapshot = bounded(
                 OverlayKind::BufferActions,
                 self.terminals.get(menu.id).map_or_else(
                     || "Terminal actions".to_owned(),
@@ -2562,7 +2959,14 @@ impl App {
                     .collect(),
                 Some(menu.selected),
                 None,
-            ));
+            );
+            snapshot.actions = menu_action_hints(
+                self.keymap.ui(),
+                crate::keymap::ui::Owner::TerminalActions,
+                "choose",
+                "back",
+            );
+            overlays.push(snapshot);
         }
 
         if let Some(confirmation) = self.confirmation_overlay() {
@@ -2588,6 +2992,66 @@ impl App {
                 ),
                 OverlayAction::new("Esc", "cancel"),
             ];
+            if self.provider_ui_owner() == Some(crate::keymap::ui::Owner::ProviderOverwrite) {
+                use crate::keymap::ui::{Action, Owner};
+                overlay.actions = vec![
+                    OverlayAction::new(
+                        self.keymap
+                            .ui()
+                            .compact_label(Owner::ProviderOverwrite, Action::Accept, 1),
+                        confirmation.accept,
+                    ),
+                    OverlayAction::new(
+                        self.keymap
+                            .ui()
+                            .compact_label(Owner::ProviderOverwrite, Action::Cancel, 1),
+                        "cancel",
+                    ),
+                ];
+            }
+            if let Some(owner) = self.confirmation_ui_owner() {
+                use crate::keymap::ui::Action;
+                let label = |action| {
+                    self.keymap.ui().compact_label_with_leader(
+                        owner,
+                        action,
+                        1,
+                        self.space_dismisses_input_overlay(),
+                    )
+                };
+                overlay.actions = vec![
+                    OverlayAction::new(
+                        label(Action::Accept),
+                        if typed_input.is_some() {
+                            "confirm exact text"
+                        } else {
+                            confirmation.accept
+                        },
+                    ),
+                    OverlayAction::new(label(Action::Cancel), "cancel"),
+                ];
+            }
+            if self.list_layer_input_active()
+                && self.list_menu_ui_owner() == Some(crate::keymap::ui::Owner::TerminalActions)
+                && self.terminal_action_menu.as_ref().is_some_and(|menu| {
+                    menu.close_armed
+                        && menu.selected_action() == Some(super::TerminalAction::ForceKill)
+                })
+            {
+                use crate::keymap::ui::{Action, Owner};
+                overlay.actions = vec![
+                    OverlayAction::new(
+                        self.keymap
+                            .ui()
+                            .label(Owner::TerminalActions, Action::Accept),
+                        "force kill",
+                    ),
+                    OverlayAction::new(
+                        self.keymap.ui().dismissal_label(Owner::TerminalActions),
+                        "cancel",
+                    ),
+                ];
+            }
             if let Some((_, cursor)) = typed_input {
                 overlay.input = OverlayInput::Text;
                 overlay.query_cursor = Some(cursor);
@@ -2596,6 +3060,12 @@ impl App {
         }
 
         if self.mode == Mode::Command {
+            use crate::keymap::ui::Action;
+            let owner = self.prompt_ui_owner();
+            let label = |action| self.keymap.ui().label(owner, action);
+            let accept = label(Action::Accept);
+            let cancel = label(Action::Cancel);
+            let overlay_start = overlays.len();
             if self.prompt_kind == PromptKind::Command {
                 if let Some(hints) = self.matching_plugin_hints() {
                     let command = self.command.split_once(char::is_whitespace).unwrap().0;
@@ -2719,7 +3189,10 @@ impl App {
                 let choices = self.matching_program_choices();
                 overlays.push(bounded(
                     OverlayKind::ProgramHints,
-                    "Open with · Enter open · Tab actions",
+                    format!(
+                        "Open with · {accept} open · {} actions",
+                        label(Action::OpenActions)
+                    ),
                     "",
                     choices
                         .iter()
@@ -2740,7 +3213,7 @@ impl App {
                         .map(|path| path.to_string_lossy().into_owned()),
                 ));
                 if let Some(menu) = &self.program_action_menu {
-                    overlays.push(bounded(
+                    let mut snapshot = bounded(
                         OverlayKind::ProgramActions,
                         format!("{} actions", menu.choice.program),
                         "",
@@ -2750,7 +3223,14 @@ impl App {
                             .collect(),
                         Some(menu.selected),
                         None,
-                    ));
+                    );
+                    snapshot.actions = menu_action_hints(
+                        self.keymap.ui(),
+                        crate::keymap::ui::Owner::ProgramActions,
+                        "run",
+                        "back",
+                    );
+                    overlays.push(snapshot);
                 }
             } else if let PromptKind::IndentationValue(setting)
             | PromptKind::IndentationPattern(setting) = self.prompt_kind
@@ -2758,14 +3238,14 @@ impl App {
                 let (title, detail) = if let Some(scope) = &self.indentation_prompt_scope {
                     (
                         format!(
-                            "{} · {} · integer 1–16 · Enter save · Esc cancel",
+                            "{} · {} · integer 1–16 · {accept} save · {cancel} cancel",
                             setting.descriptor().title,
                             scope.label()
                         ),
                         self.indentation_prompt_hint.clone().unwrap_or_default(),
                     )
                 } else {
-                    ("File pattern · Enter continue · Esc cancel".into(), "Workspace-relative / paths; * and ? match within a directory; ** crosses directories; basename patterns match at any depth. Later matching rules win.".into())
+                    (format!("File pattern · {accept} continue · {cancel} cancel"), "Workspace-relative / paths; * and ? match within a directory; ** crosses directories; basename patterns match at any depth. Later matching rules win.".into())
                 };
                 let message = if self.status_error {
                     format!("{detail} · {}", self.status)
@@ -2786,11 +3266,14 @@ impl App {
                 let title = match self.prompt_kind {
                     PromptKind::SettingValue(setting) => match setting.descriptor().value_type {
                         SettingType::Integer { minimum, maximum } => format!(
-                            "{} · integer {minimum}–{maximum} · Enter save · Esc cancel",
+                            "{} · integer {minimum}–{maximum} · {accept} save · {cancel} cancel",
                             setting.descriptor().key
                         ),
                         SettingType::Text => {
-                            format!("{} · Enter save · Esc cancel", setting.descriptor().key)
+                            format!(
+                                "{} · {accept} save · {cancel} cancel",
+                                setting.descriptor().key
+                            )
                         }
                         SettingType::Grammar
                         | SettingType::Boolean
@@ -2815,6 +3298,43 @@ impl App {
                 );
                 snapshot.query_cursor = Some(self.command_cursor);
                 overlays.push(snapshot);
+            }
+            for overlay in &mut overlays[overlay_start..] {
+                match overlay.kind {
+                    OverlayKind::CommandPalette
+                    | OverlayKind::ProgramHints
+                    | OverlayKind::Prompt => {
+                        for action in &mut overlay.actions {
+                            action.key_hint = match action.key_hint.as_str() {
+                                "Enter" => accept.clone(),
+                                "Esc" => cancel.clone(),
+                                "Tab" if overlay.kind == OverlayKind::ProgramHints => {
+                                    label(Action::OpenActions)
+                                }
+                                _ => action.key_hint.clone(),
+                            };
+                        }
+                    }
+                    OverlayKind::PathCompletion => {
+                        let enter_completes =
+                            overlay.actions.iter().any(|a| a.key_hint == "Tab/Enter");
+                        overlay.actions = vec![
+                            OverlayAction::new(
+                                format!("{}/{}", label(Action::Previous), label(Action::Next)),
+                                "select",
+                            ),
+                            OverlayAction::new(
+                                if enter_completes {
+                                    format!("{}/{accept}", label(Action::Complete))
+                                } else {
+                                    label(Action::Complete)
+                                },
+                                "complete",
+                            ),
+                        ];
+                    }
+                    _ => {}
+                }
             }
         }
         if let Some(message) = self.prompt_input_error
@@ -2886,9 +3406,34 @@ impl App {
                 // `/` — so only Tab accepts; Enter is reserved for its usual
                 // newline everywhere.
                 snapshot.actions = vec![
-                    OverlayAction::new("↑/↓, Ctrl-n/p", "navigate"),
-                    OverlayAction::new("Tab", "accept"),
-                    OverlayAction::new("Esc", "dismiss"),
+                    OverlayAction::new(
+                        format!(
+                            "{}, {}",
+                            self.keymap.ui().label(
+                                crate::keymap::ui::Owner::Completion,
+                                crate::keymap::ui::Action::Previous
+                            ),
+                            self.keymap.ui().label(
+                                crate::keymap::ui::Owner::Completion,
+                                crate::keymap::ui::Action::Next
+                            )
+                        ),
+                        "navigate",
+                    ),
+                    OverlayAction::new(
+                        self.keymap.ui().label(
+                            crate::keymap::ui::Owner::Completion,
+                            crate::keymap::ui::Action::Accept,
+                        ),
+                        "accept",
+                    ),
+                    OverlayAction::new(
+                        self.keymap.ui().label(
+                            crate::keymap::ui::Owner::Completion,
+                            crate::keymap::ui::Action::CancelOrContinue,
+                        ),
+                        "dismiss",
+                    ),
                 ];
                 overlays.push(snapshot);
             }
@@ -2942,7 +3487,7 @@ impl App {
             snapshot.omitted_rows = snapshot.total_rows.saturating_sub(snapshot.rows.len());
             snapshot.actions = if snapshot.omitted_rows > 0 {
                 vec![
-                    OverlayAction::new("Enter", "open complete documentation"),
+                    OverlayAction::new(self.hover_accept_label(), "open complete documentation"),
                     OverlayAction::new("other key", "dismiss and continue"),
                 ]
             } else {
@@ -2951,6 +3496,22 @@ impl App {
             overlays.push(snapshot);
         }
         if let Some(surface) = &self.plugins.input {
+            use crate::keymap::ui::{Action, Owner};
+            let owner = self.plugin_input_ui_owner().unwrap();
+            let path_hints = self.plugin_path_hints();
+            let has_hints = owner == Owner::PluginForm && !path_hints.is_empty();
+            let partial = has_hints
+                && matches!(&surface.values[surface.selected], crate::plugin::interaction::Value::Text(value) if self.plugin_enter_accepts_path_hint(value));
+            let label = |action| self.plugin_input_key_label(owner, action, has_hints, partial);
+            let navigation = || {
+                let previous = label(Action::Previous);
+                let next = label(Action::Next);
+                if previous == "Up" && next == "Down" {
+                    "↑/↓".into()
+                } else {
+                    format!("{previous}/{next}")
+                }
+            };
             let mut snapshot = bounded(
                 OverlayKind::Prompt,
                 &surface.title,
@@ -2965,16 +3526,27 @@ impl App {
                 surface
                     .error
                     .map(super::plugin_interaction::InputError::feedback)
-                    .or_else(|| surface.validation_feedback()),
+                    .or_else(|| {
+                        let cancel = label(Action::Cancel);
+                        surface.validation_feedback(
+                            &label(Action::Accept),
+                            if cancel == "Esc" { "Escape" } else { &cancel },
+                        )
+                    }),
             );
             snapshot.layout = OverlayLayout::Standard;
             snapshot.query_cursor = Some(surface.cursor);
             snapshot.query_placeholder = surface.fields[surface.selected].label.clone();
-            snapshot.actions = vec![OverlayAction::new("Enter", "submit")];
+            snapshot.actions = vec![OverlayAction::new(label(Action::Accept), "submit")];
             if surface.fields.len() > 1 {
-                snapshot
-                    .actions
-                    .push(OverlayAction::new("Tab/↑/↓", "field"));
+                snapshot.actions.push(OverlayAction::new(
+                    if label(Action::Next) == "Tab" && label(Action::Previous) == "Up" {
+                        "Tab/↑/↓".into()
+                    } else {
+                        format!("{}/{}", label(Action::Next), label(Action::Previous))
+                    },
+                    "field",
+                ));
             } else if matches!(
                 surface.fields[0].kind,
                 crate::plugin::interaction::Kind::Text | crate::plugin::interaction::Kind::Secret
@@ -2991,13 +3563,28 @@ impl App {
                 crate::plugin::interaction::Kind::Choice
                     | crate::plugin::interaction::Kind::Boolean
             ) {
-                snapshot
-                    .actions
-                    .push(OverlayAction::new("←/→/Space", "choice"));
+                snapshot.actions.push(OverlayAction::new(
+                    if label(Action::MoveLeft) == "Left"
+                        && label(Action::MoveRight) == "Right"
+                        && label(Action::ToggleSelection) == "Space"
+                    {
+                        "←/→/Space".into()
+                    } else {
+                        format!(
+                            "{}/{}/{}",
+                            label(Action::MoveLeft),
+                            label(Action::MoveRight),
+                            label(Action::ToggleSelection)
+                        )
+                    },
+                    "choice",
+                ));
             }
-            snapshot.actions.push(OverlayAction::new("Esc", "cancel"));
+            snapshot
+                .actions
+                .push(OverlayAction::new(label(Action::Cancel), "cancel"));
             if surface.fields[surface.selected].completion.is_some() {
-                let hints = self.plugin_path_hints();
+                let hints = &path_hints;
                 if snapshot.message.is_none() {
                     snapshot.message = Some(
                         "Local path · relative to workspace · type a directory or filename prefix"
@@ -3005,31 +3592,52 @@ impl App {
                     );
                 }
                 if !hints.is_empty() {
-                    snapshot.rows = path_hint_rows(&hints);
+                    snapshot.rows = path_hint_rows(hints);
                     snapshot.total_rows = hints.len();
                     snapshot.selected = Some(surface.completion_selected.min(hints.len() - 1));
                     snapshot.scroll_anchor = snapshot.selected;
-                    let enter_completes = matches!(
-                        &surface.values[surface.selected],
-                        crate::plugin::interaction::Value::Text(value)
-                            if self.plugin_enter_accepts_path_hint(value)
-                    );
-                    snapshot.actions = if enter_completes {
-                        vec![
-                            OverlayAction::new("Tab/Enter", "complete"),
-                            OverlayAction::new("↑/↓", "path"),
-                            OverlayAction::new("Shift-Tab", "field"),
-                            OverlayAction::new("Esc", "cancel"),
-                        ]
-                    } else {
-                        vec![
-                            OverlayAction::new("Tab", "complete"),
-                            OverlayAction::new("↑/↓", "path"),
-                            OverlayAction::new("Shift-Tab", "field"),
-                            OverlayAction::new("Enter", "submit"),
-                            OverlayAction::new("Esc", "cancel"),
-                        ]
+                    let completion_label = |action| {
+                        self.plugin_input_key_label(
+                            Owner::PluginPathCompletion,
+                            action,
+                            true,
+                            partial,
+                        )
                     };
+                    let mut completes = [
+                        completion_label(Action::Accept),
+                        completion_label(Action::AcceptOrContinue),
+                    ]
+                    .into_iter()
+                    .filter(|key| key != "unbound")
+                    .collect::<Vec<_>>();
+                    completes.dedup();
+                    let complete = if completes.is_empty() {
+                        "unbound".into()
+                    } else {
+                        completes.join("/")
+                    };
+                    let previous = completion_label(Action::Previous);
+                    let next = completion_label(Action::Next);
+                    snapshot.actions = vec![
+                        OverlayAction::new(complete, "complete"),
+                        OverlayAction::new(
+                            if previous == "Up" && next == "Down" {
+                                "↑/↓".into()
+                            } else {
+                                format!("{previous}/{next}")
+                            },
+                            "path",
+                        ),
+                        OverlayAction::new(label(Action::Next), "field"),
+                    ];
+                    let submit = label(Action::Accept);
+                    if submit != "unbound" {
+                        snapshot.actions.push(OverlayAction::new(submit, "submit"));
+                    }
+                    snapshot
+                        .actions
+                        .push(OverlayAction::new(label(Action::Cancel), "cancel"));
                 }
             }
             if surface.confirmation {
@@ -3044,8 +3652,8 @@ impl App {
                 snapshot.query_cursor = None;
                 snapshot.query_placeholder.clear();
                 snapshot.actions = vec![
-                    OverlayAction::new("Enter", "confirm"),
-                    OverlayAction::new("Esc", "cancel"),
+                    OverlayAction::new(label(Action::Accept), "confirm"),
+                    OverlayAction::new(label(Action::Cancel), "cancel"),
                 ];
             }
             if let Some(picker) = &surface.picker {
@@ -3065,9 +3673,9 @@ impl App {
                 snapshot.query_cursor = Some(picker.filter.chars().count());
                 snapshot.query_placeholder = "Type to filter".into();
                 snapshot.actions = vec![
-                    OverlayAction::new("Enter", "choose"),
-                    OverlayAction::new("↑/↓", "select"),
-                    OverlayAction::new("Esc", "cancel"),
+                    OverlayAction::new(label(Action::Accept), "choose"),
+                    OverlayAction::new(navigation(), "select"),
+                    OverlayAction::new(label(Action::Cancel), "cancel"),
                 ];
             }
             overlays.push(snapshot);
@@ -3115,6 +3723,7 @@ fn file_overlay_preview(
 fn context_action_rows(
     actions: &[ContextAction],
     capabilities: &crate::service_health::AppCapabilitySnapshot,
+    bindings: &crate::keymap::ui::Bindings,
 ) -> Vec<crate::snapshot::OverlayRow> {
     use crate::snapshot::OverlayRow;
 
@@ -3151,7 +3760,14 @@ fn context_action_rows(
             OverlayRow {
                 heading: false,
                 identity: action.mnemonic.label().into(),
-                label: action.mnemonic.label(),
+                label: if bindings
+                    .lookup(crate::keymap::ui::Owner::ContextActions, action.mnemonic)
+                    .is_some()
+                {
+                    String::new()
+                } else {
+                    action.mnemonic.label()
+                },
                 detail: format!(
                     "{name:name_width$}  {context:context_width$}  {}",
                     action.description
@@ -3167,4 +3783,35 @@ fn context_action_rows(
             }
         })
         .collect()
+}
+
+fn menu_action_hints(
+    bindings: &crate::keymap::ui::Bindings,
+    owner: crate::keymap::ui::Owner,
+    accept: &str,
+    cancel: &str,
+) -> Vec<crate::snapshot::OverlayAction> {
+    use crate::{keymap::ui::Action, snapshot::OverlayAction};
+    vec![
+        OverlayAction::new(
+            format!(
+                "{}/{}",
+                bindings.label(owner, Action::Next),
+                bindings.label(owner, Action::Previous)
+            ),
+            "select",
+        ),
+        OverlayAction::new(
+            if matches!(
+                owner,
+                crate::keymap::ui::Owner::ContextActions | crate::keymap::ui::Owner::PathActions
+            ) {
+                format!("mnemonic/{}", bindings.label(owner, Action::Accept))
+            } else {
+                bindings.label(owner, Action::Accept)
+            },
+            accept,
+        ),
+        OverlayAction::new(bindings.dismissal_label(owner), cancel),
+    ]
 }

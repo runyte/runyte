@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use crate::{config::Config, input::KeyStroke};
+use crate::{
+    config::Config,
+    input::{KeyStroke, Modifiers},
+};
 
 /// A grant review for `agent` with `details` below its toggles.
 fn grant(details: Vec<Detail>) -> App {
@@ -575,4 +578,254 @@ fn a_refreshed_agent_channel_page_shows_its_newest_message() {
     view(&mut app);
     let scroll = app.active().scroll_row;
     assert!(scroll > 0 && scroll <= newest && newest < scroll + 12);
+}
+
+fn configure_review(app: &mut App, source: &str) {
+    let compiled =
+        crate::keymap::configured::compile(&serde_yaml::from_str(source).unwrap(), &app.keymap);
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(std::sync::Arc::clone(&compiled.keymap));
+}
+
+#[test]
+fn configured_context_review_acceptance_requires_fresh_presented_physical_input() {
+    for accept in ["F8", "Esc", "Ctrl-F8"] {
+        for accept_selected in [false, true] {
+            let mut app = ready();
+            configure_review(
+                &mut app,
+                &format!(
+                    "ui: {{context-review: {{accept: [{accept}], cancel: [F10], next: [F6], previous: [F5], toggle-selection: [F7]}}}}"
+                ),
+            );
+            app.context_ui.surface.as_mut().unwrap().accept_selected = accept_selected;
+            let input = InputEvent::Key(KeyStroke::parse(accept).unwrap());
+            assert!(app.input_requires_presented_approval(&input));
+            assert!(
+                !app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(
+                    KeyCode::Enter
+                )))
+            );
+            press(&mut app, KeyCode::Enter);
+            assert!(app.context_overlay_active());
+            app.handle_repeated_input(input.clone()).unwrap();
+            assert!(
+                app.context_overlay_active(),
+                "repeated acceptance cannot even dismiss Reject"
+            );
+            assert!(app.context_ui.decision.is_none());
+            app.handle_replayed_input(input.clone()).unwrap();
+            assert!(app.context_overlay_active() && app.context_ui.decision.is_none());
+            let overlay = app.context_overlay().unwrap();
+            assert_eq!(overlay.actions[0].key_hint, "F5/F6/F7");
+            assert_eq!(overlay.actions[1].key_hint, accept);
+            assert_eq!(overlay.actions[2].key_hint, "F10");
+            app.handle_input(input).unwrap();
+            assert!(!app.context_overlay_active());
+            assert_eq!(app.context_ui.decision.is_some(), accept_selected);
+        }
+        let mut app = ready();
+        configure_review(
+            &mut app,
+            &format!("ui: {{context-review: {{accept: [{accept}], cancel: [F10]}}}}"),
+        );
+        app.note_context_frame(40, 12, 2);
+        app.note_context_presented(2);
+        app.handle_input(InputEvent::Key(KeyStroke::parse(accept).unwrap()))
+            .unwrap();
+        assert!(app.context_overlay_active() && app.context_ui.decision.is_none());
+        present(&mut app, 3);
+        app.plugins.attachment_generation += 1;
+        app.handle_input(InputEvent::Key(KeyStroke::parse(accept).unwrap()))
+            .unwrap();
+        assert!(!app.context_overlay_active() && app.context_ui.decision.is_none());
+    }
+}
+
+#[test]
+fn configured_context_review_preserves_motion_prefix_ownership_and_fallbacks() {
+    let mut app = long_grant(41);
+    configure_review(
+        &mut app,
+        "ui: {context-review: {accept: [F8], cancel: [F10]}}",
+    );
+    present(&mut app, 1);
+    for spent in [
+        KeyStroke::new(KeyCode::Up, Modifiers::ALT),
+        KeyStroke::plain(KeyCode::Enter),
+    ] {
+        press(&mut app, KeyCode::Char('g'));
+        app.handle_input(InputEvent::Key(spent)).unwrap();
+        assert!(
+            app.context_ui
+                .surface
+                .as_ref()
+                .unwrap()
+                .pending_keys
+                .is_empty()
+        );
+        press(&mut app, KeyCode::Char('e'));
+        assert_eq!(app.context_ui.surface.as_ref().unwrap().top, 0);
+    }
+    press(&mut app, KeyCode::Char('g'));
+    press(&mut app, KeyCode::Function(8));
+    assert!(
+        !app.context_overlay_active(),
+        "owned acceptance spends pending motion and selects Reject"
+    );
+
+    let mut app = long_grant(41);
+    // Existing approved registry motions can differ from factory spellings.
+    app.set_keymap(std::sync::Arc::new(
+        crate::keymap::Keymap::new(vec![Binding::implemented(
+            &[Mode::Normal],
+            KeyStroke::plain(KeyCode::Home),
+            Command::HalfPageDown,
+        )])
+        .unwrap(),
+    ));
+    present(&mut app, 1);
+    press(&mut app, KeyCode::Home);
+    assert_eq!(
+        app.context_ui.surface.as_ref().unwrap().top,
+        5,
+        "approved motion precedes the default Home fallback"
+    );
+    configure_review(&mut app, "ui: {context-review: {first: [Home]}}");
+    press(&mut app, KeyCode::Home);
+    assert_eq!(
+        app.context_ui.surface.as_ref().unwrap().top,
+        0,
+        "an explicitly authored UI action takes ownership"
+    );
+    configure_review(&mut app, "ui: {context-review: {first: []}}");
+    press(&mut app, KeyCode::Home);
+    assert_eq!(
+        app.context_ui.surface.as_ref().unwrap().top,
+        5,
+        "removing the fallback retains independently configured motions"
+    );
+}
+
+#[test]
+fn context_review_hints_exclude_ui_owned_motion_strokes_and_prefix_tails() {
+    let mut app = long_grant(41);
+    let mut bindings = app.keymap.bindings().to_vec();
+    for binding in &mut bindings {
+        if binding.sequence == KeySequence::parse("g g").unwrap() {
+            binding.sequence = KeySequence::parse("g F8").unwrap();
+        }
+    }
+    app.set_keymap(std::sync::Arc::new(
+        crate::keymap::Keymap::new(bindings).unwrap(),
+    ));
+    configure_review(
+        &mut app,
+        "ui: {context-review: {accept: [Ctrl-u, F8], cancel: [F10]}}",
+    );
+    present(&mut app, 1);
+    let overlay = app.context_overlay().unwrap();
+    let scroll = overlay
+        .rows
+        .iter()
+        .find(|row| row.label.starts_with("Lines "))
+        .unwrap();
+    assert!(
+        scroll.label.contains("unbound/Ctrl-d scroll"),
+        "{}",
+        scroll.label
+    );
+    assert!(!scroll.label.contains("g F8"));
+    assert!(
+        scroll.label.contains("Home/G first/last"),
+        "{}",
+        scroll.label
+    );
+    assert_eq!(overlay.actions[1].key_hint, "Ctrl-u");
+    app.context_ui.surface.as_mut().unwrap().accept_selected = true;
+    press(&mut app, KeyCode::Char('g'));
+    app.handle_repeated_input(InputEvent::Key(KeyStroke::plain(KeyCode::Function(8))))
+        .unwrap();
+    assert!(
+        app.context_ui
+            .surface
+            .as_ref()
+            .unwrap()
+            .pending_keys
+            .is_empty()
+    );
+    assert!(app.context_ui.decision.is_none());
+    assert_eq!(app.context_ui.surface.as_ref().unwrap().top, 0);
+}
+
+#[test]
+fn configured_review_scroll_actions_replace_inherited_motions_without_granting_authority() {
+    let mut app = long_grant(41);
+    configure_review(
+        &mut app,
+        "ui: {context-review: {page-down: [F2], page-up: [F3], half-page-down: [F4], half-page-up: [F5], first: [F6], last: [F7], accept: [F8]}}",
+    );
+    present(&mut app, 1);
+    for (key, top) in [(2, 11), (4, 16), (5, 11), (3, 0), (7, 30), (6, 0)] {
+        press(&mut app, KeyCode::Function(key));
+        assert_eq!(app.context_ui.surface.as_ref().unwrap().top, top);
+        assert!(app.context_ui.decision.is_none());
+    }
+    for key in [
+        KeyStroke::ctrl('d'),
+        KeyStroke::plain(KeyCode::End),
+        KeyStroke::char('g'),
+        KeyStroke::char('e'),
+    ] {
+        app.handle_input(InputEvent::Key(key)).unwrap();
+        assert_eq!(app.context_ui.surface.as_ref().unwrap().top, 0);
+    }
+    app.context_ui.surface.as_mut().unwrap().accept_selected = true;
+    press(&mut app, KeyCode::Function(8));
+    assert!(
+        app.context_ui.decision.is_none(),
+        "unreviewed rows still prevent approval"
+    );
+    assert!(
+        app.context_overlay()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.label.contains("F5/F4 scroll · F6/F7 first/last"))
+    );
+    configure_review(
+        &mut app,
+        "ui: {context-review: {first: [], last: [], half-page-down: []}}",
+    );
+    press(&mut app, KeyCode::End);
+    app.handle_input(InputEvent::Key(KeyStroke::ctrl('d')))
+        .unwrap();
+    assert_eq!(app.context_ui.surface.as_ref().unwrap().top, 0);
+}
+
+#[test]
+fn removed_review_motion_cannot_fall_through_to_structural_revoke() {
+    let mut app = long_grant(41);
+    app.set_keymap(std::sync::Arc::new(
+        crate::keymap::Keymap::new(vec![Binding::implemented(
+            &[Mode::Normal],
+            KeyStroke::char('x'),
+            Command::HalfPageDown,
+        )])
+        .unwrap(),
+    ));
+    configure_review(&mut app, "ui: {context-review: {half-page-down: []}}");
+    present(&mut app, 1);
+    let input = InputEvent::Key(KeyStroke::char('x'));
+    assert!(!app.input_requires_presented_approval(&input));
+    app.handle_input(input).unwrap();
+    assert!(app.context_ui.decision.is_none());
+    assert_eq!(app.context_ui.surface.as_ref().unwrap().top, 0);
+    assert!(
+        app.context_overlay()
+            .unwrap()
+            .rows
+            .iter()
+            .any(|row| row.label.contains("unbound Revoke"))
+    );
 }

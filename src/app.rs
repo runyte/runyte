@@ -291,6 +291,7 @@ mod language_workflows;
 mod lsp_trust_workflows;
 mod mouse_autoscroll;
 mod movement;
+mod native_input;
 mod navigation_workflows;
 mod pane_drag;
 use navigation_workflows::DestinationScope;
@@ -1087,7 +1088,7 @@ struct FileReloadConfirmation {
 }
 
 impl FileReloadConfirmation {
-    fn message(&self, stale: bool, keymap: &Keymap) -> String {
+    fn message(&self, stale: bool, keymap: &Keymap, accept: &str, cancel: &str) -> String {
         let mut message = format!(
             "Reload {} and discard unsaved Runyte changes and their undo history?",
             self.path.display()
@@ -1103,21 +1104,22 @@ impl FileReloadConfirmation {
                 .text,
             );
         }
-        message.push_str("\nEnter confirms.\nEscape cancels.");
+        message.push_str(&format!("\n{accept} confirms.\n{cancel} cancels."));
         message
     }
 }
 
 impl DirectoryReloadConfirmation {
-    fn message(&self) -> String {
+    fn message(&self, accept: &str, cancel: &str) -> String {
         match self.destination.as_deref() {
             Some(path) => format!(
-                "Discard unsaved directory edits and open {}?\nEnter confirms.\nEscape cancels.",
+                "Discard unsaved directory edits and open {}?\n{accept} confirms.\n{cancel} cancels.",
                 path.display()
             ),
             None => {
-                "Discard unsaved directory edits and refresh?\nEnter confirms.\nEscape cancels."
-                    .to_owned()
+                format!(
+                    "Discard unsaved directory edits and refresh?\n{accept} confirms.\n{cancel} cancels."
+                )
             }
         }
     }
@@ -1487,12 +1489,12 @@ struct GitDiscardConfirmation {
 }
 
 impl GitDiscardConfirmation {
-    fn message(&self) -> String {
+    fn message(&self, accept: &str, cancel: &str) -> String {
         let what = match self.paths.as_slice() {
             [only] => only.display().to_string(),
             many => format!("{} paths", many.len()),
         };
-        let mut sentences = vec![format!("Press Enter to discard changes to {what}.")];
+        let mut sentences = vec![format!("Press {accept} to discard changes to {what}.")];
         if self.skipped_untracked > 0 {
             sentences.push(format!(
                 "{} untracked file{} will be left alone.",
@@ -1501,7 +1503,7 @@ impl GitDiscardConfirmation {
             ));
         }
         sentences.push("This cannot be undone.".to_owned());
-        sentences.push("Escape keeps them.".to_owned());
+        sentences.push(format!("{cancel} keeps them."));
         sentences.join("\n")
     }
 }
@@ -1555,7 +1557,7 @@ impl BranchSwitch {
         }
     }
 
-    fn message(&self) -> String {
+    fn message(&self, cancel: &str) -> String {
         let action = match self {
             Self::Checkout { branch } => format!("Switch to branch {branch}."),
             Self::Create { branch, .. } => format!("Create and switch to branch {branch}."),
@@ -1567,7 +1569,7 @@ impl BranchSwitch {
             }
         };
         format!(
-            "{action}\nA terminal session is still running in this workspace and will keep using the same working directory while Git replaces files.\nType {} exactly to continue.\nEscape keeps the current branch.",
+            "{action}\nA terminal session is still running in this workspace and will keep using the same working directory while Git replaces files.\nType {} exactly to continue.\n{cancel} keeps the current branch.",
             self.branch()
         )
     }
@@ -1604,7 +1606,7 @@ impl BranchDeletionConfirmation {
         self.plan.required_authorization == DeletionAuthorization::Typed || self.cascade.is_some()
     }
 
-    fn message(&self) -> String {
+    fn message(&self, accept: &str, cancel: &str) -> String {
         let mut sentences = vec![format!("Delete branch {}.", self.plan.branch)];
         if let Some(cascade) = &self.cascade {
             sentences.push("This also:".to_owned());
@@ -1650,9 +1652,9 @@ impl BranchDeletionConfirmation {
                 self.plan.branch
             ));
         } else {
-            sentences.push("Press Enter to continue.".to_owned());
+            sentences.push(format!("Press {accept} to continue."));
         }
-        sentences.push("Escape keeps it.".to_owned());
+        sentences.push(format!("{cancel} keeps it."));
         sentences.join("\n")
     }
 }
@@ -1688,7 +1690,7 @@ impl WorktreeRemovalConfirmation {
             .unwrap_or_else(|| crate::git::display_path(&self.plan.path))
     }
 
-    fn message(&self) -> String {
+    fn message(&self, accept: &str, cancel: &str) -> String {
         let branch_note = self.plan.branch.as_deref().map_or_else(
             || "No branch will be deleted".to_owned(),
             |branch| format!("Branch {branch} will remain"),
@@ -1722,9 +1724,9 @@ impl WorktreeRemovalConfirmation {
         if self.typed() {
             lines.push(format!("Type {} exactly to continue.", self.expected()));
         } else {
-            lines.push("Press Enter to continue.".to_owned());
+            lines.push(format!("Press {accept} to continue."));
         }
-        lines.push("Escape keeps it.".to_owned());
+        lines.push(format!("{cancel} keeps it."));
         lines.join("\n")
     }
 }
@@ -1746,7 +1748,7 @@ struct PullRebaseConfirmation {
 }
 
 impl PullRebaseConfirmation {
-    fn message(&self) -> String {
+    fn message(&self, accept: &str, cancel: &str) -> String {
         let Self {
             branch,
             upstream,
@@ -1754,9 +1756,9 @@ impl PullRebaseConfirmation {
             behind,
         } = self;
         format!(
-            "Branch {branch} and {upstream} have both moved on.\nPress Enter to replay {ahead} local \
+            "Branch {branch} and {upstream} have both moved on.\nPress {accept} to replay {ahead} local \
              commit{} on top of the {behind} on {upstream}.\nA conflict undoes the replay and \
-             changes nothing.\nEscape leaves the branch as it is.",
+             changes nothing.\n{cancel} leaves the branch as it is.",
             if *ahead == 1 { "" } else { "s" }
         )
     }
@@ -1878,6 +1880,7 @@ enum PointerDrag {
     },
     /// An Alt-drag carrying `pane` to wherever it is released.
     MovePane {
+        button: PointerButton,
         pane: usize,
         expand: bool,
         drop: Option<pane_drag::PaneDrop>,
@@ -2936,7 +2939,12 @@ pub struct App {
     directory_tree_geometry: Option<(Rect, Rect)>,
     /// The tree entry the last left press landed on, and when. A second
     /// press on the same entry soon enough opens it as Enter does.
-    directory_tree_click: Option<(PathBuf, Instant)>,
+    directory_tree_click: Option<(
+        PathBuf,
+        Instant,
+        PointerButton,
+        crate::keymap::pointer_actions::Bindings,
+    )>,
     /// The pane temporarily presented across the complete editor area by
     /// `:zen` or `:fullscreen`, if either is active.
     maximized: Option<MaximizedPane>,
@@ -3320,9 +3328,10 @@ pub struct App {
     pointer_drag: Option<PointerDrag>,
     /// A consumed Alt-left press owns its trailing reports even after cancellation.
     pane_pointer_owned: bool,
+    pane_pointer_button: Option<PointerButton>,
     /// The release and drags of a link click remain editor-owned even when
     /// navigation opens a popup or changes the pane underneath the pointer.
-    pointer_link_pressed: bool,
+    pointer_link_pressed: Option<PointerButton>,
     pointer_autoscroll: Option<mouse_autoscroll::Autoscroll>,
     /// Code actions backing a code-action picker.
     lsp_actions: Vec<ActionEntry>,
@@ -3914,7 +3923,8 @@ impl App {
             settings_origin_buffer: None,
             pointer_drag: None,
             pane_pointer_owned: false,
-            pointer_link_pressed: false,
+            pane_pointer_button: None,
+            pointer_link_pressed: None,
             pointer_autoscroll: None,
             lsp_actions: Vec::new(),
             lsp_action_source: None,
@@ -4063,8 +4073,6 @@ enum ListAction {
     #[cfg(any(unix, windows))]
     Workspace(usize),
 }
-
-pub(crate) use crate::keymap::is_terminal_normal_key;
 
 /// Whether a command has no meaning over a live terminal.
 ///

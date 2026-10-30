@@ -84,7 +84,7 @@ fn native_worktree_review_discloses_exact_live_host_and_requires_typed_confirmat
     assert!(confirmation.typed());
     assert!(
         confirmation
-            .message()
+            .message("Enter", "Escape")
             .contains("stops and forgets session 3")
     );
 }
@@ -138,7 +138,7 @@ fn native_branch_cascade_review_names_the_exact_host_before_confirmation() {
     assert!(confirmation.typed());
     assert!(
         confirmation
-            .message()
+            .message("Enter", "Escape")
             .contains("stops and forgets session 3")
     );
 }
@@ -3343,6 +3343,17 @@ fn a_hidden_live_terminal_requires_exact_branch_name_before_checkout() {
 #[cfg(unix)]
 #[test]
 fn a_typed_branch_confirmation_edits_its_line_before_it_matches() {
+    check_typed_branch_confirmation(false);
+}
+
+#[test]
+#[cfg(unix)]
+fn configured_text_confirmation_edits_exact_branch_before_checkout() {
+    check_typed_branch_confirmation(true);
+}
+
+#[cfg(unix)]
+fn check_typed_branch_confirmation(configured: bool) {
     use crate::git::{MemoryGitProvider, Repository};
 
     let root = temporary("git-branch-typed-editing");
@@ -3362,36 +3373,56 @@ fn a_typed_branch_confirmation_edits_its_line_before_it_matches() {
     app.leave_terminal();
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
+    if configured {
+        super::ui_confirmations::configure_text(&mut app);
+    }
+    let action_key = |app: &mut App, code| {
+        let code = if configured {
+            match code {
+                KeyCode::Enter => KeyCode::Function(8),
+                KeyCode::Home => KeyCode::Function(1),
+                KeyCode::End => KeyCode::Function(2),
+                KeyCode::Left => KeyCode::Function(3),
+                KeyCode::Right => KeyCode::Function(4),
+                KeyCode::Delete => KeyCode::Function(6),
+                KeyCode::Backspace => KeyCode::Function(7),
+                _ => unreachable!(),
+            }
+        } else {
+            code
+        };
+        key(app, code, Modifiers::NONE);
+    };
     let typed = |app: &App| app.git_branch_switch.as_ref().unwrap().input.clone();
     type_text(&mut app, "feeture");
     assert_eq!(typed(&app), "feeture");
 
-    key(&mut app, KeyCode::Home, Modifiers::NONE);
-    key(&mut app, KeyCode::Right, Modifiers::NONE);
-    key(&mut app, KeyCode::Right, Modifiers::NONE);
-    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    action_key(&mut app, KeyCode::Home);
+    action_key(&mut app, KeyCode::Right);
+    action_key(&mut app, KeyCode::Right);
+    action_key(&mut app, KeyCode::Delete);
     assert_eq!(typed(&app), "feture");
     press(&mut app, 'a');
     assert_eq!(typed(&app), "feature");
 
-    key(&mut app, KeyCode::End, Modifiers::NONE);
-    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    action_key(&mut app, KeyCode::End);
+    action_key(&mut app, KeyCode::Backspace);
     assert_eq!(typed(&app), "featur");
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    action_key(&mut app, KeyCode::Enter);
     assert!(
         provider.checkouts().is_empty(),
         "an edited line still has to match exactly"
     );
 
-    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    action_key(&mut app, KeyCode::Left);
     press(&mut app, 'e');
     assert_eq!(typed(&app), "featuer", "the caret is where it was left");
-    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
-    key(&mut app, KeyCode::End, Modifiers::NONE);
+    action_key(&mut app, KeyCode::Backspace);
+    action_key(&mut app, KeyCode::End);
     press(&mut app, 'e');
     assert_eq!(typed(&app), "feature");
 
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    action_key(&mut app, KeyCode::Enter);
     assert_eq!(provider.checkouts(), vec!["feature"]);
     assert!(app.git_branch_switch.is_none());
     fs::remove_dir_all(root).unwrap();
@@ -4029,6 +4060,15 @@ fn p_pulls_the_current_branch_and_shift_p_pushes_the_selected_one() {
 /// offers to replay the local ones on top rather than reporting a dead end.
 #[test]
 fn pulling_a_diverged_branch_offers_to_replay_the_local_commits() {
+    check_pull_confirmation(false);
+}
+
+#[test]
+fn configured_confirmation_rebase_preserves_cancel_and_mutation() {
+    check_pull_confirmation(true);
+}
+
+fn check_pull_confirmation(configured: bool) {
     use crate::git::{Divergence, MemoryGitProvider, Repository, Upstream};
 
     let root = temporary("git-diverged");
@@ -4058,6 +4098,9 @@ fn pulling_a_diverged_branch_offers_to_replay_the_local_commits() {
     )))));
     ports.replace_git(Box::new(Rc::clone(&provider)));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    if configured {
+        super::ui_confirmations::configure(&mut app, "confirmation", "F8");
+    }
     app.execute_command("git-branches").unwrap();
 
     context_action(&mut app, 'p');
@@ -4080,7 +4123,15 @@ fn pulling_a_diverged_branch_offers_to_replay_the_local_commits() {
     assert_eq!(provider.pulls(), 0, "nothing was fast-forwarded");
     assert_eq!(provider.rebases(), 0);
 
-    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    key(
+        &mut app,
+        if configured {
+            KeyCode::Function(10)
+        } else {
+            KeyCode::Escape
+        },
+        Modifiers::NONE,
+    );
 
     assert!(app.git_pull_rebase.is_none());
     assert_eq!(provider.rebases(), 0);
@@ -4098,10 +4149,25 @@ fn pulling_a_diverged_branch_offers_to_replay_the_local_commits() {
     )))));
     ports.replace_git(Box::new(Rc::clone(&provider)));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    if configured {
+        super::ui_confirmations::configure(&mut app, "confirmation", "F8");
+    }
     app.execute_command("git-branches").unwrap();
 
     context_action(&mut app, 'p');
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    if configured {
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert_eq!(provider.rebases(), 0);
+    }
+    key(
+        &mut app,
+        if configured {
+            KeyCode::Function(8)
+        } else {
+            KeyCode::Enter
+        },
+        Modifiers::NONE,
+    );
 
     assert!(app.git_pull_rebase.is_none());
     assert_eq!(provider.rebases(), 1);
@@ -6415,7 +6481,21 @@ fn closing_an_edited_explorer_requires_force_and_touches_no_files() {
 /// file changed underneath and a stale buffer would refuse its next save.
 #[test]
 fn discarding_restores_the_file_and_reloads_its_buffer() {
+    check_discard_confirmation(None);
+}
+
+#[test]
+fn configured_confirmation_git_discard_preserves_effect_and_target() {
+    for accept in ["F8", "Esc"] {
+        check_discard_confirmation(Some(accept));
+    }
+}
+
+fn check_discard_confirmation(accept: Option<&str>) {
     let (root, mut app, provider) = staged_project("discard");
+    if let Some(accept) = accept {
+        super::ui_confirmations::configure(&mut app, "confirmation", accept);
+    }
     let path = root.join("lorem.md");
     fs::write(&path, "edited on disk\n").unwrap();
     app.open_file(path.clone()).unwrap();
@@ -6424,7 +6504,8 @@ fn discarding_restores_the_file_and_reloads_its_buffer() {
 
     app.execute_command("git-discard").unwrap();
     assert!(
-        app.status.contains("Press Enter to discard"),
+        app.status
+            .contains(&format!("Press {} to discard", accept.unwrap_or("Enter"))),
         "{}",
         app.status
     );
@@ -6440,7 +6521,14 @@ fn discarding_restores_the_file_and_reloads_its_buffer() {
 
     // The fake restores by truncating; the point is that the buffer follows.
     fs::write(&path, "committed\n").unwrap();
-    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    if accept.is_some() {
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+        assert!(provider.discards().is_empty());
+    }
+    app.handle_input(InputEvent::Key(
+        KeyStroke::parse(accept.unwrap_or("Enter")).unwrap(),
+    ))
+    .unwrap();
 
     assert!(!app.status_error, "{}", app.status);
     assert_eq!(provider.discards(), vec![PathBuf::from("lorem.md")]);
