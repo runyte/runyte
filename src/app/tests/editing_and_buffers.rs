@@ -3904,3 +3904,161 @@ fn macro_replay_cancel_remaps_removes_and_reports_effective_aliases() {
         assert_eq!(app.macro_replay_pending(), aliases == "[]");
     }
 }
+
+fn configured_hover(source: &str, rows: usize) -> App {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let result = crate::keymap::configured::compile(
+        &serde_yaml::from_str(source).unwrap(),
+        crate::keymap::default_keymap(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    app.set_keymap(result.keymap);
+    app.hover = Some(HoverState {
+        lines: (0..rows)
+            .map(|row| format!("documentation {row}"))
+            .collect(),
+    });
+    app
+}
+
+#[test]
+fn hover_acceptance_remaps_and_unbound_input_dismisses_then_continues() {
+    for binding in ["[F8]", "[]"] {
+        let source = format!("ui: {{hover: {{accept: {binding}}}}}");
+        let mut app = configured_hover(&source, 20);
+        assert_eq!(
+            app.hover_accept_label(),
+            if binding == "[]" { "unbound" } else { "F8" }
+        );
+        app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+        assert!(app.hover.is_none());
+        assert_ne!(app.active_buffer().display_name(), "[documentation]");
+        let mut app = configured_hover(&source, 20);
+        app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+            .unwrap();
+        assert_eq!(
+            app.active_buffer().display_name() == "[documentation]",
+            binding != "[]"
+        );
+    }
+    let mut app = configured_hover("ui: {hover: {accept: [F8]}}", 2);
+    assert_eq!(app.hover_accept_label(), "unbound");
+    app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+        .unwrap();
+    assert_ne!(app.active_buffer().display_name(), "[documentation]");
+
+    let mut app = configured_hover("ui: {hover: {accept: [F8]}}", 20);
+    app.mode = Mode::Insert;
+    app.handle_key(KeyStroke::char('x')).unwrap();
+    assert_eq!(text(&app), "x");
+    assert!(app.hover.is_none());
+}
+
+#[test]
+fn hover_acceptance_respects_pending_sequences_operands_and_leader() {
+    for source in [
+        "ui: {hover: {accept: [F8]}}",
+        "leader: F8\nui: {hover: {accept: [F8]}}",
+    ] {
+        let mut app = configured_hover(source, 20);
+        press(&mut app, 'g');
+        app.hover = Some(HoverState {
+            lines: vec!["line".into(); 20],
+        });
+        assert_eq!(app.hover_accept_label(), "unbound");
+        app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+            .unwrap();
+        assert_ne!(app.active_buffer().display_name(), "[documentation]");
+    }
+    let mut app = configured_hover("ui: {hover: {accept: [x, Ctrl-x]}}", 20);
+    seed(&mut app, "abcx");
+    press(&mut app, 'f');
+    assert!(app.grammar.awaiting_character().is_some());
+    app.hover = Some(HoverState {
+        lines: vec!["line".into(); 20],
+    });
+    assert_eq!(app.hover_accept_label(), "unbound");
+    press(&mut app, 'x');
+    assert_ne!(app.active_buffer().display_name(), "[documentation]");
+    assert_eq!(app.active().selection.primary().head, 3);
+
+    let mut app = configured_hover("leader: F8\nui: {hover: {accept: [F8]}}", 20);
+    assert_eq!(app.hover_accept_label(), "F8");
+    app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+        .unwrap();
+    assert_eq!(app.active_buffer().display_name(), "[documentation]");
+}
+
+#[test]
+fn hover_acceptance_reserves_counts_and_preserves_default_modifiers() {
+    let result = crate::keymap::configured::compile(
+        &serde_yaml::from_str("ui: {hover: {accept: ['2']}}").unwrap(),
+        crate::keymap::default_keymap(),
+    );
+    assert_eq!(result.errors.len(), 1);
+    for bits in 0..64 {
+        let mut app = configured_hover("{}", 20);
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        app.handle_key(KeyStroke::new(KeyCode::Enter, modifiers))
+            .unwrap();
+        assert_eq!(
+            app.active_buffer().display_name() == "[documentation]",
+            modifiers.is_empty(),
+            "{modifiers:?}"
+        );
+    }
+}
+
+#[test]
+fn hover_char_aliases_do_not_take_literal_input_and_covered_hints_are_inert() {
+    for mode in [Mode::Insert, Mode::Replace] {
+        for alias in ["x", "Meta-x", "Hyper-x"] {
+            let mut app = configured_hover(&format!("ui: {{hover: {{accept: [{alias}]}}}}"), 20);
+            app.mode = mode;
+            assert_eq!(app.hover_accept_label(), "unbound");
+            app.handle_key(KeyStroke::parse(alias).unwrap()).unwrap();
+            assert_eq!(text(&app), "x");
+            assert_ne!(app.active_buffer().display_name(), "[documentation]");
+        }
+    }
+    let mut app = configured_hover("ui: {hover: {accept: [F8]}}", 20);
+    app.path_popup = Some(PathPopup {
+        path: "example.txt".into(),
+    });
+    assert_eq!(app.hover_accept_label(), "unbound");
+    let hover = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::Hover)
+        .unwrap();
+    assert_eq!(hover.actions[0].key_hint, "unbound");
+    app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+        .unwrap();
+    assert_ne!(app.active_buffer().display_name(), "[documentation]");
+    app.path_popup = None;
+    app.macros
+        .insert('a', vec![InputEvent::Key(KeyStroke::char('l'))]);
+    app.replay_macro('a', 999_999).unwrap();
+    assert_eq!(app.hover_accept_label(), "unbound");
+}
+
+#[test]
+fn replayed_hover_acceptance_preserves_legacy_opening_without_advertising_physical_input() {
+    for (source, key) in [
+        ("{}", KeyStroke::plain(KeyCode::Enter)),
+        (
+            "ui: {hover: {accept: [F8]}}",
+            KeyStroke::plain(KeyCode::Function(8)),
+        ),
+    ] {
+        let mut app = configured_hover(source, 20);
+        app.macros.insert('a', vec![InputEvent::Key(key)]);
+        app.replay_macro('a', 1).unwrap();
+        app.hover = Some(HoverState {
+            lines: vec!["line".into(); 20],
+        });
+        assert_eq!(app.hover_accept_label(), "unbound");
+        app.advance_macro_replay().unwrap();
+        assert_eq!(app.active_buffer().display_name(), "[documentation]");
+    }
+}

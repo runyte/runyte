@@ -3482,7 +3482,7 @@ impl App {
             snapshot.omitted_rows = snapshot.total_rows.saturating_sub(snapshot.rows.len());
             snapshot.actions = if snapshot.omitted_rows > 0 {
                 vec![
-                    OverlayAction::new("Enter", "open complete documentation"),
+                    OverlayAction::new(self.hover_accept_label(), "open complete documentation"),
                     OverlayAction::new("other key", "dismiss and continue"),
                 ]
             } else {

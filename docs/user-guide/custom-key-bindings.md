@@ -1154,3 +1154,9 @@ with any modifiers and exact Ctrl-c. While replay is running, other physical
 input remains ignored. Replacing this action removes both default aliases;
 `[]` disables keyboard cancellation. The leader does not add a cancellation
 alias. The progress message shows the effective keys.
+
+`ui.hover.accept` opens the full documentation buffer from a long hover popup
+(default: plain Enter). Short hovers and other keys retain dismissal followed
+by normal input handling. Command prompts, completion and pending key sequences
+retain precedence. Character operands and plain count digits remain structural.
+Hover hints show only reachable aliases. The hover owner adds no leader alias. `[]` removes the expansion shortcut.

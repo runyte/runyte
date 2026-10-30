@@ -361,3 +361,29 @@ terminal/window acceptance rather than claiming sandbox tests prove them.
   Progress feedback names effective aliases. Astra found no blocker; all nine
   macro-replay tests passed, including all modifier masks, replacement, removal,
   leader independence and literal-event inertness. Guide validation passed.
+
+### Remaining grammar controls: validation design
+
+Prefix cancellation and hint scrolling change which key sequences are reachable.
+Compile their effective UI policy alongside binding edits, allowing null removals
+to release collisions. Defer dynamic policy conflicts until global and scoped
+edits have both applied. If the final candidate still masks surviving bindings,
+restore only the grammar-prefix/key-hints policy group and compile the original
+binding edits once more under defaults. The retry is bounded; unrelated UI owners
+remain configured. Runtime plugin admission uses the same effective policy.
+
+Character operands remain structural for every character key, including modified
+characters. Prefix cancellation remains modal; Insert/Replace fallback behavior
+is preserved. Default hint arrows yield to registered continuations, while exact
+Ctrl-n/p retain unconditional pending-popup scrolling. Hint scrolling precedes
+cancellation. Backtracking retains counts and cancellation clears them. These
+constraints were reviewed with Astra before implementation.
+- Long-hover expansion now uses a shared acceptance action and effective hints
+  in both snapshots and the terminal renderer. Short hovers and other keys keep
+  dismissal followed by normal input handling. Character operands and literal
+  Insert/Replace text take precedence; covered hover hints are inert. Astra
+  identified and helped correct a replay regression: generated acceptance still
+  opens documentation while physical replay input remains ignored. All 11
+  hover-related tests passed, including raw modifier coverage, removal, structural
+  text, covered snapshots and actual default/remapped macro replay. Astra's final
+  source review and guide validation are clear.

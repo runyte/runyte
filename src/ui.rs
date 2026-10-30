@@ -4889,7 +4889,8 @@ fn draw_hover(
         .collect::<Vec<_>>();
     let omitted = state.lines.len().saturating_sub(visible_rows);
     let title = if omitted > 0 {
-        format!(" Documentation · {omitted} more · Enter full view · other key dismisses ")
+        let accept = app.hover_accept_label();
+        format!(" Documentation · {omitted} more · {accept} full view · other key dismisses ")
     } else {
         " Documentation · any key dismisses and continues ".to_owned()
     };

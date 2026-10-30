@@ -2057,18 +2057,9 @@ impl App {
         }
         // A hover popup is a one-shot overlay: the next keystroke dismisses it
         // and is then handled normally, so reading documentation never eats an
-        // edit. Long documentation advertises Enter as the one exception: it
+        // edit. Long documentation has an acceptance action as the exception: it
         // opens the complete text as a reusable read-only buffer.
-        if matches!(key.code, KeyCode::Enter)
-            && key.modifiers.is_empty()
-            && self.mode != Mode::Command
-            && self.completion.is_none()
-            && self.grammar.pending_sequence().is_empty()
-            && self
-                .hover
-                .as_ref()
-                .is_some_and(|hover| hover.lines.len() > self.hover_visible_rows())
-        {
+        if self.hover_accepts_key(key) {
             let text = self.hover.take().unwrap().lines.join("\n");
             self.open_virtual_page(
                 GeneratedViewIdentity::Documentation,
@@ -2168,6 +2159,38 @@ impl App {
                 .git_worktree_removal
                 .as_ref()
                 .is_some_and(|confirmation| confirmation.typed())
+    }
+
+    pub(crate) fn hover_accepts_key(&self, key: KeyStroke) -> bool {
+        use crate::keymap::ui::{Action, Owner};
+        self.keymap.ui().lookup(Owner::Hover, key) == Some(Action::Accept)
+            && !self.has_input_overlay()
+            && self.jump.is_none()
+            && self.mode != Mode::Command
+            && self.completion.is_none()
+            && self.grammar.pending_sequence().is_empty()
+            // Character operands remain structural, including modified characters.
+            && !(matches!(key.code, KeyCode::Char(_))
+                && (self.grammar.awaiting_character().is_some()
+                    || (matches!(self.mode, Mode::Insert | Mode::Replace)
+                        && !key.modifiers.intersects(
+                            Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER,
+                        ))))
+            && self.hover.as_ref().is_some_and(|hover| {
+                hover.lines.len() > self.hover_visible_rows()
+            })
+    }
+
+    pub(crate) fn hover_accept_label(&self) -> String {
+        use crate::keymap::ui::{Action, Owner};
+        self.keymap
+            .ui()
+            .reachable_label(Owner::Hover, Action::Accept, None, |key| {
+                self.macro_replay.is_none()
+                    && self.hover_accepts_key(key)
+                    && !(key.canonical_for_binding() == self.keymap.leader()
+                        && self.space_dismisses_input_overlay())
+            })
     }
 
     pub(super) fn hover_visible_rows(&self) -> usize {
