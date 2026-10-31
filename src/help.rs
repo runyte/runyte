@@ -1715,7 +1715,7 @@ mod tests {
         assert!(rendered.starts_with("Help · RUNYTE · TEXT\n"));
         assert!(!rendered.contains("Read-only"));
         assert!(!rendered.contains("Text edits are refused"));
-        assert!(rendered.contains("Delete the selection or character"));
+        assert!(rendered.contains("Yank, then delete the selection or character"));
         assert!(rendered.contains("Undo the last change"));
         // Nothing is scope-specific in a plain text buffer, so neither
         // buffer-specific section appears at all.

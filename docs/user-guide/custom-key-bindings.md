@@ -457,8 +457,10 @@ This is the list `:help key-actions` shows, grouped by topic.
 | `indent` | N S | continue | Indent the selected lines |
 | `unindent` | N S | continue | Unindent the selected lines |
 | `toggle-comments` | N S I R | continue | Comment or uncomment the selected lines |
-| `delete-selection` | N S | continue | Delete the selection or character |
-| `change-selection` | N S | last | Change the selection or character |
+| `yank-delete-selection` | N S | continue | Yank, then delete the selection or character |
+| `yank-change-selection` | N S | last | Yank, then change the selection or character |
+| `delete-selection` | N S | continue | Delete the selection or character without yanking |
+| `change-selection` | N S | last | Change the selection or character without yanking |
 | `rotate-selection-contents-forward` | N S | last | Rotate selected text forward |
 | `rotate-selection-contents-backward` | N S | last | Rotate selected text backward |
 | `trim-trailing-whitespace` | N S | last | Delete trailing whitespace from every selected line |

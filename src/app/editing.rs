@@ -3234,10 +3234,14 @@ impl App {
         Ok((!entries.is_empty()).then_some(DirectoryRegister { entries, mode }))
     }
 
+    /// `yank` decides whether the removed text reaches a register first:
+    /// `yank-delete-selection` and `yank-change-selection` pass true, the
+    /// plain `delete-selection` and `change-selection` pass false.
     pub(super) fn delete_selection_or_char(
         &mut self,
         enter_insert: bool,
         transient_line_selection: bool,
+        yank: bool,
     ) {
         let buffer_id = self.active().buffer;
         if enter_insert {
@@ -3245,23 +3249,39 @@ impl App {
         }
         let linewise = transient_line_selection
             || self.active().selection_semantics() == SelectionSemantics::VimLinewise;
-        let text = if linewise {
-            self.line_register().text
+        if yank {
+            // This is not `[yank, delete-selection]`, and the difference is
+            // what a directory buffer does with the register. `yank` records
+            // its entries as a copy, so pasting them elsewhere reviews as a
+            // copy and leaves the source row's deletion to trash the original
+            // as a separate plan. Nothing then orders the two saves, and a
+            // copy whose source the same plan deletes is refused outright.
+            // Recording a move instead makes the paste one move owned by the
+            // destination, and `pending_move_sources` keeps the source
+            // listing from saving its deletion first. `yank` also collapses
+            // the selection, which would leave the delete only a character.
+            let text = if linewise {
+                self.line_register().text
+            } else {
+                self.selection_text()
+            };
+            let directory = match self.directory_register(TransferMode::Move, false) {
+                Ok(directory) => directory,
+                Err(error) => {
+                    self.action_failed(error.to_string());
+                    return;
+                }
+            };
+            self.write_selected_register(Register {
+                text,
+                linewise,
+                directory,
+            });
         } else {
-            self.selection_text()
-        };
-        let directory = match self.directory_register(TransferMode::Move, false) {
-            Ok(directory) => directory,
-            Err(error) => {
-                self.action_failed(error.to_string());
-                return;
-            }
-        };
-        self.write_selected_register(Register {
-            text,
-            linewise,
-            directory,
-        });
+            // A register chosen with `"` applies to the next command only,
+            // whether or not that command writes it.
+            self.selected_register = '"';
+        }
         let buffer = self.active_buffer();
         if !transient_line_selection {
             let changes = self

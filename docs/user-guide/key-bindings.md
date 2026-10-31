@@ -49,7 +49,7 @@ under [Insert and Replace modes](key-bindings.md#insert-and-replace-modes).
 | `_` | Delete trailing whitespace from every selected line; `%` then `_` strips the buffer |
 | `Alt-_` | Shrink every selection past the whitespace at its ends, without changing the text |
 | `Space p .` | Toggle dim `·`, `→`, and `¬` markers for spaces, tabs, and line endings |
-| `d` / `c` | Delete / change selection or cursor character; `d` after transient `x`/`X` cuts whole lines |
+| `d` / `c` | Yank, then delete / change selection or cursor character; `d` after transient `x`/`X` cuts whole lines. `delete-selection` and `change-selection` do the same without yanking and have no default key |
 | `y` / `p` / `P` | Yank selection or cursor character, leaving a caret / replace the selection, or paste after a bare caret / paste before |
 | `Y` | Yank every line the selection touches, as whole lines, leaving a caret |
 | `>` / `<` | Indent / unindent |

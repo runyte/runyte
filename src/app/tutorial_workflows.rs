@@ -292,7 +292,12 @@ impl App {
             4 => {
                 text == "north\nsouth\n"
                     && self.mode == Mode::Normal
-                    && action == Some(CommandId::Editor(EditorCommand::DeleteSelection))
+                    && matches!(
+                        action,
+                        Some(CommandId::Editor(
+                            EditorCommand::YankDeleteSelection | EditorCommand::DeleteSelection
+                        ))
+                    )
             }
             5 => text == "cat dog cat\n" && selections == 2 && self.mode == Mode::Select,
             6 => text == "fox dog fox\n" && self.mode == Mode::Normal,

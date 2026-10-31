@@ -74,6 +74,8 @@ fn scan_editor_modes(command: EditorCommand) -> Vec<Mode> {
                         | EditorCommand::SelectLineUp
                         | EditorCommand::GotoNextParagraph
                         | EditorCommand::GotoPreviousParagraph
+                        | EditorCommand::DeleteSelection
+                        | EditorCommand::ChangeSelection
                 ))
         })
         .collect()
@@ -131,6 +133,7 @@ pub fn can_continue(target: BindingTarget) -> bool {
                 | C::SplitSelectionAtLineStarts
                 | C::Yank
                 | C::YankLine
+                | C::YankDeleteSelection
                 | C::DeleteSelection
                 | C::Indent
                 | C::Unindent

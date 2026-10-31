@@ -3184,13 +3184,13 @@ impl App {
 
     fn finish_vim_operator(&mut self, operator: VimOperator) {
         match operator {
-            VimOperator::Delete => self.delete_selection_or_char(false, false),
+            VimOperator::Delete => self.delete_selection_or_char(false, false, true),
             VimOperator::Change
                 if self.active().selection_semantics() == SelectionSemantics::VimLinewise =>
             {
                 self.change_vim_lines()
             }
-            VimOperator::Change => self.delete_selection_or_char(true, false),
+            VimOperator::Change => self.delete_selection_or_char(true, false, true),
             VimOperator::Yank => {
                 self.yank(false);
                 let selection = self
@@ -4705,10 +4705,14 @@ impl App {
             Command::Indent => self.indent(false),
             Command::Unindent => self.indent(true),
             Command::ToggleComments => self.toggle_comments(),
-            Command::DeleteSelection => {
-                self.delete_selection_or_char(false, transient_line_selection)
+            Command::YankDeleteSelection => {
+                self.delete_selection_or_char(false, transient_line_selection, true)
             }
-            Command::ChangeSelection => self.delete_selection_or_char(true, false),
+            Command::YankChangeSelection => self.delete_selection_or_char(true, false, true),
+            Command::DeleteSelection => {
+                self.delete_selection_or_char(false, transient_line_selection, false)
+            }
+            Command::ChangeSelection => self.delete_selection_or_char(true, false, false),
             Command::EnterSelectMode => self.toggle_select_mode(),
             Command::SelectLine => self.extend_line(true),
             Command::SelectLineUp => self.select_line_up(),
