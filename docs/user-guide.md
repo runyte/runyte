@@ -607,7 +607,7 @@ Choose a topic below; existing fragment links remain as migration links.
 [example-applications](user-guide/plugins.md#example-applications)
 
 <a id="agent-access-to-workspace-context"></a>
-[agent-access-to-workspace-context](user-guide/agent-access-to-workspace-context.md#agent-access-to-workspace-context)
+[agent-access-to-workspace-context](user-guide/agent-access-to-workspace-context.md#mcp-server)
 
 <a id="setting-it-up"></a>
 [setting-it-up](user-guide/agent-access-to-workspace-context.md#setting-it-up)

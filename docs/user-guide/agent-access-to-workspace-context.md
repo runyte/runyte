@@ -1,4 +1,4 @@
-## Agent access to workspace context
+## MCP server
 
 Runyte includes an MCP server for agents to find and read integrated terminals
 and unsaved buffers and, when you allow it, to edit buffers and type into
