@@ -352,7 +352,7 @@ wheel events while captured drags retain their semantic action and button.
 Native media and document-preview pointer actions also resolve through
 `keys.pointer`: `media-pan`, `media-region`, `media-auto-select`,
 `media-toggle-zoom`, `media-zoom`, `media-horizontal`, `media-scroll`,
-`preview-select`, `preview-horizontal`, and `preview-scroll`. The native input-loss
+`preview-select`, `preview-zoom`, `preview-horizontal`, and `preview-scroll`. The native input-loss
 banner exposes `input-overflow-dismiss`. Their factory
 modifier precedence and content-dependent selection remain unchanged. Native
 wheel aliases use continuous `Wheel` deltas; host wheel directions remain

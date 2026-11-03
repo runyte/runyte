@@ -598,7 +598,7 @@ pub struct EditorSnapshot {
     pub directory_tree: Option<DirectoryTreeSnapshot>,
     pub panes: Vec<PaneSnapshot>,
     pub pane_drop: Option<Rect>,
-    pub pointer_bindings: [[u64; 14]; 26],
+    pub pointer_bindings: [[u64; 14]; 27],
     pub window_bindings: Vec<WindowBinding>,
     pub window_authored: u8,
     pub window_guard: u8,

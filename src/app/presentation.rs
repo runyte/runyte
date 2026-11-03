@@ -1135,6 +1135,30 @@ impl App {
     ///
     /// Help does not depend on the mode, so every route in reaches the same
     /// document and the palette's own mode cannot leak into the answer.
+    /// The document-preview part of help. Its keys describe the rendered page
+    /// a preview shows, so they are listed only while one is open in this
+    /// pane; elsewhere they would contradict the view's own keys. Views that
+    /// can open a preview name the command instead, so it stays discoverable.
+    fn document_preview_help(&self) -> String {
+        let scope = self.key_binding_scope();
+        if self.document_previews.contains_key(&self.active_pane) {
+            return self.keymap().native_preview_help(self.mode, scope);
+        }
+        if matches!(
+            scope,
+            BindingScope::Media
+                | BindingScope::PdfPages
+                | BindingScope::Terminal
+                | BindingScope::DirectoryTree
+        ) {
+            return String::new();
+        }
+        format!(
+            "\nNative document preview\n\n  :preview renders this buffer, or its selected text, as a document in this\n  pane. {} inside the preview lists its keys.\n",
+            self.binding_label(crate::command::EditorCommand::ShowHelp)
+        )
+    }
+
     pub(super) fn open_help(&mut self) {
         let topic = if self.directory_tree.focused {
             HelpTopic::DirectoryTree
@@ -1158,11 +1182,7 @@ impl App {
         let mut text = document.text().to_owned();
         if self.native_media {
             text.push_str(&self.native_window_bindings().help());
-            text.push_str(
-                &self
-                    .keymap()
-                    .native_preview_help(self.mode, self.key_binding_scope()),
-            );
+            text.push_str(&self.document_preview_help());
         }
         let existing = self.buffers.iter().enumerate().find_map(|(index, buffer)| {
             (!self.closed_buffers.contains(&index) && buffer.is_help()).then_some(index)

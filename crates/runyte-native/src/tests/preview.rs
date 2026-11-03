@@ -1128,3 +1128,27 @@ fn focus_handoff_pins_terminal_identity_and_cannot_revive_after_mismatch() {
         InputRoute::Discard
     );
 }
+#[test]
+fn wheel_zoom_steps_by_notches_within_the_keyboard_range() {
+    let step = super::super::viewport::WHEEL_ZOOM_PER_NOTCH;
+    let mut state = State::default();
+    state.zoom = 1.0;
+    state.selection = Some([[0.0; 2]; 2]);
+    state.wheel_zoom(1.0);
+    assert!((state.zoom - step).abs() < 1e-6);
+    assert!(state.selection.is_none());
+    state.wheel_zoom(-1.0);
+    assert!((state.zoom - 1.0).abs() < 1e-6);
+    for _ in 0..4 {
+        state.wheel_zoom(0.25);
+    }
+    assert!((state.zoom - step).abs() < 1e-5);
+    for _ in 0..100 {
+        state.wheel_zoom(10.0);
+    }
+    assert_eq!(state.zoom, 4.0);
+    for _ in 0..100 {
+        state.wheel_zoom(-10.0);
+    }
+    assert_eq!(state.zoom, 0.25);
+}

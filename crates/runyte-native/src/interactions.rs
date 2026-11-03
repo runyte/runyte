@@ -235,7 +235,16 @@ impl NativeView {
         }) else {
             return true;
         };
-        let delta = event.delta.pixel_delta(gpui::px(self.metrics.height));
+        // Zoom counts wheel notches so its speed is the same at every font
+        // size; panning follows the pointer in pixels.
+        let delta = if action == Action::MediaZoom {
+            super::ScrollAccumulator::delta(event.delta, self.metrics).0
+        } else {
+            event
+                .delta
+                .pixel_delta(gpui::px(self.metrics.height))
+                .map(f32::from)
+        };
         let area = self.media_area(&pane);
         let point = self.local(&pane, event.position);
         let view = self
@@ -246,7 +255,7 @@ impl NativeView {
         view.show_source(&page);
         let pages = view.pointer_scroll(
             action,
-            [f32::from(delta.x), f32::from(delta.y)],
+            [delta.x, delta.y],
             point,
             super::viewport::PointerSurface {
                 page: &page,

@@ -3346,6 +3346,27 @@ impl App {
 }
 
 impl App {
+    /// Refuses a text command over an image or PDF surface. The buffer behind
+    /// the surface holds one row per page, so a word motion, a register or a
+    /// search there would change something nobody can see. Help leaves out
+    /// exactly the keys refused here.
+    pub(super) fn refuse_on_media_surface(
+        &mut self,
+        command: crate::command::EditorCommand,
+    ) -> bool {
+        use crate::keymap::{BindingScope, admission};
+        if self.key_binding_scope() != BindingScope::Media
+            || admission::admits_command(BindingScope::Media, command)
+        {
+            return false;
+        }
+        self.action_failed(format!(
+            "{} does not apply to an image or PDF page",
+            command.metadata().description.to_lowercase()
+        ));
+        true
+    }
+
     pub(super) fn handle_media_command(&mut self, command: crate::command::EditorCommand) -> bool {
         use crate::{
             command::EditorCommand as C,
@@ -3379,6 +3400,9 @@ impl App {
                 }
                 _ => return false,
             }
+            return true;
+        }
+        if self.refuse_on_media_surface(command) {
             return true;
         }
         if pdf
@@ -3432,7 +3456,9 @@ impl App {
             C::MediaMoveUp | C::MoveUp => A::MoveUp,
             C::MediaMoveDown | C::MoveDown => A::MoveDown,
             C::AlignViewCenter | C::AlignViewMiddle => A::Center,
-            C::MediaCopySelection => A::CopySelection,
+            // `Space c y` copies to the system clipboard everywhere; here the
+            // selection is the media's own, not the hidden page rows.
+            C::MediaCopySelection | C::ClipboardYank => A::CopySelection,
             C::MediaBack => {
                 self.mode = Mode::Normal;
                 A::Back

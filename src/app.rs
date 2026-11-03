@@ -4074,37 +4074,6 @@ enum ListAction {
     Workspace(usize),
 }
 
-/// Whether a command has no meaning over a live terminal.
-///
-/// Refusing by category rather than by name so a command added later is
-/// refused by default: the failure that matters is an editing command reaching
-/// the document hidden behind the terminal, and silence is the worst way for
-/// that to happen. Project-wide search is deliberately not refused — it looks
-/// past this pane, and its results replace the pane's content anyway.
-fn terminal_refuses(command: EditorCommand) -> bool {
-    use CommandCategory as Category;
-
-    matches!(
-        command,
-        EditorCommand::Search
-            | EditorCommand::SearchRegex
-            | EditorCommand::SearchForward
-            | EditorCommand::SearchBackward
-            | EditorCommand::SearchNext
-            | EditorCommand::SearchPrevious
-            | EditorCommand::SearchSelection
-    ) || matches!(
-        command.category(),
-        Category::Editing
-            | Category::Movement
-            | Category::Selection
-            | Category::Syntax
-            | Category::Language
-            | Category::Register
-            | Category::Clipboard
-    )
-}
-
 /// What a session shows beside its name in the terminal list.
 ///
 /// The end of its output rather than all of it: two shells in the same

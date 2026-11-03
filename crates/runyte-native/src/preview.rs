@@ -484,6 +484,15 @@ impl State {
         }
         effective_navigation(&mut self.keys, key, page, bindings)
     }
+    /// Wheel zoom by notches, at the media wheel's rate and within the zoom
+    /// range the keyboard's steps share.
+    fn wheel_zoom(&mut self, notches: f32) {
+        let factor = super::viewport::WHEEL_ZOOM_PER_NOTCH
+            .powf(notches)
+            .clamp(0.5, 2.);
+        self.zoom = (self.zoom * factor).clamp(0.25, 4.0);
+        self.selection = None;
+    }
     fn clamp_scroll(&mut self) {
         if let Some(Ok(output)) = &self.output {
             for (offset, maximum) in self.scroll.iter_mut().zip(output.reply.max_scroll) {
@@ -1145,18 +1154,31 @@ impl NativeView {
         let Some(pointer) = super::pointer::event(input) else {
             return true;
         };
-        let Some(action) = [Action::PreviewHorizontal, Action::PreviewScroll]
-            .into_iter()
-            .find(|action| {
-                input
-                    .pointer_bindings
-                    .matches(*action, Trigger::Wheel, pointer.modifiers)
-            })
-        else {
+        let Some(action) = [
+            Action::PreviewZoom,
+            Action::PreviewHorizontal,
+            Action::PreviewScroll,
+        ]
+        .into_iter()
+        .find(|action| {
+            input
+                .pointer_bindings
+                .matches(*action, Trigger::Wheel, pointer.modifiers)
+        }) else {
             return true;
         };
-        let delta = event.delta.pixel_delta(px(self.metrics.height));
         let state = self.previews.states.get_mut(&pane.pane).unwrap();
+        if action == Action::PreviewZoom {
+            // Notches, as media zoom counts them, so the speed does not follow
+            // the font size. The page reflows around the new size.
+            let notches = super::ScrollAccumulator::delta(event.delta, self.metrics)
+                .0
+                .y;
+            state.wheel_zoom(notches);
+            cx.notify();
+            return true;
+        }
+        let delta = event.delta.pixel_delta(px(self.metrics.height));
         if action == Action::PreviewHorizontal {
             state.scroll[0] =
                 (state.scroll[0] - f64::from(f32::from(delta.y) / state.zoom)).max(0.0);

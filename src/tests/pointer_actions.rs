@@ -165,8 +165,9 @@ fn native_pointer_defaults_preserve_modifier_precedence() {
             (Action::MediaZoom, zoom),
             (Action::MediaHorizontal, shift && !zoom),
             (Action::MediaScroll, !shift && !zoom),
-            (Action::PreviewHorizontal, shift),
-            (Action::PreviewScroll, !shift),
+            (Action::PreviewZoom, zoom),
+            (Action::PreviewHorizontal, shift && !zoom),
+            (Action::PreviewScroll, !shift && !zoom),
         ] {
             assert_eq!(
                 bindings.matches(action, Trigger::Wheel, modifiers),
@@ -197,4 +198,72 @@ fn native_pointer_owner_rollback_and_continuous_wheel_remaps() {
     }
     assert!(invalid.matches(Action::PreviewSelect, Trigger::RightDrag, Modifiers::NONE));
     assert_eq!(Bindings::from_masks(*bindings.masks()), Some(bindings));
+}
+
+#[test]
+fn media_help_explains_view_gestures_from_the_effective_registry() {
+    let render = |keymap: &crate::keymap::Keymap| {
+        crate::help::render(
+            crate::help::HelpTopic::Media,
+            crate::command::GrammarKind::Runyte,
+            crate::keymap::BindingScope::Media,
+            keymap,
+            true,
+        )
+    };
+    let help = render(crate::keymap::default_keymap());
+    let section = help
+        .split_once("Mouse in this view\n")
+        .expect("media help has a view mouse section")
+        .1;
+    let section = &section[..section.find("\n\n").unwrap()];
+    for action in crate::help::HelpTopic::Media.pointer_actions() {
+        let entry = format!(
+            "  {}\n      {}",
+            Bindings::default().label(*action),
+            action.description()
+        );
+        assert!(section.contains(&entry), "{entry:?} missing from {section}");
+    }
+    assert!(section.starts_with("  Ctrl-Wheel / Super-Wheel"));
+    // The view's own gestures come before the general rows, which describe
+    // a wheel that scrolls and a drag that selects text.
+    assert!(help.find("Mouse in this view") < help.find("\nMouse\n"));
+    assert!(crate::help::HelpTopic::Text.pointer_actions().is_empty());
+
+    let section = serde_yaml::from_str(
+        "pointer: {media-zoom: [Alt-Wheel], media-scroll: [Wheel], media-toggle-zoom: []}",
+    )
+    .unwrap();
+    let result = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    let help = render(&result.keymap);
+    assert!(help.contains(&format!(
+        "  Alt-Wheel\n      {}",
+        Action::MediaZoom.description()
+    )));
+    assert!(!help.contains(Action::MediaToggleZoom.description()));
+}
+
+#[test]
+fn document_preview_help_lists_its_navigation_and_gestures() {
+    let help = crate::keymap::default_keymap().native_preview_help(
+        crate::command::Mode::Normal,
+        crate::keymap::BindingScope::Global,
+    );
+    for row in [
+        "  j / Down  Scroll down",
+        "  Ctrl-f / Ctrl-n / PageDown  Page down",
+        "  g g  Document start",
+        "  + / =  Zoom in",
+        "  -  Zoom out",
+        "  z 1 / z f  Reset zoom",
+        "Mouse in a document preview\n  Ctrl-Wheel / Super-Wheel (any other modifiers)\n      Zoom in or out",
+        "  Wheel (without Shift, Ctrl or Super)\n      Scroll\n",
+    ] {
+        assert!(help.contains(row), "{row:?} missing from {help}");
+    }
+    // View-alignment aliases repeat the motions; only the shortest keys show.
+    assert!(!help.contains("z j"));
+    assert!(!help.contains("Navigation follows"));
 }

@@ -15,6 +15,7 @@ use crate::{
 };
 
 pub mod actions;
+pub mod admission;
 pub mod configured;
 mod effective;
 pub mod native_preview;

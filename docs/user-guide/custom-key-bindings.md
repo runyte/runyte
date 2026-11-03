@@ -508,7 +508,7 @@ The same section exposes other editor-owned pointer actions:
 | `media-toggle-zoom` | Button double clicks | Ordinary left double-click toggles image fit/zoom where automatic selection would pan |
 | `media-zoom`, `media-horizontal`, `media-scroll` | `Wheel` | Ctrl/Super zooms, otherwise Shift scrolls horizontally, otherwise pans or changes PDF pages at fit size |
 | `preview-select` | Button drags | Left selects text in a native document preview; an inactive preview first receives focus |
-| `preview-horizontal`, `preview-scroll` | `Wheel` | Shift scrolls horizontally; other modifiers retain ordinary two-axis scrolling |
+| `preview-zoom`, `preview-horizontal`, `preview-scroll` | `Wheel` | Ctrl/Super zooms, otherwise Shift scrolls horizontally, otherwise ordinary two-axis scrolling |
 | `input-overflow-dismiss` | Button clicks | Left click dismisses the native input-loss banner |
 
 Drag bindings start on button-down and retain their button and target until

@@ -32,10 +32,11 @@ pub enum Action {
     PreviewSelect,
     PreviewHorizontal,
     PreviewScroll,
+    PreviewZoom,
     InputOverflowDismiss,
 }
 impl Action {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::PaneMove,
         Self::PaneExtend,
         Self::Resize,
@@ -61,6 +62,7 @@ impl Action {
         Self::PreviewSelect,
         Self::PreviewHorizontal,
         Self::PreviewScroll,
+        Self::PreviewZoom,
         Self::InputOverflowDismiss,
     ];
     pub fn name(self) -> &'static str {
@@ -90,8 +92,43 @@ impl Action {
             "preview-select",
             "preview-horizontal",
             "preview-scroll",
+            "preview-zoom",
             "input-overflow-dismiss",
         ][self as usize]
+    }
+    /// What the gesture does, for help pages that explain one view's mouse.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::PaneMove => "Move the pane",
+            Self::PaneExtend => "Extend the pane into its neighbours",
+            Self::Resize => "Resize the split at a shared pane border",
+            Self::TreeResize => "Resize the directory tree",
+            Self::Select => "Select text",
+            Self::Extend => "Extend the selection",
+            Self::OpenLink => "Follow the link under the pointer",
+            Self::Copy => "Copy the current selections",
+            Self::ScrollUp => "Scroll up",
+            Self::ScrollDown => "Scroll down",
+            Self::ScrollLeft => "Scroll left",
+            Self::ScrollRight => "Scroll right",
+            Self::TreeSelect => "Select a tree row",
+            Self::TreeOpen => "Open a file or toggle a directory",
+            Self::SessionActivate => "Switch to the session",
+            Self::MediaPan => "Pan",
+            Self::MediaRegion => "Select a rectangular region, also on PDFs",
+            Self::MediaAutoSelect => {
+                "Select PDF text in reading order; a scanned page selects a region and an image pans"
+            }
+            Self::MediaToggleZoom => "On an image, toggle between fit and twice fit at the pointer",
+            Self::MediaZoom => "Zoom in or out at the pointer; touchpad scrolling zooms smoothly",
+            Self::MediaHorizontal => "Pan horizontally",
+            Self::MediaScroll => "Pan; at fit size a PDF changes pages instead",
+            Self::PreviewSelect => "Select document text",
+            Self::PreviewHorizontal => "Scroll horizontally",
+            Self::PreviewScroll => "Scroll",
+            Self::PreviewZoom => "Zoom in or out; touchpad scrolling zooms smoothly",
+            Self::InputOverflowDismiss => "Dismiss the overflowing input notice",
+        }
     }
     fn owner(self) -> usize {
         match self {
@@ -109,7 +146,7 @@ impl Action {
             Self::MediaToggleZoom => 11,
             Self::MediaZoom | Self::MediaHorizontal | Self::MediaScroll => 12,
             Self::PreviewSelect => 13,
-            Self::PreviewHorizontal | Self::PreviewScroll => 14,
+            Self::PreviewHorizontal | Self::PreviewScroll | Self::PreviewZoom => 14,
             Self::InputOverflowDismiss => 15,
         }
     }
@@ -128,7 +165,8 @@ impl Action {
             | Self::MediaHorizontal
             | Self::MediaScroll
             | Self::PreviewHorizontal
-            | Self::PreviewScroll => trigger == Trigger::Wheel,
+            | Self::PreviewScroll
+            | Self::PreviewZoom => trigger == Trigger::Wheel,
             _ => trigger.is_drag(),
         }
     }
@@ -209,12 +247,12 @@ impl Trigger {
     }
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Bindings(Arc<[[u64; 14]; 26]>);
+pub struct Bindings(Arc<[[u64; 14]; 27]>);
 impl Default for Bindings {
     fn default() -> Self {
         use Action::*;
         use Trigger::*;
-        let mut masks = [[0; 14]; 26];
+        let mut masks = [[0; 14]; 27];
         for bits in 0..64 {
             let modifiers = Modifiers::from_bits(bits).unwrap();
             let shift = modifiers.contains(Modifiers::SHIFT);
@@ -278,7 +316,9 @@ impl Default for Bindings {
             );
             set(PreviewSelect, LeftDrag);
             set(
-                if shift {
+                if zoom {
+                    PreviewZoom
+                } else if shift {
                     PreviewHorizontal
                 } else {
                     PreviewScroll
@@ -330,8 +370,9 @@ impl Bindings {
                 Action::MediaHorizontal => "Shift-Wheel (without Ctrl or Super)",
                 Action::MediaScroll => "Wheel (without Shift, Ctrl or Super)",
                 Action::PreviewSelect => "LeftDrag (any modifiers)",
-                Action::PreviewHorizontal => "Shift-Wheel (any other modifiers)",
-                Action::PreviewScroll => "Wheel (without Shift)",
+                Action::PreviewHorizontal => "Shift-Wheel (without Ctrl or Super)",
+                Action::PreviewScroll => "Wheel (without Shift, Ctrl or Super)",
+                Action::PreviewZoom => "Ctrl-Wheel / Super-Wheel (any other modifiers)",
             }
             .into();
         }
@@ -361,6 +402,30 @@ impl Bindings {
         }
     }
 
+    /// A help section naming each gesture and what it does. Spellings are
+    /// long and vary with configuration, so each description sits on its own
+    /// indented row rather than in a key column. Unbound gestures are left
+    /// out; nothing is written when none remain.
+    pub fn help(&self, title: &str, actions: &[Action]) -> String {
+        let mut text = String::new();
+        for &action in actions {
+            if self.0[action as usize].iter().all(|mask| *mask == 0) {
+                continue;
+            }
+            if text.is_empty() {
+                text = format!("{title}\n");
+            }
+            text.push_str(&format!(
+                "  {}\n      {}\n",
+                self.label(action),
+                action.description()
+            ));
+        }
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text
+    }
     pub fn matches(&self, action: Action, trigger: Trigger, modifiers: Modifiers) -> bool {
         self.0[action as usize][trigger as usize] & (1u64 << modifiers.bits()) != 0
     }
@@ -412,10 +477,10 @@ impl Bindings {
             extend_pane: masks(Action::PaneExtend),
         }
     }
-    pub fn masks(&self) -> &[[u64; 14]; 26] {
+    pub fn masks(&self) -> &[[u64; 14]; 27] {
         &self.0
     }
-    pub fn from_masks(masks: [[u64; 14]; 26]) -> Option<Self> {
+    pub fn from_masks(masks: [[u64; 14]; 27]) -> Option<Self> {
         for action in Action::ALL {
             for trigger in Trigger::ALL {
                 let mask = masks[action as usize][trigger as usize];

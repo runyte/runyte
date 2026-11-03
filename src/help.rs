@@ -3,8 +3,10 @@
 //! Contextual help for the view under the cursor.
 //!
 //! Editor key tables come from the keymap registry at render time, so help
-//! follows dispatch and configured bindings. Command prompts handle their own
-//! input outside that registry and are described as such.
+//! follows dispatch and configured bindings. A view that does not show its
+//! buffer as text lists only what `keymap::admission` admits, the rule its
+//! dispatch refuses by. Command prompts handle their own input outside that
+//! registry and are described as such.
 //!
 //! The rendered document carries semantic colour spans over plain text and is
 //! opened as an ordinary read-only buffer. That is what makes help searchable,
@@ -177,7 +179,8 @@ impl HelpTopic {
                 "Escape fits zoomed media first, then clears a selection, then leaves the preview. PDFs return to their page rows; images return to their containing directory.",
                 "View alignment commands pan or center media. Zoom and fit commands appear in the key table below.",
                 "Select mode extends a PDF word/line selection or image-region corner with movement keys. Escape returns to Normal and follows the same fit, selection, and preview order.",
-                "Wheel pans; Ctrl-wheel zooms at the pointer; middle-drag pans. PDF left-drag selects text. Shift-left-drag selects an image region. Yank copies the selection to the system clipboard.",
+                "In a PDF, {binding:Ctrl-f}, {binding:Ctrl-d} and {binding:PageDown} show the next page and {binding:Ctrl-b}, {binding:Ctrl-u} and {binding:PageUp} the previous one at any zoom. A count before {binding:g g} opens that page; {binding:g g} and {binding:G} open the first and last.",
+                "Yank copies the selected PDF text or image region to the system clipboard. Zooming, panning and selecting with the mouse are listed under Mouse in this view.",
             ],
             Self::Text => &[
                 "Runyte is a selection-first modal editor: move to select, then act. Every editing command works on whatever is selected, however many ranges that is.",
@@ -259,6 +262,25 @@ impl HelpTopic {
     /// comparison prose genuinely loses — commands differing along two axes at
     /// once, where a sentence makes the reader hold one axis in their head
     /// while reading the other.
+    /// Pointer gestures only this view answers to, most asked-for first. Their
+    /// spellings come from the live pointer registry, so a remapped gesture is
+    /// described where it now is.
+    pub fn pointer_actions(self) -> &'static [crate::keymap::pointer_actions::Action] {
+        use crate::keymap::pointer_actions::Action::*;
+        match self {
+            Self::Media => &[
+                MediaZoom,
+                MediaScroll,
+                MediaHorizontal,
+                MediaAutoSelect,
+                MediaToggleZoom,
+                MediaRegion,
+                MediaPan,
+            ],
+            _ => &[],
+        }
+    }
+
     pub fn table_for(self, _grammar: GrammarKind) -> &'static [&'static str] {
         match self {
             Self::GitStash => GIT_STASH_CREATION_TABLE,
@@ -444,6 +466,14 @@ pub(crate) fn render_document_with_descriptions(
             "editor.fast_pane_keys is on, so Ctrl-h/j/k/l also leave this pane and the\n             program never receives them.\n"
         );
     }
+    // Before the trailer and the shared mouse section: the general rows say
+    // a left drag selects text and the wheel scrolls, which is not what a
+    // view with gestures of its own does.
+    out.push_str(
+        &keymap
+            .pointer()
+            .help("Mouse in this view", topic.pointer_actions()),
+    );
     let _ = writeln!(out, "{}", HELP_TRAILER);
 
     let _ = writeln!(out, "Mouse");
@@ -561,6 +591,7 @@ pub(crate) fn render_document_with_descriptions(
                 (scope != BindingScope::GitMergeInput).then_some(keymap.leader()),
             )
         })
+        .filter(|binding| crate::keymap::admission::admits(scope, binding.target))
         .collect::<Vec<_>>();
     if scope.is_merge_review() {
         use crate::keymap::ui::{Action, Owner};
@@ -641,9 +672,19 @@ pub(crate) fn render_document_with_descriptions(
     // opens the hint popup and teaches the rest of itself; a leaf runs
     // immediately and so is the only kind of key nothing can advertise.
     let entries = keymap.entry_points(mode, scope);
+    // A prefix is worth pressing only when something under it works here;
+    // a key is listed only when this view answers to it. Both read the rule
+    // dispatch refuses by, so nothing listed is refused when pressed.
     let prefixes = entries
         .iter()
         .filter(|entry| entry.prefix && !entry.scoped)
+        .filter(|entry| {
+            keymap.bindings_for_scope(mode, scope).any(|binding| {
+                binding.sequence.len() > 1
+                    && binding.sequence.as_slice()[0] == entry.key
+                    && crate::keymap::admission::admits(scope, binding.target)
+            })
+        })
         .collect::<Vec<_>>();
     if !prefixes.is_empty() {
         let _ = writeln!(out, "Where to start");
@@ -665,10 +706,18 @@ pub(crate) fn render_document_with_descriptions(
         .iter()
         .filter(|entry| !entry.prefix && !entry.scoped)
         .filter(|entry| !read_only || !hides_a_refusal(entry.key, mode, scope, keymap))
+        .filter(
+            |entry| match keymap.lookup_in(mode, scope, &KeySequence::from(entry.key)) {
+                Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
+                    crate::keymap::admission::admits(scope, binding.target)
+                }
+                _ => true,
+            },
+        )
         .collect::<Vec<_>>();
     if !direct.is_empty() {
         let _ = writeln!(out, "Direct keys");
-        let _ = writeln!(out, "  These act on the first press, in every view.\n");
+        let _ = writeln!(out, "  These act on the first press.\n");
         // Grouped by the shape of the key rather than listed as one run.
         // A chord is not findable among seventy letters: someone looking for
         // Ctrl-o is looking for a chord, not for the letter it happens to use.
@@ -1338,6 +1387,13 @@ mod tests {
                     {
                         continue;
                     }
+                    // Refused in this view; `help_lists_no_key_its_view_refuses`
+                    // checks that it is absent.
+                    if matches!(mode, Mode::Normal | Mode::Select)
+                        && !crate::keymap::admission::admits(scope, binding.target)
+                    {
+                        continue;
+                    }
                     let label = if matches!(mode, Mode::Normal | Mode::Select)
                         && binding.scope == BindingScope::Global
                         && binding.sequence.len() > 1
@@ -1365,6 +1421,98 @@ mod tests {
             assert!(document.contains("Command\n"));
             assert_eq!(keymap.bindings_for_scope(Mode::Command, scope).count(), 0);
         }
+    }
+
+    /// A view that does not show its buffer as text lists none of the keys it
+    /// refuses, and keeps a prefix only while something under it works.
+    #[test]
+    fn help_lists_no_key_its_view_refuses() {
+        use crate::keymap::admission::admits;
+        let keymap = default_keymap();
+        for scope in [
+            BindingScope::Media,
+            BindingScope::DirectoryTree,
+            BindingScope::Terminal,
+        ] {
+            let read_only = scope != BindingScope::Terminal;
+            let document = render(
+                HelpTopic::for_context(scope),
+                GrammarKind::Runyte,
+                scope,
+                keymap,
+                read_only,
+            );
+            let modal = document
+                .split_once("Normal and Select\n")
+                .unwrap()
+                .1
+                .split_once("\nInsert and Replace\n")
+                .or_else(|| {
+                    document
+                        .split_once("Normal and Select\n")
+                        .unwrap()
+                        .1
+                        .split_once("\nTerminal Insert\n")
+                })
+                .unwrap()
+                .0;
+            let rows = modal
+                .lines()
+                .filter_map(|line| line.strip_prefix("  "))
+                .map(|line| line.split("  ").next().unwrap().trim_end_matches(" …"))
+                .collect::<Vec<_>>();
+            let mut refused = 0;
+            for binding in keymap.bindings_for_scope(Mode::Normal, scope) {
+                let first = binding.sequence.as_slice()[0];
+                if binding.sequence.len() == 1 && !admits(scope, binding.target) {
+                    refused += 1;
+                    assert!(
+                        !rows.contains(&help_key_label(first).as_str()),
+                        "{scope:?} lists refused {} ({:?})",
+                        binding.sequence,
+                        binding.target
+                    );
+                }
+            }
+            assert!(
+                refused > 0,
+                "{scope:?} refuses nothing; the test proves nothing"
+            );
+            for prefix in rows.iter().filter_map(|row| {
+                modal
+                    .contains(&format!("  {row} …"))
+                    .then(|| KeySequence::parse(row).ok())
+                    .flatten()
+            }) {
+                assert!(
+                    keymap
+                        .bindings_for_scope(Mode::Normal, scope)
+                        .any(|binding| {
+                            binding.sequence.len() > 1
+                                && binding.sequence.as_slice()[0] == prefix.as_slice()[0]
+                                && admits(scope, binding.target)
+                        }),
+                    "{scope:?} offers prefix {prefix} with nothing usable under it"
+                );
+            }
+        }
+        // Media keeps the keys it does answer to.
+        let media = render(
+            HelpTopic::Media,
+            GrammarKind::Runyte,
+            BindingScope::Media,
+            keymap,
+            true,
+        );
+        for row in ["  G  ", "  Ctrl-f  ", "  v  ", "  :  "] {
+            assert!(
+                media.lines().any(|line| line.starts_with(row.trim_end())
+                    && line[row.trim_end().len()..].starts_with(' ')),
+                "media help lost {row:?}"
+            );
+        }
+        assert!(!media.lines().any(|line| line.starts_with("  w ")));
+        assert!(!media.lines().any(|line| line.starts_with("  m …")));
     }
 
     #[test]

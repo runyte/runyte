@@ -34,7 +34,8 @@ manual: invoke `:preview` again to refresh the same pane. Escape returns to
 source without changing its selection. An explicit SVG selection is detected
 by its XML root, including when selected inside Markdown or a source file.
 
-- Wheel scrolls continuously; Shift-wheel scrolls horizontally. Prose wraps
+- Wheel scrolls continuously; Shift-wheel scrolls horizontally; Ctrl-wheel
+  (Cmd-wheel on macOS) zooms, reflowing the page like the zoom keys. Prose wraps
   with pane width. Code, JSON, YAML and plain text preserve whitespace and
   overflow horizontally at document level.
 - Built-in PDF/media navigation comes from the existing keymap registry:

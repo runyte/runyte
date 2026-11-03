@@ -158,6 +158,12 @@ and pending key sequences retain their own bindings.
 | Left-drag on an image | Pan; double-click toggles fit / 2× fit |
 | Shift-left-drag | Select a rectangular image region, including on PDFs |
 
+Other keys that act on text are refused in a media pane with a message:
+word and character motions, search, registers, selection and text-object
+commands, and editing. Pane, file, picker, session and jump-list keys keep
+working. `Space ?` and the key-hint popup list only the keys the pane answers
+to; the same holds in the focused directory tree and in a terminal pane.
+
 There is no separate PDF page picker or `g p` binding. The paragraph commands
 `goto-next-paragraph` and `goto-previous-paragraph` remain available for configured
 keys without default bindings; `g p` and `g P` do not move between text paragraphs.

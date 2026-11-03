@@ -140,3 +140,31 @@ fn continuous_pdf_wheel_retains_remainders_across_zoom_and_horizontal_input() {
     );
     assert_ne!(view.center, center);
 }
+#[test]
+fn wheel_zoom_steps_by_notches_and_scales_touchpad_fractions() {
+    let page = page(false);
+    let surface = PointerSurface {
+        page: &page,
+        area: [400.; 2],
+        pdf: false,
+    };
+    let bindings = Bindings::default();
+    let mut view = Viewport::new(0);
+    let zoom = |view: &mut Viewport, notches: f32| {
+        view.pointer_scroll(
+            Action::MediaZoom,
+            [0., notches],
+            [200.; 2],
+            surface,
+            &bindings,
+        );
+    };
+    zoom(&mut view, 1.);
+    assert!((view.zoom - WHEEL_ZOOM_PER_NOTCH).abs() < 1e-6);
+    zoom(&mut view, -1.);
+    assert!((view.zoom - 1.).abs() < 1e-6);
+    for _ in 0..4 {
+        zoom(&mut view, 0.25);
+    }
+    assert!((view.zoom - WHEEL_ZOOM_PER_NOTCH).abs() < 1e-5);
+}

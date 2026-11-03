@@ -337,7 +337,59 @@ impl Keymap {
                 });
             text.push_str(&format!("  {label}  {description}\n"));
         }
-        text.push_str("  Navigation follows the supported Media bindings.\n");
+        // Navigation is projected from the Media bindings, so it is listed
+        // from that projection: a reader should not have to know which media
+        // keys a document preview accepts.
+        for action in [
+            Action::Down,
+            Action::Up,
+            Action::Left,
+            Action::Right,
+            Action::PageDown,
+            Action::PageUp,
+            Action::HalfPageDown,
+            Action::HalfPageUp,
+            Action::Top,
+            Action::Bottom,
+            Action::ZoomIn,
+            Action::ZoomOut,
+            Action::ResetZoom,
+        ] {
+            // Only the shortest sequences: the view-alignment prefixes repeat
+            // most motions, and listing those copies would bury the keys.
+            let sequences = bindings
+                .entries
+                .iter()
+                .filter(|(_, found)| *found == action)
+                .map(|(sequence, _)| sequence)
+                .collect::<Vec<_>>();
+            let Some(shortest) = sequences.iter().map(|sequence| sequence.len()).min() else {
+                continue;
+            };
+            let mut keys = sequences
+                .into_iter()
+                .filter(|sequence| sequence.len() == shortest)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>();
+            keys.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
+            keys.dedup();
+            text.push_str(&format!(
+                "  {}  {}\n",
+                keys.join(" / "),
+                action.description()
+            ));
+        }
+        text.push('\n');
+        use super::pointer_actions::Action as Pointer;
+        text.push_str(&self.pointer().help(
+            "Mouse in a document preview",
+            &[
+                Pointer::PreviewZoom,
+                Pointer::PreviewScroll,
+                Pointer::PreviewHorizontal,
+                Pointer::PreviewSelect,
+            ],
+        ));
         text
     }
     pub fn native_preview(&self, mode: Mode, source: BindingScope) -> Bindings {

@@ -772,6 +772,14 @@ impl KeyHintState {
                 namespace.sequence.len() == self.pending.len() + 1
                     && namespace.sequence.starts_with(&self.pending)
             })
+            // A group is offered only when something in it works in this view,
+            // by the rule dispatch refuses by and help lists by.
+            .filter(|namespace| {
+                keymap.bindings_for_scope(mode, scope).any(|binding| {
+                    binding.sequence.starts_with(&namespace.sequence)
+                        && crate::keymap::admission::admits(scope, binding.target)
+                })
+            })
             .collect::<Vec<_>>();
         let (exact, continuations) = match keymap.lookup_in(mode, scope, &self.pending) {
             Lookup::NoMatch => (None, Vec::new()),
@@ -782,8 +790,10 @@ impl KeyHintState {
                 continuations,
             } => (Some(exact), continuations),
         };
+        let exact = exact.filter(|binding| crate::keymap::admission::admits(scope, binding.target));
         let continuations = continuations
             .into_iter()
+            .filter(|binding| crate::keymap::admission::admits(scope, binding.target))
             .filter(|binding| {
                 binding.sequence.len() == self.pending.len() + 1
                     || !namespaces
@@ -1559,6 +1569,51 @@ mod tests {
             hints.observe(*key, Mode::Normal, keymap);
         }
         hints.rows(keymap, Mode::Normal)
+    }
+
+    /// The popup offers what help lists: nothing a view refuses, and no group
+    /// in which nothing works.
+    #[test]
+    fn hint_rows_leave_out_what_the_view_refuses() {
+        use crate::keymap::admission::admits;
+        let keymap = default_keymap();
+        let rows_in = |keys: &str, scope: BindingScope| {
+            let mut hints = KeyHintState::default();
+            for key in KeySequence::parse(keys).unwrap().as_slice() {
+                hints.observe_in(*key, Mode::Normal, scope, keymap);
+            }
+            hints.rows_in(keymap, Mode::Normal, scope)
+        };
+        for (keys, scope) in [
+            ("Space", BindingScope::Media),
+            ("Space", BindingScope::DirectoryTree),
+            ("Space", BindingScope::Terminal),
+            ("g", BindingScope::Media),
+            ("z", BindingScope::Media),
+        ] {
+            let rows = rows_in(keys, scope);
+            assert!(!rows.is_empty(), "{keys} in {scope:?}");
+            for row in &rows {
+                if let Some(target) = row.target {
+                    assert!(
+                        admits(scope, target),
+                        "{keys} in {scope:?} offers {target:?}"
+                    );
+                }
+            }
+        }
+        // The match group is selection and text objects, all refused on media.
+        assert!(rows_in("m", BindingScope::Media).is_empty());
+        assert!(!rows_in("m", BindingScope::Global).is_empty());
+        // Space offers the finder in a text view but not from the focused tree,
+        // which swallows it.
+        let finder = |scope| {
+            rows_in("Space", scope)
+                .iter()
+                .any(|row| row.target == Some(BindingTarget::Editor(EditorCommand::OpenFilePicker)))
+        };
+        assert!(finder(BindingScope::Global));
+        assert!(!finder(BindingScope::DirectoryTree));
     }
 
     #[test]

@@ -81,3 +81,35 @@ fn explicit_session_action_in_standalone_reports_unavailable_without_child_input
         before
     );
 }
+
+/// What help leaves out of the terminal page is exactly what review refuses
+/// with "needs a buffer"; every other command is either consumed by review or
+/// passed on to ordinary dispatch, never refused.
+#[test]
+fn terminal_review_refuses_exactly_what_help_leaves_out() {
+    use crate::keymap::admission::admits_command;
+    let mut mismatches = Vec::new();
+    let mut refused = 0;
+    let (mut app, terminal) = terminal_app("{}");
+    for &command in EditorCommand::ALL {
+        // Only the terminal handler runs, so one app serves every command.
+        app.mode = Mode::Normal;
+        app.status.clear();
+        app.panes.get_mut(&app.active_pane).unwrap().terminal = Some(terminal);
+        assert_eq!(app.key_binding_scope(), BindingScope::Terminal);
+        let consumed = app.execute_terminal_command(terminal, command, false);
+        let refusal = app.status.contains("needs a buffer");
+        if admits_command(BindingScope::Terminal, command) {
+            if refusal {
+                mismatches.push(format!("{command:?} admitted but refused: {}", app.status));
+            }
+        } else {
+            refused += 1;
+            if !(consumed && refusal) {
+                mismatches.push(format!("{command:?} not refused: {}", app.status));
+            }
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+    assert!(refused > 100, "only {refused} refused");
+}

@@ -3,6 +3,9 @@
 //! Pane-local document coordinates shared by drawing, hit testing and copying.
 use super::media::Page;
 
+/// Zoom factor for one wheel notch, finer than the keyboard's 1.25 step.
+pub const WHEEL_ZOOM_PER_NOTCH: f32 = 1.15;
+
 #[derive(Clone, Copy)]
 pub struct PointerSurface<'a> {
     pub page: &'a Page,
@@ -134,6 +137,8 @@ impl Viewport {
 
     /// Native wheel movement remains continuous. PDF paging retains its
     /// remainder across ordinary modifier changes, but never across remaps.
+    /// Pan and scroll deltas are pixels; a zoom delta is wheel notches, which
+    /// a touchpad reports in fractions.
     pub fn pointer_scroll(
         &mut self,
         action: runyte::keymap::pointer_actions::Action,
@@ -158,7 +163,7 @@ impl Viewport {
         self.pointer_bindings = Some(bindings.clone());
         match action {
             Action::MediaZoom => self.zoom_at(
-                (delta[1] * 0.008).exp().clamp(0.5, 2.),
+                WHEEL_ZOOM_PER_NOTCH.powf(delta[1]).clamp(0.5, 2.),
                 point,
                 [page.width, page.height],
                 area,

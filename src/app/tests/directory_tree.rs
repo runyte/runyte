@@ -1757,3 +1757,62 @@ fn remapped_tree_open_tracks_button_map_and_double_click_target() {
     assert!(app.pointer_drag.is_none());
     fs::remove_dir_all(root).unwrap();
 }
+
+/// What help leaves out of the tree page is exactly what the focused tree
+/// refuses: every refused command returns handled, says so, and changes
+/// nothing else; the commands it passes on reach ordinary dispatch.
+#[test]
+fn focused_tree_refuses_exactly_what_help_leaves_out() {
+    use crate::keymap::admission::{TREE_PASSES, admits_command};
+    let (mut app, root) = isolated("directory-tree-admission");
+    let path = root.join("file.txt");
+    fs::write(&path, "before\n").unwrap();
+    app.open_file(path).unwrap();
+    app.handle_directory_tree_command(EditorCommand::FocusDirectoryTree)
+        .unwrap();
+    assert_eq!(app.key_binding_scope(), BindingScope::DirectoryTree);
+    let fingerprint = |app: &App| {
+        (
+            app.mode,
+            app.directory_tree.focused,
+            app.directory_tree.selected.clone(),
+            app.active_pane,
+            app.active().buffer,
+            app.active().selection.clone(),
+            app.active_buffer().text().to_string(),
+        )
+    };
+    let before = fingerprint(&app);
+    let mut refused = 0;
+    for &command in EditorCommand::ALL {
+        if admits_command(BindingScope::DirectoryTree, command) {
+            continue;
+        }
+        refused += 1;
+        app.status.clear();
+        assert!(
+            app.handle_directory_tree_command(command).unwrap(),
+            "{command:?} reached the covered pane"
+        );
+        assert_eq!(fingerprint(&app), before, "{command:?} changed something");
+        assert!(
+            app.status.ends_with("does not apply to the directory tree"),
+            "{command:?} refused without saying so: {}",
+            app.status
+        );
+    }
+    assert!(refused > 100, "only {refused} refused");
+    for &command in TREE_PASSES {
+        if matches!(
+            command,
+            EditorCommand::ToggleFullscreen | EditorCommand::ToggleZen
+        ) {
+            continue; // these leave the tree first
+        }
+        assert!(
+            !app.handle_directory_tree_command(command).unwrap(),
+            "{command:?} should reach ordinary dispatch"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}

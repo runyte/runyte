@@ -6204,6 +6204,11 @@ impl App {
         if self.handle_directory_tree_command(command)? {
             return Ok(());
         }
+        // Before parameters and characters are read: character-taking and
+        // prompting commands never reach the media handler.
+        if self.refuse_on_media_surface(command) {
+            return Ok(());
+        }
         match (command, parameters) {
             (EditorCommand::ShowHelp, InvocationParameters::Help(request)) => {
                 match request {

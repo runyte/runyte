@@ -223,24 +223,18 @@ impl App {
                 self.mode = Mode::Normal;
             }
             _ if self.directory_tree.focused => {
-                // Global bindings remain visible for discovery, but document
-                // edits and terminal commands cannot reach the covered pane.
-                if matches!(
-                    command,
-                    Command::ToggleFullscreen
-                        | Command::ToggleZen
-                        | Command::OpenCommandPalette
-                        | Command::FocusWindowLeft
-                        | Command::FocusWindowRight
-                        | Command::FocusWindowUp
-                        | Command::FocusWindowDown
-                        | Command::NextWindow
-                ) {
+                // Document edits and terminal commands cannot reach the
+                // covered pane. Help reads the same rule and leaves them out.
+                if crate::keymap::admission::TREE_PASSES.contains(&command) {
                     if matches!(command, Command::ToggleFullscreen | Command::ToggleZen) {
                         self.leave_directory_tree();
                     }
                     return Ok(false);
                 }
+                self.action_failed(format!(
+                    "{} does not apply to the directory tree",
+                    command.metadata().description.to_lowercase()
+                ));
             }
             _ => return Ok(false),
         }

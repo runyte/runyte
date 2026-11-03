@@ -459,3 +459,47 @@ fn factory_preview_right_click_retains_source_selection_copy() {
     assert_eq!(&*clipboard.lock().unwrap(), "alpha");
     assert_eq!(host.active().selection, selection);
 }
+
+/// Help lists the preview's keys only while a preview is open in this pane;
+/// a text view that could open one names the command, and a media pane, where
+/// `:preview` is refused, says nothing about it.
+#[test]
+fn help_describes_the_document_preview_only_where_it_applies() {
+    let root = TestRuntimeRoot::new("document-preview-help").unwrap();
+    let notes = root.join("notes.md");
+    fs::write(&notes, "# Notes\n").unwrap();
+    let image = root.join("photo.png");
+    fs::write(&image, b"\x89PNG\0fixture").unwrap();
+    let help = |app: &mut App| {
+        app.open_help();
+        let text = app.active_buffer().text().to_string();
+        app.execute(parse_colon_command("close").unwrap()).unwrap();
+        text
+    };
+    let keys = "Mouse in a document preview";
+    let pointer = ":preview renders this buffer";
+
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    app.open_file(notes.clone()).unwrap();
+    let text = help(&mut app);
+    assert!(text.contains(pointer), "{text}");
+    assert!(!text.contains(keys));
+
+    app.open_file(notes).unwrap();
+    app.execute(parse_colon_command("preview").unwrap())
+        .unwrap();
+    assert!(app.document_previews.contains_key(&app.active_pane));
+    let text = help(&mut app);
+    assert!(text.contains(keys), "{text}");
+    assert!(text.contains("Zoom in"));
+    assert!(!text.contains(pointer));
+
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    app.open_file(image).unwrap();
+    assert_eq!(app.key_binding_scope(), BindingScope::Media);
+    let text = help(&mut app);
+    assert!(!text.contains("Native document preview"), "{text}");
+    assert!(text.contains("Native window"));
+}
