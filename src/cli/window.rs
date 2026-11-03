@@ -128,9 +128,81 @@ impl Surface {
     }
 }
 
+/// Terminal input read as soon as the terminal delivers it.
+///
+/// Crossterm tells the Esc key from the start of an Alt chord by what a single
+/// read returns: Escape followed by another byte in the same buffer is an Alt
+/// chord, so `Esc` then `:` read together become one `Alt-:`. An `EventStream`
+/// reads the terminal only when its owner asks for an event and every event
+/// from the previous read has been taken. An editor loop busy with earlier
+/// input would leave later keystrokes queued in the kernel until it asked
+/// again, and an Escape typed before a busy stretch ended would then share a
+/// read with the key typed after it. Draining the stream on a thread that does
+/// nothing else gives each burst the terminal writes its own read, however
+/// long the editor takes to handle it.
+///
+/// Dropping the value closes the channel. The thread notices when it next
+/// runs and drops the stream, which stops Crossterm's helper, so reading stops
+/// shortly after the owner is gone; keys already read by then are discarded.
+/// After a PTY hangup Crossterm can loop inside a read that never returns. The
+/// thread is detached so that only it, and never the editor loop, is held
+/// there until the process exits.
+#[cfg(not(windows))]
+pub(super) struct TerminalInput {
+    events: tokio::sync::mpsc::UnboundedReceiver<io::Result<Event>>,
+}
+
+#[cfg(not(windows))]
+impl TerminalInput {
+    pub(super) fn new() -> io::Result<Self> {
+        let (sender, events) = tokio::sync::mpsc::unbounded_channel();
+        let stream = EventStream::new();
+        std::thread::Builder::new()
+            .name("runyte-terminal-input".into())
+            .spawn(move || {
+                // Built here rather than by the caller: a runtime dropped on
+                // the editor's own runtime thread would panic. It drives only
+                // this task, and Crossterm's helper thread waits for the
+                // terminal and wakes it, so it needs no IO or timer driver.
+                match tokio::runtime::Builder::new_current_thread().build() {
+                    Ok(runtime) => runtime.block_on(forward_terminal_input(stream, sender)),
+                    Err(error) => {
+                        let _ = sender.send(Err(error));
+                    }
+                }
+            })?;
+        Ok(Self { events })
+    }
+
+    pub(super) async fn next(&mut self) -> Option<io::Result<Event>> {
+        self.events.recv().await
+    }
+}
+
+#[cfg(not(windows))]
+async fn forward_terminal_input(
+    mut stream: EventStream,
+    sender: tokio::sync::mpsc::UnboundedSender<io::Result<Event>>,
+) {
+    loop {
+        let event = tokio::select! {
+            biased;
+            () = sender.closed() => return,
+            event = stream.next() => event,
+        };
+        let Some(event) = event else {
+            return;
+        };
+        let failed = event.is_err();
+        if sender.send(event).is_err() || failed {
+            return;
+        }
+    }
+}
+
 #[cfg(not(windows))]
 pub(super) enum Events {
-    Terminal(EventStream),
+    Terminal(TerminalInput),
     Window(Box<dyn WindowEvents>),
 }
 
@@ -142,15 +214,15 @@ impl Events {
             Self::Window(window) => window.input_barrier(),
         }
     }
-    pub(super) fn new(window: Option<&'static dyn WindowFrontend>) -> Self {
-        match window {
+    pub(super) fn new(window: Option<&'static dyn WindowFrontend>) -> io::Result<Self> {
+        Ok(match window {
             Some(window) => Self::Window(window.events()),
-            None => Self::Terminal(EventStream::new()),
-        }
+            None => Self::Terminal(TerminalInput::new()?),
+        })
     }
     pub(super) async fn next(&mut self) -> Option<io::Result<Event>> {
         match self {
-            Self::Terminal(stream) => stream.next().await,
+            Self::Terminal(input) => input.next().await,
             Self::Window(window) => window.next().await,
         }
     }
