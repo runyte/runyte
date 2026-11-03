@@ -31,8 +31,9 @@ limits are documented in [the native packaging guide](../../contrib/packaging/RE
 
 Native builds embed four unmodified JetBrainsMono Nerd Font faces from Nerd
 Fonts v3.4.0 (JetBrains Mono 2.304): Medium, Medium Italic, Bold, and Bold Italic.
-They are registered before the window opens; both the cell grid and media
-labels use them. Font binaries add approximately 9.5 MiB only to native builds.
+They are registered before the window opens; the cell grid and media labels
+use them, and the document-preview helper registers the same embedded copy for
+code on generated pages. Font binaries add approximately 9.5 MiB only to native builds.
 Licenses and attribution live under `licenses/jetbrains-mono/`.
 
 The bridge retains the latest owned frame and coalesces wakeups. It does not

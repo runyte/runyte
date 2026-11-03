@@ -6,7 +6,7 @@ update the plugin/client together; there is no legacy mode or automatic fallback
 Restart existing persistent hosts to load the new executable and configuration.
 
 The separately authenticated [workspace context profile](context.md) negotiates
-`runyte.context.v1` on its own Unix transport. Its read/edit/proposal scopes do
+`runyte.context.v1` on its own Unix transport. Its read, edit and terminal-write scopes do
 not broaden the meanings of ordinary process-plugin capabilities. The current
 schema references a separate context schema, and its standalone Python client
 has independent conformance tests. The retained `compatibility/v1/` schema,

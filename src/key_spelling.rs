@@ -42,7 +42,7 @@ pub(crate) mod actionable {
     ];
 }
 
-const MARKER_KINDS: [&str; 4] = ["key:", "binding:", "prefix:", "literal-key:"];
+const MARKER_KINDS: [&str; 5] = ["key:", "binding:", "prefix:", "literal-key:", "ui:"];
 
 /// Makes text from outside Runyte, such as a plugin's help or labels, pass
 /// through [`resolve_with_map`] unchanged. Only a brace that would open a
@@ -79,9 +79,15 @@ pub(crate) fn resolve_with_map(
     while at < template.len() {
         offsets[source_character] = output_character;
         let rest = &template[at..];
-        if ["{{key:", "{{binding:", "{{prefix:", "{{literal-key:"]
-            .iter()
-            .any(|prefix| rest.starts_with(prefix))
+        if [
+            "{{key:",
+            "{{binding:",
+            "{{prefix:",
+            "{{literal-key:",
+            "{{ui:",
+        ]
+        .iter()
+        .any(|prefix| rest.starts_with(prefix))
         {
             text.push('{');
             output_character += 1;
@@ -105,6 +111,7 @@ pub(crate) fn resolve_with_map(
                 "binding:" => binding_spelling(body, keymap)?,
                 "prefix:" => prefix_spelling(body, keymap)?,
                 "literal-key:" => KeyStroke::parse(body)?.label(),
+                "ui:" => keymap.ui().named_label(body)?,
                 _ => unreachable!(),
             };
             let start = output_character;
@@ -268,7 +275,7 @@ pub(crate) fn stale_namespace_literals(template: &str) -> Vec<String> {
     while let Some(open) = rest.find('{') {
         unmarked.push_str(&rest[..open]);
         rest = &rest[open..];
-        let marker = ["{key:", "{binding:", "{prefix:", "{literal-key:"]
+        let marker = ["{key:", "{binding:", "{prefix:", "{literal-key:", "{ui:"]
             .into_iter()
             .any(|prefix| rest.starts_with(prefix));
         if marker && let Some(close) = rest.find('}') {
@@ -430,6 +437,40 @@ mod tests {
                 assert!(!rendered.text.contains("{binding:"));
                 assert!(!rendered.text.contains("Space"));
             }
+        }
+    }
+    #[test]
+    fn ui_markers_resolve_effective_actions_and_escape_external_text() {
+        let compiled = crate::keymap::configured::compile(
+            &serde_yaml::from_str(
+                "ui: {context-launcher: {open-actions: [F8]}, hover: {accept: []}}",
+            )
+            .unwrap(),
+            default_keymap(),
+        );
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        let (resolved, offsets) = resolve_with_map(
+            "λ {ui:context-launcher.open-actions} {ui:hover.accept}",
+            &compiled.keymap,
+        )
+        .unwrap();
+        assert_eq!(resolved.text, "λ F8 unbound");
+        assert_eq!(resolved.substitutions, vec![2..4, 5..12]);
+        assert_eq!(offsets.last(), Some(&12));
+        let external = "{ui:missing.owner} λ {ui:context-launcher.open-actions}";
+        assert_eq!(
+            resolve(&escape_markers(external), &compiled.keymap)
+                .unwrap()
+                .text,
+            external
+        );
+        for invalid in [
+            "{ui:missing.owner}",
+            "{ui:hover.missing}",
+            "{ui:hover}",
+            "{ui:hover.accept",
+        ] {
+            assert!(resolve(invalid, &compiled.keymap).is_err(), "{invalid}");
         }
     }
 }

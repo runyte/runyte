@@ -17,8 +17,8 @@ use super::{
     FileComparison, GeneralWorktreeRow, GeneratedViewIdentity, GitDiscardConfirmation, GitMutation,
     GitOperation, GitProvider, GitRequestId, GitResponse, GitServiceEvent, GitServiceHandle,
     GitServiceProgress, GitServiceState, GitStashConfirmation, GitTracker, HashMap, HashSet,
-    Instant, KeyCode, KeyStroke, LineChange, ListAction, ListPicker, LogCursor, LogPage,
-    LogRequest, LogViewRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_DIFF_BYTES, Mode,
+    Instant, KeyStroke, LineChange, ListAction, ListPicker, LogCursor, LogPage, LogRequest,
+    LogViewRequest, MAX_BLAME_INPUT_BYTES, MAX_BLAME_LINES, MAX_DIFF_BYTES, Mode,
     PartialStageSelection, PatchHunk, Path, PathBuf, PickerItem, PromptKind,
     PullRebaseConfirmation, RefreshSpec, Repository, RepositoryGeneration, RepositorySnapshot,
     Result, Selection, StashEntry, StashMutation, StashScope, StatusSide, WorkspaceSwitchRequest,
@@ -3103,8 +3103,8 @@ impl App {
             input: String::new(),
             cursor: 0,
         };
-        self.status(confirmation.message());
         self.git_worktree_removal = Some(confirmation);
+        self.status_confirmation();
         self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
     }
 
@@ -4333,16 +4333,14 @@ impl App {
             }
             StashScope::TrackedAndUntracked => "tracked worktree, index, and untracked files",
         };
-        let message = format!(
-            "Create stash `{name}` containing {contents}?\nEnter confirms.\nEscape cancels."
-        );
+        let message = format!("Create stash `{name}` containing {contents}?");
         self.git_stash_confirmation = Some(GitStashConfirmation {
             repository: repository.clone(),
             mutation: StashMutation::Create { name, scope },
             message: message.clone(),
         });
         self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-        self.status(message);
+        self.status_confirmation();
     }
 
     pub(super) fn request_selected_stash(&mut self, drop: bool) {
@@ -4356,15 +4354,9 @@ impl App {
             return;
         }
         let message = if drop {
-            format!(
-                "Drop {} `{}`?\nEnter confirms.\nEscape cancels.",
-                entry.selector, entry.subject
-            )
+            format!("Drop {} `{}`?", entry.selector, entry.subject)
         } else {
-            format!(
-                "Apply {} without dropping it?\nEnter confirms.\nEscape cancels.",
-                entry.selector
-            )
+            format!("Apply {} without dropping it?", entry.selector)
         };
         self.git_stash_confirmation = Some(GitStashConfirmation {
             repository: repository.clone(),
@@ -4376,16 +4368,16 @@ impl App {
             message: message.clone(),
         });
         self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-        self.status(message);
+        self.status_confirmation();
     }
 
     pub(super) fn handle_git_stash_confirmation(&mut self, key: KeyStroke) -> Result<()> {
-        match key.code {
-            KeyCode::Escape => {
+        match self.confirmation_action(key) {
+            Some(crate::keymap::ui::Action::Cancel) => {
                 self.git_stash_confirmation = None;
                 self.status("stash action cancelled");
             }
-            KeyCode::Enter => {
+            Some(crate::keymap::ui::Action::Accept) => {
                 let Some(confirmation) = self.git_stash_confirmation.take() else {
                     return Ok(());
                 };
@@ -4998,10 +4990,9 @@ impl App {
                 input: String::new(),
                 cursor: 0,
             };
-            let message = confirmation.action.message();
             self.git_branch_switch = Some(confirmation);
             self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-            self.status(message);
+            self.status_confirmation();
             return;
         }
         self.apply_branch_switch(repository, action);
@@ -5291,10 +5282,9 @@ impl App {
                 ahead: *ahead,
                 behind: *behind,
             };
-            let message = confirmation.message();
             self.git_pull_rebase = Some(confirmation);
             self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-            self.status(message);
+            self.status_confirmation();
             return;
         }
         self.error_from("Git", "Git operation failed", error.to_string());
@@ -5614,10 +5604,9 @@ impl App {
             input: String::new(),
             cursor: 0,
         };
-        let message = confirmation.message();
         self.git_branch_deletion = Some(confirmation);
         self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-        self.status(message);
+        self.status_confirmation();
     }
 
     /// Runs a confirmed branch cascade from the bottom up.
@@ -6079,10 +6068,9 @@ impl App {
             paths: tracked,
             skipped_untracked: skipped.len(),
         };
-        let message = confirmation.message();
         self.git_discard_confirmation = Some(confirmation);
         self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-        self.status(message);
+        self.status_confirmation();
     }
 
     /// The repository-relative paths a discard would act on.

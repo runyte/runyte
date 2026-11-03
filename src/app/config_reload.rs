@@ -62,6 +62,11 @@ const STARTUP_BOUND: &[StartupBound] = &[
         restore: |loaded, running| loaded.lsp.enable = running.lsp.enable,
     },
     StartupBound {
+        key: "mcp.default_grants",
+        differs: |loaded, running| loaded.mcp != running.mcp,
+        restore: |loaded, running| loaded.mcp.clone_from(&running.mcp),
+    },
+    StartupBound {
         key: "mode",
         differs: |loaded, running| loaded.mode() != running.mode(),
         restore: |loaded, running| {

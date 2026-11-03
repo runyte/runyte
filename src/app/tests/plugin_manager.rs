@@ -292,3 +292,94 @@ fn plugin_manager_id_completion_renders_configured_rows_in_native_frame() {
             .any(|line| line.contains("other") && line.contains("Stopped"))
     );
 }
+
+#[test]
+fn configured_plugin_manager_return_masks_scoped_actions_and_restores_saved_position() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.update_plugin_manager(vec![entry(0, "alpha", Phase::Running, Some(1))]);
+    app.execute_command("plugins").unwrap();
+    app.list.as_mut().unwrap().filter = "al".into();
+    app.list.as_mut().unwrap().show_preview = false;
+    let configure = |app: &mut App, ui: &str| {
+        let source =
+            format!("scopes: {{global: {{list: {{Esc: list-accept, F9: list-accept}}}}}}\n{ui}");
+        let compiled = crate::keymap::configured::compile(
+            &serde_yaml::from_str(&source).unwrap(),
+            &app.keymap,
+        );
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        app.keymap = compiled.keymap;
+    };
+    configure(&mut app, "");
+    app.open_plugin_manager_actions(0);
+    assert_eq!(
+        app.list_binding_for(KeyStroke::plain(KeyCode::Escape)),
+        None
+    );
+    assert!(
+        !app.list_action_keys(EditorCommand::ListAccept)
+            .split('/')
+            .any(|k| k == "Esc")
+    );
+    assert!(!app.fresh_physical_approval_key(&InputEvent::Key(KeyStroke::plain(KeyCode::Escape))));
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().filter, "al");
+    assert!(!app.list.as_ref().unwrap().show_preview);
+    assert!(app.take_plugin_manager_intents().is_empty());
+
+    configure(&mut app, "ui: {plugin-manager-actions: {cancel: [F9]}}");
+    app.open_plugin_manager_actions(0);
+    assert_eq!(app.list_binding_for(KeyStroke::parse("F9").unwrap()), None);
+    assert!(!app.fresh_physical_approval_key(&InputEvent::Key(KeyStroke::parse("F9").unwrap())));
+    assert!(app.fresh_physical_approval_key(&InputEvent::Key(KeyStroke::plain(KeyCode::Escape))));
+    let snapshot = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|s| s.title == "Plugin actions")
+        .unwrap();
+    assert!(
+        snapshot
+            .actions
+            .iter()
+            .any(|a| a.label == "back" && a.key_hint == "F9")
+    );
+    assert!(
+        app.list_action_keys(EditorCommand::ListAccept)
+            .split('/')
+            .any(|k| k == "Esc")
+    );
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().filter, "al");
+    assert!(app.take_plugin_manager_intents().is_empty());
+
+    app.open_plugin_manager_actions(0);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    let intents = app.take_plugin_manager_intents();
+    assert_eq!(intents.len(), 1);
+    assert_eq!(intents[0].action, Action::Stop);
+}
+
+#[test]
+fn configured_plugin_manager_return_removal_restores_literal_leader_without_escape_alias() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.update_plugin_manager(vec![entry(0, "alpha", Phase::Running, Some(1))]);
+    app.execute_command("plugins").unwrap();
+    app.open_plugin_manager_actions(0);
+    let compiled = crate::keymap::configured::compile(
+        &serde_yaml::from_str("ui: {plugin-manager-actions: {cancel: []}}").unwrap(),
+        &app.keymap,
+    );
+    assert!(compiled.errors.is_empty());
+    app.keymap = compiled.keymap;
+    press(&mut app, ' ');
+    assert!(app.plugin_manager_actions_open());
+    assert_eq!(app.list.as_ref().unwrap().filter, " ");
+    assert_eq!(app.plugin_manager_return_keys(), None);
+    assert_eq!(app.list_close_keys(), Some("Esc".into()));
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(
+        app.list.is_none(),
+        "removing transparent return reveals ordinary list-close"
+    );
+    assert!(app.take_plugin_manager_intents().is_empty());
+}

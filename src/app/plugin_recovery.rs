@@ -5,7 +5,7 @@
 use super::App;
 use crate::{
     buffer::{PreparedProviderReload, ProviderIdentity, ProviderReloadChoice},
-    input::{InputEvent, KeyCode, Modifiers},
+    input::InputEvent,
     plugin::application::CapturedContext,
 };
 use anyhow::{Result, ensure};
@@ -30,7 +30,7 @@ pub(crate) struct ProviderReload {
 pub(crate) struct ProviderReloadDecision {
     pub job: String,
     pub choice: Option<ProviderReloadChoice>,
-    /// Only physical, unmodified Enter can provide this fresh context.
+    /// Only fresh physical acceptance can provide this fresh context.
     pub context: Option<CapturedContext>,
 }
 
@@ -239,27 +239,19 @@ impl App {
         let previous_selection = surface.selected;
         let mut finish = None;
         if let InputEvent::Key(key) = input {
-            let control = key.modifiers == Modifiers::CONTROL;
-            if key.code == KeyCode::Escape
-                || (control && key.code == KeyCode::Char('c'))
-                || key.canonical_for_binding() == self.keymap.leader()
-            {
-                finish = Some(None);
-            } else if key.code == KeyCode::Enter && key.modifiers.is_empty() {
-                finish = Some(match surface.selected {
-                    0 => Some(ProviderReloadChoice::ReloadRemote),
-                    1 => Some(ProviderReloadChoice::KeepLocal),
-                    _ => None,
-                });
-            } else if (key.modifiers.is_empty() && matches!(key.code, KeyCode::Down | KeyCode::Tab))
-                || (control && key.code == KeyCode::Char('n'))
-            {
-                surface.selected = (surface.selected + 1) % 3;
-            } else if matches!(key.code, KeyCode::BackTab)
-                || (key.modifiers.is_empty() && key.code == KeyCode::Up)
-                || (control && key.code == KeyCode::Char('p'))
-            {
-                surface.selected = (surface.selected + 2) % 3;
+            use crate::keymap::ui::{Action, Owner};
+            match self.keymap.ui().lookup(Owner::ProviderReload, key) {
+                Some(Action::Cancel) => finish = Some(None),
+                Some(Action::Accept) => {
+                    finish = Some(match surface.selected {
+                        0 => Some(ProviderReloadChoice::ReloadRemote),
+                        1 => Some(ProviderReloadChoice::KeepLocal),
+                        _ => None,
+                    })
+                }
+                Some(Action::Next) => surface.selected = (surface.selected + 1) % 3,
+                Some(Action::Previous) => surface.selected = (surface.selected + 2) % 3,
+                _ => {}
             }
         }
         surface.intent.context.foreground = self.plugins.foreground_generation;

@@ -15,7 +15,7 @@ Both expose visible selections before an operation and support external automati
 Runyte capabilities follow the [project overview](../../README.md),
 [user guide](../user-guide/README.md), [plugin contract](../plugins.md), and
 [built-in MCP adapter](../mcp.md).
-The bridge requires native grants; terminal-text proposals need approval and do not submit Enter.
+The bridge requires native grants: Read, and a separate Write for edits and terminal text, whose Enter waits visibly and is dropped if the terminal changes.
 
 | Area | Runyte | Kakoune |
 | --- | --- | --- |

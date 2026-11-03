@@ -256,6 +256,12 @@ impl App {
             .bindings_for_scope(super::Mode::Normal, scope)
             .filter(|binding| {
                 binding.scope == scope
+                    && self.keymap.merge_binding_reachable(
+                        scope,
+                        binding,
+                        self.space_dismisses_input_overlay()
+                            .then_some(self.keymap.leader()),
+                    )
                     && binding.target == crate::keymap::BindingTarget::Editor(command)
             })
             .min_by_key(|binding| {
@@ -271,43 +277,46 @@ impl App {
             .unwrap_or_default()
     }
 
+    pub(super) fn merge_input_route(&self, key: KeyStroke) -> crate::keymap::ui::MergeInput {
+        self.keymap.ui().merge_input(
+            self.merge_scope().unwrap(),
+            key,
+            self.space_dismisses_input_overlay()
+                .then_some(self.keymap.leader()),
+        )
+    }
+
     pub(super) fn handle_merge_review_key(&mut self, key: KeyStroke) -> super::Result<()> {
+        use crate::keymap::ui::{Action, MergeInput};
         let scope = self.merge_scope().unwrap();
-        if self
-            .merge_ui
-            .review
-            .as_ref()
-            .is_some_and(MergeReview::input_focused)
-        {
-            let review = self.merge_ui.review.as_mut().unwrap();
-            match (key.code, key.modifiers) {
-                (KeyCode::Char(c), modifiers)
-                    if modifiers.is_empty() || modifiers == Modifiers::SHIFT =>
-                {
-                    super::prompt_insert(&mut review.acknowledgment, review.cursor, c);
-                    review.cursor += 1;
-                    return Ok(());
-                }
-                (KeyCode::Backspace, _) => {
-                    super::prompt_backspace(&mut review.acknowledgment, &mut review.cursor);
-                    return Ok(());
-                }
-                (KeyCode::Delete, _) => {
-                    super::prompt_delete(&mut review.acknowledgment, review.cursor);
-                    return Ok(());
-                }
-                (KeyCode::Left, _) => {
-                    review.cursor = review.cursor.saturating_sub(1);
-                    return Ok(());
-                }
-                (KeyCode::Right, _) => {
-                    review.cursor = (review.cursor + 1).min(review.acknowledgment.chars().count());
-                    return Ok(());
-                }
-                _ => {}
+        let (key, reset) = match self.merge_input_route(key) {
+            MergeInput::Literal(c) => {
+                let review = self.merge_ui.review.as_mut().unwrap();
+                super::prompt_insert(&mut review.acknowledgment, review.cursor, c);
+                review.cursor += 1;
+                return Ok(());
             }
-        }
-        if key.code == KeyCode::Escape {
+            MergeInput::Edit(action) => {
+                let review = self.merge_ui.review.as_mut().unwrap();
+                match action {
+                    Action::Backspace => {
+                        super::prompt_backspace(&mut review.acknowledgment, &mut review.cursor)
+                    }
+                    Action::Delete => {
+                        super::prompt_delete(&mut review.acknowledgment, review.cursor)
+                    }
+                    Action::MoveLeft => review.cursor = review.cursor.saturating_sub(1),
+                    Action::MoveRight => {
+                        review.cursor =
+                            (review.cursor + 1).min(review.acknowledgment.chars().count())
+                    }
+                    _ => unreachable!("acknowledgment exposes editing actions only"),
+                }
+                return Ok(());
+            }
+            MergeInput::Scoped { key, reset } => (key, reset),
+        };
+        if reset {
             self.merge_ui.keys.clear();
         }
         self.merge_ui.keys.push(key);

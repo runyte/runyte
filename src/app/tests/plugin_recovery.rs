@@ -506,3 +506,168 @@ fn provider_reload_terminal_feedback_redraws_without_a_matching_action_echo() {
     assert!(app.plugins.presentation_dirty);
     assert!(app.status.contains("Resource provider is unavailable"));
 }
+
+fn configure_reload(app: &mut App, source: &str) {
+    let compiled =
+        crate::keymap::configured::compile(&serde_yaml::from_str(source).unwrap(), &app.keymap);
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+}
+
+#[test]
+fn configured_provider_reload_acceptance_retains_selection_and_fresh_context() {
+    for spelling in ["F8", "Esc", "Ctrl-F8"] {
+        for choice in 0..3 {
+            let (mut app, buffer) = fixture(true);
+            configure_reload(
+                &mut app,
+                &format!(
+                    "ui: {{provider-reload: {{accept: [{spelling}], cancel: [F10], next: [F6], previous: [F5]}}}}"
+                ),
+            );
+            let intent = queue(&mut app);
+            let original_action = intent.context.action;
+            show(&mut app, intent);
+            for _ in choice..2 {
+                key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+            }
+            let input = InputEvent::Key(KeyStroke::parse(spelling).unwrap());
+            assert!(app.input_requires_presented_approval(&input));
+            key(&mut app, KeyCode::Enter, Modifiers::NONE);
+            app.handle_repeated_input(input.clone()).unwrap();
+            app.handle_replayed_input(input.clone()).unwrap();
+            assert_eq!(
+                app.plugins.provider_reload.as_ref().unwrap().selected,
+                choice
+            );
+            assert!(app.take_provider_reload_decisions().is_empty());
+            let overlay = app
+                .overlay_snapshots()
+                .into_iter()
+                .find(|s| s.title == "Reload remote document")
+                .unwrap();
+            assert_eq!(overlay.actions[0].key_hint, "F5/F6");
+            assert_eq!(overlay.actions[1].key_hint, spelling);
+            assert_eq!(overlay.actions[2].key_hint, "F10");
+            app.handle_input(input).unwrap();
+            let decision = app.take_provider_reload_decisions().pop().unwrap();
+            assert_eq!(
+                decision.choice,
+                match choice {
+                    0 => Some(ProviderReloadChoice::ReloadRemote),
+                    1 => Some(ProviderReloadChoice::KeepLocal),
+                    _ => None,
+                }
+            );
+            if let Some(context) = decision.context {
+                app.plugin_foreground(&context).unwrap();
+                assert_eq!(context.action, original_action);
+            }
+            assert_eq!(app.buffers[buffer].to_string(), "local original\n");
+        }
+    }
+}
+
+#[test]
+fn provider_reload_raw_modifier_policies_and_navigation_survive_registry_routing() {
+    for bits in 0..64 {
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        for code in [
+            KeyCode::Char('c'),
+            KeyCode::Char('n'),
+            KeyCode::Char('p'),
+            KeyCode::Tab,
+            KeyCode::BackTab,
+            KeyCode::Up,
+            KeyCode::Down,
+        ] {
+            let (mut app, _) = fixture(true);
+            let intent = queue(&mut app);
+            show(&mut app, intent);
+            key(&mut app, code, modifiers);
+            let control = modifiers == Modifiers::CONTROL;
+            if code == KeyCode::Char('c') && control {
+                assert!(app.plugins.provider_reload.is_none());
+            } else {
+                let expected = if code == KeyCode::BackTab
+                    || (code == KeyCode::Up && modifiers.is_empty())
+                    || (code == KeyCode::Char('p') && control)
+                {
+                    1
+                } else if (matches!(code, KeyCode::Down | KeyCode::Tab) && modifiers.is_empty())
+                    || (code == KeyCode::Char('n') && control)
+                {
+                    0
+                } else {
+                    2
+                };
+                assert_eq!(
+                    app.plugins.provider_reload.as_ref().unwrap().selected,
+                    expected,
+                    "{code:?} {modifiers:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn provider_reload_enter_leader_keeps_inherited_repeat_guard_and_explicit_cancel_can_repeat() {
+    let (mut app, _) = fixture(true);
+    app.set_keymap(Arc::new(crate::keymap::Keymap::new(vec![]).unwrap()));
+    configure_reload(&mut app, "leader: Enter");
+    let intent = queue(&mut app);
+    show(&mut app, intent);
+    let input = InputEvent::Key(KeyStroke::plain(KeyCode::Enter));
+    assert!(!app.input_requires_presented_approval(&input));
+    app.handle_repeated_input(input.clone()).unwrap();
+    assert!(app.plugins.provider_reload.is_some());
+    app.handle_input(input.clone()).unwrap();
+    assert!(
+        app.take_provider_reload_decisions()
+            .pop()
+            .unwrap()
+            .choice
+            .is_none()
+    );
+
+    let (mut app, _) = fixture(true);
+    configure_reload(
+        &mut app,
+        "ui: {provider-reload: {accept: [], cancel: [Enter]}}",
+    );
+    let intent = queue(&mut app);
+    show(&mut app, intent);
+    app.handle_repeated_input(input).unwrap();
+    assert!(app.plugins.provider_reload.is_none());
+    assert!(
+        app.take_provider_reload_decisions()
+            .pop()
+            .unwrap()
+            .choice
+            .is_none()
+    );
+}
+
+#[test]
+fn stale_provider_reload_remapped_acceptance_does_not_approve_a_covering_confirmation() {
+    let (mut app, buffer) = fixture(true);
+    configure_reload(
+        &mut app,
+        "ui: {provider-reload: {accept: [F8]}, confirmation: {accept: [F8]}}",
+    );
+    let intent = queue(&mut app);
+    show(&mut app, intent);
+    app.buffer_discard_confirmation = Some(buffer);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.plugins.provider_reload.is_none());
+    assert_eq!(app.buffer_discard_confirmation, Some(buffer));
+    assert!(
+        app.take_provider_reload_decisions()
+            .pop()
+            .unwrap()
+            .choice
+            .is_none()
+    );
+    assert!(!app.host_buffer_is_closed(buffer));
+}

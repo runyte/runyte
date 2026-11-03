@@ -168,4 +168,4 @@ identify a failing local operation. Review a log before sharing it.
   indefinitely.
 
 <!-- navigation -->
-[Contents](README.md) · [Previous: Agent access to workspace context](agent-access-to-workspace-context.md) · [Next: Configuration](configuration.md)
+[Contents](README.md) · [Previous: MCP server](agent-access-to-workspace-context.md) · [Next: Configuration](configuration.md)

@@ -140,6 +140,7 @@ pub const HELP_NAME: &str = "[view help]";
 
 /// The display name of the diagnostic log projection opened by `:log-open`.
 pub const LOG_NAME: &str = "[log]";
+pub const AGENT_CHANNEL_NAME: &str = "[agent channel]";
 
 /// How many undo steps a buffer retains.
 const HISTORY_LIMIT: usize = 1000;
@@ -236,6 +237,8 @@ pub enum GeneratedViewIdentity {
     Documentation,
     /// The diagnostic log owned by the process that owns `App`.
     Log,
+    /// The workspace host's agent channel, as the person reads it.
+    AgentChannel,
     GitIndex,
     GitComparison {
         repository: PathBuf,

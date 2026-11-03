@@ -4,7 +4,7 @@
 
 use super::App;
 use crate::{
-    input::{InputEvent, KeyCode, Modifiers},
+    input::{InputEvent, KeyStroke},
     plugin::application::CapturedContext,
 };
 
@@ -18,14 +18,14 @@ pub(crate) struct ProviderOverwrite {
 }
 
 impl ProviderOverwrite {
-    pub(super) fn message(&self) -> String {
+    pub(super) fn message(&self, accept: &str, cancel: &str) -> String {
         let replacement = if self.atomic_replace {
             "Replacement is atomic, but changes made remotely since the saved version was read can still be overwritten."
         } else {
             "Replacement is not atomic. Changes made remotely since the saved version was read can be overwritten, and a failed write can leave partial content."
         };
         format!(
-            "Overwrite {} with the captured Runyte text?\nThis provider cannot guarantee conditional writes.\n{replacement}\nEnter confirms.\nEscape cancels.",
+            "Overwrite {} with the captured Runyte text?\nThis provider cannot guarantee conditional writes.\n{replacement}\n{accept} confirms.\n{cancel} cancels.",
             self.label
         )
     }
@@ -33,11 +33,50 @@ impl ProviderOverwrite {
 
 pub(crate) struct ProviderOverwriteDecision {
     pub job: String,
-    /// Present only after a physical, unmodified Enter accepted the surface.
+    /// Present only after a fresh physical acceptance accepted the surface.
     pub context: Option<CapturedContext>,
 }
 
 impl App {
+    pub(super) fn provider_ui_owner(&self) -> Option<crate::keymap::ui::Owner> {
+        use crate::keymap::ui::Owner;
+        if self.context_overlay_active() || self.macro_replay.is_some() {
+            return None;
+        }
+        if self.plugins.provider_reload.is_some() {
+            Some(Owner::ProviderReload)
+        } else if self.plugins.provider_overwrite.is_some() {
+            Some(Owner::ProviderOverwrite)
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn provider_accept_key(&self, key: KeyStroke) -> bool {
+        self.provider_ui_owner().is_some_and(|owner| {
+            self.keymap.ui().lookup(owner, key) == Some(crate::keymap::ui::Action::Accept)
+        })
+    }
+
+    pub(super) fn provider_repeat_suppressed(&self, key: KeyStroke) -> bool {
+        use crate::{
+            input::{KeyCode, Modifiers},
+            keymap::ui::{Action, Owner},
+        };
+        self.provider_accept_key(key)
+            || (self.provider_ui_owner() == Some(Owner::ProviderReload)
+                && key == KeyStroke::new(KeyCode::Enter, Modifiers::NONE)
+                && self.keymap.leader() == key
+                && !self
+                    .keymap
+                    .ui()
+                    .explicitly_configured(Owner::ProviderReload, Action::Cancel)
+                && !self
+                    .keymap
+                    .ui()
+                    .explicitly_configured(Owner::ProviderReload, Action::Accept))
+    }
+
     pub(super) fn retain_provider_overwrite_after_repeat(&mut self) {
         if let Some(surface) = self.plugins.provider_overwrite.as_mut() {
             surface.context.foreground = self.plugins.foreground_generation;
@@ -154,8 +193,15 @@ impl App {
         let Some(mut surface) = self.plugins.provider_overwrite.take() else {
             return;
         };
-        let accepted = matches!(&input, InputEvent::Key(key) if key.code == KeyCode::Enter && key.modifiers.is_empty());
-        let cancelled = matches!(&input, InputEvent::Key(key) if key.code == KeyCode::Escape || (key.code == KeyCode::Char('c') && key.modifiers == Modifiers::CONTROL) || key.canonical_for_binding() == self.keymap.leader());
+        let action = match input {
+            InputEvent::Key(key) => self
+                .keymap
+                .ui()
+                .lookup(crate::keymap::ui::Owner::ProviderOverwrite, key),
+            _ => None,
+        };
+        let accepted = action == Some(crate::keymap::ui::Action::Accept);
+        let cancelled = action == Some(crate::keymap::ui::Action::Cancel);
         // Input consumed by the surface continues its context. A semantic
         // command bypassing this owner changes the generation and cancels it.
         surface.context.foreground = self.plugins.foreground_generation;

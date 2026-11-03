@@ -743,15 +743,16 @@ fn view_setup_with_binding(
     receiver
 }
 fn view_result(receiver: &mut mpsc::Receiver<HostMessage>) -> (String, String) {
+    let reply = next(receiver);
     let api::HostMessage::Response {
         outcome:
             api::Response::Success {
                 result: api::ResultValue::View { view, revision, .. },
             },
         ..
-    } = next(receiver)
+    } = reply
     else {
-        panic!()
+        panic!("expected view response, got {reply:?}")
     };
     (view, revision)
 }

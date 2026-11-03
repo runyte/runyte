@@ -2,7 +2,7 @@
 """Scoped Runyte context client. Python 3.10+, Unix, standard library only.
 
 This module is independently vendorable. It never reconnects or retries a
-request: delivery uncertainty must not duplicate edits or approved insertion.
+request: delivery uncertainty must not duplicate edits, terminal text or Enter.
 """
 import json
 import os
@@ -16,9 +16,10 @@ import sys
 
 VERSION = 'runyte-1'
 FEATURE = 'runyte.context.v1'
+WRITE_FEATURE = 'runyte.context.terminal.write.v1'
 RUNYTE_RANGE = '>=0.3.0, <0.5.0'
 FRAME_BYTES = 2 * 1024 * 1024
-SCOPES = frozenset(('terminal_read', 'editor_context_read', 'buffer_edit', 'terminal_propose'))
+SCOPES = frozenset(('terminal_read', 'editor_context_read', 'buffer_edit', 'terminal_write'))
 ERROR_CODES = frozenset(('invalid_argument', 'unsupported', 'capability_denied', 'not_found', 'closed',
                         'stale', 'conflict', 'read_only', 'busy', 'limit_exceeded', 'cancelled',
                         'timeout', 'unavailable', 'internal', 'outcome_unknown', 'no_frontend', 'context_changed'))
@@ -40,11 +41,11 @@ METHODS = {
     'terminal.snapshot.open': ('terminal_read', 'terminal region max_rows max_bytes max_cells', 'expected_revision'),
     'terminal.snapshot.read': ('terminal_read', 'snapshot offset limit', ''),
     'terminal.snapshot.close': ('terminal_read', 'snapshot', ''),
-    'terminal.input.propose': ('terminal_propose', 'terminal text', 'reason'),
-    'terminal.input.status': ('terminal_propose', 'proposal', ''),
-    'terminal.input.cancel': ('terminal_propose', 'proposal', ''),
+    'terminal.input.write': ('terminal_write', 'terminal text', ''),
+    'terminal.input.enter': ('terminal_write', 'terminal expected_revision', ''),
+    'terminal.input.enter.status': ('terminal_write', 'enter', ''),
 }
-MUTATIONS = frozenset(('buffer.edit', 'buffer.append', 'terminal.input.propose', 'terminal.input.cancel'))
+MUTATIONS = frozenset(('buffer.edit', 'buffer.append', 'terminal.input.write', 'terminal.input.enter'))
 
 
 class ContextError(Exception):
@@ -77,7 +78,7 @@ def _scopes(values):
 
 def _dependencies(values):
     if ('buffer_edit' in values and 'editor_context_read' not in values
-            or 'terminal_propose' in values and 'terminal_read' not in values):
+            or 'terminal_write' in values and 'terminal_read' not in values):
         _fail('Write scopes require corresponding read scopes')
 
 
@@ -133,7 +134,7 @@ def validate_request(method, params):
     required, optional = set(required.split()), set(optional.split())
     if not isinstance(params, dict) or not required <= params.keys() or params.keys() - required - optional:
         _fail('Missing or unknown context parameter')
-    for key in ('buffer', 'pane', 'terminal', 'snapshot', 'proposal', 'expected_revision'):
+    for key in ('buffer', 'pane', 'terminal', 'snapshot', 'enter', 'expected_revision'):
         if key not in params or key == 'expected_revision' and key in optional and params[key] is None:
             continue
         if not isinstance(params[key], str) or not IDENTIFIER.fullmatch(params[key]):
@@ -175,12 +176,9 @@ def validate_request(method, params):
             _fail('Append text must be nonempty and within the replacement limit')
         if tail is not None and (not isinstance(tail, str) or not 1 <= _utf8_len(tail) <= 4096):
             _fail('Expected tail must be nonempty and within its byte limit')
-    if method == 'terminal.input.propose':
-        text, reason = params['text'], params.get('reason')
-        if not _single_line(text) or not 1 <= _utf8_len(text) <= 4096:
-            _fail('Proposal must be one bounded line without controls')
-        if reason is not None and (not _single_line(reason) or len(reason) > 256 or _utf8_len(reason) > 1024):
-            _fail('Proposal reason exceeds limits')
+    if method == 'terminal.input.write':
+        if not _single_line(params['text']) or not 1 <= _utf8_len(params['text']) <= 4096:
+            _fail('Terminal text must be one bounded line without controls')
     return scope
 
 
@@ -263,15 +261,24 @@ class ContextClient:
             if expected_incarnation is not None and (not isinstance(self.workspace, dict)
                     or self.workspace.get('host_incarnation') != expected_incarnation):
                 raise ContextError('stale', 'Host incarnation changed')
+            # Terminal writes come with their feature, which older hosts lack;
+            # they refuse a capability name they do not know.
+            offered = WRITE_FEATURE in _names(hello.get('features'))
+            if 'terminal_write' in required and not offered:
+                raise ContextError('unsupported', 'Host does not support terminal writes')
+            if not offered:
+                optional = optional - {'terminal_write'}
+            writes = 'terminal_write' in required | optional
             self._send({'type': 'register', 'version': VERSION, 'runyte': RUNYTE_RANGE,
                         'name': name, 'commands': [], 'required_features': [FEATURE],
-                        'optional_features': [], 'required_capabilities': sorted(required),
+                        'optional_features': [WRITE_FEATURE] if writes else [],
+                        'required_capabilities': sorted(required),
                         'optional_capabilities': sorted(optional)}, deadline)
             registered = self._receive(deadline)
             if registered.get('type') == 'registration_error':
                 _host_error(registered)
             if (registered.get('type') != 'registered'
-                    or _names(registered.get('features')) != {FEATURE}
+                    or not {FEATURE} <= _names(registered.get('features')) <= {FEATURE, WRITE_FEATURE}
                     or registered.get('commands') != []
                     or registered.get('runyte') != RUNYTE_RANGE):
                 raise ContextError('capability_denied', 'Context registration refused')

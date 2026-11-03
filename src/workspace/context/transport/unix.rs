@@ -32,12 +32,14 @@ impl Server {
                         let Ok((stream, _)) = accepted else { break; };
                         let Ok(permit) = permits.clone().try_acquire_owned() else { continue; };
                         // SAFETY: geteuid has no preconditions.
-                        if stream.peer_cred().map_or(true, |peer| peer.uid() != unsafe { libc::geteuid() }) { continue; }
+                        let Ok(credentials) = stream.peer_cred() else { continue; };
+                        if credentials.uid() != unsafe { libc::geteuid() } { continue; }
+                        let peer = credentials.pid().and_then(|pid| u32::try_from(pid).ok());
                         let Ok(id) = NEXT_CONNECTION.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1)) else { break; };
                         let events = events.clone();
                         peers.spawn(async move {
                             let _permit = permit;
-                            connection(stream, id, &events).await;
+                            connection(stream, id, peer, &events).await;
                             let _ = events.send(Event::Closed(id)).await;
                         });
                     }
@@ -56,7 +58,7 @@ impl Drop for Server {
     }
 }
 
-async fn connection(stream: UnixStream, id: u64, events: &mpsc::Sender<Event>) {
+async fn connection(stream: UnixStream, id: u64, peer: Option<u32>, events: &mpsc::Sender<Event>) {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut lease: Option<Arc<Lease>> = None;
@@ -81,6 +83,7 @@ async fn connection(stream: UnixStream, id: u64, events: &mpsc::Sender<Event>) {
         if events
             .send(Event::Frame {
                 connection: id,
+                peer,
                 bytes,
                 reply,
             })

@@ -559,8 +559,12 @@ impl App {
         };
         let register = replay.root_register;
         let processed = replay.processed_work;
+        let cancel = self.keymap.ui().label(
+            crate::keymap::ui::Owner::MacroReplay,
+            crate::keymap::ui::Action::Cancel,
+        );
         self.status(format!(
-            "replaying macro @{register}; {processed} work unit(s) · Esc/Ctrl-c cancels"
+            "replaying macro @{register}; {processed} work unit(s) · {cancel} cancels"
         ));
     }
 

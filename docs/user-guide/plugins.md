@@ -190,4 +190,4 @@ protection, and stop closes the player. The
 prerequisites and YouTube browser playback separately.
 
 <!-- navigation -->
-[Contents](README.md) · [Previous: Commands](commands.md) · [Next: Agent access to workspace context](agent-access-to-workspace-context.md)
+[Contents](README.md) · [Previous: Commands](commands.md) · [Next: MCP server](agent-access-to-workspace-context.md)

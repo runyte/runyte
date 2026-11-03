@@ -21,7 +21,11 @@ use tokio::{
 trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
 const SUPPORTED_HOSTS: &str = ">=0.3.0, <0.5.0";
+/// Shown when every live host was registered from another environment, which
+/// is what an MCP client that starts servers with a reduced environment sees.
+pub(super) const HIDDEN_HELP: &str = "Running Runyte workspaces exist but were registered from a different environment: XDG_RUNTIME_DIR or XDG_CACHE_HOME here differs from the editor's. Configure the MCP client to pass both variables through to runyte mcp and restart it, or rerun with include_hidden=true.";
 struct Connection {
+    durable: bool,
     socket: BufReader<Box<dyn Stream>>,
     scopes: BTreeSet<Scope>,
     generation: u64,
@@ -37,19 +41,19 @@ impl Connection {
         }
         // A metadata-only request checks the live grant and connection. Grant
         // changes close readers at the host, so stale negotiations cannot pass.
-        let method = if self.scopes.contains(&Scope::EditorContextRead) {
-            "buffer.list"
+        let (method, params) = if self.scopes.contains(&Scope::EditorContextRead) {
+            ("buffer.list", json!({"offset":0,"limit":1}))
         } else if self.scopes.contains(&Scope::TerminalRead) {
-            "terminal.list"
+            ("terminal.list", json!({"offset":0,"limit":1}))
+        } else if self.scopes.contains(&Scope::AgentChannel) {
+            ("channel.who", json!({}))
         } else {
             return None;
         };
         self.count += 1;
         let id = format!("r:{}", self.count);
         let response = self
-            .exchange(
-                &json!({"type":"request","id":id,"method":method,"params":{"offset":0,"limit":1}}),
-            )
+            .exchange(&json!({"type":"request","id":id,"method":method,"params":params}))
             .await
             .ok()?;
         (response["type"] == "response"
@@ -91,6 +95,7 @@ impl Connection {
         let _ = root;
         let socket = discovery::connect(record).await?;
         let mut connection = Self {
+            durable: false,
             socket: BufReader::new(Box::new(socket)),
             scopes: BTreeSet::new(),
             generation: 0,
@@ -134,9 +139,33 @@ impl Connection {
             ));
         }
         connection.limits(&hello)?;
+        // Ask for the agent channel and terminal writes only from a host that
+        // says it has them; an older host refuses capability names it does
+        // not know.
+        let offers = |feature: &str| {
+            hello["features"]
+                .as_array()
+                .is_some_and(|v| v.contains(&json!(feature)))
+        };
+        let mut features = vec![wire::FEATURE];
+        let mut capabilities = wire::CAPABILITIES.to_vec();
+        if offers(wire::CHANNEL_FEATURE) {
+            features.push(wire::CHANNEL_FEATURE);
+            capabilities.push(Scope::AgentChannel.capability());
+        }
+        if offers(wire::TERMINAL_WRITE_FEATURE) {
+            features.push(wire::TERMINAL_WRITE_FEATURE);
+            capabilities.push(Scope::TerminalWrite.capability());
+        }
+        connection.durable = hello["features"]
+            .as_array()
+            .is_some_and(|v| v.contains(&json!(wire::DURABLE_FEATURE)));
+        if connection.durable {
+            features.push(wire::DURABLE_FEATURE);
+        }
         let reply = connection.exchange(&json!({"type":"register","version":"runyte-1","runyte":SUPPORTED_HOSTS,
-            "name":format!("Runyte MCP ({})",identity.name()),"commands":[],"required_features":[wire::FEATURE],"optional_features":[],
-            "required_capabilities":[],"optional_capabilities":wire::CAPABILITIES})).await?;
+            "name":format!("Runyte MCP ({})",identity.name()),"commands":[],"required_features":[wire::FEATURE],"optional_features":&features[1..],
+            "required_capabilities":[],"optional_capabilities":capabilities})).await?;
         if reply["type"] == "registration_error" {
             return Err(Failure::new(
                 "capability_denied",
@@ -144,7 +173,7 @@ impl Connection {
             ));
         }
         if reply["type"] != "registered"
-            || reply["features"] != json!([wire::FEATURE])
+            || reply["features"] != json!(features)
             || reply["commands"] != json!([])
             || reply["runyte"] != SUPPORTED_HOSTS
         {
@@ -176,6 +205,7 @@ struct Resource {
 }
 
 pub(super) struct Bridge {
+    pub(super) durable_profile: Option<super::durable::Profile>,
     root: Option<PathBuf>,
     pub(super) identity: String,
     timeout: Duration,
@@ -186,6 +216,31 @@ pub(super) struct Bridge {
     order: VecDeque<String>,
     resources: BTreeMap<String, Resource>,
     pub(super) deadline: Option<Instant>,
+    /// The MCP client that started this server, as `initialize` named it.
+    pub(super) client: Option<crate::workspace::context::channel::Client>,
+    /// This agent's place in each workspace's channel, by workspace handle.
+    pub(super) joined: BTreeMap<String, Joined>,
+    /// The last location reported, so posting in quick succession does not
+    /// run Git each time.
+    pub(super) location: Option<(
+        PathBuf,
+        Instant,
+        crate::workspace::context::channel::Location,
+    )>,
+}
+
+/// What a join established, so the agent can be joined again after a
+/// reconnect and reads continue where they stopped.
+pub(super) struct Joined {
+    /// The private token that brings this participant back.
+    pub resume: String,
+    /// The directory the agent last said it works in, used until it names
+    /// another.
+    pub directory: Option<PathBuf>,
+    pub provider: String,
+    pub task: String,
+    pub generation: u64,
+    pub next: u64,
 }
 impl Bridge {
     pub(super) fn new(
@@ -194,6 +249,7 @@ impl Bridge {
         timeout: Duration,
     ) -> std::io::Result<Self> {
         Ok(Self {
+            durable_profile: None,
             root,
             identity,
             timeout,
@@ -204,7 +260,20 @@ impl Bridge {
             order: VecDeque::new(),
             resources: BTreeMap::new(),
             deadline: None,
+            client: None,
+            joined: BTreeMap::new(),
+            location: None,
         })
+    }
+    /// The connection generation for a workspace handle, while connected.
+    pub(super) fn generation(&self, workspace: &str) -> Option<u64> {
+        self.connections.get(workspace).map(|c| c.generation)
+    }
+    pub(super) fn durable_supported(&self, workspace: &str) -> bool {
+        self.connections.get(workspace).is_some_and(|c| c.durable)
+    }
+    pub(super) fn workspace_id(&self, workspace: &str) -> Option<&str> {
+        self.records.get(workspace).map(|r| r.workspace_id.as_str())
     }
     fn token(&mut self, kind: &str) -> String {
         self.next += 1;
@@ -342,12 +411,15 @@ impl Bridge {
                     (BTreeSet::new(), Some(e.code))
                 }
             };
-            rows.push(json!({"workspace":key,"root":record.root,"label":label,"scopes":scopes,"unavailable_reason":error}));
+            rows.push(json!({"workspace":key,"root":record.root,"label":label,"permissions":wire::permissions_of(&scopes),"scopes":scopes,"unavailable_reason":error}));
         }
-        Ok(
-            json!({"identity":self.identity,"workspaces":rows,"next_workspace_offset":(offset+4<total).then_some(offset+4),
-            "truncated":inventory.truncated,"permission_help":format!("In the target Runyte workspace, use :mcp {}. Apply permissions, then rerun find_resources; no agent restart needed.",self.identity)}),
-        )
+        let mut reply = json!({"identity":self.identity,"workspaces":rows,"next_workspace_offset":(offset+4<total).then_some(offset+4),
+            "truncated":inventory.truncated,"permission_help":format!("In the target Runyte workspace, use :mcp {} and turn on Read (1) or Write (2). Apply, then rerun find_resources; no agent restart needed.",self.identity)});
+        if inventory.hidden > 0 {
+            reply["hidden_workspaces"] = json!(inventory.hidden);
+            reply["discovery_help"] = json!(HIDDEN_HELP);
+        }
+        Ok(reply)
     }
 
     pub(super) fn scopes(&self, workspace: &str) -> BTreeSet<Scope> {
@@ -384,7 +456,7 @@ impl Bridge {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect();
             for (kind, child) in object {
-                if ["buffer", "terminal", "pane", "snapshot", "proposal"].contains(&kind.as_str())
+                if ["buffer", "terminal", "pane", "snapshot", "enter"].contains(&kind.as_str())
                     && child.is_string()
                 {
                     let native = child.as_str().unwrap();
@@ -449,7 +521,7 @@ impl Bridge {
         let connection = self.connections.get_mut(workspace).ok_or_else(|| {
             Failure::new("stale", "Run find_resources to discover this workspace")
         })?;
-        for kind in ["buffer", "terminal", "pane", "snapshot", "proposal"] {
+        for kind in ["buffer", "terminal", "pane", "snapshot", "enter"] {
             if let Some(handle) = params.get(kind).and_then(Value::as_str) {
                 let resource = self
                     .resources
@@ -474,9 +546,13 @@ impl Bridge {
             return Err(Failure::new(
                 "capability_denied",
                 format!(
-                    "Missing {}. In Runyte use :mcp {}, apply permissions, then find_resources again.",
+                    "Missing {}. In Runyte use :mcp {}, turn on {}, apply, then find_resources again.",
                     parsed.request.required_scope().capability(),
-                    self.identity
+                    self.identity,
+                    match parsed.request.required_scope() {
+                        Scope::BufferEdit | Scope::TerminalWrite => "Write (2)",
+                        _ => "Read (1)",
+                    }
                 ),
             ));
         }
@@ -510,8 +586,10 @@ impl Bridge {
                     if [
                         "buffer.edit",
                         "buffer.append",
-                        "terminal.input.propose",
-                        "terminal.input.cancel",
+                        "terminal.input.write",
+                        "terminal.input.enter",
+                        "channel.post",
+                        "channel.durable",
                     ]
                     .contains(&method)
                     {

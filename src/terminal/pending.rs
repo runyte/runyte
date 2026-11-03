@@ -185,6 +185,8 @@ impl TerminalPreparation {
             session: Some(TerminalSession {
                 id,
                 number: None,
+                channel_unread: 0,
+                agent_enter_pending: false,
                 label: self.request.label,
                 user_name: None,
                 directory: self.request.directory.clone(),

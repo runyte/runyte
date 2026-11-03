@@ -443,7 +443,8 @@ dot-source it from `$PROFILE`. The wrapper is tested with Windows PowerShell
   Debian/Ubuntu or Fedora, or `poppler` on Arch or through Homebrew. Its
   `pdfinfo`, `pdftoppm`, and `pdftotext` commands must all be on `PATH`.
 - **Fonts:** the terminal edition uses your terminal emulator's font. The
-  desktop window embeds JetBrainsMono Nerd Font; no font installation is needed.
+  desktop window and its document preview embed JetBrainsMono Nerd Font; no
+  font installation is needed.
   See its [licences and attribution](licenses/jetbrains-mono/README.md).
 
 Window controls, media navigation and document preview are covered in the

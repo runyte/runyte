@@ -27,7 +27,9 @@ class NativePackageTests(unittest.TestCase):
             destination.rename(moved)
             self.assertEqual((moved / "runyte").read_bytes(), fixture.read_bytes())
             self.assertFalse((moved / "runyte-preview-helper").exists())
-            self.assertEqual((moved / "runed").resolve(), moved / "runyte")
+            self.assertEqual((moved / "runed").readlink(), Path("runyte"))
+            # macOS temporary paths may traverse /var -> /private/var.
+            self.assertTrue((moved / "runed").samefile(moved / "runyte"))
             for name in ("licenses", "INSTALLATION.md", "docs/user-guide.md", "THIRD_PARTY_NOTICES.md",
                          "contrib/packaging/package.py", "contrib/packaging/icons/Runyte.icns"):
                 self.assertTrue((moved / name).exists(), name)

@@ -125,7 +125,7 @@ impl ParentContext {
         Self::parse(value).map(Some)
     }
 
-    fn parse(value: &str) -> Result<Self> {
+    pub(crate) fn parse(value: &str) -> Result<Self> {
         ensure!(
             value != "standalone",
             "this integrated terminal belongs to a standalone editor; launch a persistent session outside it first"

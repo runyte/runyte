@@ -262,6 +262,11 @@ mod platform {
             self.open_file(name, libc::O_RDONLY, false)
         }
 
+        /// Read user-owned content without changing its permissions.
+        pub(crate) fn open_owned_read(&self, name: &OsStr) -> io::Result<File> {
+            self.open_read(name)
+        }
+
         pub fn remove_owned(&self, name: &OsStr, file: &File) -> io::Result<()> {
             let name_c = leaf(name)?;
             let mut current = std::mem::MaybeUninit::<libc::stat>::uninit();

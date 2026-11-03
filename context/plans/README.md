@@ -26,6 +26,17 @@ current sources take precedence.
 
 Active work:
 
+- [MCP read and write permissions](active/PLAN_MCP_READ_WRITE_PERMISSIONS.md):
+  two per-workspace permissions, direct terminal writes with a revision-guarded
+  delayed Enter, and removal of nudges, terminal bindings and reviewed
+  proposals. Channel notifications remain an experiment on `exp`.
+
+- [Runyte MCP skill and durable agent channels](active/PLAN_AGENT_CHANNEL_SKILL_AND_STORAGE.md):
+  a cooperative MCP skill and safe installer first, followed by user testing;
+  SQLite storage across workspaces with retained public history and acknowledged
+  DM/group cleanup, now deferred. Its channel nudges were replaced by terminal
+  writes under the read and write permissions plan; hooks remain tentative.
+
 - [Terminal and desktop editions](active/PLAN_EDITIONS_AND_EXTENSIONS.md):
   two editions built from one Cargo workspace, PDF and document-preview helpers
   inside the desktop executable, one register of process boundaries and
@@ -45,6 +56,16 @@ Proposed work:
 
 The retained completed records cover:
 
+- [Configurable UI actions](completed/PLAN_CONFIGURABLE_UI_ACTIONS.md): shared,
+  scoped keyboard and pointer actions, structural input boundaries, captured
+  native ownership, and effective bindings across terminal and native surfaces
+  ([#46](https://github.com/runyte/runyte/issues/46), [PR #47](https://github.com/runyte/runyte/pull/47));
+
+- [Agent channel](completed/PLAN_AGENT_CHANNEL.md): the implemented
+  workspace-scoped conversation through `runyte mcp`, with verified participant
+  identity, direct messages, unread indicators and the person's read-only view
+  ([#29](https://github.com/runyte/runyte/issues/29), item 5). Follow-up work is
+  consolidated in the active MCP skill and durable-channel plan above;
 - [Aligned indentation and document overrides](completed/PLAN_INDENTATION_OVERRIDES.md):
   shared per-buffer indentation, aligned Backspace, and configurable language
   and ordered file-pattern overrides through the settings page;

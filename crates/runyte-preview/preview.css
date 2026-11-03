@@ -8,8 +8,8 @@ h2 { font-size: 1.5em; border-bottom: 1px solid #d1d9e0; padding-bottom: .3em; }
 p, ul, ol, blockquote, table, pre { margin-top: 0; margin-bottom: 16px; }
 a { color: #0969da; text-decoration: underline; }
 blockquote { padding: 0 1em; color: #59636e; border-left: .25em solid #d1d9e0; }
-pre { font-family: monospace; font-size: 13px; line-height: 1.5; padding: 16px; background: #f6f8fa; border-radius: 6px; white-space: pre; }
-code { font-family: monospace; background: #eff1f3; }
+pre { font-family: "JetBrainsMono Nerd Font", monospace; font-size: 13px; line-height: 1.5; padding: 16px; background: #f6f8fa; border-radius: 6px; white-space: pre; }
+code { font-family: "JetBrainsMono Nerd Font", monospace; background: #eff1f3; }
 pre code { background: transparent; }
 table { border-collapse: collapse; }
 th, td { padding: 6px 13px; border: 1px solid #d1d9e0; }

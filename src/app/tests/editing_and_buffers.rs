@@ -1977,7 +1977,7 @@ fn the_path_popup_and_its_action_menu_publish_one_overlay_each() {
             .iter()
             .map(|action| action.key_hint.as_str())
             .collect::<Vec<_>>(),
-        ["Tab", "Esc"]
+        ["Tab", "Esc/Ctrl-c/Space"]
     );
 
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
@@ -3701,4 +3701,525 @@ fn syntax_newline_adds_a_level_exactly_below_rows_that_open_one() {
         fs::remove_file(path).unwrap();
     }
     assert!(failures.is_empty(), "{failures:#?}");
+}
+
+fn configurable_path_menu(keys: &str) -> App {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let section = serde_yaml::from_str(keys).unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+    app.path_popup = Some(PathPopup {
+        path: "example.txt".into(),
+    });
+    app
+}
+
+#[test]
+fn configurable_path_actions_preserve_nested_ownership_and_structural_choices() {
+    let mut app = configurable_path_menu(
+        "ui: {path: {open-actions: [F9], cancel: [F7]}, path-actions: {next: [F8], previous: [F6], accept: [F5], cancel: [F7]}}",
+    );
+    for code in [KeyCode::Tab, KeyCode::Escape, KeyCode::Char(' ')] {
+        key(&mut app, code, Modifiers::NONE);
+    }
+    assert!(app.path_popup.is_some());
+    assert!(app.path_action_menu.is_none());
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    press(&mut app, 'j');
+    assert_eq!(app.path_action_menu.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::Function(8), Modifiers::ALT);
+    assert_eq!(app.path_action_menu.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.path_action_menu.as_ref().unwrap().selected, 1);
+    let snapshots = app.overlay_snapshots();
+    let snapshot = snapshots
+        .iter()
+        .find(|s| s.kind == crate::snapshot::OverlayKind::PathActions)
+        .unwrap();
+    assert!(snapshot.actions.iter().any(|a| a.key_hint.contains("F8")));
+    assert!(snapshot.actions.iter().any(|a| a.key_hint == "F7"));
+    for code in [KeyCode::Escape, KeyCode::Tab, KeyCode::Char(' ')] {
+        key(&mut app, code, Modifiers::NONE);
+    }
+    assert!(app.path_action_menu.is_some());
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(app.path_action_menu.is_none());
+    assert!(app.path_popup.is_some());
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    key(
+        &mut app,
+        KeyCode::Char('r'),
+        Modifiers::CONTROL | Modifiers::ALT,
+    );
+    assert!(app.path_popup.is_none());
+    assert_eq!(app.registers.get(&'"').unwrap().text, "example.txt");
+    app.path_popup = Some(PathPopup {
+        path: "second.txt".into(),
+    });
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.path_action_menu.is_some());
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(app.registers.get(&'"').unwrap().text, "second.txt");
+    app.path_popup = Some(PathPopup {
+        path: "third.txt".into(),
+    });
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(app.path_popup.is_none());
+}
+
+fn simple_context_menu() -> ContextActionMenu {
+    use crate::keymap::{BindingScope, ContextAction, Key};
+    ContextActionMenu {
+        actions: vec![
+            ContextAction::buffer(
+                BindingScope::Markdown,
+                Key::char('a'),
+                "up",
+                EditorCommand::MoveUp,
+            ),
+            ContextAction::buffer(
+                BindingScope::Markdown,
+                Key::char('b'),
+                "down",
+                EditorCommand::MoveDown,
+            ),
+        ],
+        selected: 0,
+    }
+}
+
+#[test]
+fn configurable_context_actions_keep_choices_and_do_not_leak_removed_keys() {
+    let mut app = configurable_path_menu(
+        "ui: {context-actions: {next: [F9], previous: [F8], accept: [F7], cancel: []}}",
+    );
+    app.path_popup = None;
+    seed(&mut app, "one\ntwo\nthree");
+    app.context_action_menu = Some(simple_context_menu());
+    for code in [
+        KeyCode::Down,
+        KeyCode::Char('j'),
+        KeyCode::Escape,
+        KeyCode::Tab,
+        KeyCode::Char(' '),
+        KeyCode::Enter,
+    ] {
+        key(&mut app, code, Modifiers::NONE);
+    }
+    key(
+        &mut app,
+        KeyCode::Char('c'),
+        Modifiers::CONTROL | Modifiers::ALT,
+    );
+    assert_eq!(app.context_action_menu.as_ref().unwrap().selected, 0);
+    assert_eq!(app.active().selection.primary().head, 0);
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    assert_eq!(app.context_action_menu.as_ref().unwrap().selected, 1);
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(app.context_action_menu.is_none());
+    assert_eq!(app.active().selection.primary().head, 4);
+    app.context_action_menu = Some(simple_context_menu());
+    press(&mut app, 'a');
+    assert!(app.context_action_menu.is_none());
+    assert_eq!(app.active().selection.primary().head, 0);
+    assert_eq!(text(&app), "one\ntwo\nthree");
+}
+
+#[test]
+fn configured_leader_is_an_inherited_menu_cancel_without_rewriting_other_owners() {
+    let mut app = configurable_path_menu("leader: F12\nui: {path-actions: {cancel: []}}");
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    key(&mut app, KeyCode::Function(12), Modifiers::NONE);
+    assert!(
+        app.path_action_menu.is_some(),
+        "removed cancel also removes leader dismissal"
+    );
+    app.path_action_menu = None;
+    key(&mut app, KeyCode::Function(12), Modifiers::NONE);
+    assert!(
+        app.path_popup.is_none(),
+        "bare popup retains inherited leader cancellation"
+    );
+    app.context_action_menu = Some(simple_context_menu());
+    key(&mut app, KeyCode::Function(12), Modifiers::NONE);
+    assert!(app.context_action_menu.is_none());
+}
+
+#[test]
+fn macro_replay_cancel_preserves_raw_modifiers_and_ignores_other_input() {
+    for bits in 0..64 {
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        for code in [KeyCode::Escape, KeyCode::Char('c'), KeyCode::Char(' ')] {
+            let mut app = App::new(Config::default(), None).unwrap();
+            app.macros
+                .insert('a', vec![InputEvent::Key(KeyStroke::char('l'))]);
+            app.replay_macro('a', 999_999).unwrap();
+            let key = KeyStroke::new(code, modifiers);
+            app.handle_key(key).unwrap();
+            assert_eq!(
+                app.macro_replay_pending(),
+                !(code == KeyCode::Escape || key == KeyStroke::ctrl('c')),
+                "{key:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn macro_replay_cancel_remaps_removes_and_reports_effective_aliases() {
+    for aliases in ["[F8]", "[]"] {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let source = format!("leader: F8\nui: {{macro-replay: {{cancel: {aliases}}}}}");
+        let result = crate::keymap::configured::compile(
+            &serde_yaml::from_str(&source).unwrap(),
+            crate::keymap::default_keymap(),
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        app.set_keymap(result.keymap);
+        app.macros
+            .insert('a', vec![InputEvent::Key(KeyStroke::char('l'))]);
+        app.replay_macro('a', 999_999).unwrap();
+        let label = if aliases == "[]" { "unbound" } else { "F8" };
+        assert!(
+            app.status.ends_with(&format!("{label} cancels")),
+            "{}",
+            app.status
+        );
+        for key in [
+            KeyStroke::plain(KeyCode::Escape),
+            KeyStroke::ctrl('c'),
+            KeyStroke::char(' '),
+        ] {
+            app.handle_key(key).unwrap();
+            assert!(app.macro_replay_pending());
+        }
+        app.handle_input(InputEvent::Text("F8".into())).unwrap();
+        assert!(app.macro_replay_pending());
+        app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+            .unwrap();
+        assert_eq!(app.macro_replay_pending(), aliases == "[]");
+    }
+}
+
+fn configured_hover(source: &str, rows: usize) -> App {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let result = crate::keymap::configured::compile(
+        &serde_yaml::from_str(source).unwrap(),
+        crate::keymap::default_keymap(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    app.set_keymap(result.keymap);
+    app.hover = Some(HoverState {
+        lines: (0..rows)
+            .map(|row| format!("documentation {row}"))
+            .collect(),
+    });
+    app
+}
+
+#[test]
+fn hover_acceptance_remaps_and_unbound_input_dismisses_then_continues() {
+    for binding in ["[F8]", "[]"] {
+        let source = format!("ui: {{hover: {{accept: {binding}}}}}");
+        let mut app = configured_hover(&source, 20);
+        assert_eq!(
+            app.hover_accept_label(),
+            if binding == "[]" { "unbound" } else { "F8" }
+        );
+        app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
+        assert!(app.hover.is_none());
+        assert_ne!(app.active_buffer().display_name(), "[documentation]");
+        let mut app = configured_hover(&source, 20);
+        app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+            .unwrap();
+        assert_eq!(
+            app.active_buffer().display_name() == "[documentation]",
+            binding != "[]"
+        );
+    }
+    let mut app = configured_hover("ui: {hover: {accept: [F8]}}", 2);
+    assert_eq!(app.hover_accept_label(), "unbound");
+    app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+        .unwrap();
+    assert_ne!(app.active_buffer().display_name(), "[documentation]");
+
+    let mut app = configured_hover("ui: {hover: {accept: [F8]}}", 20);
+    app.mode = Mode::Insert;
+    app.handle_key(KeyStroke::char('x')).unwrap();
+    assert_eq!(text(&app), "x");
+    assert!(app.hover.is_none());
+}
+
+#[test]
+fn hover_acceptance_respects_pending_sequences_operands_and_leader() {
+    for source in [
+        "ui: {hover: {accept: [F8]}}",
+        "leader: F8\nui: {hover: {accept: [F8]}}",
+    ] {
+        let mut app = configured_hover(source, 20);
+        press(&mut app, 'g');
+        app.hover = Some(HoverState {
+            lines: vec!["line".into(); 20],
+        });
+        assert_eq!(app.hover_accept_label(), "unbound");
+        app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+            .unwrap();
+        assert_ne!(app.active_buffer().display_name(), "[documentation]");
+    }
+    let mut app = configured_hover("ui: {hover: {accept: [x, Ctrl-x]}}", 20);
+    seed(&mut app, "abcx");
+    press(&mut app, 'f');
+    assert!(app.grammar.awaiting_character().is_some());
+    app.hover = Some(HoverState {
+        lines: vec!["line".into(); 20],
+    });
+    assert_eq!(app.hover_accept_label(), "unbound");
+    press(&mut app, 'x');
+    assert_ne!(app.active_buffer().display_name(), "[documentation]");
+    assert_eq!(app.active().selection.primary().head, 3);
+
+    let mut app = configured_hover("leader: F8\nui: {hover: {accept: [F8]}}", 20);
+    assert_eq!(app.hover_accept_label(), "F8");
+    app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+        .unwrap();
+    assert_eq!(app.active_buffer().display_name(), "[documentation]");
+}
+
+#[test]
+fn hover_acceptance_reserves_counts_and_preserves_default_modifiers() {
+    let result = crate::keymap::configured::compile(
+        &serde_yaml::from_str("ui: {hover: {accept: ['2']}}").unwrap(),
+        crate::keymap::default_keymap(),
+    );
+    assert_eq!(result.errors.len(), 1);
+    for bits in 0..64 {
+        let mut app = configured_hover("{}", 20);
+        let modifiers = Modifiers::from_bits(bits).unwrap();
+        app.handle_key(KeyStroke::new(KeyCode::Enter, modifiers))
+            .unwrap();
+        assert_eq!(
+            app.active_buffer().display_name() == "[documentation]",
+            modifiers.is_empty(),
+            "{modifiers:?}"
+        );
+    }
+}
+
+#[test]
+fn hover_char_aliases_do_not_take_literal_input_and_covered_hints_are_inert() {
+    for mode in [Mode::Insert, Mode::Replace] {
+        for alias in ["x", "Meta-x", "Hyper-x"] {
+            let mut app = configured_hover(&format!("ui: {{hover: {{accept: [{alias}]}}}}"), 20);
+            app.mode = mode;
+            assert_eq!(app.hover_accept_label(), "unbound");
+            app.handle_key(KeyStroke::parse(alias).unwrap()).unwrap();
+            assert_eq!(text(&app), "x");
+            assert_ne!(app.active_buffer().display_name(), "[documentation]");
+        }
+    }
+    let mut app = configured_hover("ui: {hover: {accept: [F8]}}", 20);
+    app.path_popup = Some(PathPopup {
+        path: "example.txt".into(),
+    });
+    assert_eq!(app.hover_accept_label(), "unbound");
+    let hover = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|overlay| overlay.kind == crate::snapshot::OverlayKind::Hover)
+        .unwrap();
+    assert_eq!(hover.actions[0].key_hint, "unbound");
+    app.handle_key(KeyStroke::plain(KeyCode::Function(8)))
+        .unwrap();
+    assert_ne!(app.active_buffer().display_name(), "[documentation]");
+    app.path_popup = None;
+    app.macros
+        .insert('a', vec![InputEvent::Key(KeyStroke::char('l'))]);
+    app.replay_macro('a', 999_999).unwrap();
+    assert_eq!(app.hover_accept_label(), "unbound");
+}
+
+#[test]
+fn replayed_hover_acceptance_preserves_legacy_opening_without_advertising_physical_input() {
+    for (source, key) in [
+        ("{}", KeyStroke::plain(KeyCode::Enter)),
+        (
+            "ui: {hover: {accept: [F8]}}",
+            KeyStroke::plain(KeyCode::Function(8)),
+        ),
+    ] {
+        let mut app = configured_hover(source, 20);
+        app.macros.insert('a', vec![InputEvent::Key(key)]);
+        app.replay_macro('a', 1).unwrap();
+        app.hover = Some(HoverState {
+            lines: vec!["line".into(); 20],
+        });
+        assert_eq!(app.hover_accept_label(), "unbound");
+        app.advance_macro_replay().unwrap();
+        assert_eq!(app.active_buffer().display_name(), "[documentation]");
+    }
+}
+
+fn launcher_map(source: &str) -> std::sync::Arc<crate::keymap::Keymap> {
+    let result = crate::keymap::configured::compile(
+        &serde_yaml::from_str(source).unwrap(),
+        crate::keymap::default_keymap(),
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    result.keymap
+}
+
+#[test]
+fn context_launcher_remaps_releases_tab_and_keeps_native_choices() {
+    use crate::keymap::ContextAction;
+    let mut app = App::new(Config::default(), None).unwrap();
+    seed(&mut app, "abc");
+    let map = launcher_map(
+        "ui: {context-launcher: {open-actions: [F8]}}\nbind: {normal: {Tab: move-right}}",
+    );
+    let map = (*map)
+        .clone()
+        .with_context_actions(vec![ContextAction::buffer(
+            app.key_binding_scope(),
+            KeyStroke::char('a'),
+            "left",
+            EditorCommand::MoveLeft,
+        )]);
+    app.set_keymap(std::sync::Arc::new(map));
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, 1);
+    assert!(app.context_action_menu.is_none());
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.context_action_menu.is_some());
+    press(&mut app, 'a');
+    assert!(app.context_action_menu.is_none());
+    assert_eq!(app.active().selection.primary().head, 0);
+}
+
+#[test]
+fn context_launcher_preserves_actual_key_fallback_and_count_with_a_server() {
+    let (mut app, _, _queue) = super::language::rust_app("abcde");
+    super::language::ready_language(&mut app, "rust", crate::lsp::Encoding::Utf16);
+    app.set_keymap(launcher_map(
+        "ui: {context-launcher: {open-actions: [F8]}}\nbind: {normal: {F8: move-right}}",
+    ));
+    assert!(app.has_language_server());
+    press(&mut app, '2');
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, 2);
+    assert!(app.context_action_menu.is_none());
+    assert!(app.pending_count().is_none());
+}
+
+#[test]
+fn context_launcher_removal_and_operand_ownership_do_not_invent_fallback_keys() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_keymap(launcher_map(
+        "ui: {context-launcher: {open-actions: [F8]}}\nbind: {normal: {F8: move-right}}",
+    ));
+    seed(&mut app, "abc");
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.status, "No actions available for this selection");
+    assert_eq!(app.active().selection.primary().head, 0);
+    press(&mut app, 'f');
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.status, "expected a character");
+    assert!(app.awaiting_character_command().is_none());
+    app.set_keymap(launcher_map(
+        "ui: {context-launcher: {open-actions: []}}\nbind: {normal: {Tab: move-right}}",
+    ));
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, 1);
+}
+
+#[test]
+fn context_launcher_defaults_keep_exact_tab_modifiers_and_counts_structural() {
+    use crate::keymap::ui::{Action, Bindings, Owner};
+    let map = Bindings::default();
+    for bits in 0..64 {
+        let key = KeyStroke::new(KeyCode::Tab, Modifiers::from_bits(bits).unwrap());
+        assert_eq!(
+            map.lookup(Owner::ContextLauncher, key),
+            (bits == 0).then_some(Action::OpenActions)
+        );
+    }
+    let result = crate::keymap::configured::compile(
+        &serde_yaml::from_str("ui: {context-launcher: {open-actions: ['2']}}").unwrap(),
+        crate::keymap::default_keymap(),
+    );
+    assert_eq!(result.errors.len(), 1);
+    assert_eq!(
+        result
+            .keymap
+            .ui()
+            .label(Owner::ContextLauncher, Action::OpenActions),
+        "Tab"
+    );
+}
+
+#[test]
+fn authored_window_chords_yield_to_structural_operands_but_factory_aliases_remain() {
+    use crate::keymap::native_window::Action;
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_keymap(launcher_map(
+        "ui: {native-window: {font-increase: [Ctrl-x]}}",
+    ));
+    let key = KeyStroke::ctrl('x');
+    assert_eq!(
+        app.native_window_bindings().lookup(key),
+        Some(Action::FontSize(1))
+    );
+    let captured = app.native_window_bindings();
+    seed(&mut app, "abcx");
+    press(&mut app, 'f');
+    assert!(
+        captured
+            .with_current_guard(&app.native_window_bindings())
+            .lookup(key)
+            .is_none()
+    );
+    assert!(app.native_window_bindings().lookup(key).is_none());
+    assert_eq!(
+        app.native_window_bindings().lookup(KeyStroke::ctrl('V')),
+        Some(Action::PasteText)
+    );
+    app.handle_key(key).unwrap();
+    assert_eq!(app.active().selection.primary().head, 3);
+    assert_eq!(
+        app.native_window_bindings().lookup(key),
+        Some(Action::FontSize(1))
+    );
+}
+
+#[test]
+fn authored_window_chords_yield_to_menu_mnemonics_and_prompt_text() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.set_keymap(launcher_map(
+        "ui: {native-window: {font-increase: [Ctrl-r], font-decrease: [Super-x]}}",
+    ));
+    app.path_popup = Some(PathPopup {
+        path: "example.txt".into(),
+    });
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert!(app.path_action_menu.is_some());
+    assert!(
+        app.native_window_bindings()
+            .lookup(KeyStroke::ctrl('r'))
+            .is_none()
+    );
+    key(&mut app, KeyCode::Char('r'), Modifiers::CONTROL);
+    assert_eq!(app.registers.get(&'"').unwrap().text, "example.txt");
+    assert!(
+        app.native_window_bindings()
+            .lookup(KeyStroke::ctrl('r'))
+            .is_some()
+    );
+    press(&mut app, ':');
+    let super_x = KeyStroke::parse("Super-x").unwrap();
+    assert!(app.native_window_bindings().lookup(super_x).is_none());
+    app.handle_key(super_x).unwrap();
+    assert_eq!(app.command, "x");
 }

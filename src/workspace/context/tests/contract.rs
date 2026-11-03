@@ -67,7 +67,8 @@ fn scopes_require_reads_and_unknown_scopes_are_rejected() {
         Scope::TerminalRead,
         Scope::EditorContextRead,
         Scope::BufferEdit,
-        Scope::TerminalPropose,
+        Scope::TerminalWrite,
+        Scope::AgentChannel,
     ] {
         assert_eq!(Scope::from_capability(scope.capability()), Some(scope));
         assert_eq!(
@@ -78,13 +79,13 @@ fn scopes_require_reads_and_unknown_scopes_are_rejected() {
     assert_eq!(Scope::from_capability("terminal_input"), None);
     assert!(serde_json::from_str::<Scope>("\"terminal_submit\"").is_err());
     assert!(validate_scopes(&BTreeSet::new()).is_ok());
-    assert!(validate_scopes(&[Scope::TerminalPropose].into()).is_err());
+    assert!(validate_scopes(&[Scope::TerminalWrite].into()).is_err());
     assert!(validate_scopes(&[Scope::BufferEdit].into()).is_err());
     assert!(
         validate_scopes(
             &[
                 Scope::TerminalRead,
-                Scope::TerminalPropose,
+                Scope::TerminalWrite,
                 Scope::EditorContextRead,
                 Scope::BufferEdit
             ]
@@ -169,20 +170,39 @@ fn every_allowlisted_method_has_an_explicit_scope_and_round_trips() {
             Scope::TerminalRead,
         ),
         (
-            "terminal.input.propose",
+            "terminal.input.write",
             json!({"terminal":"t:1","text":"echo hello"}),
-            Scope::TerminalPropose,
+            Scope::TerminalWrite,
         ),
         (
-            "terminal.input.status",
-            json!({"proposal":"i:1"}),
-            Scope::TerminalPropose,
+            "terminal.input.enter",
+            json!({"terminal":"t:1","expected_revision":"r:4"}),
+            Scope::TerminalWrite,
         ),
         (
-            "terminal.input.cancel",
-            json!({"proposal":"i:1"}),
-            Scope::TerminalPropose,
+            "terminal.input.enter.status",
+            json!({"enter":"e:1"}),
+            Scope::TerminalWrite,
         ),
+        (
+            "channel.join",
+            json!({"provider":"claude","task":"refactor","client":{"name":"claude-code","version":"2.0"},
+                "location":{"directory":"/work","repository":"/work","worktree":"/work","branch":"main"},
+                "terminal":{"terminal":3,"capability":"c".repeat(64)},"resume":"r:1"}),
+            Scope::AgentChannel,
+        ),
+        (
+            "channel.post",
+            json!({"text":"hello\nall","to":"codex-1",
+                "location":{"directory":"/work","repository":null,"worktree":null,"branch":null}}),
+            Scope::AgentChannel,
+        ),
+        (
+            "channel.read",
+            json!({"since":0,"limit":50}),
+            Scope::AgentChannel,
+        ),
+        ("channel.who", json!({}), Scope::AgentChannel),
     ] {
         let raw = request(method, params.clone());
         let parsed = parse_request(&raw).unwrap();
@@ -233,7 +253,7 @@ fn profile_has_no_submission_approval_or_control_escape_hatch() {
     ] {
         assert!(
             parse_request(&request(
-                "terminal.input.propose",
+                "terminal.input.write",
                 json!({"terminal":"t:1","text":text})
             ))
             .is_err()
@@ -241,7 +261,7 @@ fn profile_has_no_submission_approval_or_control_escape_hatch() {
     }
     assert!(
         parse_request(&request(
-            "terminal.input.propose",
+            "terminal.input.write",
             json!({"terminal":"t:1","text":"literal \\n"})
         ))
         .is_ok()
@@ -299,7 +319,7 @@ fn bounds_reject_oversized_untrusted_work_before_host_dispatch() {
     assert!(parse_request(&" ".repeat(MAX_FRAME_BYTES + 1)).is_err());
     assert!(
         parse_request(&request(
-            "terminal.input.propose",
+            "terminal.input.write",
             json!({"terminal":"t:1","text":"x".repeat(4097)})
         ))
         .is_err()
@@ -323,35 +343,12 @@ fn advertised_context_limits_exclude_unavailable_plugin_resources() {
     assert_eq!(value["commands"], 0);
     assert_eq!(value["resources"]["views"], 0);
     assert_eq!(value["context"]["read_rows"], 1000);
-    assert_eq!(value["context"]["proposal_text_bytes"], 4096);
+    assert_eq!(value["context"]["terminal_text_bytes"], 4096);
+    assert_eq!(value["context"]["enter_delay_ms"], ENTER_DELAY_MILLIS);
+    assert_eq!(value["context"]["enters"], MAX_ENTERS);
     assert_eq!(
         value["context"]["edit_replacement_bytes"],
         editor::MAX_REPLACEMENT_BYTES
-    );
-}
-
-#[test]
-fn proposal_reason_is_optional_bounded_and_never_an_authorization_flag() {
-    let valid = request(
-        "terminal.input.propose",
-        json!({"terminal":"t:1","text":"cargo test","reason":"Run the focused test suite"}),
-    );
-    assert!(parse_request(&valid).is_ok());
-    for reason in ["x".repeat(257), "a\nb".into(), "\u{2028}".into()] {
-        assert!(
-            parse_request(&request(
-                "terminal.input.propose",
-                json!({"terminal":"t:1","text":"cargo test","reason":reason})
-            ))
-            .is_err()
-        );
-    }
-    assert!(
-        parse_request(&request(
-            "terminal.input.propose",
-            json!({"terminal":"t:1","text":"cargo test","reason":"approved","approved":true})
-        ))
-        .is_err()
     );
 }
 
@@ -390,4 +387,147 @@ fn buffer_append_is_a_strict_buffer_edit_request_with_advertised_bounds() {
     let context = &limits()["context"];
     assert_eq!(context["append_tail_bytes"], MAX_EXPECTED_TAIL_BYTES);
     assert_eq!(context["append_preview_chars"], APPEND_PREVIEW_CHARS);
+}
+
+#[test]
+fn terminal_input_carries_no_submit_or_approval_and_enter_needs_a_revision() {
+    for params in [
+        json!({"terminal":"t:1","text":"ls","enter":true}),
+        json!({"terminal":"t:1","text":"ls","reason":"why"}),
+    ] {
+        assert!(parse_request(&request("terminal.input.write", params)).is_err());
+    }
+    for params in [
+        json!({"terminal":"t:1"}),
+        json!({"terminal":"t:1","expected_revision":""}),
+        json!({"terminal":"t:1","expected_revision":"r:1","text":"y"}),
+    ] {
+        assert!(parse_request(&request("terminal.input.enter", params)).is_err());
+    }
+    assert!(
+        parse_request(&request(
+            "terminal.input.enter.status",
+            json!({"enter":"e 1"})
+        ))
+        .is_err()
+    );
+    // The retired methods are unknown now, not unauthorized.
+    for (method, params) in [
+        (
+            "terminal.input.propose",
+            json!({"terminal":"t:1","text":"ls"}),
+        ),
+        ("terminal.input.status", json!({"proposal":"i:1"})),
+        ("terminal.input.cancel", json!({"proposal":"i:1"})),
+    ] {
+        assert!(parse_request(&request(method, params)).is_err(), "{method}");
+    }
+}
+
+#[test]
+fn permissions_map_to_capabilities_and_write_needs_read() {
+    use crate::workspace::context::wire::{
+        Permission, granted_scopes, permissions_of, validate_permissions,
+    };
+    let read: BTreeSet<_> = [Permission::Read].into();
+    let write: BTreeSet<_> = [Permission::Read, Permission::Write].into();
+    assert!(validate_permissions(&BTreeSet::new()).is_ok());
+    assert!(validate_permissions(&read).is_ok());
+    assert!(validate_permissions(&write).is_ok());
+    assert!(validate_permissions(&[Permission::Write].into()).is_err());
+    assert_eq!(
+        granted_scopes(&read),
+        [
+            Scope::TerminalRead,
+            Scope::EditorContextRead,
+            Scope::AgentChannel
+        ]
+        .into()
+    );
+    assert_eq!(
+        granted_scopes(&write),
+        [
+            Scope::TerminalRead,
+            Scope::EditorContextRead,
+            Scope::AgentChannel,
+            Scope::BufferEdit,
+            Scope::TerminalWrite
+        ]
+        .into()
+    );
+    assert!(validate_scopes(&granted_scopes(&write)).is_ok());
+    assert_eq!(permissions_of(&granted_scopes(&read)), ["read"]);
+    assert_eq!(permissions_of(&granted_scopes(&write)), ["read", "write"]);
+    assert!(permissions_of(&BTreeSet::new()).is_empty());
+    assert_eq!(permissions_of(&[Scope::AgentChannel].into()), ["read"]);
+    assert_eq!(serde_json::to_value(Permission::Write).unwrap(), "write");
+}
+
+#[test]
+fn retired_and_grant_only_names_stay_out_of_negotiation() {
+    // An older adapter asks for proposals; it keeps its other access.
+    let mut requested = registration();
+    requested["optional_capabilities"] = json!(["terminal_propose"]);
+    assert!(parse_registration(&requested.to_string()).is_ok());
+    assert_eq!(Scope::from_capability("terminal_propose"), None);
+    // One that requires them cannot work at all, and is told so.
+    let mut requested = registration();
+    requested["required_capabilities"] = json!(["terminal_read", "terminal_propose"]);
+    assert_eq!(
+        parse_registration(&requested.to_string()).unwrap_err().code,
+        ErrorCode::CapabilityDenied
+    );
+    for name in ["terminal_insert", "channel_nudge", "read", "write"] {
+        let mut requested = registration();
+        requested["optional_capabilities"] = json!([name]);
+        assert!(
+            parse_registration(&requested.to_string()).is_err(),
+            "{name}"
+        );
+    }
+    // Nudges are gone from posts and from the features a host knows.
+    assert!(
+        parse_request(
+            &json!({"type":"request","id":"1","method":"channel.post","params":{"text":"hi","location":{"directory":"/w","repository":null,"worktree":null,"branch":null},"nudge":["codex-1"]}})
+                .to_string()
+        )
+        .is_err()
+    );
+    let mut requested = registration();
+    requested["optional_features"] = json!(["runyte.context.channel.nudge.v1"]);
+    assert!(
+        parse_registration(&requested.to_string()).is_ok(),
+        "unknown optional features are ignored"
+    );
+    let mut requested = registration();
+    requested["optional_features"] = json!([TERMINAL_WRITE_FEATURE]);
+    requested["optional_capabilities"] = json!(["terminal_write"]);
+    assert!(parse_registration(&requested.to_string()).is_ok());
+}
+
+#[test]
+fn the_agent_channel_is_negotiated_through_its_feature_and_capability() {
+    assert_eq!(
+        Scope::from_capability("agent_channel"),
+        Some(Scope::AgentChannel)
+    );
+    assert!(validate_scopes(&[Scope::AgentChannel].into()).is_ok());
+    let mut requested = registration();
+    requested["optional_features"] = json!([CHANNEL_FEATURE]);
+    requested["optional_capabilities"] = json!(["agent_channel"]);
+    assert!(parse_registration(&requested.to_string()).is_ok());
+    for (method, params) in [
+        ("channel.read", json!({"since":0,"limit":0})),
+        ("channel.read", json!({"since":0,"limit":201})),
+        (
+            "channel.post",
+            json!({"text":"x".repeat(16 * 1024 + 1),"location":{"directory":"/","repository":null,"worktree":null,"branch":null}}),
+        ),
+        (
+            "channel.join",
+            json!({"provider":"claude","task":"t","location":{"directory":"/"},"extra":1}),
+        ),
+    ] {
+        assert!(parse_request(&request(method, params)).is_err(), "{method}");
+    }
 }

@@ -414,3 +414,59 @@ async fn native_late_result_rejects_replaced_attachment_and_stopped_plugin_gener
     settle(&mut host, &mut events).await;
     assert_eq!(host.app.plugins.orphaned_payload, 0);
 }
+
+#[tokio::test]
+async fn configured_prompt_acceptance_requires_fresh_input_for_native_handoff() {
+    for spelling in ["F9", "Ctrl-F9"] {
+        for delivery in ["fresh", "repeat"] {
+            let (root, mut host, mut output) = fixture();
+            next(&mut output); // Registration.
+            let config = root.path().join("config.yaml");
+            std::fs::write(
+                &config,
+                format!("keys:\n  ui:\n    command-prompt:\n      accept: [{spelling}]\n"),
+            )
+            .unwrap();
+            host.app.note_loaded_config(&config);
+            host.app
+                .execute(crate::command::parse_colon_command("config-reload").unwrap())
+                .unwrap();
+            for character in ":plugin.native.open".chars() {
+                host.app
+                    .handle_input(KeyStroke::char(character).into())
+                    .unwrap();
+            }
+            let input = InputEvent::Key(KeyStroke::parse(spelling).unwrap());
+            match delivery {
+                "fresh" => host.app.handle_input(input).unwrap(),
+                "repeat" => host.app.handle_repeated_input(input).unwrap(),
+                _ => unreachable!(),
+            }
+            let token = invocation(&mut output);
+            assert_eq!(
+                host.app.plugins.instances[&0].application.requests[&token].native_handoff_allowed,
+                delivery == "fresh"
+            );
+            if delivery == "fresh" {
+                let (sender, mut events) = mpsc::channel(crate::plugin::EVENT_CAPACITY);
+                host.plugin_events_sender = Some(sender);
+                host.plugin_external_launcher = Some(
+                    std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+                        .join("System32/cmd.exe"),
+                );
+                request(&mut host, 20, external(&token));
+                settle(&mut host, &mut events).await;
+                assert!(matches!(
+                    next(&mut output),
+                    api::HostMessage::Response {
+                        outcome: api::Response::Success { .. },
+                        ..
+                    }
+                ));
+            } else {
+                request(&mut host, 20, external(&token));
+                assert_eq!(failure(&mut output), api::ErrorCode::ContextChanged);
+            }
+        }
+    }
+}

@@ -563,10 +563,9 @@ impl App {
                 destination: None,
                 focus_entry: None,
             };
-            let message = confirmation.message();
             self.directory_reload_confirmation = Some(confirmation);
             self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-            self.status(message);
+            self.status_confirmation();
             return Ok(());
         }
         self.reload_directory_buffer(buffer)
@@ -913,10 +912,9 @@ impl App {
                 destination: Some(path.to_path_buf()),
                 focus_entry: None,
             };
-            let message = confirmation.message();
             self.directory_reload_confirmation = Some(confirmation);
             self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
-            self.status(message);
+            self.status_confirmation();
             return Ok(None);
         }
         let view = self.listing_view();
@@ -2261,11 +2259,8 @@ impl App {
             generation: observation.generation,
             observation: observation.observation,
         };
-        self.status(confirmation.message(
-            self.buffers[buffer_id].external_file_status().is_stale(),
-            self.keymap(),
-        ));
         self.file_reload_confirmation = Some(confirmation);
+        self.status_confirmation();
         self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
         Ok(())
     }
@@ -3351,6 +3346,27 @@ impl App {
 }
 
 impl App {
+    /// Refuses a text command over an image or PDF surface. The buffer behind
+    /// the surface holds one row per page, so a word motion, a register or a
+    /// search there would change something nobody can see. Help leaves out
+    /// exactly the keys refused here.
+    pub(super) fn refuse_on_media_surface(
+        &mut self,
+        command: crate::command::EditorCommand,
+    ) -> bool {
+        use crate::keymap::{BindingScope, admission};
+        if self.key_binding_scope() != BindingScope::Media
+            || admission::admits_command(BindingScope::Media, command)
+        {
+            return false;
+        }
+        self.action_failed(format!(
+            "{} does not apply to an image or PDF page",
+            command.metadata().description.to_lowercase()
+        ));
+        true
+    }
+
     pub(super) fn handle_media_command(&mut self, command: crate::command::EditorCommand) -> bool {
         use crate::{
             command::EditorCommand as C,
@@ -3384,6 +3400,9 @@ impl App {
                 }
                 _ => return false,
             }
+            return true;
+        }
+        if self.refuse_on_media_surface(command) {
             return true;
         }
         if pdf
@@ -3437,7 +3456,9 @@ impl App {
             C::MediaMoveUp | C::MoveUp => A::MoveUp,
             C::MediaMoveDown | C::MoveDown => A::MoveDown,
             C::AlignViewCenter | C::AlignViewMiddle => A::Center,
-            C::MediaCopySelection => A::CopySelection,
+            // `Space c y` copies to the system clipboard everywhere; here the
+            // selection is the media's own, not the hidden page rows.
+            C::MediaCopySelection | C::ClipboardYank => A::CopySelection,
             C::MediaBack => {
                 self.mode = Mode::Normal;
                 A::Back

@@ -84,6 +84,10 @@ jobs:
         run: cargo fmt --check
       - name: Lint
         run: cargo clippy --all-targets --locked -- -D warnings
+      # Catch ownership/SQLite initialization failures before linking the full
+      # integration suite; the complete suite below remains the final gate.
+      - name: Test private Windows channel storage
+        run: cargo test --locked --lib workspace::context::durable
       - name: Compile native tests
         run: cargo test --locked --no-run --timings
       - name: Retain Windows build timings

@@ -29,8 +29,38 @@ async fn catalog_is_stable_before_pairing_and_discovery_needs_no_storage() {
         .await
         .unwrap();
     let tools = catalog["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 9);
-    assert!(tools.iter().any(|t| t["name"] == "append_buffer"));
+    let names = tools
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        [
+            "find_resources",
+            "list_workspaces",
+            "read_buffer",
+            "read_terminal",
+            "append_buffer",
+            "edit_buffer",
+            "write_terminal",
+            "press_enter",
+            "join_channel",
+            "post_message",
+            "read_messages",
+            "list_participants",
+            "durable_channel",
+        ]
+    );
+    let read_terminal = &tools[3]["inputSchema"]["properties"]["region"];
+    assert_eq!(
+        read_terminal["default"], "screen",
+        "history only when asked"
+    );
+    for name in ["write_terminal", "press_enter"] {
+        let tool = tools.iter().find(|t| t["name"] == name).unwrap();
+        assert_eq!(tool["annotations"]["readOnlyHint"], false, "{name}");
+        assert_eq!(tool["annotations"]["destructiveHint"], true, "{name}");
+    }
     assert!(
         tools
             .iter()
@@ -137,6 +167,54 @@ async fn lifecycle_errors_arguments_and_bounded_frames() {
     assert!(String::from_utf8(output).unwrap().contains("Invalid JSON"));
 }
 
+#[tokio::test]
+async fn joining_with_no_host_running_says_so() {
+    let mut empty = Bridge::new(None, "agent".into(), Duration::from_millis(100)).unwrap();
+    let error = empty
+        .call("join_channel", json!({"provider":"codex","task":"review"}))
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, "unavailable");
+    assert!(error.message.contains("No running Runyte workspace"));
+    let named = empty
+        .call(
+            "join_channel",
+            json!({"provider":"codex","task":"review","workspace":"elsewhere"}),
+        )
+        .await
+        .unwrap_err();
+    assert!(named.message.contains("matches elsewhere"));
+}
+
 #[cfg(unix)]
 #[path = "tests/host.rs"]
 mod host;
+
+#[cfg(unix)]
+#[test]
+fn channel_terminal_claim_handles_filtered_standalone_and_invalid_environment() {
+    use super::channel::terminal_claim;
+    for value in [
+        None,
+        Some("standalone"),
+        Some("not-json"),
+        Some("{}"),
+        Some(""),
+    ] {
+        assert!(terminal_claim(value).is_none());
+    }
+    let launch = crate::workspace::parent::ParentLaunch::new(std::path::Path::new(
+        "/tmp/fixture/endpoint.json",
+    ))
+    .unwrap();
+    let value = launch.context(crate::terminal::TerminalId::from_raw(42));
+    let claim = terminal_claim(Some(&value)).unwrap();
+    assert_eq!(claim["terminal"], 42);
+    assert!(launch.validates(
+        crate::terminal::TerminalId::from_raw(42),
+        claim["capability"].as_str().unwrap()
+    ));
+    let mut stale: Value = serde_json::from_str(&value).unwrap();
+    stale["protocol"] = json!(0);
+    assert!(terminal_claim(Some(&stale.to_string())).is_none());
+}

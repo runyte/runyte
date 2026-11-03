@@ -563,6 +563,13 @@ impl Directory {
     pub fn open_read(&self, name: &OsStr) -> io::Result<File> {
         self.file(name, FILE_GENERIC_READ, false, false)
     }
+    /// Read ordinary user content, checking ownership without requiring or
+    /// changing its ACL. Private runtime callers continue to use open_read.
+    pub(crate) fn open_owned_read(&self, name: &OsStr) -> io::Result<File> {
+        self.file_with_admission(name, FILE_GENERIC_READ, false, false, |file, _| {
+            windows_security::admit_owned(file)
+        })
+    }
     pub fn read(&self, name: &OsStr, limit: usize) -> io::Result<Vec<u8>> {
         let file = self.file(name, FILE_GENERIC_READ, false, true)?;
         let mut bytes = Vec::new();

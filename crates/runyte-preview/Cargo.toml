@@ -10,6 +10,8 @@ blitz-dom = { git = "https://github.com/DioxusLabs/blitz", rev = "74fe1abf090732
 blitz-html = { git = "https://github.com/DioxusLabs/blitz", rev = "74fe1abf090732524c86d96e6cdb6f95d8f8d6dc", default-features = false }
 blitz-paint = { features = ["svg"], git = "https://github.com/DioxusLabs/blitz", rev = "74fe1abf090732524c86d96e6cdb6f95d8f8d6dc", default-features = false }
 blitz-traits = { git = "https://github.com/DioxusLabs/blitz", rev = "74fe1abf090732524c86d96e6cdb6f95d8f8d6dc", default-features = false }
+# Same revision as pinned Blitz's Parley, so the font context it is handed is its own type.
+parley = { git = "https://github.com/linebender/parley", rev = "62790943af982ad3388a3ff96cef6f90ac80a8bb", default-features = false }
 anyrender = "0.14"
 anyrender_vello_cpu = "0.18"
 serde = { version = "1", features = ["derive"] }

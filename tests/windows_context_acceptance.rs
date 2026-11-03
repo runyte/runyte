@@ -303,8 +303,8 @@ fn grant_remembered_edit(editor: &mut Console) {
             editor.until(&format!("Page {current}/{page}"));
         }
     }
-    editor.send("3");
-    editor.until("3 [x] Edit and append to buffers");
+    editor.send("2");
+    editor.until("2 [x] Write: edit buffers, type in terminals, press Enter");
     editor.send("r");
     editor.until("r [x] Remember for this workspace");
     editor.send("\t");

@@ -60,6 +60,7 @@ pub struct Config {
     pub lsp: LspConfig,
     pub git: GitConfig,
     pub notifications: NotificationsConfig,
+    pub mcp: McpConfig,
     /// Raw so malformed key-remapping sections can be reported non-fatally by
     /// the keymap compiler after the built-in registry is available.
     #[serde(
@@ -129,6 +130,97 @@ fn serialize_sorted<S: Serializer, V: Serialize>(
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     map.iter().collect::<BTreeMap<_, _>>().serialize(serializer)
+}
+
+/// Agent access through `runyte mcp`.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(default)]
+pub struct McpConfig {
+    /// What each MCP identity may do in a workspace that has no grant of its
+    /// own. Only `read` can be a default; a grant applied with `:mcp`, and a
+    /// revocation, take precedence in that workspace.
+    pub default_grants: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// Capability names from before read and write permissions. A default naming
+/// both reads among them still grants Read, and never more; one naming less
+/// grants nothing, since Read is wider than what it named.
+const LEGACY_DEFAULT_NAMES: [&str; 5] = [
+    "terminal_read",
+    "editor_context_read",
+    "buffer_edit",
+    "terminal_propose",
+    "agent_channel",
+];
+
+/// Whether a default's names amount to Read.
+fn grants_read(names: &[String]) -> bool {
+    let named = |name: &str| names.iter().any(|n| n == name);
+    named("read") || (named("terminal_read") && named("editor_context_read"))
+}
+
+impl McpConfig {
+    /// The identities whose configured default amounts to Read: `read`, or
+    /// both legacy read names. Validation has already refused anything else
+    /// but the other legacy names.
+    pub fn default_permissions(
+        &self,
+    ) -> impl Iterator<
+        Item = (
+            &str,
+            std::collections::BTreeSet<crate::workspace::context::wire::Permission>,
+        ),
+    > {
+        self.default_grants
+            .iter()
+            .filter(|(_, names)| grants_read(names))
+            .map(|(identity, _)| {
+                (
+                    identity.as_str(),
+                    [crate::workspace::context::wire::Permission::Read].into(),
+                )
+            })
+    }
+
+    /// Identities whose default names only some of the legacy reads, and so
+    /// grants nothing now, to be reported rather than silently dropped.
+    pub fn narrow_defaults(&self) -> impl Iterator<Item = &str> {
+        self.default_grants
+            .iter()
+            .filter(|(_, names)| !names.is_empty() && !grants_read(names))
+            .map(|(identity, _)| identity.as_str())
+    }
+
+    fn validate(&self) -> std::result::Result<(), String> {
+        if self.default_grants.len() > 32 {
+            return Err("mcp.default_grants names at most 32 identities".to_owned());
+        }
+        for (identity, names) in &self.default_grants {
+            if identity.is_empty()
+                || identity.len() > 64
+                || !identity
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            {
+                return Err(format!(
+                    "mcp.default_grants identity {identity:?} must use 1 to 64 ASCII letters, digits, underscores or hyphens"
+                ));
+            }
+            for name in names {
+                if name == "write" {
+                    return Err(format!(
+                        "mcp.default_grants.{identity}: write is granted per workspace with :mcp, never by default"
+                    ));
+                }
+                if name != "read" && !LEGACY_DEFAULT_NAMES.contains(&name.as_str()) {
+                    return Err(format!(
+                        "mcp.default_grants.{identity}: unknown permission {name:?}; use read"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1051,6 +1143,7 @@ impl Default for Config {
             lsp: LspConfig::default(),
             git: GitConfig::default(),
             notifications: NotificationsConfig::default(),
+            mcp: McpConfig::default(),
             plugins: Vec::new(),
             keys: None,
             theme: None,
@@ -1413,6 +1506,7 @@ impl Config {
                 "git.refresh_interval_seconds must be between 0 and {MAX_GIT_REFRESH_INTERVAL_SECONDS}"
             ));
         }
+        self.mcp.validate()?;
         let mut servers = self.lsp.servers.iter().collect::<Vec<_>>();
         servers.sort_unstable_by_key(|(language, _)| language.as_str());
         for (language, server) in servers {
@@ -1954,6 +2048,55 @@ themes:
         let config: Config = serde_yaml::from_str("editor:\n  scratch_markdown: false\n").unwrap();
         assert!(!config.editor.scratch_markdown);
         assert!(config.validate_settings().is_ok());
+    }
+
+    #[test]
+    fn mcp_default_grants_can_name_only_read_and_legacy_names_never_grant_more() {
+        use crate::workspace::context::wire::Permission;
+        assert!(Config::default().mcp.default_grants.is_empty());
+        for yaml in [
+            "agent: [read]",
+            // Releases before read and write named capabilities, some of
+            // them writes. Both reads still mean Read, and never Write.
+            "agent: [terminal_read, editor_context_read]",
+            "agent: [terminal_read, editor_context_read, buffer_edit, terminal_propose]",
+        ] {
+            let config: Config =
+                serde_yaml::from_str(&format!("mcp:\n  default_grants:\n    {yaml}\n")).unwrap();
+            assert!(config.validate_settings().is_ok(), "{yaml}");
+            let (identity, permissions) = config.mcp.default_permissions().next().unwrap();
+            assert_eq!(identity, "agent");
+            assert_eq!(permissions, [Permission::Read].into(), "{yaml}");
+        }
+        let empty: Config =
+            serde_yaml::from_str("mcp:\n  default_grants:\n    agent: []\n").unwrap();
+        assert!(empty.validate_settings().is_ok());
+        assert_eq!(empty.mcp.default_permissions().count(), 0, "grants nothing");
+        assert_eq!(empty.mcp.narrow_defaults().count(), 0);
+        // Less than both reads used to mean less than Read does now, so it
+        // grants nothing, and says so.
+        for yaml in [
+            "agent: [agent_channel]",
+            "agent: [terminal_read, buffer_edit]",
+        ] {
+            let narrow: Config =
+                serde_yaml::from_str(&format!("mcp:\n  default_grants:\n    {yaml}\n")).unwrap();
+            assert!(narrow.validate_settings().is_ok(), "{yaml}");
+            assert_eq!(narrow.mcp.default_permissions().count(), 0, "{yaml}");
+            assert_eq!(narrow.mcp.narrow_defaults().collect::<Vec<_>>(), ["agent"]);
+        }
+
+        for (yaml, error) in [
+            ("agent: [read, write]", "never by default"),
+            ("agent: [terminal_write]", "unknown permission"),
+            ("agent: [terminal_insert]", "unknown permission"),
+            ("'bad name': [read]", "must use 1 to 64"),
+        ] {
+            let config: Config =
+                serde_yaml::from_str(&format!("mcp:\n  default_grants:\n    {yaml}\n")).unwrap();
+            let message = config.validate_settings().unwrap_err();
+            assert!(message.contains(error), "{yaml}: {message}");
+        }
     }
 
     #[test]

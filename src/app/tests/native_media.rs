@@ -704,3 +704,103 @@ fn native_help_lists_the_window_registry_controls_only_for_window_frontends() {
         }
     }
 }
+
+/// Every default Normal binding in a media pane either does something there or
+/// is refused with a message, exactly as `keymap::admission` says, so help can
+/// list by that rule. A refused key leaves the hidden page rows untouched.
+#[test]
+fn media_dispatch_refuses_exactly_what_help_leaves_out() {
+    use crate::keymap::admission::admits;
+    let root = TestRuntimeRoot::new("media-admission").unwrap();
+    let path = root.join("pages.pdf");
+    fs::write(&path, b"%PDF fixture").unwrap();
+    let open = || {
+        let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+        app.native_media = true;
+        app.open_file(path.clone()).unwrap();
+        let buffer = app.active().buffer;
+        app.buffers[buffer].replace_virtual_text("Page 1\nPage 2\nPage 3\nPage 4");
+        assert_eq!(app.key_binding_scope(), BindingScope::Media);
+        app
+    };
+    let bindings = open()
+        .keymap()
+        .bindings_for_scope(Mode::Normal, BindingScope::Media)
+        .filter(|binding| matches!(binding.target, BindingTarget::Editor(_)))
+        .map(|binding| (binding.sequence.clone(), binding.target))
+        .collect::<Vec<_>>();
+    let (mut refused, mut admitted) = (0, 0);
+    let mut mismatches = Vec::new();
+    for (sequence, target) in bindings {
+        // The context launcher owns its key before command dispatch.
+        if open().keymap().ui().lookup(
+            crate::keymap::ui::Owner::ContextLauncher,
+            sequence.as_slice()[0],
+        ) == Some(crate::keymap::ui::Action::OpenActions)
+        {
+            continue;
+        }
+        let mut app = open();
+        let selection = app.active().selection.clone();
+        for &key in sequence.as_slice() {
+            app.handle_key(key).unwrap();
+        }
+        for _ in 0..2 {
+            if app.grammar.awaiting_character().is_some() {
+                press(&mut app, 'x');
+            }
+        }
+        let refusal = app
+            .status
+            .contains("does not apply to an image or PDF page");
+        // Some commands are refused before dispatch, for want of a syntax
+        // tree or an argument; they are refused here all the same.
+        let refused_earlier = app.status.contains("is unavailable for this buffer")
+            || app.status.contains("is unsupported");
+        if admits(BindingScope::Media, target) {
+            admitted += 1;
+            if refusal {
+                mismatches.push(format!("{sequence} ({target:?}) refused: {}", app.status));
+            }
+        } else {
+            refused += 1;
+            if !(refusal || refused_earlier)
+                || app.active().selection != selection
+                || app.active_buffer().text().to_string() != "Page 1\nPage 2\nPage 3\nPage 4"
+            {
+                mismatches.push(format!(
+                    "{sequence} ({target:?}) not refused: {}",
+                    app.status
+                ));
+            }
+        }
+    }
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
+    assert!(
+        refused > 20 && admitted > 20,
+        "{refused} refused, {admitted} admitted"
+    );
+}
+
+/// `Space c y` copies the media selection, as `y` and Ctrl-c do, rather than
+/// the hidden page rows.
+#[test]
+fn system_clipboard_yank_copies_the_media_selection() {
+    let root = TestRuntimeRoot::new("media-clipboard-yank").unwrap();
+    let path = root.join("pages.pdf");
+    fs::write(&path, b"%PDF fixture").unwrap();
+    let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+    app.native_media = true;
+    app.open_file(path.clone()).unwrap();
+    for key in KeySequence::parse("Space c y").unwrap().as_slice() {
+        app.handle_key(*key).unwrap();
+    }
+    assert_eq!(
+        app.media_requests
+            .iter()
+            .map(|request| (request.action, request.path.clone()))
+            .collect::<Vec<_>>(),
+        vec![(crate::media::ViewAction::CopySelection, path)]
+    );
+    assert!(!app.status.contains("does not apply"), "{}", app.status);
+}

@@ -65,25 +65,59 @@ and result application live in `src/workspace/host/plugins.rs` and the adjacent
 
 This is a public extension surface for external agents connecting into Runyte.
 It uses a separately authenticated, owner-private Unix socket or Windows named
-pipe, enabled by a native grant for an exact workspace. It negotiates the
-`runyte-1` envelope, a supported release range and the `runyte.context.v1`
-feature; ordinary plugin grants cannot authorize it.
+pipe, enabled by a native grant, or a configured default, for an exact
+workspace. It negotiates the `runyte-1` envelope, a supported release range and
+the `runyte.context.v1` feature; ordinary plugin grants cannot authorize it.
 
-The host checks peer ownership, credentials and granted scopes for reads,
-revision-checked buffer edits and individually approved terminal text proposals.
-Terminal insertion never submits Enter. Grants and approvals remain native
-editor actions. Frames are at most 2 MiB; readers, outstanding requests,
-snapshots, retained bytes and proposals have independent quotas.
+The person grants an identity, per exact workspace, Read (terminal and editor
+reads and the agent channel) and optionally Write (buffer edits, terminal writes
+and Enter), toggled and revoked natively at any time. Readers negotiate
+capabilities within the grant. The host checks peer ownership, credentials and
+negotiated scopes for reads, revision-checked buffer edits and terminal writes,
+and rechecks the live grant before every delayed Enter. Grants remain native
+editor actions, with one second source: the per-user configuration may name
+default grants (`mcp.default_grants`), trusted like the rest of that file,
+applied at host start only where the workspace has no grant or revocation
+record, and never including Write. Applying a changed grant disconnects that
+identity's readers; the endpoint stays while any identity is granted. Frames are
+at most 2 MiB; readers, outstanding requests, snapshots, retained bytes and
+waiting Enters have independent quotas.
 
 [`runyte mcp`](../../docs/mcp.md) adapts MCP over stdio to this same context
 transport. An external client starts the adapter; the adapter connects to
-granted hosts and gains no additional authority. Its nine-tool catalog is
-distinct from the fuller context operation catalog. The
+granted hosts and gains no additional authority. Its thirteen-tool catalog is
+distinct from the fuller context operation catalog. The agent channel
+(`agent_channel`, feature `runyte.context.channel.v1`) lets readers of one host
+exchange messages; the host verifies a participant's terminal from the
+capability Runyte handed that terminal's children and the connecting process's
+session, and treats every message as untrusted text. A participant whose
+terminal cannot be verified has none; nothing binds one by hand.
+
+Terminal writes (`terminal_write`, feature `runyte.context.terminal.write.v1`)
+are the one path by which a reader's bytes reach a terminal, and the only key
+they can press is Enter. Text is one bounded line without controls, queued
+behind other input and never followed by Enter. Enter is a separate request
+naming the terminal read revision the agent looked at; the host refuses a stale
+revision, shows `[Enter pending]` in the pane title for five seconds, and then
+writes a carriage return only if the read revision and the input generation are
+both unchanged, the reader still holds Write, the same frontend is attached and
+the terminal is live. Any output (such as an approval dialog appearing), any
+physical input and any other reader's text therefore drop it. This replaced
+channel nudges and native terminal bindings (removed together with reviewed
+terminal proposals; see
+[the plan](../plans/active/PLAN_MCP_READ_WRITE_PERMISSIONS.md)): the earlier
+rule that terminal text never submits Enter is now that it never carries Enter.
+Write lets an agent run commands in shells and answer other agents' prompts; it
+is meant to be granted for a job and revoked afterwards, and the grant dialog
+says so. Implementation: `src/workspace/host/context_input.rs` and the input
+generation in `src/terminal/mod.rs`.
+
+The
 [context contract](../../docs/plugins/context.md) defines the profile and its
 bounds, and the MCP guide defines adapter discovery and usage.
 Implementation: `src/workspace/context/`, `src/workspace/host/context.rs`,
-`context_reads.rs` beside it, `src/app/context_access.rs`, and `src/mcp.rs` /
-`src/mcp/`.
+`context_reads.rs` and `context_input.rs` beside it, `src/app/context_access.rs`,
+and `src/mcp.rs` / `src/mcp/`.
 
 ## Private client/host protocol
 
@@ -134,3 +168,7 @@ a drop. Matching client and host protocol versions are required.
   messages have a 1 MiB limit.
 - A new public wire requires its own plan. The private client/host wire is not
   a shortcut to extending a public contract.
+
+Private protocol version 82 removes the `ContextReview` overlay layout that
+version 81 added for terminal proposal reviews, which no longer exist. Matching
+client and host protocol versions are required.

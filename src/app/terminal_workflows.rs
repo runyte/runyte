@@ -7,7 +7,7 @@ use super::{
     App, ContentAlignment, EditorCommand, GeneratedViewIdentity, HashSet, InputGrammar, JumpLabels,
     KeyStroke, Mode, OsString, Path, PathBuf, PromptKind, Range, Register, Result, SearchMode,
     SentTextUndo, TerminalId, TerminalOutput, TerminalRequest, TerminalSession,
-    default_terminal_program, program_label, terminal_refuses,
+    default_terminal_program, program_label,
 };
 
 impl App {
@@ -1030,7 +1030,11 @@ impl App {
             | Command::JumpForward
             | Command::JumpBackwardBuffer
             | Command::JumpForwardBuffer => false,
-            _ if terminal_refuses(command) => {
+            _ if !crate::keymap::admission::admits_command(
+                crate::keymap::BindingScope::Terminal,
+                command,
+            ) =>
+            {
                 self.action_failed(format!(
                     "{} needs a buffer · {} shows this pane's again",
                     command.metadata().description.to_lowercase(),

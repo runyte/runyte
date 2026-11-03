@@ -174,6 +174,13 @@ fn owner_rights_descriptor() -> io::Result<Descriptor> {
     Ok(Descriptor(descriptor))
 }
 
+/// Check ownership of ordinary user content without changing or restricting ACLs.
+pub(super) fn admit_owned(file: &File) -> io::Result<()> {
+    let user = User::current()?;
+    let (_descriptor, owner, _acl) = inspect(file)?;
+    owned_by(owner, &user)
+}
+
 /// Requires READ_CONTROL on the handle, and WRITE_DAC when hardening. Never
 /// takes ownership. Read-only admission does not modify the security descriptor.
 /// The caller separately validates entry kind, reparse points, and link count.

@@ -21,6 +21,16 @@ struct State {
     fail: Option<String>,
     malformed: bool,
     exhaust_inventory: Option<String>,
+    extra_terminals: Vec<Value>,
+    unnumbered: bool,
+    /// The host advertises the agent channel.
+    channel: bool,
+    /// The host advertises terminal writes.
+    writes: bool,
+    /// What a status request reports for a scheduled Enter.
+    enter_state: &'static str,
+    joins: Vec<Value>,
+    posts: Vec<Value>,
 }
 struct Host {
     _temp: crate::test_support::TestRuntimeRoot,
@@ -35,6 +45,10 @@ impl Drop for Host {
 }
 impl Host {
     fn new() -> Self {
+        Self::in_environment(storage::environment_fingerprint())
+    }
+    /// A host as seen by a client whose runtime and cache variables differ.
+    fn in_environment(environment: String) -> Self {
         let temp = crate::test_support::TestRuntimeRoot::new("mcp").unwrap();
         let project = temp.path().join("project");
         std::fs::create_dir(&project).unwrap();
@@ -49,7 +63,7 @@ impl Host {
             endpoint: store.socket_path(&incarnation).unwrap(),
             mode: HostMode::Persistent,
             pid: std::process::id(),
-            environment: storage::environment_fingerprint(),
+            environment,
         };
         let listener = UnixListener::bind(&record.endpoint).unwrap();
         std::fs::set_permissions(&record.endpoint, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -58,6 +72,7 @@ impl Host {
             scopes: wire::CAPABILITIES.iter().map(|s| s.to_string()).collect(),
             buffer: "notes: Claude Code is working on syntax\n".into(),
             revision: 1,
+            enter_state: "sent",
             ..State::default()
         }));
         let shared = state.clone();
@@ -92,20 +107,40 @@ impl Host {
                         .await;
                         return;
                     }
-                    let hello = json!({"type":"hello","version":"runyte-1","host_version":"0.4.0","features":[wire::FEATURE],"workspace":record,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
+                    let (channel, writes) = {
+                        let s = shared.lock().unwrap();
+                        (s.channel, s.writes)
+                    };
+                    let mut offered = vec![wire::FEATURE];
+                    if channel {
+                        offered.push(wire::CHANNEL_FEATURE);
+                    }
+                    if writes {
+                        offered.push(wire::TERMINAL_WRITE_FEATURE);
+                    }
+                    let features = json!(offered);
+                    let hello = json!({"type":"hello","version":"runyte-1","host_version":"0.4.0","features":features,"workspace":record,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
                     if write_frame(socket.get_mut(), &hello, wire::MAX_FRAME_BYTES)
                         .await
                         .is_err()
                     {
                         return;
                     }
-                    if read_frame(&mut socket, wire::MAX_FRAME_BYTES)
-                        .await
-                        .is_err()
-                    {
+                    let Ok(registration) = read_frame(&mut socket, wire::MAX_FRAME_BYTES).await
+                    else {
                         return;
-                    }
-                    let registered = json!({"type":"registered","runyte":">=0.3.0, <0.5.0","commands":[],"features":[wire::FEATURE],"capabilities":scopes,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
+                    };
+                    let registration = parse(&registration).unwrap();
+                    let mut negotiated = vec![json!(wire::FEATURE)];
+                    negotiated.extend(
+                        registration["optional_features"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .filter(|feature| offered.iter().any(|offer| *feature == offer))
+                            .cloned(),
+                    );
+                    let registered = json!({"type":"registered","runyte":">=0.3.0, <0.5.0","commands":[],"features":negotiated,"capabilities":scopes,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
                     if write_frame(socket.get_mut(), &registered, wire::MAX_FRAME_BYTES)
                         .await
                         .is_err()
@@ -150,13 +185,33 @@ impl Host {
                                         json!({"buffers":[{"buffer":"native:b","name":"notes.txt","revision":format!("r:{}",s.revision),"chars":s.buffer.chars().count(),"read_only":false}],"next":null})
                                     }
                                     "terminal.list" => {
-                                        json!({"terminals":[{"terminal":"native:t","name":"shell","live":true,"revision":"r:1"}],"next":null})
+                                        let mut terminals = vec![
+                                            json!({"terminal":"native:t","number":1,"title":"[terminal #1] shell","name":"shell","live":true,"revision":"r:1"}),
+                                        ];
+                                        terminals.extend(s.extra_terminals.iter().cloned());
+                                        if s.unnumbered {
+                                            for row in &mut terminals {
+                                                let row = row.as_object_mut().unwrap();
+                                                row.remove("number");
+                                                row.remove("title");
+                                            }
+                                        }
+                                        let offset = params["offset"].as_u64().unwrap() as usize;
+                                        let limit = params["limit"].as_u64().unwrap() as usize;
+                                        let next = (offset + limit < terminals.len())
+                                            .then_some(offset + limit);
+                                        let page = terminals
+                                            .into_iter()
+                                            .skip(offset)
+                                            .take(limit)
+                                            .collect::<Vec<_>>();
+                                        json!({"terminals":page,"next":next})
                                     }
                                     "buffer.read" => {
                                         json!({"buffer":"native:b","revision":format!("r:{}",s.revision),"text":s.buffer.chars().skip(params["from"].as_u64().unwrap() as usize).take((params["to"].as_u64().unwrap()-params["from"].as_u64().unwrap()) as usize).collect::<String>()})
                                     }
                                     "terminal.read" => {
-                                        json!({"terminal":"native:t","rows":[{"text":"Welcome to Claude Code"},{"text":"Editing Rust"}],"revision":"r:1"})
+                                        json!({"terminal":"native:t","rows":[{"text":"Welcome to Claude Code"},{"text":"Editing Rust"},{"text":"Merged PR #19"}],"revision":"r:1"})
                                     }
                                     "buffer.append" => {
                                         s.buffer.push_str(params["text"].as_str().unwrap());
@@ -167,15 +222,34 @@ impl Host {
                                         s.revision += 1;
                                         json!({"buffer":"native:b","revision":format!("r:{}",s.revision)})
                                     }
-                                    "terminal.input.propose" => {
-                                        json!({"proposal":"native:i","state":"pending"})
+                                    "terminal.input.write" => {
+                                        json!({"state":"queued","chars":params["text"].as_str().unwrap().chars().count()})
                                     }
-                                    "terminal.input.status" => {
-                                        json!({"proposal":"native:i","state":"pending"})
+                                    "terminal.input.enter" => {
+                                        assert_eq!(params["terminal"], "native:t");
+                                        json!({"enter":"native:e","state":"waiting","delay_ms":10})
                                     }
-                                    "terminal.input.cancel" => {
-                                        json!({"proposal":"native:i","state":"cancelled"})
+                                    "terminal.input.enter.status" => {
+                                        assert_eq!(params["enter"], "native:e");
+                                        json!({"enter":"native:e","state":s.enter_state})
                                     }
+                                    "channel.join" => {
+                                        s.joins.push(params.clone());
+                                        json!({"participant":{"participant":"0c0ffee0-0000-4000-8000-000000000001","nick":"claude-1"},"resume":"secret-resume","head":4})
+                                    }
+                                    "channel.post" => {
+                                        s.posts.push(params.clone());
+                                        json!({"seq":5})
+                                    }
+                                    "channel.read" => {
+                                        let since = params["since"].as_u64().unwrap();
+                                        if since < 5 {
+                                            json!({"messages":[{"seq":5,"kind":"message","from_nick":"codex-1","text":"hello"}],"next":5,"lost":false,"head":5})
+                                        } else {
+                                            json!({"messages":[],"next":since,"lost":false,"head":5})
+                                        }
+                                    }
+                                    "channel.who" => json!({"participants":[]}),
                                     _ => panic!("unexpected method {method}"),
                                 };
                                 json!({"type":"response","id":value["id"],"result":data})
@@ -297,28 +371,17 @@ async fn fuzzy_contents_find_plain_shell_and_append_in_two_tool_calls() {
             .unwrap()
             .contains("Claude")
     );
-    let proposal = bridge
-        .call(
-            "propose_terminal_text",
-            json!({"terminal":terminal,"text":"hello"}),
-        )
-        .await
-        .unwrap();
-    assert_eq!(proposal["data"]["state"], "pending");
-    let id = &proposal["data"]["proposal"];
     assert_eq!(
         bridge
-            .call("terminal_proposal_status", json!({"proposal":id}))
+            .call(
+                "write_terminal",
+                json!({"terminal":terminal,"text":"hello"}),
+            )
             .await
-            .unwrap()["data"]["state"],
-        "pending"
-    );
-    assert_eq!(
-        bridge
-            .call("cancel_terminal_proposal", json!({"proposal":id}))
-            .await
-            .unwrap()["data"]["state"],
-        "cancelled"
+            .unwrap_err()
+            .code,
+        "capability_denied",
+        "writing needs Write"
     );
     bridge.call("edit_buffer",json!({"buffer":buffer,"expected_revision":"r:2","changes":[{"from":0,"to":0,"text":"x"}]})).await.unwrap();
     assert_eq!(
@@ -444,12 +507,13 @@ async fn names_only_never_reads_contents_and_explicit_targets_reject_foreign_han
 async fn uncertain_mutations_are_never_replayed_and_controls_never_reach_host() {
     let host = Host::new();
     let mut bridge = host.bridge();
+    grant_writes(&host);
     let found = bridge.call("find_resources", json!({})).await.unwrap();
     let terminal = handle(&found, "terminal");
     assert_eq!(
         bridge
             .call(
-                "propose_terminal_text",
+                "write_terminal",
                 json!({"terminal":terminal,"text":"hello\n"})
             )
             .await
@@ -463,13 +527,13 @@ async fn uncertain_mutations_are_never_replayed_and_controls_never_reach_host() 
             .lock()
             .unwrap()
             .methods
-            .contains(&"terminal.input.propose".to_owned())
+            .contains(&"terminal.input.write".to_owned())
     );
-    host.state.lock().unwrap().fail = Some("terminal.input.propose".into());
+    host.state.lock().unwrap().fail = Some("terminal.input.write".into());
     assert_eq!(
         bridge
             .call(
-                "propose_terminal_text",
+                "write_terminal",
                 json!({"terminal":terminal,"text":"hello"})
             )
             .await
@@ -480,7 +544,7 @@ async fn uncertain_mutations_are_never_replayed_and_controls_never_reach_host() 
     assert_eq!(
         bridge
             .call(
-                "propose_terminal_text",
+                "write_terminal",
                 json!({"terminal":terminal,"text":"hello"})
             )
             .await
@@ -494,7 +558,7 @@ async fn uncertain_mutations_are_never_replayed_and_controls_never_reach_host() 
             .unwrap()
             .methods
             .iter()
-            .filter(|m| m.as_str() == "terminal.input.propose")
+            .filter(|m| m.as_str() == "terminal.input.write")
             .count(),
         1
     );
@@ -558,4 +622,460 @@ async fn healthy_discovery_preserves_handles_and_later_buffer_windows_are_explic
         .await
         .unwrap();
     assert_eq!(read["data"]["text"], "TARGET_LATE\n");
+}
+
+#[tokio::test]
+async fn terminal_number_finds_the_titled_terminal_on_any_page_without_reading_output() {
+    let host = Host::new();
+    {
+        let mut s = host.state.lock().unwrap();
+        // Exited terminals keep earlier slots, so #2 sits past the first page.
+        for index in 0..10 {
+            s.extra_terminals.push(json!({"terminal":format!("native:x{index}"),"number":null,"title":format!("[terminal] old{index}"),"name":format!("old{index}"),"live":false,"revision":"r:1"}));
+        }
+        s.extra_terminals.push(json!({"terminal":"native:t2","number":2,"title":"[terminal #2] codex","name":"codex","live":true,"revision":"r:1"}));
+        s.buffer = "see issue #2 here\n".into();
+    }
+    let mut bridge = host.bridge();
+    let terminal_reads = |host: &Host| {
+        host.state
+            .lock()
+            .unwrap()
+            .methods
+            .iter()
+            .filter(|m| *m == "terminal.read")
+            .count()
+    };
+    for query in [
+        "#2",
+        "terminal 2",
+        "Terminal #2",
+        " [terminal #2] ",
+        "[terminal #2] codex",
+    ] {
+        let found = bridge
+            .call("find_resources", json!({"query":query,"kind":"terminal"}))
+            .await
+            .unwrap();
+        let results = found["results"].as_array().unwrap();
+        assert_eq!(results.len(), 1, "{query}");
+        assert_eq!(results[0]["matched_on"], "number");
+        assert_eq!(results[0]["excerpt"], "[terminal #2] codex");
+    }
+    assert_eq!(terminal_reads(&host), 0, "a number lookup reads no output");
+
+    // Searching everything, the exact terminal ranks above a buffer that
+    // mentions the same text.
+    let found = bridge
+        .call("find_resources", json!({"query":"#2"}))
+        .await
+        .unwrap();
+    let results = found["results"].as_array().unwrap();
+    assert_eq!(results[0]["matched_on"], "number");
+    assert!(
+        results
+            .iter()
+            .any(|row| row["kind"] == "buffer" && row["matched_on"] == "content")
+    );
+    let terminal = handle(&found, "terminal");
+    let read = bridge
+        .call("read_terminal", json!({"terminal":terminal}))
+        .await
+        .unwrap();
+    assert!(
+        read["data"]["rows"].is_array(),
+        "the number's terminal reads"
+    );
+
+    // A buffer or content search means the text, as in an issue reference.
+    let found = bridge
+        .call("find_resources", json!({"query":"#2","kind":"buffer"}))
+        .await
+        .unwrap();
+    assert_eq!(found["results"][0]["matched_on"], "content");
+    let before = terminal_reads(&host);
+    let found = bridge
+        .call(
+            "find_resources",
+            json!({"query":"#2","kind":"terminal","match_in":"content"}),
+        )
+        .await
+        .unwrap();
+    assert!(
+        found["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["matched_on"] != "number")
+    );
+    assert!(terminal_reads(&host) > before);
+
+    // No running terminal shows the number. Output that merely mentions it
+    // (`PR #19`) is not offered as something to write to.
+    let missing = bridge
+        .call("find_resources", json!({"query":"#9","kind":"terminal"}))
+        .await
+        .unwrap();
+    assert!(missing["results"].as_array().unwrap().is_empty());
+    assert!(
+        missing["searches"][0]["note"]
+            .as_str()
+            .unwrap()
+            .starts_with("No live terminal shows this number")
+    );
+    let text = bridge
+        .call(
+            "find_resources",
+            json!({"query":"#9","kind":"terminal","match_in":"content"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(text["results"][0]["matched_on"], "content");
+    // A bare number is fuzzy text from the start.
+    let bare = bridge
+        .call("find_resources", json!({"query":"2","kind":"terminal"}))
+        .await
+        .unwrap();
+    assert!(bare["searches"][0].get("note").is_none());
+
+    // A host that predates numbers is named rather than silently empty.
+    host.state.lock().unwrap().unnumbered = true;
+    let old = bridge
+        .call("find_resources", json!({"query":"#2","kind":"terminal"}))
+        .await
+        .unwrap();
+    assert!(
+        old["searches"][0]["note"]
+            .as_str()
+            .unwrap()
+            .contains("does not report terminal numbers")
+    );
+}
+
+#[tokio::test]
+async fn writing_and_enter_are_offered_only_with_write_and_enter_waits_for_its_outcome() {
+    let host = Host::new();
+    host.state.lock().unwrap().scopes.remove("buffer_edit");
+    let mut bridge = host.bridge();
+    let found = bridge
+        .call("find_resources", json!({"kind":"terminal"}))
+        .await
+        .unwrap();
+    assert_eq!(
+        found["results"][0]["available_actions"],
+        json!(["read_terminal"]),
+        "read only"
+    );
+    let listed = bridge.call("list_workspaces", json!({})).await.unwrap();
+    assert_eq!(listed["workspaces"][0]["permissions"], json!(["read"]));
+
+    grant_writes(&host);
+    let mut bridge = host.bridge();
+    let found = bridge
+        .call("find_resources", json!({"kind":"terminal"}))
+        .await
+        .unwrap();
+    assert_eq!(
+        found["results"][0]["available_actions"],
+        json!(["read_terminal", "write_terminal", "press_enter"])
+    );
+    let listed = bridge.call("list_workspaces", json!({})).await.unwrap();
+    assert_eq!(
+        listed["workspaces"][0]["permissions"],
+        json!(["read", "write"])
+    );
+    let terminal = handle(&found, "terminal");
+    let written = bridge
+        .call("write_terminal", json!({"terminal":terminal,"text":"ls"}))
+        .await
+        .unwrap();
+    assert_eq!(written["data"]["state"], "queued");
+    assert!(
+        written["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("press_enter")
+    );
+    let read = bridge
+        .call("read_terminal", json!({"terminal":terminal}))
+        .await
+        .unwrap();
+    let revision = read["data"]["revision"].clone();
+    let sent = bridge
+        .call(
+            "press_enter",
+            json!({"terminal":terminal,"expected_revision":revision}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sent["data"]["state"], "sent");
+    assert!(
+        sent["next_step"]
+            .as_str()
+            .unwrap()
+            .starts_with("Enter was pressed")
+    );
+    assert!(
+        sent["data"].get("enter").is_some(),
+        "a handle, not the native id"
+    );
+    assert_ne!(sent["data"]["enter"], "native:e");
+
+    host.state.lock().unwrap().enter_state = "stale";
+    let stale = bridge
+        .call(
+            "press_enter",
+            json!({"terminal":terminal,"expected_revision":revision}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stale["data"]["state"], "stale");
+    assert!(
+        stale["next_step"]
+            .as_str()
+            .unwrap()
+            .starts_with("Nothing was sent")
+    );
+
+    // The connection ending while Enter waits leaves its outcome unknown.
+    host.state.lock().unwrap().fail = Some("terminal.input.enter.status".into());
+    let lost = bridge
+        .call(
+            "press_enter",
+            json!({"terminal":terminal,"expected_revision":revision}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(lost.code, "outcome_unknown");
+    let methods = host.state.lock().unwrap().methods.clone();
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|m| m.as_str() == "terminal.input.enter")
+            .count(),
+        3,
+        "never retried"
+    );
+}
+
+/// The fake host offers terminal writes, and the identity holds Write.
+fn grant_writes(host: &Host) {
+    let mut s = host.state.lock().unwrap();
+    s.writes = true;
+    s.scopes.insert("terminal_write".into());
+}
+
+#[tokio::test]
+async fn channel_tools_join_once_continue_reads_and_rejoin_after_a_reconnect() {
+    let host = Host::new();
+    let mut bridge = host.bridge();
+    // A host without the channel, or a grant without it, has none to join.
+    let refused = bridge
+        .call(
+            "join_channel",
+            json!({"provider":"claude","task":"refactor"}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code, "capability_denied");
+    assert!(
+        refused.message.contains(":mcp agent"),
+        "{}",
+        refused.message
+    );
+
+    {
+        let mut s = host.state.lock().unwrap();
+        s.channel = true;
+        s.scopes.insert("agent_channel".into());
+    }
+    let mut bridge = host.bridge();
+    bridge.client = Some(crate::workspace::context::channel::Client {
+        name: "claude-code".into(),
+        version: "2.0".into(),
+    });
+    assert_eq!(
+        bridge
+            .call("post_message", json!({"text":"hi"}))
+            .await
+            .unwrap_err()
+            .code,
+        "capability_denied",
+        "posting needs a join"
+    );
+    let joined = bridge
+        .call(
+            "join_channel",
+            json!({"provider":"claude","task":"refactor"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(joined["data"]["participant"]["nick"], "claude-1");
+    assert!(
+        joined["data"].get("resume").is_none(),
+        "the agent never sees its token"
+    );
+    let join = host.state.lock().unwrap().joins[0].clone();
+    assert_eq!(join["client"]["name"], "claude-code");
+    assert_eq!(
+        join["location"]["directory"],
+        std::env::current_dir().unwrap().display().to_string()
+    );
+    assert!(join.get("resume").is_none(), "a first join is new");
+
+    // The first read starts with what was said before; the next continues.
+    let first = bridge.call("read_messages", json!({})).await.unwrap();
+    assert_eq!(first["data"]["messages"][0]["text"], "hello");
+    let started = std::time::Instant::now();
+    let second = bridge
+        .call("read_messages", json!({"wait_seconds":1}))
+        .await
+        .unwrap();
+    assert!(second["data"]["messages"].as_array().unwrap().is_empty());
+    assert!(started.elapsed() >= Duration::from_millis(900));
+    bridge
+        .call("post_message", json!({"text":"done","to":"codex-1"}))
+        .await
+        .unwrap();
+    bridge.call("list_participants", json!({})).await.unwrap();
+
+    // A lost connection renews on the next call, which joins again as the
+    // same participant before reading.
+    host.state.lock().unwrap().fail = Some("channel.post".into());
+    assert_eq!(
+        bridge
+            .call("post_message", json!({"text":"lost"}))
+            .await
+            .unwrap_err()
+            .code,
+        "outcome_unknown"
+    );
+    bridge.call("read_messages", json!({})).await.unwrap();
+    let joins = host.state.lock().unwrap().joins.clone();
+    assert_eq!(joins.len(), 2);
+    assert_eq!(joins[1]["resume"], "secret-resume");
+    assert_eq!(joins[1]["provider"], "claude");
+}
+
+#[tokio::test]
+async fn a_channel_only_grant_keeps_its_connection_between_calls() {
+    let host = Host::new();
+    {
+        let mut s = host.state.lock().unwrap();
+        s.channel = true;
+        s.scopes = ["agent_channel".to_owned()].into();
+    }
+    let mut bridge = host.bridge();
+    bridge
+        .call("join_channel", json!({"provider":"codex","task":"review"}))
+        .await
+        .unwrap();
+    for _ in 0..3 {
+        bridge
+            .call("post_message", json!({"text":"still here"}))
+            .await
+            .unwrap();
+        bridge.call("read_messages", json!({})).await.unwrap();
+    }
+    assert_eq!(
+        host.state.lock().unwrap().joins.len(),
+        1,
+        "no reconnect, so no rejoin"
+    );
+}
+
+#[tokio::test]
+async fn a_post_carries_no_nudge() {
+    let host = Host::new();
+    {
+        let mut s = host.state.lock().unwrap();
+        s.channel = true;
+        s.scopes.insert("agent_channel".into());
+    }
+    let mut bridge = host.bridge();
+    bridge
+        .call("join_channel", json!({"provider":"claude","task":"review"}))
+        .await
+        .unwrap();
+    assert_eq!(
+        bridge
+            .call("post_message", json!({"text":"ready","nudge":["codex-1"]}))
+            .await
+            .unwrap_err()
+            .code,
+        "invalid_argument",
+        "the field is gone from the tool"
+    );
+    assert!(host.state.lock().unwrap().posts.is_empty());
+    bridge
+        .call("post_message", json!({"text":"ready"}))
+        .await
+        .unwrap();
+    let posts = host.state.lock().unwrap().posts.clone();
+    assert!(posts[0].get("nudge").is_none());
+}
+
+#[tokio::test]
+async fn a_named_directory_stays_the_agents_place_until_it_names_another() {
+    let host = Host::new();
+    {
+        let mut s = host.state.lock().unwrap();
+        s.channel = true;
+        s.scopes.insert("agent_channel".into());
+    }
+    let mut bridge = host.bridge();
+    bridge
+        .call(
+            "join_channel",
+            json!({"provider":"claude","task":"refactor"}),
+        )
+        .await
+        .unwrap();
+    let elsewhere = std::env::temp_dir().display().to_string();
+    bridge
+        .call(
+            "post_message",
+            json!({"text":"moved","directory":elsewhere}),
+        )
+        .await
+        .unwrap();
+    bridge
+        .call("post_message", json!({"text":"still there"}))
+        .await
+        .unwrap();
+    let posts = host.state.lock().unwrap().posts.clone();
+    assert_eq!(posts[0]["location"]["directory"], elsewhere);
+    assert_eq!(
+        posts[1]["location"]["directory"], elsewhere,
+        "leaving directory out does not move the agent back"
+    );
+}
+
+#[tokio::test]
+async fn a_host_from_another_environment_is_reported_not_blamed_on_permissions() {
+    let host = Host::in_environment("f".repeat(64));
+    host.state.lock().unwrap().channel = true;
+    let mut bridge = host.bridge();
+    let listed = bridge.call("list_workspaces", json!({})).await.unwrap();
+    assert_eq!(listed["workspaces"], json!([]));
+    assert_eq!(listed["hidden_workspaces"], 1);
+    assert!(
+        listed["discovery_help"]
+            .as_str()
+            .unwrap()
+            .contains("XDG_RUNTIME_DIR")
+    );
+    let joined = bridge
+        .call("join_channel", json!({"provider":"codex","task":"review"}))
+        .await
+        .unwrap_err();
+    assert_eq!(joined.code, "unavailable");
+    assert!(joined.message.contains("include_hidden"));
+    // The explicit expansion still reaches the host, with its grant intact.
+    let broad = bridge
+        .call("list_workspaces", json!({"include_hidden":true}))
+        .await
+        .unwrap();
+    assert_eq!(broad["workspaces"].as_array().unwrap().len(), 1);
+    assert!(broad.get("hidden_workspaces").is_none());
 }

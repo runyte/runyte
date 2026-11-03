@@ -54,7 +54,7 @@ fn mcp_stdio_starts_without_editor_or_permissions_and_rejects_duplicate_fields()
         .map(|line| serde_json::from_str(line).unwrap())
         .collect();
     assert_eq!(replies.len(), 4);
-    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 13);
     assert_eq!(
         replies[2]["result"]["structuredContent"]["workspaces"],
         json!([])

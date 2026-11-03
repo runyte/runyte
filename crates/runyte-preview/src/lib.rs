@@ -45,6 +45,11 @@ struct Reply {
     /// Whether the page took the request's theme; authored pages never do.
     themed: bool,
 }
+/// Font files the host bundles. Code on generated pages, in blocks and inline,
+/// names their family first; system fonts set the prose and cover what those
+/// faces lack.
+pub type Fonts = &'static [&'static [u8]];
+
 fn default_zoom() -> f32 {
     1.0
 }
@@ -60,6 +65,7 @@ fn color_scheme(request: &Request) -> ColorScheme {
 pub fn serve(
     mut input: impl BufRead,
     mut output: impl Write,
+    fonts: Fonts,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut cache = None;
     loop {
@@ -74,7 +80,12 @@ pub fn serve(
         if line.len() > 1024 * 1024 || line.last() != Some(&b'\n') {
             return Err("request exceeds 1 MiB or lacks framing".into());
         }
-        render(serde_json::from_slice(&line)?, &mut cache, &mut output)?;
+        render(
+            serde_json::from_slice(&line)?,
+            &mut cache,
+            &mut output,
+            fonts,
+        )?;
     }
 }
 
@@ -83,6 +94,7 @@ pub fn run_once(
     mut args: impl Iterator<Item = std::ffi::OsString>,
     input: impl Read,
     mut output: impl Write,
+    fonts: Fonts,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if args.next().is_some() {
         return Err("unknown preview helper argument".into());
@@ -92,10 +104,35 @@ pub fn run_once(
     if bytes.len() > 1024 * 1024 {
         return Err("request exceeds 1 MiB".into());
     }
-    render(serde_json::from_slice(&bytes)?, &mut None, &mut output)
+    render(
+        serde_json::from_slice(&bytes)?,
+        &mut None,
+        &mut output,
+        fonts,
+    )
 }
 
-fn build_document(request: &Request) -> (HtmlDocument, bool) {
+/// Blitz's list-marker face and the bundled faces over the system collection.
+/// Supplying a context replaces Blitz's default one, which registers the
+/// marker face itself, so it has to be registered here too.
+fn font_context(fonts: Fonts) -> parley::FontContext {
+    use parley::fontique::{Blob, Collection, CollectionOptions, SourceCache};
+    let mut context = parley::FontContext {
+        source_cache: SourceCache::new_shared(),
+        collection: Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: true,
+        }),
+    };
+    for face in std::iter::once(&blitz_dom::BULLET_FONT).chain(fonts) {
+        context
+            .collection
+            .register_fonts(Blob::new(std::sync::Arc::new(*face) as _), None);
+    }
+    context
+}
+
+fn build_document(request: &Request, fonts: Fonts) -> (HtmlDocument, bool) {
     let svg_fragment = request.selection_only
         && roxmltree::Document::parse(&request.text)
             .is_ok_and(|doc| doc.root_element().tag_name().name() == "svg");
@@ -123,6 +160,7 @@ fn build_document(request: &Request) -> (HtmlDocument, bool) {
         DocumentConfig {
             base_url,
             net_provider: Some(std::sync::Arc::new(assets::LocalImages::new(root))),
+            font_ctx: Some(font_context(fonts)),
             viewport: Some(Viewport::new(
                 request.width,
                 request.height,
@@ -210,6 +248,7 @@ fn render(
     request: Request,
     cache: &mut Option<Cache>,
     mut out: impl Write,
+    fonts: Fonts,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if request.text.len() > 128 * 1024
         || request.width == 0
@@ -237,7 +276,7 @@ fn render(
             && old.theme == request.theme
     });
     if !same_document {
-        let (doc, themed) = build_document(&request);
+        let (doc, themed) = build_document(&request, fonts);
         let cacheable = viewport_independent(&doc);
         *cache = Some(Cache {
             request: request.clone(),
@@ -365,6 +404,18 @@ fn render(
 mod tests {
     use serde_json::{Value, json};
 
+    /// The family `preview.css` asks for, as the bundled faces name themselves.
+    const BUNDLED_FAMILY: &str = "JetBrainsMono Nerd Font";
+    /// The faces the desktop executable hands the helper, embedded for tests only.
+    const FONTS: super::Fonts = &[
+        include_bytes!("../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Medium.ttf"),
+        include_bytes!(
+            "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-MediumItalic.ttf"
+        ),
+        include_bytes!("../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Bold.ttf"),
+        include_bytes!("../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-BoldItalic.ttf"),
+    ];
+
     fn palette(dark: bool, syntax: usize) -> Value {
         let ground = if dark {
             [0x10, 0x20, 0x30]
@@ -394,7 +445,7 @@ mod tests {
             input.push(b'\n');
         }
         let mut output = Vec::new();
-        super::serve(&input[..], &mut output).map_err(|e| e.to_string())?;
+        super::serve(&input[..], &mut output, FONTS).map_err(|e| e.to_string())?;
         let mut frames = Vec::new();
         let mut rest = &output[..];
         while !rest.is_empty() {
@@ -454,5 +505,23 @@ mod tests {
         let limit = super::format::MAX_SYNTAX_SCOPES;
         assert!(serve(&[request("x", "text", palette(true, limit))]).is_ok());
         assert!(serve(&[request("x", "text", palette(true, limit + 1))]).is_err());
+    }
+
+    #[test]
+    fn generated_pages_ask_for_the_family_the_bundled_faces_register() {
+        let mut context = super::font_context(FONTS);
+        let family = context
+            .collection
+            .family_by_name(BUNDLED_FAMILY)
+            .expect("bundled family is registered");
+        assert_eq!(family.fonts().len(), FONTS.len());
+        assert!(context.collection.family_by_name("Bullet").is_some());
+        // Code blocks and inline code take the bundled face; prose does not.
+        let css = include_str!("../preview.css");
+        let rule = |selector: &str| css.lines().find(|line| line.starts_with(selector)).unwrap();
+        let wanted = format!("font-family: \"{}\", monospace;", BUNDLED_FAMILY);
+        assert!(rule("pre {").contains(&wanted));
+        assert!(rule("code {").contains(&wanted));
+        assert!(!rule(".markdown-body {").contains(&wanted));
     }
 }

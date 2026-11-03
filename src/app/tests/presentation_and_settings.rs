@@ -2828,3 +2828,78 @@ fn relative_line_numbers_preview_cancel_and_save() {
     assert!(app.list.is_none());
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn remapped_pointer_copy_preserves_selection_and_removes_old_alias() {
+    let mut config = Config::default();
+    config.editor.line_numbers = false;
+    let shared = Arc::new(Mutex::new(String::new()));
+    let mut app = App::new(config, None).unwrap();
+    app.set_system_clipboard(Box::new(super::editing_and_buffers::MemoryClipboard(
+        shared.clone(),
+    )));
+    seed(&mut app, "alpha beta");
+    let selection = Selection::single(Range::new(0, 4));
+    app.active_mut().replace_selection(selection.clone());
+    let section = serde_yaml::from_str("pointer: {copy: [MiddleClick]}").unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty());
+    app.set_keymap(compiled.keymap);
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 6,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 4,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+    let body = view.pane(app.active_pane).unwrap().body;
+    let event = PointerEvent {
+        kind: PointerEventKind::Down(PointerButton::Right),
+        column: body.x + 2,
+        row: body.y,
+        modifiers: Modifiers::NONE,
+    };
+    app.handle_pointer(event, &view).unwrap();
+    assert!(shared.lock().unwrap().is_empty());
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Middle),
+            ..event
+        },
+        &view,
+    )
+    .unwrap();
+    assert_eq!(&*shared.lock().unwrap(), "alpha");
+    assert_eq!(app.active().selection, selection);
+    assert!(
+        app.snapshot(&view)
+            .status
+            .interaction_line
+            .contains("MiddleClick")
+    );
+    for kind in [
+        PointerEventKind::Up(PointerButton::Right),
+        PointerEventKind::Drag(PointerButton::Middle),
+        PointerEventKind::Up(PointerButton::Middle),
+    ] {
+        app.handle_pointer(
+            PointerEvent {
+                kind,
+                column: body.x + 8,
+                ..event
+            },
+            &view,
+        )
+        .unwrap();
+    }
+    assert_eq!(app.active().selection, selection);
+    assert!(!app.pane_pointer_owned);
+}

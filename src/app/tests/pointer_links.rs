@@ -59,7 +59,7 @@ fn click(app: &mut App, view: &PreparedView, column: u16, row: u16) {
         )
         .unwrap();
     }
-    assert!(!app.pointer_link_pressed);
+    assert!(app.pointer_link_pressed.is_none());
     assert!(app.pointer_drag.is_none());
 }
 
@@ -490,4 +490,50 @@ fn native_link_click_echo_follows_a_pending_browser_launch_to_completion() {
             );
         }
     }
+}
+
+#[test]
+fn remapped_pointer_link_captures_button_and_uses_effective_feedback() {
+    let (_root, mut app, opened) = fixture();
+    seed(&mut app, "https://example.com/remapped\n");
+    let section = serde_yaml::from_str("pointer: {open-link: [Ctrl-MiddleClick]}").unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty());
+    app.set_keymap(compiled.keymap);
+    let view = app.prepare_view(geometry(80));
+    let (column, row) = text_cell(&app, &view, app.active_pane, 5);
+    let event = PointerEvent {
+        kind: PointerEventKind::Down(PointerButton::Middle),
+        column,
+        row,
+        modifiers: Modifiers::CONTROL,
+    };
+    app.handle_pointer(event, &view).unwrap();
+    assert_eq!(&*opened.lock().unwrap(), &["https://example.com/remapped"]);
+    assert!(
+        app.snapshot(&view)
+            .status
+            .interaction_line
+            .contains("Ctrl-MiddleClick")
+    );
+    let selection = app.active().selection.clone();
+    app.set_keymap(Arc::new(crate::keymap::default_keymap().clone()));
+    for kind in [
+        PointerEventKind::Up(PointerButton::Right),
+        PointerEventKind::Drag(PointerButton::Middle),
+        PointerEventKind::Up(PointerButton::Middle),
+    ] {
+        app.handle_pointer(
+            PointerEvent {
+                kind,
+                column: column + 4,
+                modifiers: Modifiers::NONE,
+                ..event
+            },
+            &view,
+        )
+        .unwrap();
+    }
+    assert_eq!(app.active().selection, selection);
+    assert!(app.pointer_link_pressed.is_none());
 }

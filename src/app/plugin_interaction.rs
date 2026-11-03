@@ -82,9 +82,11 @@ pub(crate) struct ValidationState {
 }
 
 impl Surface {
-    pub fn validation_feedback(&self) -> Option<String> {
+    pub fn validation_feedback(&self, accept: &str, cancel: &str) -> Option<String> {
         if self.validation.unavailable {
-            return Some("Validation unavailable; press Enter to retry or Escape to cancel".into());
+            return Some(format!(
+                "Validation unavailable; press {accept} to retry or {cancel} to cancel"
+            ));
         }
         if self.validation.queued.is_some()
             || self
@@ -106,10 +108,10 @@ impl Surface {
                 format!(
                     "{}: {}",
                     field.label,
-                    field
-                        .validation_message
-                        .as_deref()
-                        .unwrap_or("Value was not accepted; press Enter to retry")
+                    field.validation_message.as_deref().map_or_else(
+                        || format!("Value was not accepted; press {accept} to retry"),
+                        str::to_owned
+                    )
                 )
             })
     }
@@ -226,7 +228,87 @@ impl App {
             self.finish_plugin_input(false);
         }
     }
-    pub(super) fn handle_plugin_input(&mut self, input: InputEvent) {
+    pub(super) fn plugin_input_ui_owner(&self) -> Option<crate::keymap::ui::Owner> {
+        use crate::keymap::ui::Owner;
+        let surface = self.plugins.input.as_ref()?;
+        Some(if surface.confirmation {
+            Owner::PluginConfirmation
+        } else if surface.picker.is_some() {
+            Owner::PluginPicker
+        } else if matches!(
+            surface.fields[surface.selected].kind,
+            Kind::Boolean | Kind::Choice
+        ) {
+            Owner::PluginChoice
+        } else {
+            Owner::PluginForm
+        })
+    }
+
+    pub(super) fn plugin_input_route(
+        &self,
+        key: crate::input::KeyStroke,
+        hints: bool,
+        partial: bool,
+    ) -> Option<(crate::keymap::ui::Owner, crate::keymap::ui::Action)> {
+        use crate::keymap::ui::{Action, Owner};
+        let owner = self.plugin_input_ui_owner()?;
+        if owner == Owner::PluginForm
+            && hints
+            && let Some(action) = self.keymap.ui().lookup(Owner::PluginPathCompletion, key)
+            && (action != Action::AcceptOrContinue || partial)
+        {
+            return Some((Owner::PluginPathCompletion, action));
+        }
+        self.keymap
+            .ui()
+            .lookup(owner, key)
+            .map(|action| (owner, action))
+    }
+
+    pub(super) fn plugin_effective_input_route(
+        &self,
+        key: crate::input::KeyStroke,
+    ) -> Option<(crate::keymap::ui::Owner, crate::keymap::ui::Action)> {
+        let hints = !self.plugin_path_hints().is_empty();
+        let partial = hints && self.plugins.input.as_ref().is_some_and(|surface| matches!(&surface.values[surface.selected], Value::Text(value) if self.plugin_enter_accepts_path_hint(value)));
+        self.plugin_input_route(key, hints, partial)
+    }
+
+    pub(super) fn plugin_input_requires_presented_approval(
+        &self,
+        key: crate::input::KeyStroke,
+    ) -> bool {
+        use crate::keymap::ui::{Action, Owner};
+        // Filesystem completion can disappear between host admission and input
+        // dispatch. A masked submission key still requires a presented frame.
+        self.plugin_input_ui_owner()
+            .is_some_and(|owner| self.keymap.ui().lookup(owner, key) == Some(Action::Accept))
+            || self
+                .plugin_effective_input_route(key)
+                .is_some_and(|(owner, action)| {
+                    owner == Owner::PluginPathCompletion && action == Action::AcceptOrContinue
+                })
+    }
+
+    pub(super) fn plugin_input_key_label(
+        &self,
+        owner: crate::keymap::ui::Owner,
+        action: crate::keymap::ui::Action,
+        hints: bool,
+        partial: bool,
+    ) -> String {
+        use crate::keymap::ui::{Action, Owner};
+        let preferred = (hints && owner == Owner::PluginForm && action == Action::Next)
+            .then_some(crate::input::KeyStroke::new(KeyCode::Tab, Modifiers::SHIFT));
+        self.keymap
+            .ui()
+            .reachable_label(owner, action, preferred, |key| {
+                self.plugin_input_route(key, hints, partial) == Some((owner, action))
+            })
+    }
+
+    pub(super) fn handle_plugin_input(&mut self, input: InputEvent, fresh: bool) {
         self.cancel_plugin_validation_intent();
         let hints = self.plugin_path_hints();
         let enter_accepts_hint = !hints.is_empty()
@@ -234,54 +316,59 @@ impl App {
                 matches!(&surface.values[surface.selected], Value::Text(value)
                     if self.plugin_enter_accepts_path_hint(value))
             });
+        use crate::keymap::ui::{Action, Owner};
+        let route = match &input {
+            InputEvent::Key(key) => {
+                self.plugin_input_route(*key, !hints.is_empty(), enter_accepts_hint)
+            }
+            _ => None,
+        };
+        let action = route.map(|(_, action)| action);
+        let submission = route.is_some_and(|(owner, action)| {
+            owner != Owner::PluginPathCompletion && action == Action::Accept
+        });
+        // Resolve the filesystem-dependent completion layer once, then apply
+        // freshness to that same route before any submission or validation.
+        if !fresh && (submission || action == Some(Action::AcceptOrContinue)) {
+            if let Some(surface) = self.plugins.input.as_mut() {
+                surface.context.foreground = self.plugins.foreground_generation;
+            }
+            return;
+        }
+        self.plugin_physical_input = fresh && submission;
         let foreground = self.plugins.foreground_generation;
         let Some(surface) = self.plugins.input.as_mut() else {
             return;
         };
         if surface.confirmation {
-            if let InputEvent::Key(key) = input {
-                if key.code == KeyCode::Enter && key.modifiers.is_empty() {
+            match action {
+                Some(Action::Accept) => {
                     surface.values[0] = Value::Boolean(true);
                     self.finish_plugin_input(true);
-                } else if key.code == KeyCode::Escape
-                    || (key.code == KeyCode::Char('c') && key.modifiers == Modifiers::CONTROL)
-                {
-                    self.finish_plugin_input(false);
                 }
+                Some(Action::Cancel) => self.finish_plugin_input(false),
+                _ => {}
             }
             return;
         }
         if let Some(picker) = &mut surface.picker {
             match input {
-                InputEvent::Key(key)
-                    if key.code == KeyCode::Escape
-                        || (key.code == KeyCode::Char('c')
-                            && key.modifiers == Modifiers::CONTROL) =>
-                {
-                    self.finish_plugin_input(false)
-                }
-                InputEvent::Key(key) if key.code == KeyCode::Enter && key.modifiers.is_empty() => {
+                _ if action == Some(Action::Cancel) => self.finish_plugin_input(false),
+                _ if action == Some(Action::Accept) => {
                     if let Some(item) = picker.selected_item() {
                         surface.values[0] = Value::Text(item.label.clone());
                         self.finish_plugin_input(true);
                     }
                 }
-                InputEvent::Key(key)
-                    if matches!(key.code, KeyCode::Up | KeyCode::Down | KeyCode::BackTab)
-                        || (key.modifiers == Modifiers::CONTROL
-                            && matches!(key.code, KeyCode::Char('n' | 'p'))) =>
-                {
+                _ if matches!(action, Some(Action::Next | Action::Previous)) => {
                     let n = picker.visible_indices().len();
-                    picker.selected = if matches!(
-                        key.code,
-                        KeyCode::Up | KeyCode::BackTab | KeyCode::Char('p')
-                    ) {
+                    picker.selected = if action == Some(Action::Previous) {
                         picker.selected.saturating_sub(1)
                     } else {
                         (picker.selected + 1).min(n.saturating_sub(1))
                     };
                 }
-                InputEvent::Key(key) if key.code == KeyCode::Backspace => {
+                _ if action == Some(Action::Backspace) => {
                     picker.filter.pop();
                     picker.selected = 0;
                 }
@@ -313,21 +400,16 @@ impl App {
         let i = surface.selected;
         let before = surface.values[i].clone();
         match input {
-            InputEvent::Key(key)
-                if !hints.is_empty()
-                    && key.modifiers.is_empty()
-                    && (matches!(key.code, KeyCode::Tab | KeyCode::Up | KeyCode::Down)
-                        || (key.code == KeyCode::Enter && enter_accepts_hint)) =>
-            {
+            _ if route.is_some_and(|(owner, _)| owner == Owner::PluginPathCompletion) => {
                 let selected = surface.completion_selected.min(hints.len() - 1);
-                if matches!(key.code, KeyCode::Tab | KeyCode::Enter) {
+                if matches!(action, Some(Action::Accept | Action::AcceptOrContinue)) {
                     let value = hints[selected].value.clone();
                     surface.cursor = value.chars().count();
                     surface.values[i] = Value::Text(value);
                     surface.error = None;
                 } else {
                     surface.completion_selected = (selected
-                        + if key.code == KeyCode::Up {
+                        + if action == Some(Action::Previous) {
                             hints.len() - 1
                         } else {
                             1
@@ -335,13 +417,8 @@ impl App {
                         % hints.len();
                 }
             }
-            InputEvent::Key(key)
-                if key.code == KeyCode::Escape
-                    || (key.code == KeyCode::Char('c') && key.modifiers == Modifiers::CONTROL) =>
-            {
-                self.finish_plugin_input(false)
-            }
-            InputEvent::Key(key) if key.code == KeyCode::Enter && key.modifiers.is_empty() => {
+            _ if action == Some(Action::Cancel) => self.finish_plugin_input(false),
+            _ if action == Some(Action::Accept) => {
                 surface.error = None;
                 if let Some((index, reason)) = surface
                     .fields
@@ -391,13 +468,8 @@ impl App {
                     self.finish_plugin_input(true);
                 }
             }
-            InputEvent::Key(key)
-                if matches!(
-                    key.code,
-                    KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down
-                ) =>
-            {
-                let back = matches!(key.code, KeyCode::BackTab | KeyCode::Up);
+            _ if matches!(action, Some(Action::Next | Action::Previous)) => {
+                let back = action == Some(Action::Previous);
                 surface.selected =
                     (i + if back { surface.fields.len() - 1 } else { 1 }) % surface.fields.len();
                 surface.completion_selected = 0;
@@ -410,19 +482,16 @@ impl App {
             input => {
                 let field = &surface.fields[i];
                 if matches!(field.kind, Kind::Boolean | Kind::Choice) {
-                    if let InputEvent::Key(key) = input
-                        && matches!(
-                            key.code,
-                            KeyCode::Left | KeyCode::Right | KeyCode::Char(' ')
-                        )
-                        && key.modifiers.is_empty()
-                    {
+                    if matches!(
+                        action,
+                        Some(Action::MoveLeft | Action::MoveRight | Action::ToggleSelection)
+                    ) {
                         match &mut surface.values[i] {
                             Value::Boolean(v) => *v = !*v,
                             Value::Text(v) => {
                                 let current =
                                     field.choices.iter().position(|c| c == v).unwrap_or(0);
-                                let step = if key.code == KeyCode::Left {
+                                let step = if action == Some(Action::MoveLeft) {
                                     field.choices.len() - 1
                                 } else {
                                     1
@@ -434,38 +503,40 @@ impl App {
                 } else if let Value::Text(value) = &mut surface.values[i] {
                     let text = match input {
                         InputEvent::Text(text) => Some(text),
-                        InputEvent::Key(key) => match key.code {
-                            KeyCode::Char(c)
-                                if key.modifiers.is_empty()
-                                    || key.modifiers == Modifiers::SHIFT =>
-                            {
-                                Some(c.to_string())
-                            }
-                            KeyCode::Backspace => {
+                        InputEvent::Key(key) => match action {
+                            Some(Action::Backspace) => {
                                 prompt_backspace(value, &mut surface.cursor);
                                 None
                             }
-                            KeyCode::Delete => {
+                            Some(Action::Delete) => {
                                 prompt_delete(value, surface.cursor);
                                 None
                             }
-                            KeyCode::Left => {
+                            Some(Action::MoveLeft) => {
                                 surface.cursor = prompt_left(value, surface.cursor);
                                 None
                             }
-                            KeyCode::Right => {
+                            Some(Action::MoveRight) => {
                                 surface.cursor = prompt_right(value, surface.cursor);
                                 None
                             }
-                            KeyCode::Home => {
+                            Some(Action::MoveStart) => {
                                 surface.cursor = 0;
                                 None
                             }
-                            KeyCode::End => {
+                            Some(Action::MoveEnd) => {
                                 surface.cursor = value.chars().count();
                                 None
                             }
-                            _ => None,
+                            _ => match key.code {
+                                KeyCode::Char(c)
+                                    if key.modifiers.is_empty()
+                                        || key.modifiers == Modifiers::SHIFT =>
+                                {
+                                    Some(c.to_string())
+                                }
+                                _ => None,
+                            },
                         },
                         _ => None,
                     };

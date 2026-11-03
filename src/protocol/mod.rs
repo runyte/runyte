@@ -208,7 +208,17 @@ use crate::workspace::{
 // Version 78 adds a correlated post-input snapshot for bundled window routing.
 // Version 79 carries the live document-preview theme colour setting.
 // Version 80 carries pane-drop previews and explicit pointer-capture cancellation.
-pub const VERSION: u32 = 80;
+// Version 81 adds the bounded terminal proposal review layout.
+// Version 82 removes that layout with terminal proposals.
+// Version 83 carries effective pane pointer gestures for native input routing.
+// Version 84 carries effective native-window bindings with painted input frames.
+// Version 85 carries effective preview navigation and source identity.
+// Version 86 carries pane gesture masks for all three pointer buttons.
+// Version 87 carries the full pointer action registry.
+// Version 88 adds native media, preview and overflow-dismiss pointer action masks.
+// Version 89 distinguishes acknowledged preview focus handoffs from generic forwarding.
+// Version 90 adds the preview-zoom pointer action mask.
+pub const VERSION: u32 = 90;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1567,7 +1577,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 80);
+        assert_eq!(VERSION, 90);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

@@ -147,10 +147,12 @@ local macOS app bundles. The Linux x86-64 and ARM64 desktop release archives req
 2.39 or newer and the native runtime dependencies; the terminal archives and
 curl installer remain separate. See the [desktop packaging guide](../../contrib/packaging/README.md).
 For a checkout build, use the [preview instructions](../../crates/runyte-preview/README.md).
-Markdown uses proportional GitHub-like typography; static HTML and SVG render
+Markdown uses proportional GitHub-like typography, with code blocks and inline
+code in the bundled JetBrainsMono Nerd Font; static HTML and SVG render
 graphically. JSON is pretty-printed when valid and retains its original text
 with a diagnostic otherwise. YAML retains its comments, structure and ordering.
-Source code uses available syntax highlighting; other text uses monospace.
+Source code uses available syntax highlighting; other text uses the same
+bundled monospace face.
 
 Generated pages — Markdown, JSON, YAML, source and plain text — take the active
 theme's colours: its background and text, its link and heading colours, and
@@ -160,7 +162,8 @@ the original light page. Static HTML and valid SVG keep the appearance they
 were written with; HTML that styles itself through `prefers-color-scheme`
 follows whether the theme is dark or light.
 
-Wheel/trackpad scrolling preserves fractional pixels; Shift-wheel pans horizontally.
+Wheel/trackpad scrolling preserves fractional pixels; Shift-wheel pans horizontally,
+and Ctrl-wheel (Cmd-wheel on macOS) zooms within the same range as `+`/`-`.
 The preview also uses the built-in PDF navigation keys: `j`/`k` and arrows,
 `h`/`l`, page/half-page controls, `gg`/`ge`, and `+`/`-` zoom (`z1` resets).
 Left-drag selects text; `y` or Ctrl-Shift-c copies it. Escape dismisses an overlay

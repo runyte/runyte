@@ -176,6 +176,12 @@ pub struct EditorSnapshot {
     /// The area a pane being Alt-dragged would occupy if it were released
     /// now, outlined over the panes it would displace.
     pub pane_drop: Option<Rect>,
+    pub pointer_bindings: crate::keymap::pointer_actions::Bindings,
+    pub window_bindings: crate::keymap::native_window::Bindings,
+    pub preview_bindings: crate::keymap::native_preview::Bindings,
+    pub preview_source: Option<(usize, usize)>,
+    pub preview_terminal: Option<(usize, u64)>,
+    pub preview_structural: bool,
     pub status: StatusSnapshot,
     pub session_strip: Option<SessionStripSnapshot>,
 }
@@ -839,7 +845,7 @@ impl App {
         self.visible_pane_snapshots
             .borrow_mut()
             .retain(|pane, _| prepared.pane(*pane).is_some());
-        let panes = prepared
+        let panes: Vec<PaneSnapshot> = prepared
             .panes
             .iter()
             .map(|pane| {
@@ -907,6 +913,15 @@ impl App {
                     session.review_selection_count(),
                 )
             });
+        let preview_bindings = if panes
+            .iter()
+            .any(|pane| pane.active && pane.preview.is_some())
+        {
+            self.keymap()
+                .native_preview(self.mode, self.key_binding_scope())
+        } else {
+            Default::default()
+        };
         EditorSnapshot {
             geometry: prepared.geometry,
             directory_tree: prepared.tree_area.map(|area| {
@@ -968,6 +983,18 @@ impl App {
             mode: self.mode,
             panes,
             pane_drop: self.pane_drop_preview(prepared),
+            pointer_bindings: self.keymap().pointer().clone(),
+            window_bindings: self.native_window_bindings(),
+            preview_bindings,
+            preview_structural: matches!(self.mode, Mode::Insert | Mode::Replace)
+                || self.awaiting_character_command().is_some(),
+            preview_terminal: self
+                .active_terminal()
+                .map(|id| (self.active_pane, id.get())),
+            preview_source: self
+                .active_terminal()
+                .is_none()
+                .then_some((self.active_pane, self.active().buffer)),
             status: StatusSnapshot {
                 mode: self.mode,
                 workspace_number: self.workspace_number,
@@ -2196,6 +2223,17 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
 /// looking at history rather than at the live screen, and that the child has
 /// gone. Neither is a buffer property, so neither has a field of its own.
 ///
+/// The label a terminal's pane title begins with, without the markers for how
+/// the person is viewing it. A context reader is shown this rather than the
+/// whole title, so the name it finds a terminal by does not change because the
+/// person scrolled or opened a review.
+pub(crate) fn terminal_label(session: &crate::terminal::TerminalSession) -> String {
+    match session.number() {
+        Some(number) => format!("[terminal #{number}] {}", session.name()),
+        None => format!("[terminal] {}", session.name()),
+    }
+}
+
 /// The title exposes the number accepted by `:terminal-send` without
 /// requiring the terminal list preview. An exited terminal has none, so its
 /// title carries only the kind.
@@ -2205,10 +2243,7 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
 /// spelling it out here would repeat the mode line on the title of the one
 /// pane that has other things to say.
 fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Option<Mode>) -> String {
-    let mut name = match session.number() {
-        Some(number) => format!("[terminal #{number}] {}", session.name()),
-        None => format!("[terminal] {}", session.name()),
-    };
+    let mut name = terminal_label(session);
     if active_mode == Some(Mode::Insert) {
         name.push_str(" [insert]");
     }
@@ -2224,6 +2259,17 @@ fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Optio
     if session.history_truncated() {
         name.push_str(" [history truncated]");
     }
+    // The agent here has messages waiting in the agent channel.
+    match session.channel_unread() {
+        0 => {}
+        1 => name.push_str(" [1 unread]"),
+        count => name.push_str(&format!(" [{count} unread]")),
+    }
+    // An agent asked for Enter here; typing anything before it is pressed
+    // drops it.
+    if session.agent_enter_pending() {
+        name.push_str(" [Enter pending]");
+    }
     if !session.live() {
         name.push_str(match session.exit_code() {
             Some(Some(code)) if code != 0 => return format!("{name} [exited {code}]"),
@@ -2236,6 +2282,10 @@ fn terminal_title(session: &crate::terminal::TerminalSession, active_mode: Optio
 #[cfg(test)]
 #[path = "snapshot/tests/long_lines.rs"]
 mod long_line_tests;
+
+#[cfg(test)]
+#[path = "snapshot/tests/terminal_titles.rs"]
+mod terminal_title_tests;
 
 #[cfg(test)]
 mod tests {

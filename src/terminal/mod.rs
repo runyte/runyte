@@ -746,6 +746,11 @@ pub struct TerminalSession {
     /// The small number a person reads and types, held only while the child
     /// runs. See [`TerminalSession::number`].
     number: Option<u32>,
+    /// Agent channel messages the agent running here has not read, as the
+    /// workspace host last counted them.
+    channel_unread: usize,
+    /// An agent's Enter waits out its delay, shown in the pane title.
+    agent_enter_pending: bool,
     label: String,
     user_name: Option<String>,
     directory: PathBuf,
@@ -761,7 +766,8 @@ pub struct TerminalSession {
     bell: bool,
     history_truncated: bool,
     content_revision: u64,
-    /// Live output identity, independent of scrolling and frozen review state.
+    /// Live output and input identity, independent of scrolling and frozen
+    /// review state.
     read_revision: u64,
     review: Option<TerminalReview>,
     emulator: Emulator,
@@ -789,6 +795,23 @@ impl Drop for TerminalSession {
 impl TerminalSession {
     pub fn id(&self) -> TerminalId {
         self.id
+    }
+
+    pub fn channel_unread(&self) -> usize {
+        self.channel_unread
+    }
+
+    /// Whether an agent's Enter is waiting out its delay here.
+    pub fn agent_enter_pending(&self) -> bool {
+        self.agent_enter_pending
+    }
+
+    pub fn set_agent_enter_pending(&mut self, pending: bool) {
+        self.agent_enter_pending = pending;
+    }
+
+    pub fn set_channel_unread(&mut self, count: usize) {
+        self.channel_unread = count;
     }
 
     /// The number a title shows and a command accepts, or `None` once the
@@ -1852,17 +1875,51 @@ impl TerminalSession {
 
     fn note_input_intent(&mut self) {
         self.cancel_queued_proposals();
-        self.input_generation = self.input_generation.wrapping_add(1);
+        self.note_input();
     }
 
-    /// Native approval alone may call this after checking the captured target,
-    /// grant, and input signature. It does not change native presentation state.
+    /// Input changes what the line holds even where the child echoes
+    /// nothing, so a reader's revision moves with it as well as with output.
+    fn note_input(&mut self) {
+        self.input_generation = self.input_generation.wrapping_add(1);
+        self.read_revision = self.read_revision.wrapping_add(1);
+    }
+
+    /// Presses Enter for an agent whose grant allows it, unless any other
+    /// input reached the terminal since `generation` was read: that may have
+    /// changed what is on the line. The caller checks the grant, the delay
+    /// and the output revision.
     #[cfg_attr(not(unix), allow(dead_code))]
-    pub(crate) fn enqueue_proposal(
+    pub(crate) fn press_agent_enter(&mut self, generation: u64) -> bool {
+        if self.input_generation != generation || !self.live() {
+            return false;
+        }
+        self.note_input();
+        self.write(vec![b'\r'])
+    }
+
+    /// Types an agent's line for a grant that allows writing, checked by the
+    /// caller: the text joins the queue behind whatever is already there, so
+    /// one agent's text never cancels another's. It still changes the input
+    /// line, so an Enter requested before it goes stale.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub(crate) fn queue_agent_text(
         &mut self,
         text: &proposal::Text,
     ) -> std::io::Result<proposal::Delivery> {
-        self.note_input_intent();
+        self.note_input();
+        self.queue_input(text)
+    }
+
+    fn queue_input(&mut self, text: &proposal::Text) -> std::io::Result<proposal::Delivery> {
+        // Insertions without review supersede nothing, so finished records
+        // would otherwise accumulate until the person next types.
+        self.proposal_deliveries.retain(|delivery| {
+            matches!(
+                delivery.state(),
+                proposal::DeliveryState::Queued | proposal::DeliveryState::Writing
+            )
+        });
         self.sent_text = None;
         if !self.live() {
             return Err(std::io::Error::new(
@@ -2969,6 +3026,8 @@ impl TerminalSessions {
             TerminalSession {
                 id,
                 number,
+                channel_unread: 0,
+                agent_enter_pending: false,
                 label: request.label,
                 user_name: None,
                 directory: request.directory.clone(),
@@ -3228,6 +3287,8 @@ mod tests {
         TerminalSession {
             id: TerminalId(1),
             number: None,
+            channel_unread: 0,
+            agent_enter_pending: false,
             label: "test".to_owned(),
             user_name: None,
             directory: PathBuf::from("/"),
@@ -4156,5 +4217,39 @@ mod tests {
         assert_eq!(session.scroll(), 1);
         session.send_key(KeyStroke::char('x'));
         assert_eq!(session.scroll(), 0);
+    }
+
+    #[test]
+    fn input_moves_the_read_revision_even_when_nothing_is_echoed() {
+        let mut session = session(8, 2);
+        let read = session.read_revision();
+        session.send_key(KeyStroke::char('x'));
+        assert_ne!(session.read_revision(), read, "typing");
+        let read = session.read_revision();
+        session.send_text("pasted");
+        assert_ne!(session.read_revision(), read, "pasting");
+        let read = session.read_revision();
+        let _ = session.queue_agent_text(&proposal::Text::new("ls").unwrap());
+        assert_ne!(session.read_revision(), read, "an agent's line");
+    }
+
+    #[test]
+    fn an_agent_enter_needs_the_generation_it_was_asked_for_and_a_live_child() {
+        let mut session = session(8, 2);
+        let text = proposal::Text::new("ls").unwrap();
+        // Without a child, text cannot be queued and Enter cannot be written.
+        assert!(session.queue_agent_text(&text).is_err());
+        let generation = session.input_generation();
+        assert!(
+            !session.press_agent_enter(generation.wrapping_add(1)),
+            "stale"
+        );
+        assert!(
+            !session.press_agent_enter(generation),
+            "no child to write to"
+        );
+        assert!(!session.agent_enter_pending());
+        session.set_agent_enter_pending(true);
+        assert!(session.agent_enter_pending());
     }
 }

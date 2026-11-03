@@ -50,6 +50,8 @@ pub struct Reply {
 pub enum Event {
     Frame {
         connection: u64,
+        /// The connecting process, where the platform reports it.
+        peer: Option<u32>,
         bytes: Vec<u8>,
         reply: oneshot::Sender<Reply>,
     },

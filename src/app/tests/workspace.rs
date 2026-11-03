@@ -206,7 +206,7 @@ fn worktree_removal_names_its_session_and_takes_it_down_before_the_directory() {
         .git_worktree_removal
         .as_ref()
         .expect("a clean session should be offered rather than refused");
-    let message = confirmation.message();
+    let message = confirmation.message("Enter", "Escape");
     assert!(
         message.contains("This also stops and forgets session 5 (runyte-feature)."),
         "{message}"
@@ -3273,7 +3273,7 @@ fn worktree_control_path_is_one_safe_row_and_confirmation_with_typed_identity() 
     context_action(&mut app, 'D');
     let confirmation = app.git_worktree_removal.as_ref().unwrap();
     assert_eq!(confirmation.plan.path, linked);
-    let question = confirmation.message();
+    let question = confirmation.message("Enter", "Escape");
     assert!(
         question
             .chars()
@@ -4377,4 +4377,245 @@ fn session_actions_end_with_the_manager_chords_whichever_row_is_selected() {
     assert!(app.session_directory_chooser_open());
 
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn configured_session_menu_arming_navigation_and_stale_identity_follow_actions() {
+    let (mut app, root) =
+        session_manager_with_running_and_stopped_rows("configured-session-menu", true);
+    let compiled = crate::keymap::configured::compile(&serde_yaml::from_str("ui: {session-actions: {accept: [F8], next: [F6], previous: [F5], back: [F7], cancel: [F10]}}").unwrap(), &app.keymap);
+    assert!(compiled.errors.is_empty());
+    app.keymap = compiled.keymap;
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    let menu = app.session_action_menu.as_mut().unwrap();
+    menu.selected = menu
+        .actions
+        .iter()
+        .position(|a| *a == SessionAction::ForceClose)
+        .unwrap();
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.session_action_menu.as_ref().unwrap().force_armed);
+    assert!(app.status.contains("press F8 again"));
+    assert!(
+        app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::parse("F8").unwrap()))
+    );
+    assert!(
+        !app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::plain(KeyCode::Enter)))
+    );
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert!(app.session_action_menu.as_ref().unwrap().force_armed);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(!app.session_action_menu.as_ref().unwrap().force_armed);
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.session_action_menu.as_ref().unwrap().force_armed);
+    app.workspace_rows.clear();
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.session_action_menu.is_none());
+    assert!(app.status.contains("selected session changed"));
+    drop(app);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+fn configure_session_navigation(app: &mut App, owner: &str, cancel: &str) {
+    let browse = if owner == "session-directory" {
+        ", enter-directory: [F9]"
+    } else {
+        ""
+    };
+    let source = format!(
+        "scopes: {{global: {{list: {{Enter: null, Down: list-close}}}}}}\nui: {{{owner}: {{accept: [F8], cancel: [{cancel}], next: [F6], previous: [F5], page-up: [F3], page-down: [F4], first: [F1], last: [F2], backspace: [F7]{browse}}}}}"
+    );
+    let compiled =
+        crate::keymap::configured::compile(&serde_yaml::from_str(&source).unwrap(), &app.keymap);
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.keymap = compiled.keymap;
+}
+
+#[test]
+#[cfg(unix)]
+fn configured_session_directory_actions_preserve_text_browsing_and_switch_target() {
+    let root = temporary("configured-session-directory");
+    let child = root.join("empty");
+    fs::create_dir_all(&child).unwrap();
+    let mut app = App::new_in_isolated_project(
+        &root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    app.enable_persistent_session();
+    configure_session_navigation(&mut app, "session-directory", "F10");
+    app.mode = Mode::Insert;
+    app.open_session_directory_chooser();
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert!(
+        app.session_directory_chooser_open(),
+        "scoped list bindings cannot intercept direct input"
+    );
+    press(&mut app, ' ');
+    assert_eq!(app.list.as_ref().unwrap().filter, " ");
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    key(&mut app, KeyCode::Char('e'), Modifiers::SUPER);
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().filter, "e");
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    key(&mut app, KeyCode::Function(10), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Insert);
+    assert!(app.list.is_none() && app.take_workspace_switch().is_none());
+    app.open_session_directory_chooser();
+    for character in "empty".chars() {
+        press(&mut app, character);
+    }
+    let snapshot = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|s| s.kind == crate::snapshot::OverlayKind::ResultList)
+        .unwrap();
+    assert!(snapshot.actions.iter().any(|a| a.key_hint == "F8"));
+    assert!(
+        snapshot
+            .actions
+            .iter()
+            .any(|a| a.key_hint == "F9" && a.label == "browse directory")
+    );
+    assert!(
+        !snapshot
+            .legend
+            .iter()
+            .any(|a| a.key_hint.contains("Delete") || a.key_hint.contains("Ctrl-n"))
+    );
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert_eq!(
+        app.list.as_ref().unwrap().title,
+        format!("Open directory · {}", root.display())
+    );
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    assert_eq!(
+        app.list.as_ref().unwrap().title,
+        format!("Open directory · {}", child.display())
+    );
+    assert!(app.list.as_ref().unwrap().filter.is_empty());
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.take_workspace_switch().is_none());
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(
+        switch_target_path(&app.take_workspace_switch().unwrap()),
+        child
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn configured_session_inventory_actions_preserve_incarnation_and_dynamic_report_hints() {
+    use crate::protocol::{OpenDestination as WireDestination, OpenDestinationEntry};
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.enable_persistent_session();
+    let target = temporary("configured-inventory-target");
+    app.workspace_rows = vec![navigation_row(target.clone(), true, Some(1))];
+    open_session_manager_for_refresh(&mut app);
+    app.rebuild_workspace_picker();
+    configure_session_navigation(&mut app, "session-inventory", "F10");
+    app.open_session_inventory();
+    assert_eq!(app.list.as_ref().unwrap().purpose, ListPurpose::Report);
+    app.list
+        .as_mut()
+        .unwrap()
+        .items
+        .push(PickerItem::new("Another report row", "", 1));
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().selected, 1);
+    assert_eq!(app.list.as_ref().unwrap().report_offset, 0);
+    configure_session_navigation(&mut app, "session-inventory", "F11");
+    let snapshot = app
+        .overlay_snapshots()
+        .into_iter()
+        .find(|s| s.kind == crate::snapshot::OverlayKind::ResultList)
+        .unwrap();
+    assert_eq!(
+        snapshot.actions,
+        vec![crate::snapshot::OverlayAction::new("F11", "back")]
+    );
+    assert!(snapshot.legend.is_empty());
+    assert!(!snapshot.rows.iter().any(|r| r.detail.contains("Escape")));
+    key(&mut app, KeyCode::Function(10), Modifiers::NONE);
+    assert!(app.session_inventory_open());
+    key(&mut app, KeyCode::Function(11), Modifiers::NONE);
+    assert!(!app.session_inventory_open());
+    assert!(app.list.as_ref().unwrap().title.starts_with("Sessions"));
+    app.open_session_inventory();
+    let (generation, selection) = app.session_inventory_request().unwrap();
+    let selection = selection.clone();
+    app.apply_workspace_event(WorkspaceEvent::Inventory {
+        generation,
+        path: target.clone(),
+        selection,
+        result: Ok(crate::workspace::DestinationInventory {
+            incarnation: "a".repeat(64),
+            entries: vec![
+                OpenDestinationEntry {
+                    destination: WireDestination::Buffer(42),
+                    label: "notes".into(),
+                    detail: "modified".into(),
+                },
+                OpenDestinationEntry {
+                    destination: WireDestination::Terminal(7),
+                    label: "shell".into(),
+                    detail: "running".into(),
+                },
+            ],
+            truncated: false,
+        }),
+    });
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().selected, 0);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().selected, 1);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.take_workspace_switch().is_none());
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    let request = app.take_workspace_switch().unwrap();
+    assert_eq!(switch_target_path(&request), target);
+    assert!(request.running_only);
+    let visit = request.visit.unwrap();
+    assert_eq!(visit.incarnation, "a".repeat(64));
+    assert_eq!(
+        visit.destination,
+        OpenDestination::Terminal(TerminalId::from_raw(7))
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn remapped_session_strip_activation_keeps_the_presented_target() {
+    let (mut app, geometry, click) = clickable_session_strip();
+    let target = app.workspace_rows[2].selection();
+    let section = serde_yaml::from_str("pointer: {session-activate: [Ctrl-MiddleClick]}").unwrap();
+    let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty());
+    app.set_keymap(compiled.keymap);
+    let view = app.prepare_view(geometry);
+    app.handle_pointer(click, &view).unwrap();
+    assert!(app.take_workspace_switch().is_none());
+    app.workspace_rows[2] =
+        distinct_publication_row(temporary("strip-new-target"), "replacement", b"replacement");
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Middle),
+            modifiers: Modifiers::CONTROL,
+            ..click
+        },
+        &view,
+    )
+    .unwrap();
+    assert_eq!(
+        app.take_workspace_switch().unwrap().target,
+        WorkspaceSwitchTarget::Selected(target)
+    );
 }

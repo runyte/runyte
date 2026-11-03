@@ -14,12 +14,17 @@ fn main() -> anyhow::Result<()> {
                 let result = if args.peek().is_some_and(|arg| arg == "--serve") {
                     args.next();
                     anyhow::ensure!(args.next().is_none(), "unknown preview helper argument");
-                    runyte_preview::serve(std::io::stdin().lock(), std::io::stdout().lock())
+                    runyte_preview::serve(
+                        std::io::stdin().lock(),
+                        std::io::stdout().lock(),
+                        runyte_native::BUNDLED_FONTS,
+                    )
                 } else {
                     runyte_preview::run_once(
                         args,
                         std::io::stdin().lock(),
                         std::io::stdout().lock(),
+                        runyte_native::BUNDLED_FONTS,
                     )
                 };
                 result.map_err(|error| anyhow::anyhow!("{error}"))

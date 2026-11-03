@@ -123,6 +123,7 @@ pub enum ColonCommand {
     LogOpen,
     LspTrust,
     ContextAccess,
+    AgentChannel,
     LspRestart,
     LspStatus,
     Notifications,
@@ -304,6 +305,7 @@ impl ColonCommand {
         Self::Grammar,
         Self::LspTrust,
         Self::ContextAccess,
+        Self::AgentChannel,
         Self::LspRestart,
         Self::LogOpen,
         Self::LspStatus,
@@ -404,6 +406,7 @@ impl ColonCommand {
             | Self::ForceWriteConfig
             | Self::Grammar
             | Self::ContextAccess
+            | Self::AgentChannel
             | Self::LogOpen
             | Self::ServiceHealth
             | Self::Plugins
@@ -1003,6 +1006,9 @@ editor_commands! {
     OpenSessionDirectory => ("open-session-directory", "Open a directory as a persistent session"),
     OpenExplorerSession => ("open-explorer-session", "Open persistent session here"),
     OpenBufferPicker => ("open-buffer-picker", "Open the buffer picker"),
+    ListAccept => ("list-accept", "Activate the selected row"),
+    ListOpenActions => ("list-open-actions", "Open actions or cycle the list"),
+    ListBackspace => ("list-backspace", "Delete the last filter character"),
     ListNext => ("list-next", "Select the next row"),
     ListPrevious => ("list-previous", "Select the previous row"),
     ListPageDown => ("list-page-down", "Move the selection one page down"),
@@ -1435,7 +1441,10 @@ impl EditorCommand {
             | Self::OpenExplorerSession
             | Self::OpenSessionDestinations
             | Self::OpenBufferPicker => CommandCategory::File,
-            Self::ListNext
+            Self::ListAccept
+            | Self::ListOpenActions
+            | Self::ListBackspace
+            | Self::ListNext
             | Self::ListPrevious
             | Self::ListPageDown
             | Self::ListPageUp
@@ -1644,6 +1653,7 @@ impl CommandId {
             Self::Colon(
                 ColonCommand::LspTrust
                 | ColonCommand::ContextAccess
+                | ColonCommand::AgentChannel
                 | ColonCommand::Plugins
                 | ColonCommand::PluginStop
                 | ColonCommand::PluginRestart,
@@ -2554,6 +2564,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
+        ColonId(Colon::AgentChannel),
+        "agent-channel",
+        [],
+        "agent-channel",
+        "Show this workspace's agent channel",
+        NoArguments
+    ),
+    spec!(
         ColonId(Colon::ContextAccess),
         "mcp",
         ["context-access"],
@@ -3168,6 +3186,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::LogOpen
             | Colon::LspStatus
             | Colon::LspTrust
+            | Colon::AgentChannel
             | Colon::Notifications
             | Colon::Path
             | Colon::ServiceHealth
@@ -3595,6 +3614,7 @@ fn invocation_from_parts(
                 | ColonCommand::LogOpen
                 | ColonCommand::LspStatus
                 | ColonCommand::LspTrust
+                | ColonCommand::AgentChannel
                 | ColonCommand::Notifications
                 | ColonCommand::Path
                 | ColonCommand::ServiceHealth

@@ -365,12 +365,14 @@ environment override, before uploading. Publishing requires this job to succeed
 and includes both desktop archives in `SHA256SUMS`.
 
 Historical tags without `crates/runyte-desktop/Cargo.toml` retain their original
-artifact set and `runyte-<tag>-<target>` names, and skip the desktop job. The independent `macos-desktop` job builds the desktop executable and native
-launcher for ARM64 and x86-64 with `MACOSX_DEPLOYMENT_TARGET=11.0`, combines
+artifact set and `runyte-<tag>-<target>` names, and skip both desktop jobs.
+The `macos-desktop` job builds the desktop executable and native launcher for ARM64 and x86-64 with `MACOSX_DEPLOYMENT_TARGET=11.0`, combines
 both with `lipo`, and checks both slices for the deployment floor and system-only
 library links. It runs headless engine acceptance, then retains
 `Runyte-<version>-unsigned.app.zip` made by `ditto` as a workflow artifact only.
-The publishing job neither depends on this job nor downloads its artifact.
+Publication requires this job to succeed for tags with desktop support; only
+historical tags without desktop support may skip it. The publishing job does
+not download its unsigned artifact.
 The job also builds an unsigned disk image, attaches it read-only, checks its
 contents and detaches it. That image is not published. The macOS window still
 requires manual platform validation before distribution.

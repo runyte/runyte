@@ -23,7 +23,7 @@ or find [files](files-and-buffers.md), [terminal sessions](terminals.md), and [s
 - [Workspaces and persistent sessions — Editor, ide, and mux modes, the session manager](workspaces-and-persistent-sessions.md)
 - [Commands — The command palette and every `:` command](commands.md)
 - [Plugins — Process plugins and application views](plugins.md)
-- [Agent access to workspace context — The built-in MCP adapter for AI agents](agent-access-to-workspace-context.md)
+- [MCP server — The built-in MCP adapter for AI agents](agent-access-to-workspace-context.md)
 - [Diagnostics and logging — The diagnostic log](diagnostics-and-logging.md)
 - [Configuration — The configuration file and every setting](configuration.md)
 - [Custom key bindings — Remapping keys and binding actions](custom-key-bindings.md)
