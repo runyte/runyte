@@ -1,9 +1,38 @@
 # Contributing to Runyte
 
-Feature requests, bug reports, and plugin development are welcome.
+Runyte welcomes contributions from people who share its direction: a fast,
+selection-first editor with consistent keybindings and closely integrated
+tools. Bug fixes, performance improvements, tests, documentation, and
+thoughtfully scoped features all help.
 
-Suspected security vulnerabilities do not belong in any of the channels below.
-Follow the [security policy](SECURITY.md) instead.
+You do not need to start with a large feature. A focused improvement to
+something you use is a good first contribution.
+
+Suspected security vulnerabilities should follow the
+[security policy](SECURITY.md).
+
+## Before you start
+
+Small fixes, documentation improvements, and focused performance or test
+improvements can go straight to a pull request. An issue is not required
+for every change.
+
+For substantial features, architecture changes, or changes to editing
+behavior and keybindings, open an issue first. Describe the workflow,
+give a concrete example, and explain your proposed approach. This lets us
+agree on scope and direction before you spend time implementing it.
+
+Search existing issues and pull requests before starting. If you pick up an
+existing issue, leave a comment describing your approach so others know
+someone is working on it.
+
+Runyte's selection-first model, keymap, and module boundaries are deliberate.
+Contributions should build on those choices and keep the editor fast and
+consistent. Integrations with separate services or applications are often
+best implemented as plugins.
+
+We review changes for both correctness and fit with the project. Discussing
+larger changes early helps avoid work that we cannot accept.
 
 ## Request a feature
 
@@ -14,8 +43,8 @@ existing request before opening a new one.
 
 Runyte's selection-first model and its keymap are deliberate, so a request that
 works with them lands more easily than one that adds a second way to do
-something already bound. Anything an external process could do is better as a
-plugin than as an editor feature.
+something already bound. For integrations with separate services or
+applications, consider whether a plugin would fit the workflow.
 
 ## Report a bug
 
@@ -60,23 +89,34 @@ share it on [r/runyte](https://www.reddit.com/r/runyte/). If the contract is
 missing something a plugin needs, open an issue describing the plugin and the
 gap rather than working around it.
 
-## Code changes
+## Submit a pull request
 
-Read [`AGENTS.md`](AGENTS.md) before changing code. It describes the
-architecture, where each responsibility lives, and the conventions every change
-follows. A pull request should:
+Read [`AGENTS.md`](AGENTS.md) before changing code. Despite its name, it is
+the development guide for everyone: it describes the architecture,
+conventions, and required checks.
 
-- Link the relevant GitHub issue when one exists, and describe the cause,
-  resulting behavior, validation, and any remaining limitations. GitHub is the
-  primary issue tracker; a fix does not require a duplicate issue or resolution
-  record under `context/`.
-- Stay focused on one behavior, with tests at the boundary it changes.
-- Keep line coverage at or above the floor in
-  [`context/reference/test-coverage.md`](context/reference/test-coverage.md).
-- Pass `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and
-  `cargo test`.
-- Update [`docs/user-guide/README.md`](docs/user-guide/README.md) when user-visible behavior
-  changes.
+Fork the repository, create a branch from `main`, and keep your pull request
+focused on one improvement. Draft pull requests are welcome when you want
+feedback before finishing.
+
+A pull request should:
+
+- Explain the problem, what changes for the user, and why this approach fits.
+  Link the relevant issue when one exists.
+- Include regression tests for fixes and appropriate coverage for new behavior.
+  Keep coverage at or above the
+  [documented floor](context/reference/test-coverage.md).
+- Update the relevant [user-guide chapters](docs/user-guide/README.md) when
+  user-visible behavior changes.
+- Describe how you validated the change and any remaining limitations.
+  For performance improvements, include before-and-after measurements and
+  enough detail to reproduce them.
+- Pass `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
+  and `cargo test`. Run the additional desktop checks in `AGENTS.md` when
+  the change can affect the desktop edition.
+
+GitHub is the primary issue tracker. A fix does not require a duplicate
+issue or resolution record under `context/`.
 
 Runyte is licensed under the [Mozilla Public License 2.0](LICENSE), and
 contributions are accepted under the same license. Material taken from another
