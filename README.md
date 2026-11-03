@@ -330,17 +330,21 @@ the complete manual.
 
 ## Contributing
 
-Contributions are welcome in the form of:
+Contributions are welcome: bug fixes, performance improvements, tests,
+documentation, and features that fit Runyte's direction.
 
-- Feature requests and bug reports through [GitHub Issues](https://github.com/runyte/runyte/issues).
-- [Plugin development](docs/plugins/authoring.md), in any programming language.
+Small, focused pull requests can be submitted directly. For a substantial
+feature or a change to editing behavior, open an
+[issue](https://github.com/runyte/runyte/issues) first so we can discuss the
+approach before you invest time in implementation.
 
-See the [contributing guide](CONTRIBUTING.md) for how to describe a feature
-request, report a bug, or share a plugin.
+Bug reports, feature requests, and [plugins](docs/plugins/authoring.md) are
+welcome too. See the [contributing guide](CONTRIBUTING.md) for where to start
+and how to prepare a pull request.
 
 ## The name
 
-Runyte is pronounced *“roon-ite”* and blends rune, byte, Rust, and unite `¯\_(ツ)_/¯`.
+Runyte is pronounced *“roon-ite”* and blends rune, byte, Rust, and unite 🤷.
 
 ## Acknowledgements
 

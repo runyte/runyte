@@ -459,8 +459,11 @@ fn over_limit_assignments_refuse_forced_export_without_touching_files() {
     let root = Root::new();
     root.write("config.yaml", "# keep main\n");
     root.write("keybinds.d/normal.yaml", "# keep keys\n");
+    // The boundary is the same at any limit, and the real one took seconds
+    // to write out and compile in a debug build.
+    let limit = 64;
     let mut source = String::from("keys:\n  bind:\n    normal:\n");
-    for n in 0..=crate::keymap::actions::MAX_BINDINGS {
+    for n in 0..=limit {
         let letters = format!("{n:05}")
             .bytes()
             .map(|digit| char::from(b'a' + digit - b'0').to_string())
@@ -472,8 +475,13 @@ fn over_limit_assignments_refuse_forced_export_without_touching_files() {
     config
         .themes
         .insert("mine".into(), ThemeDefinition::default());
-    let error = crate::settings::write_config(&root.config(), &config, true).unwrap_err();
-    assert!(error.to_string().contains("65536 assignments"), "{error}");
+    let error = crate::keymap::actions::with_max_bindings(limit, || {
+        crate::settings::write_config(&root.config(), &config, true).unwrap_err()
+    });
+    assert!(
+        error.to_string().contains(&format!("{limit} assignments")),
+        "{error}"
+    );
     assert_eq!(fs::read_to_string(root.config()).unwrap(), "# keep main\n");
     assert_eq!(
         fs::read_to_string(root.0.join("keybinds.d/normal.yaml")).unwrap(),
