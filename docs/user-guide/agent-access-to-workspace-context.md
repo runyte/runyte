@@ -8,11 +8,37 @@ connections, with no Python installation. See the [MCP setup guide](../mcp.md).
 
 ### Setting it up
 
-1. Configure the agent to launch your Runyte binary with arguments
-   `["mcp", "--identity", "agent"]`.
+1. Add Runyte to the agent as an MCP server, following the [MCP setup
+   guide](../mcp.md#codex-and-claude-code). It covers the client
+   configurations, the environment the server needs, and the bundled skill.
+   In short, give the absolute path to your Runyte binary, which
+   `command -v runyte` prints; the desktop edition's `runyte-desktop` takes the
+   same arguments. For Claude Code and Codex:
+
+   ```sh
+   claude mcp add --scope user --transport stdio runyte -- /path/to/runyte mcp --identity agent
+   codex mcp add runyte -- /path/to/runyte mcp --identity agent
+   ```
+
+   Codex starts MCP servers with a reduced environment, and without these
+   variables it finds no workspaces. Add this line to the `[mcp_servers.runyte]`
+   table that `codex mcp add` wrote to `~/.codex/config.toml`:
+
+   ```toml
+   env_vars = ["XDG_RUNTIME_DIR", "XDG_CACHE_HOME", "RUNYTE_PARENT_CONTEXT"]
+   ```
+
+   Any other MCP client runs the same binary with the arguments
+   `["mcp", "--identity", "agent"]` over stdio; the setup guide has the JSON
+   and TOML forms. Restart an agent that was already running so it starts the
+   server.
 2. In each workspace to share, run `:mcp agent` using that same identity.
 3. Turn on Read with `1`, and Write with `2` if the agent should edit or type,
    then select **Apply permissions** with Tab then Enter.
+4. Ask the agent to call `list_workspaces`. The workspace should be listed with
+   Read. If it is missing and the reply counts `hidden_workspaces`, the client
+   is not passing the environment variables above to the server; its
+   `discovery_help` names them.
 
 You may grant permissions before **or after** starting the agent. The built-in
 server always offers the same tools; each call checks the workspace grant.
