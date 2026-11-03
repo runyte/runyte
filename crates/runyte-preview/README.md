@@ -102,8 +102,13 @@ formatted channels, never as request text. Authored HTML and valid SVG are not
 recoloured; `prefers-color-scheme` reports the theme's appearance. Without a
 theme the page is the original light layout with InspiredGitHub highlighting.
 Each reply says whether the page was themed, so the native view paints the
-ground around it, its link bar and key hints to match. Proportional and code
-fonts currently use system fonts; no additional font is bundled by the helper.
+ground around it, its link bar and key hints to match. Generated pages set prose
+and headings in the system sans-serif, and code blocks and inline code in the
+JetBrainsMono Nerd Font faces the desktop window already embeds: the
+executable hands the helper that same embedded copy, so the font is not carried
+twice. System fonts remain registered behind it for scripts and symbols the
+face lacks, such as CJK and emoji. Authored HTML keeps the fonts its own styles
+name, resolved from the system.
 
 ## Supported static subset and resource policy
 

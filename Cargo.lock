@@ -6050,6 +6050,7 @@ dependencies = [
  "fontique",
  "image",
  "markup5ever",
+ "parley",
  "pulldown-cmark",
  "roxmltree 0.20.0",
  "serde",

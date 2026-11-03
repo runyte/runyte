@@ -108,6 +108,16 @@ struct MediaPane {
     page: usize,
     body: runyte::layout::Rect,
 }
+/// The bundled JetBrains Mono Nerd Font faces: Medium, Medium Italic, Bold and
+/// Bold Italic. The window grid and the document-preview helper share this one
+/// embedded copy rather than each carrying its own.
+pub static BUNDLED_FONTS: &[&[u8]] = &[
+    include_bytes!("../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Medium.ttf"),
+    include_bytes!("../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-MediumItalic.ttf"),
+    include_bytes!("../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Bold.ttf"),
+    include_bytes!("../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-BoldItalic.ttf"),
+];
+
 /// Window colours used where no cell supplies one, before the first frame.
 const FALLBACK_BACKGROUND: u32 = 0x181818;
 const FALLBACK_FOREGROUND: u32 = 0xdddddd;
@@ -828,20 +838,12 @@ pub(crate) fn launch(
         })?;
     Application::new().run(move |cx| {
         cx.text_system()
-            .add_fonts(vec![
-                std::borrow::Cow::Borrowed(include_bytes!(
-                    "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Medium.ttf"
-                )),
-                std::borrow::Cow::Borrowed(include_bytes!(
-                    "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-MediumItalic.ttf"
-                )),
-                std::borrow::Cow::Borrowed(include_bytes!(
-                    "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-Bold.ttf"
-                )),
-                std::borrow::Cow::Borrowed(include_bytes!(
-                    "../../../assets/fonts/jetbrains-mono/JetBrainsMonoNerdFont-BoldItalic.ttf"
-                )),
-            ])
+            .add_fonts(
+                BUNDLED_FONTS
+                    .iter()
+                    .map(|face| std::borrow::Cow::Borrowed(*face))
+                    .collect(),
+            )
             .expect("load bundled JetBrains Mono Nerd Font faces");
         let bridge = bridge.clone();
         let bounds = Bounds::centered(None, size(px(1080.), px(800.)), cx);

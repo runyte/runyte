@@ -10,8 +10,10 @@ Only the `JetBrainsMono Nerd Font` family is included: Medium, Medium Italic,
 Bold, and Bold Italic. The files have not been renamed internally, subsetted,
 or otherwise modified by Runyte. Their combined size is about 9.5 MiB.
 
-Native builds embed these bytes with `include_bytes!` and register them before
-opening the window. No font installation or network access is required to run.
+Native builds embed these bytes once with `include_bytes!`
+(`runyte_native::BUNDLED_FONTS`) and register them before opening the window.
+The document-preview helper runs from the same executable and registers that
+same copy for code on generated preview pages. No font installation or network access is required to run.
 Terminal builds do not embed them; terminal applications control their own fonts.
 The native grid uses Medium at 15 logical pixels, with true Bold/Italic faces
 selected from cell modifiers. Glyphs outside this font's coverage can still use

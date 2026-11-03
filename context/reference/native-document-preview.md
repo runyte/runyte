@@ -137,8 +137,12 @@ Blitz serves static documents; this integration does not settle the broader
 browser-engine decision. The current implementation retains a DOM/font context
 and CPU renderer in a killable helper, coalesces viewport updates and caches
 adjacent document regions. Large jumps and multiple active previews still incur
-raster upload and replacement costs. Packaged fonts, stronger asset isolation
-and macOS, Wayland and physical HiDPI acceptance remain future work.
+raster upload and replacement costs. Code on generated pages uses the
+bundled JetBrainsMono Nerd Font faces, handed to the helper by the executable
+that embeds them for the window; prose keeps the system sans-serif, and
+authored HTML still resolves the families it names from the system. Stronger
+asset isolation and macOS, Wayland and physical HiDPI acceptance remain future
+work.
 
 The follow-up sections below preserve the implementation diagnoses and checks
 recorded on 2026-10-09; their intermediate behavior and measurements are historical.
