@@ -1548,6 +1548,19 @@ struct ScrollAccumulator {
     events: Point<f32>,
     last: Option<std::time::Instant>,
 }
+/// Touchpad pixels that count as one wheel notch of zoom: three rows at the
+/// default 15-point font. Fixed rather than read from the live cell size, so a
+/// touchpad zooms at the same speed at every font size, as a wheel does.
+const ZOOM_PIXELS_PER_NOTCH: f32 = 60.0;
+
+/// A wheel or touchpad delta as zoom notches, independent of the font size.
+fn zoom_notches(delta: ScrollDelta) -> f32 {
+    match delta {
+        ScrollDelta::Lines(lines) => lines.y / WHEEL_LINES_PER_NOTCH,
+        ScrollDelta::Pixels(pixels) => f32::from(pixels.y) / ZOOM_PIXELS_PER_NOTCH,
+    }
+}
+
 impl ScrollAccumulator {
     fn set_policy(&mut self, policy: [Option<runyte::keymap::pointer_actions::Action>; 4]) {
         if self.policy.is_some_and(|previous| previous != policy) {

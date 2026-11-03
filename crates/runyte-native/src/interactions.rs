@@ -238,7 +238,7 @@ impl NativeView {
         // Zoom counts wheel notches so its speed is the same at every font
         // size; panning follows the pointer in pixels.
         let delta = if action == Action::MediaZoom {
-            super::ScrollAccumulator::delta(event.delta, self.metrics).0
+            gpui::point(0., super::zoom_notches(event.delta))
         } else {
             event
                 .delta

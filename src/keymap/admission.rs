@@ -167,7 +167,9 @@ pub(crate) const TREE_PASSES: &[C] = &[
 
 /// Text commands terminal review answers to, on its captured snapshot. The
 /// character-taking ones are resolved before the terminal handler sees them;
-/// insert-mode entries send input to the child.
+/// insert-mode entries send input to the child. Macros record and replay keys
+/// rather than text, so the whole set works here: a recording started in a
+/// terminal must be one the same pane can stop.
 const TERMINAL: &[C] = &[
     C::AppendAfter,
     C::ClipboardPasteAfter,
@@ -201,6 +203,7 @@ const TERMINAL: &[C] = &[
     C::JumpForward,
     C::JumpForwardBuffer,
     C::KeepPrimarySelection,
+    C::ListMacros,
     C::MoveDown,
     C::MoveFileEnd,
     C::MoveFileStart,
@@ -222,7 +225,9 @@ const TERMINAL: &[C] = &[
     C::PageUp,
     C::PasteAfter,
     C::PasteBefore,
+    C::RecordDefaultMacro,
     C::RecordMacro,
+    C::ReplayDefaultMacro,
     C::ReplayMacro,
     C::RotateSelectionBackward,
     C::RotateSelectionForward,
@@ -236,6 +241,7 @@ const TERMINAL: &[C] = &[
     C::SelectLine,
     C::SelectLineUp,
     C::SelectRegister,
+    C::StopMacroRecording,
     C::Undo,
     C::Yank,
 ];

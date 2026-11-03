@@ -1171,10 +1171,7 @@ impl NativeView {
         if action == Action::PreviewZoom {
             // Notches, as media zoom counts them, so the speed does not follow
             // the font size. The page reflows around the new size.
-            let notches = super::ScrollAccumulator::delta(event.delta, self.metrics)
-                .0
-                .y;
-            state.wheel_zoom(notches);
+            state.wheel_zoom(super::zoom_notches(event.delta));
             cx.notify();
             return true;
         }

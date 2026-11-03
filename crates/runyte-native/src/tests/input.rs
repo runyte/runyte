@@ -429,6 +429,23 @@ fn resized_font_scales_pointer_and_media_hit_testing_together() {
     assert_eq!(super::CellMetrics::new(usize::MAX).font_size, 48.);
 }
 
+/// Zoom counts notches from the gesture alone: a wheel notch is one, and the
+/// touchpad pixels that make one do not depend on the font size.
+#[test]
+fn zoom_notches_ignore_the_font_size() {
+    use super::{CellMetrics, ScrollAccumulator, WHEEL_LINES_PER_NOTCH, zoom_notches};
+    use gpui::ScrollDelta;
+    assert_eq!(
+        zoom_notches(ScrollDelta::Lines(point(0., -WHEEL_LINES_PER_NOTCH))),
+        -1.
+    );
+    let swipe = ScrollDelta::Pixels(point(px(0.), px(30.)));
+    assert_eq!(zoom_notches(swipe), 0.5);
+    // At the default font size this is the speed scrolling would give.
+    let scrolled = ScrollAccumulator::delta(swipe, CellMetrics::new(15)).0.y;
+    assert!((zoom_notches(swipe) - scrolled).abs() < 1e-6);
+}
+
 #[test]
 fn fractional_scroll_accumulates_into_whole_host_events() {
     use super::{CellMetrics, ScrollAccumulator, WHEEL_LINES_PER_NOTCH};

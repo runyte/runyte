@@ -254,14 +254,6 @@ impl HelpTopic {
         }
     }
 
-    /// Rows written out verbatim between the overview and the key tables.
-    ///
-    /// Unlike `overview_for`, these strings *are* terminal rows: they are
-    /// aligned against one another and must not be re-flowed, which is why
-    /// they are a separate list rather than another paragraph. Reserved for a
-    /// comparison prose genuinely loses — commands differing along two axes at
-    /// once, where a sentence makes the reader hold one axis in their head
-    /// while reading the other.
     /// Pointer gestures only this view answers to, most asked-for first. Their
     /// spellings come from the live pointer registry, so a remapped gesture is
     /// described where it now is.
@@ -281,6 +273,14 @@ impl HelpTopic {
         }
     }
 
+    /// Rows written out verbatim between the overview and the key tables.
+    ///
+    /// Unlike `overview_for`, these strings *are* terminal rows: they are
+    /// aligned against one another and must not be re-flowed, which is why
+    /// they are a separate list rather than another paragraph. Reserved for a
+    /// comparison prose genuinely loses — commands differing along two axes at
+    /// once, where a sentence makes the reader hold one axis in their head
+    /// while reading the other.
     pub fn table_for(self, _grammar: GrammarKind) -> &'static [&'static str] {
         match self {
             Self::GitStash => GIT_STASH_CREATION_TABLE,

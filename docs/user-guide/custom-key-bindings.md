@@ -558,6 +558,13 @@ keys:
     preview-select: [MiddleDrag]
 ```
 
+Actions in one group may not share a gesture. When they do, Runyte reports the
+overlap and keeps the whole group's defaults, so a list that claims a gesture
+another action of the group holds by default must reassign that action too.
+Ctrl- and Super-wheel belong to `preview-zoom` by default; a `preview-scroll`
+or `preview-horizontal` list written before preview zoom existed that names
+them now needs a `preview-zoom` list of its own.
+
 Native surfaces consume removed gestures rather than passing them to hidden
 source text. The factory preview right-click retains source-selection copying;
 replacing or removing `preview-select` also suppresses that fallback. A captured drag stays with its pane, page and document source;

@@ -162,7 +162,8 @@ the original light page. Static HTML and valid SVG keep the appearance they
 were written with; HTML that styles itself through `prefers-color-scheme`
 follows whether the theme is dark or light.
 
-Wheel/trackpad scrolling preserves fractional pixels; Shift-wheel pans horizontally.
+Wheel/trackpad scrolling preserves fractional pixels; Shift-wheel pans horizontally,
+and Ctrl-wheel (Cmd-wheel on macOS) zooms within the same range as `+`/`-`.
 The preview also uses the built-in PDF navigation keys: `j`/`k` and arrows,
 `h`/`l`, page/half-page controls, `gg`/`ge`, and `+`/`-` zoom (`z1` resets).
 Left-drag selects text; `y` or Ctrl-Shift-c copies it. Escape dismisses an overlay

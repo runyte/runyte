@@ -1126,15 +1126,6 @@ impl App {
         }
     }
 
-    /// Renders help for the active view into the shared help buffer and
-    /// focuses it.
-    ///
-    /// The text is a snapshot of the view help was opened from, so it is
-    /// rendered before the pane retargets: once the help buffer is active, the
-    /// scope would describe help itself.
-    ///
-    /// Help does not depend on the mode, so every route in reaches the same
-    /// document and the palette's own mode cannot leak into the answer.
     /// The document-preview part of help. Its keys describe the rendered page
     /// a preview shows, so they are listed only while one is open in this
     /// pane; elsewhere they would contradict the view's own keys. Views that
@@ -1159,6 +1150,15 @@ impl App {
         )
     }
 
+    /// Renders help for the active view into the shared help buffer and
+    /// focuses it.
+    ///
+    /// The text is a snapshot of the view help was opened from, so it is
+    /// rendered before the pane retargets: once the help buffer is active, the
+    /// scope would describe help itself.
+    ///
+    /// Help does not depend on the mode, so every route in reaches the same
+    /// document and the palette's own mode cannot leak into the answer.
     pub(super) fn open_help(&mut self) {
         let topic = if self.directory_tree.focused {
             HelpTopic::DirectoryTree
