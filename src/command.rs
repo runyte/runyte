@@ -587,8 +587,10 @@ editor_commands! {
     Indent => ("indent", "Indent the selected lines"),
     Unindent => ("unindent", "Unindent the selected lines"),
     ToggleComments => ("toggle-comments", "Comment or uncomment the selected lines"),
-    DeleteSelection => ("delete-selection", "Delete the selection or character"),
-    ChangeSelection => ("change-selection", "Change the selection or character"),
+    YankDeleteSelection => ("yank-delete-selection", "Yank, then delete the selection or character"),
+    YankChangeSelection => ("yank-change-selection", "Yank, then change the selection or character"),
+    DeleteSelection => ("delete-selection", "Delete the selection or character without yanking"),
+    ChangeSelection => ("change-selection", "Change the selection or character without yanking"),
 
     EnterSelectMode => ("enter-select-mode", "Toggle select mode"),
     SelectLine => ("select-line", "Select the current line, then extend downward"),
@@ -1078,6 +1080,8 @@ impl EditorCommand {
                 | Self::Indent
                 | Self::Unindent
                 | Self::ToggleComments
+                | Self::YankDeleteSelection
+                | Self::YankChangeSelection
                 | Self::DeleteSelection
                 | Self::ChangeSelection
                 | Self::ReplaceChar
@@ -1241,6 +1245,8 @@ impl EditorCommand {
             | Self::Indent
             | Self::Unindent
             | Self::ToggleComments
+            | Self::YankDeleteSelection
+            | Self::YankChangeSelection
             | Self::DeleteSelection
             | Self::ChangeSelection
             | Self::DeleteWordBackward

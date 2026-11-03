@@ -17,6 +17,40 @@ pub const MAX_BINDINGS: usize = 65_536;
 const MAX_ACTIONS: usize = 16;
 const MAX_ARGUMENT_BYTES: usize = 4096;
 
+#[cfg(test)]
+thread_local! {
+    static TEST_MAX_BINDINGS: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// The assignment limit in force. Unit tests may lower it on their own thread
+/// with [`with_max_bindings`], so the boundary is checked without compiling
+/// tens of thousands of assignments; release builds always use
+/// [`MAX_BINDINGS`].
+fn max_bindings() -> usize {
+    #[cfg(test)]
+    if let Some(limit) = TEST_MAX_BINDINGS.get() {
+        return limit;
+    }
+    MAX_BINDINGS
+}
+
+/// Runs `f` with the assignment limit lowered to `limit` on this thread only.
+///
+/// Each test runs on its own thread, so concurrent tests never see another
+/// test's limit. Integration tests and benchmarks link the normally compiled
+/// library and always see [`MAX_BINDINGS`].
+#[cfg(test)]
+pub(crate) fn with_max_bindings<T>(limit: usize, f: impl FnOnce() -> T) -> T {
+    struct Restore(Option<usize>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TEST_MAX_BINDINGS.set(self.0);
+        }
+    }
+    let _restore = Restore(TEST_MAX_BINDINGS.replace(Some(limit)));
+    f()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Action {
     /// The grammar supplies a count or a subsequent character, as for a default key.
@@ -74,6 +108,8 @@ fn scan_editor_modes(command: EditorCommand) -> Vec<Mode> {
                         | EditorCommand::SelectLineUp
                         | EditorCommand::GotoNextParagraph
                         | EditorCommand::GotoPreviousParagraph
+                        | EditorCommand::DeleteSelection
+                        | EditorCommand::ChangeSelection
                 ))
         })
         .collect()
@@ -131,6 +167,7 @@ pub fn can_continue(target: BindingTarget) -> bool {
                 | C::SplitSelectionAtLineStarts
                 | C::Yank
                 | C::YankLine
+                | C::YankDeleteSelection
                 | C::DeleteSelection
                 | C::Indent
                 | C::Unindent
@@ -632,10 +669,11 @@ pub(super) fn apply(section: Option<&Value>, base: Keymap, errors: &mut Vec<Stri
             .filter_map(Value::as_mapping)
             .map(|mapping| mapping.len())
             .sum::<usize>()
-            > MAX_BINDINGS
+            > max_bindings()
     {
         errors.push(format!(
-            "bind rejected: at most 4 modes and {MAX_BINDINGS} assignments are allowed"
+            "bind rejected: at most 4 modes and {} assignments are allowed",
+            max_bindings()
         ));
         return base;
     }
@@ -963,16 +1001,21 @@ mod tests {
             }
             serde_yaml::from_str::<serde_yaml::Value>(&source).unwrap()
         };
-        let built_in = crate::keymap::keymap_for(false);
-        let errors = configured::compile(&section(super::MAX_BINDINGS), &built_in).errors;
-        assert!(errors.is_empty(), "{errors:?}");
-        let errors = configured::compile(&section(super::MAX_BINDINGS + 1), &built_in).errors;
-        assert!(
-            errors
-                .iter()
-                .any(|error| error.contains("65536 assignments")),
-            "{errors:?}"
-        );
+        // The boundary is the same at any limit; compiling the real one in a
+        // debug build took most of a minute.
+        let limit = 64;
+        super::with_max_bindings(limit, || {
+            let built_in = crate::keymap::keymap_for(false);
+            let errors = configured::compile(&section(limit), &built_in).errors;
+            assert!(errors.is_empty(), "{errors:?}");
+            let errors = configured::compile(&section(limit + 1), &built_in).errors;
+            assert!(
+                errors
+                    .iter()
+                    .any(|error| error.contains(&format!("{limit} assignments"))),
+                "{errors:?}"
+            );
+        });
     }
 
     #[test]

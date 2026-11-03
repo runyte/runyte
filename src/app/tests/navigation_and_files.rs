@@ -1367,6 +1367,44 @@ fn explorer_yank_of_a_bare_caret_takes_the_whole_entry() {
 }
 
 #[test]
+fn explorer_d_records_a_cut_and_delete_selection_records_nothing() {
+    let parent = temporary("explorer-delete-register");
+    let source = parent.join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("note.txt"), "moved content").unwrap();
+    fs::write(source.join("other.txt"), "deleted content").unwrap();
+    let config = Config {
+        keys: Some(
+            serde_yaml::from_str(
+                "bind:\n  normal:\n    F5: delete-selection\n  select:\n    F5: delete-selection\n",
+            )
+            .unwrap(),
+        ),
+        ..Config::default()
+    };
+    let mut app = App::new(config, Some(source)).unwrap();
+
+    // `d` must record a move rather than the copy `y` records, so that a
+    // paste elsewhere reviews as one move owned by the destination.
+    press(&mut app, 'x');
+    press(&mut app, 'd');
+    let register = app.registers[&'"'].clone();
+    assert_eq!(register.text, "note.txt\n");
+    assert_eq!(register.directory.unwrap().mode, TransferMode::Move);
+
+    app.registers.clear();
+    press(&mut app, 'x');
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert!(app.registers.is_empty());
+    assert_eq!(app.active_buffer().text().to_string(), "");
+    assert!(matches!(
+        app.active_buffer().directory_plan().unwrap().operations(),
+        [FsOperation::Delete { .. }, FsOperation::Delete { .. }]
+    ));
+    fs::remove_dir_all(parent).unwrap();
+}
+
+#[test]
 fn explorer_paste_between_existing_rows_keeps_their_identities() {
     let parent = temporary("explorer-middle-paste");
     let source = parent.join("source");

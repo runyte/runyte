@@ -1043,37 +1043,37 @@ impl Keymap {
         mode: Mode,
         scope: BindingScope,
     ) -> impl Iterator<Item = &Binding> {
-        let mut bindings = Vec::new();
-        if scope != BindingScope::Global {
-            let mut scoped = self
-                .bindings
+        let mut scoped = if scope == BindingScope::Global {
+            Vec::new()
+        } else {
+            self.bindings
                 .iter()
                 .filter(|binding| {
                     binding.is_active_in(mode) && scope_includes(scope, binding.scope)
                 })
-                .collect::<Vec<_>>();
-            scoped.sort_by_key(|binding| binding.role);
-            bindings.extend(scoped);
-        }
+                .collect::<Vec<_>>()
+        };
+        scoped.sort_by_key(|binding| binding.role);
+        // A global binding is shadowed by one of the scope's own, so it is
+        // checked against that short list rather than the whole registry.
+        // Help asks this once per key it lists, and a scan of every binding
+        // for every global binding made each answer quadratic.
         let mut global = self
             .bindings
             .iter()
             .filter(|binding| {
                 binding.visible_in(mode, scope)
                     && binding.scope == BindingScope::Global
-                    && (scope == BindingScope::Global
-                        || !self.bindings.iter().any(|scoped| {
-                            scoped.is_active_in(mode)
-                                && scope_includes(scope, scoped.scope)
-                                && (scoped.sequence == binding.sequence
-                                    || (scope == BindingScope::DirectoryTree
-                                        && binding.sequence.starts_with(&scoped.sequence)))
-                        }))
+                    && !scoped.iter().any(|scoped| {
+                        scoped.sequence == binding.sequence
+                            || (scope == BindingScope::DirectoryTree
+                                && binding.sequence.starts_with(&scoped.sequence))
+                    })
             })
             .collect::<Vec<_>>();
         global.sort_by_key(|binding| binding.role);
-        bindings.extend(global);
-        bindings.into_iter()
+        scoped.extend(global);
+        scoped.into_iter()
     }
 
     /// The bindings a scope contributes on top of the global keymap.
@@ -1425,8 +1425,8 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::char('>'), Command::Indent),
         modal(Key::char('<'), Command::Unindent),
         modal(Key::ctrl('c'), Command::ToggleComments),
-        modal(Key::char('d'), Command::DeleteSelection),
-        modal(Key::char('c'), Command::ChangeSelection),
+        modal(Key::char('d'), Command::YankDeleteSelection),
+        modal(Key::char('c'), Command::YankChangeSelection),
         modal(Key::char('v'), Command::EnterSelectMode),
         modal(Key::char('x'), Command::SelectLine),
         modal(Key::char('X'), Command::ExtendLineAbove),

@@ -136,3 +136,50 @@ fn without_defaults_a_terminal_can_still_be_left() {
     assert_eq!(app.mode, Mode::Normal);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn delete_and_change_selection_leave_registers_alone_while_d_and_c_yank() {
+    let mut app = configured(
+        "bind:\n  normal:\n    F5: delete-selection\n    F6: change-selection\n    F7: [select-all, delete-selection]\n",
+    );
+    seed(&mut app, "abc def");
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 2));
+    press(&mut app, 'd');
+    assert_eq!(app.registers[&'"'].text, "abc");
+    assert_eq!(app.active_buffer().text().to_string(), " def");
+
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(1, 3));
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(app.active_buffer().text().to_string(), " ");
+    assert_eq!(app.registers[&'"'].text, "abc");
+
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 0));
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Insert);
+    assert_eq!(app.active_buffer().text().to_string(), "");
+    assert_eq!(app.registers[&'"'].text, "abc");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+
+    // A register chosen for a delete that writes nothing must not linger
+    // and capture the next yank instead.
+    seed(&mut app, "ghi jkl");
+    press(&mut app, '"');
+    press(&mut app, 'a');
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert!(!app.registers.contains_key(&'a'));
+    press(&mut app, 'y');
+    assert!(!app.registers.contains_key(&'a'));
+    assert_eq!(app.registers[&'"'].text, "h");
+
+    // `delete-selection` continues a sequence, so it can follow a selection.
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert_eq!(app.active_buffer().text().to_string(), "");
+    assert_eq!(app.registers[&'"'].text, "h");
+
+    press(&mut app, 'u');
+    assert_eq!(app.active_buffer().text().to_string(), "hi jkl");
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 1));
+    press(&mut app, 'c');
+    assert_eq!(app.mode, Mode::Insert);
+    assert_eq!(app.registers[&'"'].text, "hi");
+}
