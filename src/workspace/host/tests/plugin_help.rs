@@ -95,6 +95,22 @@ fn open_help(host: &mut WorkspaceHost) -> String {
     help_page(host).0
 }
 
+/// Expires view publication pacing. Each step here once waited out the
+/// interval by accident, because rendering help was slow; this test exercises
+/// help, not pacing.
+fn expire_pacing(host: &mut WorkspaceHost, view: &str) {
+    host.app
+        .plugins
+        .instances
+        .get_mut(&0)
+        .unwrap()
+        .application
+        .views
+        .get_mut(view)
+        .unwrap()
+        .published = None;
+}
+
 fn failure(receiver: &mut mpsc::Receiver<HostMessage>) -> api::ErrorCode {
     let api::HostMessage::Response {
         outcome: api::Response::Failure { error },
@@ -154,6 +170,7 @@ async fn space_question_follows_the_models_registered_topic_and_live_actions() {
     assert!(styled(key + 2, label + " with Enter".len()).is_empty());
 
     // A header patch replaces the topic, as it replaces the rest of the header.
+    expire_pacing(&mut host, &view);
     model_request(
         &mut host,
         0,
@@ -171,6 +188,7 @@ async fn space_question_follows_the_models_registered_topic_and_live_actions() {
     assert!(record.contains("A record shows every field of one row."));
 
     // A model without a topic falls back to the ordinary overview.
+    expire_pacing(&mut host, &view);
     model_request(
         &mut host,
         0,
@@ -190,6 +208,7 @@ async fn space_question_follows_the_models_registered_topic_and_live_actions() {
     assert!(fallback.contains("Next page — Show the next page"));
 
     // An unregistered topic refuses the whole publication and keeps the model.
+    expire_pacing(&mut host, &view);
     model_request(
         &mut host,
         0,
