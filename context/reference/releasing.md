@@ -437,10 +437,42 @@ the listed `runyte-terminal-` archive, falling back to a listed historical
 `runyte-` archive, and fails if neither is listed. `--version X.Y.Z` bypasses latest-release discovery.
 `--install-dir` chooses an absolute destination directory; the default is
 `$HOME/.local/bin`. Downloads and checks complete before a staged executable
-replaces the old file through a rename on the destination filesystem. An
-installed executable reporting the desktop edition is preserved: use the
-desktop release archive to update it. Historical and unrecognized version
-strings continue to count as terminal installations.
+replaces the old file through a rename on the destination filesystem.
+
+Without an option the script keeps the edition already installed at the
+destination: an executable reporting the desktop edition, or an absolute link
+into a `Runyte.app`, selects the desktop edition; any other version output,
+including historical and unrecognized strings, the terminal edition. An
+executable whose `--version` fails needs `--desktop` or `--terminal`, which
+always choose explicitly. The desktop edition is the listed
+`runyte-desktop-` archive for the target, `universal-apple-darwin` on macOS,
+and the script fails before downloading it if the release lists none. On Linux
+it requires glibc 2.39 and, where `ldconfig` can say, the libraries the desktop
+executable links, also accepting them in `LD_LIBRARY_PATH`; then it installs the
+executable like the terminal edition and runs the archive's registration
+script when Python 3 is available. On macOS it requires `codesign`, `spctl`
+and macOS 11 and refuses, before downloading, an `--app-dir` inside a bundle,
+an existing `--app-dir` it cannot write to, and an existing `Runyte.app` that
+is not a Runyte bundle directory; a missing directory that cannot be created
+fails when the script creates it, after the download. The default app
+directory is `$HOME/Applications`, or the one the existing link points into.
+It moves an existing app aside to a `.runyte-previous.*` directory beside it,
+renames the new app into place, puts the old one back if that fails or is
+interrupted, and links `runyte` to the app's executable. On every platform an
+existing `runed` that is an absolute link into a `Runyte.app` becomes the
+relative `runed -> runyte` link, so it follows edition switches.
+
+Because a `curl` download carries no quarantine attribute, Gatekeeper never
+assesses the installed app; the installer's own check is the signature gate.
+It requires `codesign --verify --deep --strict` with the requirement
+`anchor apple generic and identifier "com.runyte.Runyte" and certificate
+1[field.1.2.840.113635.100.6.2.6] exists and certificate
+leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] =
+"DP96UQZ969"`: a Developer ID Application certificate of the release team, which
+the team's development and distribution certificates do not satisfy. It then
+requires `spctl --assess --type execute`, which needs the app's notarization.
+`DP96UQZ969` is `TEAM_ID` in `install.sh`; a renewed certificate from the same
+team keeps it, and signing with another team requires changing it there.
 
 Installer changes land with ordinary code before the version-only release
 commit. No installer version or embedded archive hash needs updating at release
