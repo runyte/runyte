@@ -67,8 +67,6 @@ use crate::{
 #[cfg(unix)]
 use crate::{app::PersistentExitRequest, input::PointerEvent, launch::LaunchTarget};
 use anyhow::{Context, Result};
-#[cfg(not(windows))]
-use crossterm::event::EventStream;
 #[cfg(unix)]
 use crossterm::event::{
     KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
@@ -88,8 +86,6 @@ use crossterm::{
 };
 #[cfg(windows)]
 use futures_util::FutureExt;
-#[cfg(not(windows))]
-use futures_util::StreamExt;
 #[cfg(unix)]
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -2093,7 +2089,7 @@ async fn run(
     #[allow(clippy::drop_non_drop)]
     drop(startup_signal_exit.take());
     #[cfg(not(windows))]
-    let mut terminal_events = Events::new(window);
+    let mut terminal_events = Events::new(window)?;
     #[cfg(windows)]
     let mut terminal_events = crate::tui::windows_input::EventStream::new()?;
     let mut git_refresh_tick = tokio::time::interval(MAINTENANCE_INTERVAL);
@@ -4679,11 +4675,12 @@ async fn attach_for_wait(
 /// Crossterm 0.29 can remain inside its Unix event reader forever after a PTY
 /// hangup. Its `EventStream::poll_next` then blocks the Tokio thread on the
 /// process-global reader mutex, preventing `attach_for_wait` from observing
-/// the independent terminal-loss watcher. A `--wait` process therefore reads
-/// input on a detached OS thread and receives events through a channel. The
-/// reader may remain blocked after a dead terminal, but it cannot block the
-/// lifecycle executor, and the dedicated wait process exits immediately after
-/// releasing its request.
+/// the independent terminal-loss watcher. Every source here therefore reads
+/// input on a detached OS thread and receives events through a channel: an
+/// interactive attachment through `window::TerminalInput`, and a `--wait`
+/// process through a plain blocking reader. The reader may remain blocked
+/// after a dead terminal, but it cannot block the lifecycle executor, and the
+/// dedicated wait process exits immediately after releasing its request.
 #[cfg(unix)]
 struct AttachedTerminalEvents {
     source: AttachedEventSource,
@@ -4697,7 +4694,7 @@ struct AttachedTerminalEvents {
 #[cfg(unix)]
 enum AttachedEventSource {
     Window(Box<dyn window::WindowEvents>),
-    Stream(EventStream),
+    Stream(window::TerminalInput),
     Isolated(tokio::sync::mpsc::UnboundedReceiver<io::Result<CrosstermEvent>>),
 }
 
@@ -4726,7 +4723,7 @@ impl AttachedTerminalEvents {
     }
 
     fn stream() -> Result<Self> {
-        Self::new(AttachedEventSource::Stream(EventStream::new()))
+        Self::new(AttachedEventSource::Stream(window::TerminalInput::new()?))
     }
 
     /// Records one input as it leaves for the host.
@@ -4792,7 +4789,7 @@ impl AttachedTerminalEvents {
     async fn next(&mut self) -> Option<io::Result<CrosstermEvent>> {
         match &mut self.source {
             AttachedEventSource::Window(events) => events.next().await,
-            AttachedEventSource::Stream(stream) => stream.next().await,
+            AttachedEventSource::Stream(input) => input.next().await,
             AttachedEventSource::Isolated(receiver) => receiver.recv().await,
         }
     }
