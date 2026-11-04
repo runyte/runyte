@@ -74,12 +74,26 @@ const LIFECYCLE_IO_TIMEOUT: Duration = Duration::from_millis(200);
 /// This doubles as the liveness check for a host: a successful return means the
 /// host is accepting connections and speaks a compatible protocol.
 pub async fn connect_control(endpoint: &LocalEndpoint) -> Result<LocalClient> {
+    connect_control_process(endpoint)
+        .await
+        .map(|(client, _)| client)
+}
+
+/// Returns the identity from this connection's handshake, so a caller can
+/// observe that process before sending a lifecycle request on the same stream.
+pub(crate) async fn connect_control_process(
+    endpoint: &LocalEndpoint,
+) -> Result<(LocalClient, u32)> {
     tokio::time::timeout(LIFECYCLE_IO_TIMEOUT, async {
         let mut client = LocalClient::connect(endpoint, FrameGeometry::default(), false).await?;
         match client.recv().await? {
-            Some(response @ HostResponse::Welcome { .. }) => {
+            Some(response @ HostResponse::Welcome { pid, .. }) => {
                 validate_welcome(&response, false).map_err(anyhow::Error::msg)?;
-                Ok(client)
+                anyhow::ensure!(
+                    pid > 0 && pid <= libc::pid_t::MAX as u32,
+                    "workspace host welcome has an invalid PID"
+                );
+                Ok((client, pid))
             }
             Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
                 anyhow::bail!(message)
@@ -204,7 +218,7 @@ pub async fn force_shutdown_host(endpoint: &LocalEndpoint) -> Result<()> {
     shutdown_request(&mut client, ClientRequest::ForceShutdown, "force-shutdown").await
 }
 
-async fn shutdown_request(
+pub(crate) async fn shutdown_request(
     client: &mut LocalClient,
     request: ClientRequest,
     description: &str,

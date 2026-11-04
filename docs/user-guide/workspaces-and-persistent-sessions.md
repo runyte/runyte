@@ -647,6 +647,13 @@ The refusal names each count. Add `--force` to discard that state.
   own live terminals or unsaved buffers. Use a compatible client, or make the
   loss explicit with `runyte --session-stop --force`.
 
+On Unix, `--session-stop` waits for the selected host process to exit after
+accepting shutdown, including plugin child cleanup and final state/log writes.
+`--session-stop-all` waits for each stopped host in the same way. If a host has
+not exited within 15 seconds after acknowledging the request, the command
+reports an error instead of success, although the host may still finish
+exiting. This also applies with `--force`.
+
 **Restart** replaces the running host without attaching a TUI, and keeps its
 name. It does not keep clean buffers or other in-memory state. If the host
 used a non-default configuration, pass the same `--config PATH`.
