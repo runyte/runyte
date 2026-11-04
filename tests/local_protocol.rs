@@ -1243,6 +1243,48 @@ async fn standalone_terminal_input_edits_and_quits_through_the_real_event_loop()
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Escape typed while the editor is still busy with earlier keys stays the Esc
+/// key rather than becoming an Alt chord with the key typed after it.
+///
+/// The burst keeps the event loop of a debug build working for longer than
+/// the gaps between the later writes (about two seconds on a recent Mac), and
+/// stays below the 1024-byte input limit of a macOS PTY. Escape and `:` reach
+/// the terminal in separate writes while the loop is still busy, so they are
+/// distinct keys only if input is read as it arrives rather than when the loop
+/// next asks for it.
+#[tokio::test]
+async fn standalone_escape_typed_during_a_busy_event_loop_is_not_an_alt_chord() {
+    let root = project();
+    let config = default_config(&root);
+    let (child, mut terminal) = spawn_in_pty(
+        bundled_runyte()
+            .args(["--ide", "--config"])
+            .arg(config)
+            .arg("note.txt")
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    );
+    let mut child = ChildGuard(Some(child));
+    let output = capture_terminal_output(&terminal);
+
+    wait_for_terminal_screen(&output, "note.txt").await;
+    wait_for_terminal_screen(&output, " NOR ").await;
+    std::io::Write::write_all(&mut terminal, "jk".repeat(400).as_bytes()).unwrap();
+    std::io::Write::flush(&mut terminal).unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    std::io::Write::write_all(&mut terminal, b"ihello\x1b").unwrap();
+    std::io::Write::flush(&mut terminal).unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    type_colon_command(&mut terminal, "buffer-new");
+    wait_for_terminal_screen(&output, "[scratch]").await;
+    type_colon_command(&mut terminal, "quit-all!");
+
+    assert!(wait_child(child.0.as_mut().unwrap()).await.success());
+    child.0.take();
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn standalone_event_loop_drains_integrated_terminal_output_before_quitting() {
     let root = project();
