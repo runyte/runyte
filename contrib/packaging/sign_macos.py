@@ -47,10 +47,15 @@ def notarize(commands, artifact, profile, keychain=None):
     except (ValueError, TypeError) as error:
         diagnostic = response.stderr.strip() or response.stdout.strip() or "no diagnostic output"
         raise RuntimeError(f"notarytool failed (exit {response.returncode}): {diagnostic}") from error
-    if result.get("status") != "Accepted":
-        if result.get("id"):
-            commands.run("xcrun", "notarytool", "log", result["id"], *credentials)
-        raise RuntimeError(f"notarization was not accepted: {result.get('status', 'missing status')}")
+    status = result.get("status")
+    if status != "Accepted":
+        # Apple keeps a log only for a finished submission. One still in
+        # progress when the wait ran out has none yet, and asking would replace
+        # this error with notarytool's.
+        if result.get("id") and status in ("Invalid", "Rejected"):
+            commands.run("xcrun", "notarytool", "log", result["id"], *credentials, check=False)
+        submission = f" (submission {result['id']})" if result.get("id") else ""
+        raise RuntimeError(f"notarization was not accepted: {status or 'missing status'}{submission}")
     response.check_returncode()
 
 

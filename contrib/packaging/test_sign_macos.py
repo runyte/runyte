@@ -129,9 +129,11 @@ class DistributionToolsTests(unittest.TestCase):
                         sign_macos.sign_dmg(commands, Path("Runyte.dmg"), "test-identity", "test-profile")
                         self.assertEqual(calls[-1], ["xcrun", "stapler", "staple", "Runyte.dmg"])
                     else:
-                        with self.assertRaises(RuntimeError):
+                        with self.assertRaisesRegex(RuntimeError, r"not accepted: .*\(submission submission-test\)"):
                             sign_macos.sign_dmg(commands, Path("Runyte.dmg"), "test-identity", "test-profile")
-                        self.assertEqual(calls[-1], ["xcrun", "notarytool", "log", "submission-test", "--keychain-profile", "test-profile"])
+                        log = ["xcrun", "notarytool", "log", "submission-test", "--keychain-profile", "test-profile"]
+                        # Only a finished submission has a log; a timed-out wait does not.
+                        self.assertEqual(log in calls, status in ("Invalid", "Rejected"))
                         self.assertFalse(any("staple" in call for call in calls))
 
 
