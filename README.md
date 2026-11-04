@@ -48,7 +48,7 @@ terminal.
 | Edition | Includes | Platforms | Installation |
 | --- | --- | --- | --- |
 | Terminal | Editor, terminal UI, Git, language services, integrated terminals, plugins and MCP | Linux, macOS, Windows 11 | [Install script, release archive or Cargo](#installation) |
-| Desktop | Everything above, plus a window, native clipboard, image/PDF viewing and document preview | Linux and macOS | [Linux release archive or source build](INSTALLATION.md#desktop-edition) |
+| Desktop | Everything above, plus a window, native clipboard, image/PDF viewing and document preview | Linux and macOS | [Linux release archive, macOS disk image or source build](INSTALLATION.md#desktop-edition) |
 
 **Both distributions provide an executable named `runyte`.** The Cargo build
 name `runyte-desktop` distinguishes the desktop executable in `target/`;
@@ -264,8 +264,9 @@ cargo install runyte --locked
 Download the Linux **desktop** archive for your CPU from
 [GitHub Releases](https://github.com/runyte/runyte/releases), then follow the
 [desktop installation steps](INSTALLATION.md#desktop-edition). Linux desktop
-archives require glibc 2.39 or newer and a working Vulkan driver. macOS desktop
-builds are available as unsigned bundles built from source.
+archives require glibc 2.39 or newer and a working Vulkan driver. On macOS 11 or
+later, download the signed and notarized `Runyte-X.Y.Z.dmg` from releases after
+v0.4.1 and drag Runyte into Applications.
 
 The desktop executable supports both frontends:
 

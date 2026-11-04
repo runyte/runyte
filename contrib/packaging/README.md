@@ -109,9 +109,13 @@ when invoking the bundled binary from a terminal.
 
 ## macOS distribution tools
 
-After manual Apple account setup and before distribution, use the reviewed
-unsigned app from the exact release tag. These commands use an existing
-Developer ID Application identity and Keychain notary profile:
+The release workflow signs, notarizes and staples `Runyte.app` and the disk
+image itself, from Developer ID and App Store Connect credentials held in
+encrypted repository secrets; the
+[release runbook](../../context/reference/releasing.md#macos-signing-secrets)
+describes them. The same tools work on a Mac whose login keychain holds a
+Developer ID Application identity and a notarytool profile, for example to
+check a packaging change before tagging:
 
 ```sh
 python3 contrib/packaging/sign_macos.py app --dry-run \
@@ -122,16 +126,17 @@ python3 contrib/packaging/sign_macos.py dmg --dry-run \
 python3 contrib/packaging/sign_macos.py verify --dry-run /tmp/Runyte.app /tmp/Runyte-VERSION.dmg
 ```
 
-Replace the example identity/version and omit `--dry-run` only during the
-manual signing session. The scripts never obtain credentials from files or
+Replace the example identity/version and omit `--dry-run` to sign. `--identity`
+also accepts the certificate's SHA-1 hash, and `--keychain PATH` confines the
+identity and profile lookups to one keychain file, as the workflow does with its
+temporary keychain. The scripts never obtain credentials from files or
 environment variables. Rejected notarization fetches the submission log and
 fails before stapling. The disk-image tool refuses an existing output, stages
 `Runyte.app`, `Applications` → `/Applications`, `README.md` and `INSTALLATION.md`, then creates a UDZO
-image. CI checks an unsigned image by mounting it read-only and detaching.
-Manual quarantine, Finder, window, PTY, PDF, preview and update acceptance must
-pass before uploading the DMG and its separate checksum, as specified in the
-[release runbook](../../context/reference/releasing.md). The manual files are
-outside the workflow's regenerated `SHA256SUMS`.
+image. CI checks each image by mounting it read-only and detaching. Manual
+quarantine, Finder, window, PTY, PDF, preview and update acceptance is still
+needed for the first signed release and after packaging or signing changes,
+as specified in the release runbook.
 
 ## Artwork and checks
 
