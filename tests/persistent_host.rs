@@ -2592,6 +2592,7 @@ async fn plugin_completion_while_detached_and_reattachment_keep_one_process() {
     .unwrap();
     fs::write(sandbox.runtime.join("plugin-worker.behavior"), r#"
 printf 'started\n' >> "$0.starts"
+printf '%s\n' "$$" > "$0.pid"
 read -r hello
 printf '%s\n' '{"type":"register","version":"runyte-1","runyte":">=0.0.0, <18446744073709551615.0.0","name":"Detached text edit","required_features":[],"optional_features":[],"required_capabilities":["text"],"optional_capabilities":[],"commands":[{"name":"upper","description":"Uppercase selections","context":"buffer"}]}'
 read -r registered
@@ -2687,7 +2688,19 @@ done
             .any(|pane| pane.lines.iter().any(|line| line.contains("base")))
     })
     .await;
-    shutdown(&mut control, ClientRequest::Shutdown).await;
+    assert_cli_success(&sandbox.run_cli(&root, &["--session-stop"]));
+    assert!(child.0.as_mut().unwrap().try_wait().unwrap().is_some());
+    let plugin_pid: libc::pid_t = fs::read_to_string(sandbox.runtime.join("plugin-worker.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // Signal zero only observes the fixture's child: it must already be reaped.
+    assert_eq!(unsafe { libc::kill(plugin_pid, 0) }, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::ESRCH)
+    );
     let status = tokio::task::spawn_blocking(move || child.0.take().unwrap().wait())
         .await
         .unwrap()
@@ -2912,4 +2925,211 @@ async fn terminal_edition_host_accepts_preview_from_a_window_attachment() {
             .success()
     );
     fs::remove_dir_all(root).unwrap();
+}
+
+/// Models the host's acknowledgement, early unpublication, and late cleanup
+/// as separate barriers. The executable is this compiled test binary.
+#[tokio::test]
+#[ignore = "subprocess fixture"]
+async fn delayed_stop_host_helper() {
+    use runyte::workspace::transport::{LocalServer, PROTOCOL_VERSION, ServerEvent};
+    let Some(root) = std::env::var_os("RUNYTE_STOP_FIXTURE_ROOT").map(PathBuf::from) else {
+        return;
+    };
+    let runtime = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
+    let endpoint =
+        LocalEndpoint::discover_with_runtime(&root.join(".runyte"), &root, Some(&runtime)).unwrap();
+    let mut server = LocalServer::bind(&endpoint).await.unwrap();
+    let mut clients = std::collections::HashMap::new();
+    while let Some(event) = server.recv().await {
+        match event {
+            ServerEvent::Connected { id, responses, .. } => {
+                if root.join("stale-metadata").exists() {
+                    let mut metadata: serde_json::Value =
+                        serde_json::from_slice(&fs::read(endpoint.metadata()).unwrap()).unwrap();
+                    metadata["pid"] = std::process::id().into();
+                    fs::write(endpoint.metadata(), serde_json::to_vec(&metadata).unwrap()).unwrap();
+                }
+                responses
+                    .send(HostResponse::Welcome {
+                        protocol: PROTOCOL_VERSION,
+                        pid: std::process::id(),
+                        features: vec![
+                            runyte::protocol::FeatureGroup::Control,
+                            runyte::protocol::FeatureGroup::Buffers,
+                            runyte::protocol::FeatureGroup::Wait,
+                        ],
+                        host_version: env!("CARGO_PKG_VERSION").into(),
+                    })
+                    .await
+                    .unwrap();
+                clients.insert(id, responses);
+            }
+            ServerEvent::Request {
+                id,
+                request: ClientRequest::Health,
+            } => {
+                clients[&id]
+                    .send(HostResponse::Health {
+                        plugin_jobs: 0,
+                        activity_leases: 0,
+                        activities: Box::new([]),
+                        protocol: PROTOCOL_VERSION,
+                        pid: std::process::id(),
+                        interactive_attached: false,
+                        unsaved_buffers: 0,
+                        open_buffers: 0,
+                        pending_wait_requests: 0,
+                        live_terminals: 0,
+                        terminal_sessions: 0,
+                        terminal_line_activity_unix_seconds: None,
+                        unread_terminals: 0,
+                        terminal_bell: false,
+                    })
+                    .await
+                    .unwrap();
+            }
+            ServerEvent::Request {
+                id,
+                request: ClientRequest::Shutdown | ClientRequest::ForceShutdown,
+            } => {
+                clients[&id].send(HostResponse::ShuttingDown).await.unwrap();
+                endpoint.cleanup().unwrap();
+                fs::write(root.join("acknowledged"), "").unwrap();
+                let deadline = Instant::now() + Duration::from_secs(30);
+                while !root.join("release").exists() {
+                    assert!(
+                        Instant::now() < deadline,
+                        "cleanup barrier was not released"
+                    );
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                fs::create_dir_all(root.join("late-state")).unwrap();
+                fs::write(root.join("late-state/flushed"), "finished").unwrap();
+                break;
+            }
+            _ => {}
+        }
+    }
+}
+
+#[tokio::test]
+async fn session_stop_waits_past_acknowledgement_and_endpoint_cleanup() {
+    for (force, all, timeout, replacement) in [
+        (false, false, false, false),
+        (true, false, false, false),
+        (false, true, false, false),
+        (true, true, false, false),
+        (false, false, true, false),
+        (false, false, false, true),
+    ] {
+        let sandbox = TestSandbox::new();
+        let root = project();
+        let endpoint = LocalEndpoint::discover_with_runtime(
+            &root.join(".runyte"),
+            &root,
+            Some(sandbox.runtime_dir()),
+        )
+        .unwrap();
+        let mut host = ChildGuard(Some(
+            sandbox
+                .runyte(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "delayed_stop_host_helper",
+                    "--nocapture",
+                ])
+                .env("RUNYTE_STOP_FIXTURE_ROOT", &root)
+                .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+                .env("XDG_CACHE_HOME", sandbox.cache_dir())
+                .current_dir(&root)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        ));
+        assert!(wait_for_endpoint(&mut host, &endpoint).await);
+        if replacement {
+            // Model the metadata/handshake boundary during replacement: the
+            // metadata initially names a still-live old owner, but the control
+            // connection is served by the new owner. Waiting on metadata would
+            // incorrectly wait on this test process instead of the stopped host.
+            fs::write(root.join("stale-metadata"), "").unwrap();
+            let mut metadata: serde_json::Value =
+                serde_json::from_slice(&fs::read(endpoint.metadata()).unwrap()).unwrap();
+            metadata["pid"] = std::process::id().into();
+            fs::write(endpoint.metadata(), serde_json::to_vec(&metadata).unwrap()).unwrap();
+        }
+        let mut command = sandbox.bundled_runyte();
+        if all {
+            command.args(["--session-stop-all", "--include-hidden"]);
+        } else {
+            command.arg("--session-stop").arg(&root);
+        }
+        command
+            .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+            .env("XDG_CACHE_HOME", sandbox.cache_dir())
+            .current_dir(&root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if force {
+            command.arg("--force");
+        }
+        let mut stop = ChildGuard(Some(command.spawn().unwrap()));
+        let deadline = Instant::now() + HOST_RESPONSE_TIMEOUT;
+        while !root.join("acknowledged").exists() {
+            if stop.0.as_mut().unwrap().try_wait().unwrap().is_some() {
+                let output = stop.0.take().unwrap().wait_with_output().unwrap();
+                panic!(
+                    "stop exited before request: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            assert!(
+                Instant::now() < deadline,
+                "stop request never reached fixture"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(!endpoint.metadata().exists());
+        // Give the CLI an opportunity to return incorrectly while cleanup is
+        // held. Release and reap the fixture even when the assertion will fail.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let returned_early = stop.0.as_mut().unwrap().try_wait().unwrap().is_some();
+        if timeout {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while stop.0.as_mut().unwrap().try_wait().unwrap().is_none() {
+                assert!(
+                    Instant::now() < deadline,
+                    "stop did not bound its shutdown wait"
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+        fs::write(root.join("release"), "").unwrap();
+        let output = bounded_output(stop.0.take().unwrap(), "session stop");
+        let host_exited = host.0.as_mut().unwrap().try_wait().unwrap().is_some();
+        assert!(host.0.take().unwrap().wait().unwrap().success());
+        assert_eq!(
+            fs::read_to_string(root.join("late-state/flushed")).unwrap(),
+            "finished"
+        );
+        fs::remove_dir_all(&root).unwrap();
+        if timeout {
+            assert!(!output.status.success());
+            assert!(
+                String::from_utf8_lossy(&output.stderr)
+                    .contains("accepted the stop but was still exiting after 15 seconds")
+            );
+        } else {
+            assert_cli_success(&output);
+            assert!(host_exited, "session stop returned before the host exited");
+        }
+        assert!(
+            !returned_early,
+            "session stop returned before host cleanup (force={force})"
+        );
+    }
 }

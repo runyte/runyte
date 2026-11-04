@@ -116,6 +116,13 @@ const WAIT_LIFECYCLE_RECOVERY_BUDGET: Duration = Duration::from_millis(500);
 /// merely slow is flushed and only one that has stopped reading is cut off.
 #[cfg(unix)]
 const SHUTDOWN_FLUSH_BUDGET: Duration = Duration::from_secs(3);
+/// How long a session stop waits for an acknowledging host to exit. After
+/// acknowledging, the host flushes connections for up to
+/// [`SHUTDOWN_FLUSH_BUDGET`], reaps plugin workers within their own two-second
+/// write bound, flushes its log and drops its runtime; this leaves room for
+/// all of that on a loaded machine.
+#[cfg(unix)]
+const SESSION_STOP_EXIT_BUDGET: Duration = Duration::from_secs(15);
 
 /// Decides at the publication boundary whether a requested frame is whole.
 ///
@@ -155,9 +162,8 @@ use crate::protocol::{MAX_POINTER_REPETITIONS, WaitStatus, WaitToken, validate_w
 #[cfg(unix)]
 use crate::workspace::lifecycle::{
     HostStartup, UnavailableStartupExecutable, connect_control, force_restart_host,
-    force_shutdown_host, resolve_registered_host, resolve_registered_host_from_directory,
-    resolve_workspace_endpoint, restart_host, shutdown_host, start_detached_host,
-    terminate_incompatible_host,
+    resolve_registered_host, resolve_registered_host_from_directory, resolve_workspace_endpoint,
+    restart_host, start_detached_host, terminate_incompatible_host,
 };
 #[cfg(unix)]
 use crate::workspace::transport::{
@@ -913,7 +919,7 @@ fn terminated(event: ConsoleEvent) -> anyhow::Error {
 #[derive(Clone, Copy)]
 enum HostSupervisorKind {
     Parent,
-    TestProcess,
+    ObservedProcess,
 }
 
 #[cfg(unix)]
@@ -936,7 +942,7 @@ impl HostSupervisor {
                     .parse::<libc::pid_t>()
                     .context("RUNYTE_TEST_WAIT_PARENT_PID must be a positive process ID")?;
                 anyhow::ensure!(pid > 0, "RUNYTE_TEST_WAIT_PARENT_PID must be positive");
-                return Self::new(HostSupervisorKind::TestProcess, pid).map(Some);
+                return Self::new(HostSupervisorKind::ObservedProcess, pid).map(Some);
             }
             // SAFETY: `getppid` has no preconditions and only reads process
             // metadata maintained by the kernel.
@@ -951,7 +957,7 @@ impl HostSupervisor {
                 .parse::<libc::pid_t>()
                 .context("RUNYTE_TEST_SUPERVISOR_PID must be a positive process ID")?;
             anyhow::ensure!(pid > 0, "RUNYTE_TEST_SUPERVISOR_PID must be positive");
-            return Self::new(HostSupervisorKind::TestProcess, pid).map(Some);
+            return Self::new(HostSupervisorKind::ObservedProcess, pid).map(Some);
         }
         if arguments.detached_host {
             return Ok(None);
@@ -1013,7 +1019,7 @@ impl HostSupervisor {
                 // SAFETY: `getppid` has no preconditions.
                 (unsafe { libc::getppid() }) != self.pid
             }
-            HostSupervisorKind::TestProcess => {
+            HostSupervisorKind::ObservedProcess => {
                 // SAFETY: signal zero does not deliver a signal; it only asks
                 // the kernel whether this positive PID is observable.
                 let result = unsafe { libc::kill(self.pid, 0) };
@@ -1794,13 +1800,7 @@ async fn run(
                         restart_host(&endpoint, startup).await
                     }
                 }
-                LaunchMode::StopSession => {
-                    if arguments.force {
-                        force_shutdown_host(&endpoint).await
-                    } else {
-                        shutdown_host(&endpoint).await
-                    }
-                }
+                LaunchMode::StopSession => stop_selected_session(&endpoint, arguments.force).await,
                 _ => unreachable!(),
             };
         }
@@ -6465,25 +6465,40 @@ async fn rename_selected_session(
 /// nothing else can release the endpoint every client resolves to it.
 #[cfg(unix)]
 async fn stop_selected_session(endpoint: &LocalEndpoint, force: bool) -> Result<()> {
-    if force {
-        let Err(error) = force_shutdown_host(endpoint).await else {
-            return Ok(());
-        };
-        if error.downcast_ref::<IncompatibleHost>().is_none() {
-            return Err(error);
+    let connection = crate::workspace::lifecycle::connect_control_process(endpoint).await;
+    match connection {
+        Ok((mut client, pid)) => {
+            // Observe the handshaken process, not an endpoint replacement.
+            // Unpublication precedes plugin reaping and final process logging.
+            let process = match HostSupervisor::new(
+                HostSupervisorKind::ObservedProcess,
+                pid as libc::pid_t,
+            ) {
+                Ok(process) => process,
+                // It exited after its handshake, stopped by another client
+                // or by itself, so there is nothing left to stop.
+                Err(_) if !observed_process_alive(pid as libc::pid_t) => return Ok(()),
+                Err(error) => return Err(error),
+            };
+            let (request, description) = if force {
+                (ClientRequest::ForceShutdown, "force-shutdown")
+            } else {
+                (ClientRequest::Shutdown, "shutdown")
+            };
+            crate::workspace::lifecycle::shutdown_request(&mut client, request, description)
+                .await?;
+            return await_stopped_session(&process).await;
         }
+        Err(error) if error.downcast_ref::<IncompatibleHost>().is_some() => {}
+        Err(error) => return Err(error),
+    }
+    if force {
         let host = terminate_incompatible_host(endpoint).await?;
         eprintln!(
             "force-stopped persistent session process {} (protocol {}); its protected live state was discarded",
             host.pid, host.protocol
         );
         return Ok(());
-    }
-    let Err(error) = shutdown_host(endpoint).await else {
-        return Ok(());
-    };
-    if error.downcast_ref::<IncompatibleHost>().is_none() {
-        return Err(error);
     }
     let host = endpoint
         .published_host()?
@@ -6493,6 +6508,29 @@ async fn stop_selected_session(endpoint: &LocalEndpoint, force: bool) -> Result<
         host.pid,
         host.protocol
     )
+}
+
+/// A stop acknowledgement accepts shutdown; only process exit completes it.
+#[cfg(unix)]
+async fn await_stopped_session(process: &HostSupervisor) -> Result<()> {
+    tokio::time::timeout(SESSION_STOP_EXIT_BUDGET, process.recv())
+        .await
+        .with_context(|| {
+            format!(
+                "persistent session process {} accepted the stop but was still exiting after {} seconds",
+                process.pid(),
+                SESSION_STOP_EXIT_BUDGET.as_secs()
+            )
+        })?
+}
+
+/// Whether `pid` still names a process, which permission to signal it does
+/// not decide.
+#[cfg(unix)]
+fn observed_process_alive(pid: libc::pid_t) -> bool {
+    // SAFETY: signal zero delivers nothing; it only asks whether the PID exists.
+    let signalled = unsafe { libc::kill(pid, 0) } == 0;
+    signalled || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
 
 /// Tries every running host even when one refuses, so a protected session
@@ -8316,7 +8354,7 @@ mod tests {
             .spawn()
             .unwrap();
         let supervisor = super::HostSupervisor::new(
-            super::HostSupervisorKind::TestProcess,
+            super::HostSupervisorKind::ObservedProcess,
             child.id() as libc::pid_t,
         )
         .unwrap();
@@ -8354,7 +8392,7 @@ mod tests {
         };
         let mut child = ChildGuard(child);
         let supervisor = super::HostSupervisor::new(
-            super::HostSupervisorKind::TestProcess,
+            super::HostSupervisorKind::ObservedProcess,
             child.0.id() as libc::pid_t,
         )
         .unwrap();
