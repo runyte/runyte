@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Mount an unsigned CI disk image read-only and check its staged contents."""
+"""Mount a disk image read-only and check its staged contents."""
 import argparse
 from pathlib import Path
 import plistlib

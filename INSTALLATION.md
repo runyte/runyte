@@ -5,7 +5,7 @@ configuration, see the [user guide](docs/user-guide/README.md).
 
 - [Choose an edition](#choose-an-edition)
 - [Terminal edition](#terminal-edition): Linux/macOS install script, archives, Cargo and [Windows](#windows)
-- [Desktop edition](#desktop-edition): Linux archives and macOS builds
+- [Desktop edition](#desktop-edition): Linux archives and the macOS disk image
 - [Build from source](#build-from-source): package names and system dependencies
 - [Shell and external-editor setup](#shell-and-external-editor-setup)
 - [Optional tools](#optional-tools)
@@ -21,15 +21,16 @@ provides the terminal frontend, so you can use one desktop installation for both
 | | Terminal edition | Desktop edition |
 | --- | --- | --- |
 | Platforms | Linux, macOS, Windows 11 | Linux, macOS |
-| Prebuilt archives | Linux/macOS x86-64 and ARM64; Windows x86-64 | Linux x86-64 and ARM64 |
+| Prebuilt archives | Linux/macOS x86-64 and ARM64; Windows x86-64 | Linux x86-64 and ARM64; macOS universal (Apple silicon and Intel) |
 | Linux archive requirement | glibc 2.35 or newer | glibc 2.39 or newer; Vulkan driver and desktop libraries |
 | Source-build toolchain | Rust 1.88 or newer and a C compiler | Current stable Rust, at least 1.92; platform dependencies below |
 | Approximate executable size | 56 MB | 107 MB |
 
 Sizes are stripped Linux x86-64 release measurements, not download sizes.
 Linux release archives target glibc; Alpine/musl is not supported. The desktop
-edition targets macOS 11 or later; macOS desktop builds are available as unsigned
-bundles built from source. Windows requirements are [listed below](#windows).
+edition targets macOS 11 or later. Releases after v0.4.1 include a universal
+`Runyte.app`, signed with a Developer ID and notarized by Apple, as a disk image
+and as an archive. Windows requirements are [listed below](#windows).
 
 **Both distributions install an executable named `runyte`.** Run
 `runyte --version` to see its version and edition. `runyte --window` opens the
@@ -186,11 +187,22 @@ there is no separate helper to install.
 
 ### macOS
 
-Use the [macOS build dependencies](#macos-desktop-dependencies) and
+Download `Runyte-X.Y.Z.dmg` from
+[GitHub Releases](https://github.com/runyte/runyte/releases); it runs on Apple
+silicon and Intel Macs with macOS 11 or later. Open it, drag `Runyte` onto
+`Applications`, then eject the image. Launch Runyte from Finder, Launchpad or
+Spotlight; it opens in editor mode. The app is signed with a Developer ID and
+notarized, so macOS asks only its usual first-launch confirmation. To update,
+replace `/Applications/Runyte.app` with the newer one the same way.
+
+The same app is published as
+`runyte-desktop-vX.Y.Z-universal-apple-darwin.tar.xz`, listed in `SHA256SUMS`,
+for scripted installation.
+
+To build the app yourself instead, use the [macOS build dependencies](#macos-desktop-dependencies) and
 [desktop build command](#build-from-source). The [packaging guide](contrib/packaging/README.md#macos)
 explains how to create a universal unsigned `Runyte.app` with its launcher and
-icons. Signing and notarization are separate distribution steps; an unsigned
-local bundle is not a signed release download.
+icons; an unsigned local bundle is not a signed release download.
 
 For an app installed in `/Applications`, optional command-line links are:
 

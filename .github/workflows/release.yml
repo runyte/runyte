@@ -35,6 +35,7 @@ jobs:
       targets: ${{ steps.release.outputs.targets }}
       windows: ${{ steps.release.outputs.windows }}
       desktop: ${{ steps.release.outputs.desktop }}
+      macos_signed: ${{ steps.release.outputs.macos_signed }}
       terminal_prefix: ${{ steps.release.outputs.terminal_prefix }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,6 +85,14 @@ jobs:
             terminal_prefix=runyte-terminal
             desktop=true
           fi
+          # Retrying a historical desktop tag must keep its unsigned app an
+          # unpublished workflow artifact: its signing tool cannot use the
+          # runner's temporary keychain.
+          macos_signed=false
+          if [[ "$desktop" == true ]] &&
+            python3 contrib/packaging/sign_macos.py app --help | grep -q -- '--keychain'; then
+            macos_signed=true
+          fi
           windows=false
           # Retrying a historical tag must retain its original platform set.
           if test -f src/terminal/pty_windows.rs; then
@@ -98,6 +107,7 @@ jobs:
             echo "targets=$targets"
             echo "windows=$windows"
             echo "desktop=$desktop"
+            echo "macos_signed=$macos_signed"
             echo "terminal_prefix=$terminal_prefix"
           } >> "$GITHUB_OUTPUT"
 
@@ -298,7 +308,8 @@ jobs:
     needs: validate
     if: needs.validate.outputs.desktop == 'true'
     runs-on: macos-15
-    timeout-minutes: 90
+    # Two release builds plus two notarizations, each wait capped at 30 minutes.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -335,12 +346,135 @@ jobs:
           python3 contrib/packaging/check_package.py "$RUNNER_TEMP/Runyte.app"
           python3 contrib/packaging/package.py dmg --app "$RUNNER_TEMP/Runyte.app" --output "$RUNNER_TEMP/Runyte-unsigned.dmg"
           python3 contrib/packaging/check_dmg.py "$RUNNER_TEMP/Runyte-unsigned.dmg"
-          ditto -c -k --keepParent "$RUNNER_TEMP/Runyte.app" "$RUNNER_TEMP/Runyte-${VERSION}-unsigned.app.zip"
-      - name: Retain unsigned app for manual macOS acceptance
+      - name: Retain a historical tag's unsigned app for manual acceptance
+        if: needs.validate.outputs.macos_signed != 'true'
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ditto -c -k --keepParent "$RUNNER_TEMP/Runyte.app" "$RUNNER_TEMP/Runyte-${VERSION}-unsigned.app.zip"
+      - name: Upload a historical tag's unsigned app
+        if: needs.validate.outputs.macos_signed != 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Runyte-${{ needs.validate.outputs.version }}-unsigned.app
           path: ${{ runner.temp }}/Runyte-${{ needs.validate.outputs.version }}-unsigned.app.zip
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      # The only step that sees the signing secrets. It loads them into a
+      # temporary keychain and removes the decoded files before it ends, so
+      # later steps hold nothing but that keychain's path and the identity's
+      # public certificate hash.
+      - name: Load the Developer ID identity into a temporary keychain
+        if: needs.validate.outputs.macos_signed == 'true'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_API_KEY_P8_BASE64: ${{ secrets.NOTARY_API_KEY_P8_BASE64 }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+          # https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer, valid until 2031-09-17.
+          DEVELOPER_ID_G2_SHA256: f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in MACOS_CERTIFICATE_P12_BASE64 MACOS_CERTIFICATE_PASSWORD \
+            NOTARY_API_KEY_P8_BASE64 NOTARY_API_KEY_ID NOTARY_API_ISSUER_ID; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "release secret $name is not configured" >&2
+              exit 1
+            fi
+          done
+          secrets="$RUNNER_TEMP/signing-secrets"
+          mkdir -m 700 "$secrets"
+          trap 'rm -rf "$secrets"' EXIT
+
+          keychain="$RUNNER_TEMP/release-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          echo "::add-mask::$keychain_password"
+          security create-keychain -p "$keychain_password" "$keychain"
+          # Published at once so the cleanup step also removes a keychain whose
+          # loading fails part way.
+          echo "MACOS_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          base64 --decode <<< "$MACOS_CERTIFICATE_P12_BASE64" > "$secrets/identity.p12"
+          security import "$secrets/identity.p12" -k "$keychain" -f pkcs12 \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          # The issuing intermediate completes the chain on any runner image.
+          curl -q --fail --silent --show-error --location --proto '=https' \
+            -o "$secrets/DeveloperIDG2CA.cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          echo "$DEVELOPER_ID_G2_SHA256  $secrets/DeveloperIDG2CA.cer" | shasum -a 256 -c -
+          # A .p12 exported with its chain already holds it, and importing an
+          # existing item fails.
+          if ! security find-certificate -c "Developer ID Certification Authority" "$keychain" > /dev/null 2>&1; then
+            security import "$secrets/DeveloperIDG2CA.cer" -k "$keychain"
+          fi
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+            -k "$keychain_password" "$keychain" > /dev/null
+          # Keep the existing search list; runner keychain paths hold no spaces.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+          identities="$(security find-identity -v -p codesigning "$keychain")"
+          identity="$(awk '/"Developer ID Application: / { print $2 }' <<< "$identities")"
+          if [[ "$(wc -w <<< "$identity" | tr -d ' ')" != 1 ]]; then
+            echo "expected exactly one valid Developer ID Application identity; $(tail -n 1 <<< "$identities")" >&2
+            exit 1
+          fi
+          base64 --decode <<< "$NOTARY_API_KEY_P8_BASE64" > "$secrets/notary.p8"
+          xcrun notarytool store-credentials runyte-release-notary --key "$secrets/notary.p8" \
+            --key-id "$NOTARY_API_KEY_ID" --issuer "$NOTARY_API_ISSUER_ID" --keychain "$keychain"
+          echo "MACOS_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+      - name: Sign, notarize and accept the app, its archive and disk image
+        if: needs.validate.outputs.macos_signed == 'true'
+        env:
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          signed="$RUNNER_TEMP/signed"
+          mkdir "$signed"
+          ditto "$RUNNER_TEMP/Runyte.app" "$signed/Runyte.app"
+          signing=(--identity "$MACOS_SIGNING_IDENTITY" --notary-profile runyte-release-notary
+            --keychain "$MACOS_SIGNING_KEYCHAIN")
+          python3 contrib/packaging/sign_macos.py app "${signing[@]}" "$signed/Runyte.app"
+          dmg="$RUNNER_TEMP/Runyte-${VERSION}.dmg"
+          python3 contrib/packaging/package.py dmg --app "$signed/Runyte.app" --output "$dmg"
+          python3 contrib/packaging/sign_macos.py dmg "${signing[@]}" "$dmg"
+          python3 contrib/packaging/sign_macos.py verify "$signed/Runyte.app" "$dmg"
+          python3 contrib/packaging/check_dmg.py "$dmg"
+
+          # The installer's archive holds the same stapled app.
+          package_name="runyte-desktop-${VERSION}-universal-apple-darwin"
+          package_root="$RUNNER_TEMP/macos-package"
+          mkdir -p "$package_root/$package_name"
+          ditto "$signed/Runyte.app" "$package_root/$package_name/Runyte.app"
+          install -m 0644 README.md INSTALLATION.md "$package_root/$package_name/"
+          archive="$RUNNER_TEMP/runyte-desktop-${RELEASE_TAG}-universal-apple-darwin.tar.xz"
+          COPYFILE_DISABLE=1 tar -C "$package_root" -cJf "$archive" "$package_name"
+          mkdir "$RUNNER_TEMP/macos-extracted"
+          tar -C "$RUNNER_TEMP/macos-extracted" -xJf "$archive"
+          extracted="$RUNNER_TEMP/macos-extracted/$package_name/Runyte.app"
+          codesign --verify --deep --strict --verbose=2 "$extracted"
+          spctl --assess --type execute -vv "$extracted"
+          xcrun stapler validate "$extracted"
+          test "$("$extracted/Contents/MacOS/runyte" --version)" = "runyte $VERSION (desktop edition)"
+      - name: Remove the temporary signing keychain
+        if: always() && needs.validate.outputs.macos_signed == 'true'
+        shell: bash
+        run: |
+          if [[ -n "${MACOS_SIGNING_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$MACOS_SIGNING_KEYCHAIN"
+          fi
+      - name: Upload the signed app archive and disk image
+        if: needs.validate.outputs.macos_signed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-macos-desktop
+          path: |
+            ${{ runner.temp }}/runyte-desktop-${{ needs.validate.outputs.tag }}-universal-apple-darwin.tar.xz
+            ${{ runner.temp }}/Runyte-${{ needs.validate.outputs.version }}.dmg
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
@@ -374,6 +508,8 @@ jobs:
           TERMINAL_PREFIX: ${{ needs.validate.outputs.terminal_prefix }}
           WINDOWS: ${{ needs.validate.outputs.windows }}
           DESKTOP: ${{ needs.validate.outputs.desktop }}
+          MACOS_SIGNED: ${{ needs.validate.outputs.macos_signed }}
+          VERSION: ${{ needs.validate.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
@@ -405,11 +541,19 @@ jobs:
             done
             expected=$((expected + 2))
           fi
+          if [[ "$MACOS_SIGNED" == true ]]; then
+            test -f "dist/runyte-desktop-${RELEASE_TAG}-universal-apple-darwin.tar.xz"
+            test -f "dist/Runyte-${VERSION}.dmg"
+            test "$(find dist -maxdepth 1 -type f -name 'Runyte-*.dmg' | wc -l)" -eq 1
+            expected=$((expected + 2))
+          else
+            test "$(find dist -maxdepth 1 -type f -name 'Runyte-*.dmg' | wc -l)" -eq 0
+          fi
 
           (
             cd dist
             shopt -s nullglob
-            sha256sum runyte-*.tar.xz runyte-*.zip | sort -k2 > SHA256SUMS
+            sha256sum runyte-*.tar.xz runyte-*.zip Runyte-*.dmg | sort -k2 > SHA256SUMS
           )
           test "$(wc -l < dist/SHA256SUMS)" -eq "$expected"
 
@@ -420,10 +564,15 @@ jobs:
           RELEASE_TAG: ${{ needs.validate.outputs.tag }}
           VERSION: ${{ needs.validate.outputs.version }}
           TERMINAL_PREFIX: ${{ needs.validate.outputs.terminal_prefix }}
+          MACOS_SIGNED: ${{ needs.validate.outputs.macos_signed }}
         shell: bash
         run: |
           set -euo pipefail
 
+          signing="The macOS and Windows executables are unsigned."
+          if [[ "$MACOS_SIGNED" == true ]]; then
+            signing="The macOS desktop app and disk image are signed with a Developer ID and notarized by Apple. The macOS terminal archives and Windows executables are unsigned."
+          fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release edit "$RELEASE_TAG" --title "Runyte $VERSION"
             gh release upload "$RELEASE_TAG" dist/* --clobber
@@ -431,5 +580,5 @@ jobs:
             gh release create "$RELEASE_TAG" dist/* \
               --verify-tag \
               --title "Runyte $VERSION" \
-              --notes "Prebuilt archives are attached. Verify the selected archive with SHA256SUMS. Supported platforms and limitations are documented in the packaged README and user guide. The macOS and Windows executables are unsigned."
+              --notes "Prebuilt archives are attached. Verify the selected archive with SHA256SUMS. Supported platforms and limitations are documented in the packaged README and user guide. $signing"
           fi

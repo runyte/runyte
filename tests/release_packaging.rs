@@ -246,23 +246,66 @@ fn binary_release_is_tag_bound_native_and_narrowly_privileged() {
             .iter()
             .any(|step| step["env"]["MACOSX_DEPLOYMENT_TARGET"] == "11.0")
     );
-    let artifact = macos_steps.last().unwrap();
+    let step = |name: &str| {
+        macos_steps
+            .iter()
+            .find(|step| step["name"] == name)
+            .unwrap_or_else(|| panic!("macOS desktop job has no step {name:?}"))
+    };
+    // A historical tag keeps its unsigned app out of the release.
+    let unsigned = step("Upload a historical tag's unsigned app");
+    assert_eq!(
+        unsigned["if"],
+        "needs.validate.outputs.macos_signed != 'true'"
+    );
     assert!(
-        !artifact["with"]["name"]
+        !unsigned["with"]["name"]
             .as_str()
             .unwrap()
             .starts_with("release-")
     );
     assert!(
-        artifact["with"]["path"]
+        unsigned["with"]["path"]
             .as_str()
             .unwrap()
             .ends_with("-unsigned.app.zip")
     );
+    assert!(
+        source.contains(
+            "python3 contrib/packaging/sign_macos.py app --help | grep -q -- '--keychain'"
+        )
+    );
+    // Only one step receives the signing secrets, and the keychain they are
+    // loaded into is removed whatever happens after it.
+    let secret_steps: Vec<_> = macos_steps
+        .iter()
+        .filter(|step| serde_yaml::to_string(step).unwrap().contains("secrets."))
+        .collect();
+    assert_eq!(secret_steps.len(), 1);
+    assert_eq!(
+        secret_steps[0]["name"],
+        "Load the Developer ID identity into a temporary keychain"
+    );
+    assert_eq!(source.matches("${{ secrets.").count(), 5);
+    assert!(
+        step("Remove the temporary signing keychain")["if"]
+            .as_str()
+            .unwrap()
+            .starts_with("always() && ")
+    );
+    let signed = step("Upload the signed app archive and disk image");
+    assert_eq!(signed["with"]["name"], "release-macos-desktop");
+    let signed_paths = signed["with"]["path"].as_str().unwrap();
+    assert!(signed_paths.contains("-universal-apple-darwin.tar.xz"));
+    assert!(signed_paths.contains("/Runyte-${{ needs.validate.outputs.version }}.dmg"));
 
     assert!(source.contains("cargo build --release --locked --target \"$TARGET\""));
     assert!(source.contains("${TERMINAL_PREFIX}-${RELEASE_TAG}-${TARGET}.tar.xz"));
-    assert!(source.contains("sha256sum runyte-*.tar.xz runyte-*.zip | sort -k2 > SHA256SUMS"));
+    assert!(
+        source.contains(
+            "sha256sum runyte-*.tar.xz runyte-*.zip Runyte-*.dmg | sort -k2 > SHA256SUMS"
+        )
+    );
     assert!(
         source
             .lines()

@@ -1,5 +1,9 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Sign and notarize macOS distribution artifacts using an existing Keychain profile."""
+"""Sign and notarize macOS distribution artifacts using an existing Keychain profile.
+
+`--keychain` limits the identity and profile lookups to one keychain file, such
+as the temporary keychain a release runner creates from its encrypted secrets.
+"""
 import argparse
 import json
 from pathlib import Path
@@ -21,13 +25,20 @@ class Commands:
         return result if capture else None
 
 
-def notarize(commands, artifact, profile):
-    response = commands.run("xcrun", "notarytool", "submit", artifact,
-                            "--keychain-profile", profile, "--wait", "--output-format", "json",
+def keychain_options(keychain):
+    return ["--keychain", keychain] if keychain is not None else []
+
+
+def notarize(commands, artifact, profile, keychain=None):
+    credentials = ["--keychain-profile", profile, *keychain_options(keychain)]
+    # A capped wait fails a stuck submission with Apple's last status rather
+    # than holding the release job until its own time limit.
+    response = commands.run("xcrun", "notarytool", "submit", artifact, *credentials,
+                            "--wait", "--timeout", "30m", "--output-format", "json",
                             capture=True, check=False)
     if commands.dry_run:
         print("Require status Accepted; on rejection, fetch: " + shlex.join([
-            "xcrun", "notarytool", "log", "<submission-id>", "--keychain-profile", profile]))
+            "xcrun", "notarytool", "log", "<submission-id>", *map(str, credentials)]))
         return
     try:
         result = json.loads(response.stdout)
@@ -38,17 +49,18 @@ def notarize(commands, artifact, profile):
         raise RuntimeError(f"notarytool failed (exit {response.returncode}): {diagnostic}") from error
     if result.get("status") != "Accepted":
         if result.get("id"):
-            commands.run("xcrun", "notarytool", "log", result["id"], "--keychain-profile", profile)
+            commands.run("xcrun", "notarytool", "log", result["id"], *credentials)
         raise RuntimeError(f"notarization was not accepted: {result.get('status', 'missing status')}")
     response.check_returncode()
 
 
-def sign_app(commands, app, identity, profile):
+def sign_app(commands, app, identity, profile, keychain=None):
     for artifact in (app / "Contents/MacOS/runyte", app / "Contents/MacOS/RunyteLauncher", app):
-        commands.run("codesign", "--force", "--options", "runtime", "--timestamp", "--sign", identity, artifact)
+        commands.run("codesign", "--force", "--options", "runtime", "--timestamp",
+                     *keychain_options(keychain), "--sign", identity, artifact)
     def submit(archive):
         commands.run("ditto", "-c", "-k", "--keepParent", app, archive)
-        notarize(commands, archive, profile)
+        notarize(commands, archive, profile, keychain)
     if commands.dry_run:
         submit(Path("<temporary>") / "Runyte.zip")
     else:
@@ -57,9 +69,9 @@ def sign_app(commands, app, identity, profile):
     commands.run("xcrun", "stapler", "staple", app)
 
 
-def sign_dmg(commands, dmg, identity, profile):
-    commands.run("codesign", "--force", "--timestamp", "--sign", identity, dmg)
-    notarize(commands, dmg, profile)
+def sign_dmg(commands, dmg, identity, profile, keychain=None):
+    commands.run("codesign", "--force", "--timestamp", *keychain_options(keychain), "--sign", identity, dmg)
+    notarize(commands, dmg, profile, keychain)
     commands.run("xcrun", "stapler", "staple", dmg)
 
 
@@ -80,6 +92,8 @@ def main():
         if name != "verify":
             child.add_argument("--identity", required=True, help="Developer ID Application certificate identity")
             child.add_argument("--notary-profile", required=True, help="existing Keychain notarytool profile")
+            child.add_argument("--keychain", type=Path,
+                               help="keychain file holding the identity and profile (default: search list)")
             child.add_argument("artifact", type=Path)
         else:
             child.add_argument("app", type=Path)
@@ -87,9 +101,9 @@ def main():
     args = parser.parse_args()
     commands = Commands(args.dry_run)
     if args.command == "app":
-        sign_app(commands, args.artifact.resolve(), args.identity, args.notary_profile)
+        sign_app(commands, args.artifact.resolve(), args.identity, args.notary_profile, args.keychain)
     elif args.command == "dmg":
-        sign_dmg(commands, args.artifact.resolve(), args.identity, args.notary_profile)
+        sign_dmg(commands, args.artifact.resolve(), args.identity, args.notary_profile, args.keychain)
     else:
         verify(commands, args.app.resolve(), args.dmg.resolve())
 
