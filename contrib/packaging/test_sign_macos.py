@@ -88,6 +88,33 @@ class DistributionToolsTests(unittest.TestCase):
         self.assertIn("xcrun stapler validate Runyte.app", lines)
         self.assertIn("xcrun stapler validate Runyte.dmg", lines)
 
+    def test_release_keychain_scopes_every_identity_and_profile_lookup(self):
+        output = io.StringIO()
+        with patch("sign_macos.subprocess.run") as run, contextlib.redirect_stdout(output):
+            commands = sign_macos.Commands(dry_run=True)
+            sign_macos.sign_app(commands, Path("Runyte.app"), "ABC123", "release-notary", Path("/tmp/release.keychain-db"))
+            sign_macos.sign_dmg(commands, Path("Runyte.dmg"), "ABC123", "release-notary", Path("/tmp/release.keychain-db"))
+            run.assert_not_called()
+        lines = output.getvalue().splitlines()
+        lookups = [line for line in lines if line.startswith(("codesign --force", "xcrun notarytool"))]
+        self.assertEqual(len(lookups), 6)
+        self.assertTrue(all("--keychain /tmp/release.keychain-db" in line for line in lookups), lookups)
+        submissions = [line for line in lookups if line.startswith("xcrun notarytool submit")]
+        self.assertEqual(len(submissions), 2)
+        self.assertTrue(all("--wait --timeout 30m" in line for line in submissions), submissions)
+        self.assertTrue(any("notarytool log '<submission-id>' --keychain-profile release-notary --keychain" in line
+                            for line in lines))
+        with patch("sign_macos.subprocess.run") as run, contextlib.redirect_stdout(io.StringIO()):
+            calls = []
+            def rejected(command, **kwargs):
+                calls.append(command)
+                return subprocess.CompletedProcess(command, 0, json.dumps({"status": "Invalid", "id": "submission-test"}), "")
+            run.side_effect = rejected
+            with self.assertRaises(RuntimeError):
+                sign_macos.notarize(sign_macos.Commands(), Path("Runyte.dmg"), "release-notary", Path("/tmp/release.keychain-db"))
+            self.assertEqual(calls[-1], ["xcrun", "notarytool", "log", "submission-test", "--keychain-profile",
+                                         "release-notary", "--keychain", "/tmp/release.keychain-db"])
+
     def test_notarization_status_gates_stapling_and_fetches_failure_log(self):
         for status, code in [("Accepted", 0), ("Invalid", 0), ("Rejected", 1), ("In Progress", 0), (None, 0)]:
             with self.subTest(status=status), contextlib.redirect_stdout(io.StringIO()):
@@ -102,9 +129,11 @@ class DistributionToolsTests(unittest.TestCase):
                         sign_macos.sign_dmg(commands, Path("Runyte.dmg"), "test-identity", "test-profile")
                         self.assertEqual(calls[-1], ["xcrun", "stapler", "staple", "Runyte.dmg"])
                     else:
-                        with self.assertRaises(RuntimeError):
+                        with self.assertRaisesRegex(RuntimeError, r"not accepted: .*\(submission submission-test\)"):
                             sign_macos.sign_dmg(commands, Path("Runyte.dmg"), "test-identity", "test-profile")
-                        self.assertEqual(calls[-1], ["xcrun", "notarytool", "log", "submission-test", "--keychain-profile", "test-profile"])
+                        log = ["xcrun", "notarytool", "log", "submission-test", "--keychain-profile", "test-profile"]
+                        # Only a finished submission has a log; a timed-out wait does not.
+                        self.assertEqual(log in calls, status in ("Invalid", "Rejected"))
                         self.assertFalse(any("staple" in call for call in calls))
 
 

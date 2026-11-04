@@ -10,8 +10,10 @@ notarized macOS disk image; it is manual and needs the maintainer's Apple
 Developer credentials.
 
 Phases 1–7 are implemented and accepted as of 2026-10-10, with the approved
-fast-forward into `dev`. Phase 8 remains active for the joint manual Apple
-signing, notarization, real-window acceptance and disk-image publication.
+fast-forward into `dev`. Phase 8 remains active. On 2026-11-04 the maintainer
+moved its signing, notarization and disk-image publication into the release
+workflow (see decision 9); the real-window and quarantine acceptance of the
+first signed release is still manual.
 
 ## How to execute this plan
 
@@ -76,8 +78,13 @@ These are settled. Do not reopen them while implementing.
    to match `runyte-desktop-<tag>-<target>`. The installer stays compatible
    with older tags.
 9. **macOS distribution is a signed, notarized and stapled universal disk
-   image** (`Runyte-<version>.dmg`) containing `Runyte.app`. It is produced
-   manually in Phase 8. The minimum macOS version is **11.0**.
+   image** (`Runyte-<version>.dmg`) containing `Runyte.app`. The minimum macOS
+   version is **11.0**. Revised by the maintainer on 2026-11-04: the release
+   workflow signs and notarizes with credentials held in encrypted repository
+   secrets, and publishes the disk image and the same stapled app as
+   `runyte-desktop-<tag>-universal-apple-darwin.tar.xz` for scripted
+   installation. Manual production in Phase 8 is replaced; its hands-on
+   acceptance is not.
 
 ## Current state
 
@@ -955,6 +962,16 @@ Prepare, then wait.
    versions.
 
 ## Phase 8: signed and notarized macOS disk image (manual)
+
+> Revised 2026-11-04. The one-time setup below is done, and steps 1–6 and 8 of
+> "Per release" now run in the release workflow's `macos-desktop` job; the
+> [release runbook](../../reference/releasing.md#macos-signing-secrets) is
+> current. Step 7's hands-on acceptance remains manual, against the published
+> disk image of the first signed release. The signed app has hardened runtime
+> and no entitlements, so that acceptance should also run commands from the
+> integrated terminal that need Automation, camera or microphone permission
+> (for example `osascript`), since macOS attributes them to Runyte. Step 9 is
+> done with the workflow change.
 
 This runs on the maintainer's Mac with the maintainer's Apple Developer
 account. An assisting agent prepares commands and checklists. It never asks

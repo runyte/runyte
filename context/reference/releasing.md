@@ -21,7 +21,8 @@ not a dump of commit subjects. Release notes are drafted outside the working
 tree, so they do not become a third file in the release commit.
 
 The `Binary release` GitHub Actions workflow attaches five terminal archives,
-two Linux desktop archives, and one combined `SHA256SUMS` to that GitHub Release. It builds the exact tag on
+two Linux desktop archives, a signed and notarized universal macOS desktop
+archive and disk image, and one combined `SHA256SUMS` to that GitHub Release. It builds the exact tag on
 native x86-64 and ARM64 Linux/macOS runners and an x86-64 Windows MSVC runner. Cargo publishing remains a
 manual local operation; the workflow never publishes to crates.io.
 
@@ -212,28 +213,27 @@ The example version below is 0.4.1. Substitute the real one.
    ```
 
     Pushing the tag starts the `Binary release` workflow. It validates the tag
-    and package version, builds and smoke-tests all five native targets, then
-    creates or updates the GitHub Release and its binary assets. It does not
-    move or create the tag.
+    and package version, builds and smoke-tests all five native targets,
+    builds the desktop edition for Linux and macOS, signs and notarizes the
+    macOS app, then creates or updates the GitHub Release and its binary
+    assets. It does not move or create the tag.
 
 12. **Require a green binary workflow for the exact tag.** Wait for the
     `Binary release` workflow triggered by step 11. Verify that its event is
     the pushed tag and that the validated source SHA is the release commit.
-    Terminal/Linux desktop builds and the publishing job must pass. The
-    independent universal macOS desktop job does not block those assets; its
-    failure blocks manual macOS distribution. The expected workflow assets are
-    seven archives plus `SHA256SUMS` (eight files); the macOS app zip is only a
-    workflow artifact. Diagnose a failed build;
+    Every build job, including the universal macOS desktop job that signs and
+    notarizes, and the publishing job must pass; publishing waits for all of
+    them. The expected workflow assets are nine archives and disk images plus
+    `SHA256SUMS` (ten files). Diagnose a failed build;
     rerunning a failed job is safe because publishing replaces only assets
-    with the expected names and preserves the release body.
+    with the expected names and preserves the release body. A notarization
+    rejection prints Apple's submission log in the macOS job.
 
-    After step 12, the maintainer may complete the manual signing, notarization,
-    quarantine and real-window acceptance in the editions plan's Phase 8.
-    Upload `Runyte-<version>.dmg` and its separate `.dmg.sha256` only after that
-    acceptance. These two manual assets are excluded from workflow `SHA256SUMS`,
-    which reruns regenerate. With the manual pair, the release has ten files;
-    otherwise it has the eight workflow files. No signing identity or notary
-    credential is stored in the repository.
+    The quarantine, Finder and real-window acceptance in the editions plan's
+    Phase 8 remains manual. Complete it against the published disk image for
+    the first signed release and after any change to macOS packaging or
+    signing. No signing identity or notary credential is stored in the
+    repository; see [macOS signing secrets](#macos-signing-secrets).
 
 13. **Publish the `Changes` notes.** The workflow creates the GitHub Release
     with a minimal binary-download note when it does not already exist. Replace
@@ -246,8 +246,8 @@ The example version below is 0.4.1. Substitute the real one.
     ```
 
     Open the URL printed by `gh` and verify the title, tag, comparison link,
-    rendered `Changes` list, seven archives, and `SHA256SUMS`, plus the manual
-    DMG/checksum pair if macOS acceptance is complete. The GitHub Release
+    rendered `Changes` list, the eight archives, the disk image, and
+    `SHA256SUMS`. The GitHub Release
     is the published changes record; the temporary draft may then be removed.
 
 14. **Carry the release commit back to `dev`**, so the branches do not diverge
@@ -325,8 +325,10 @@ The tag workflow publishes these files, where `<version>` includes its leading
 - `runyte-terminal-<version>-aarch64-apple-darwin.tar.xz`;
 - `runyte-terminal-<version>-x86_64-pc-windows-msvc.zip`;
 - `runyte-desktop-<version>-x86_64-unknown-linux-gnu.tar.xz`;
-- `runyte-desktop-<version>-aarch64-unknown-linux-gnu.tar.xz`; and
-- `SHA256SUMS`, covering all seven archives.
+- `runyte-desktop-<version>-aarch64-unknown-linux-gnu.tar.xz`;
+- `runyte-desktop-<version>-universal-apple-darwin.tar.xz`;
+- `Runyte-MAJOR.MINOR.PATCH.dmg`, without the leading `v`; and
+- `SHA256SUMS`, covering all nine files above.
 
 Each terminal archive has one top-level directory named
 `runyte-terminal-MAJOR.MINOR.PATCH-<target>`. It contains the executable, `README.md`, `INSTALLATION.md`,
@@ -337,14 +339,14 @@ notarized. Windows executables are also unsigned. The packaged README links to t
 
 To verify one downloaded archive, compute `sha256sum <archive>` on Linux or
 `shasum -a 256 <archive>` on macOS and compare the complete digest with the
-archive's line in `SHA256SUMS`. On Windows use `Get-FileHash -Algorithm SHA256 <archive.zip>`. Downloading all seven archives permits the
+archive's line in `SHA256SUMS`. On Windows use `Get-FileHash -Algorithm SHA256 <archive.zip>`. Downloading all nine files permits the
 direct `sha256sum -c SHA256SUMS` or `shasum -a 256 -c SHA256SUMS` form.
 
 Build jobs keep only read access to repository contents. The final publishing
 job alone receives `contents: write`, through the workflow-provided
 `GITHUB_TOKEN`. Actions are pinned to complete commit hashes. A rerun checks
 out the immutable commit resolved from the requested tag, replaces only the
-eight expected assets, and neither recreates nor moves the tag. Build-provenance
+ten expected assets, and neither recreates nor moves the tag. Build-provenance
 attestations are deliberately omitted for now because they require additional
 permissions; archive checksums and exact-tag validation add no such authority.
 
@@ -368,22 +370,63 @@ Historical tags without `crates/runyte-desktop/Cargo.toml` retain their original
 artifact set and `runyte-<tag>-<target>` names, and skip both desktop jobs.
 The `macos-desktop` job builds the desktop executable and native launcher for ARM64 and x86-64 with `MACOSX_DEPLOYMENT_TARGET=11.0`, combines
 both with `lipo`, and checks both slices for the deployment floor and system-only
-library links. It runs headless engine acceptance, then retains
-`Runyte-<version>-unsigned.app.zip` made by `ditto` as a workflow artifact only.
+library links. It runs headless engine acceptance, builds `Runyte.app`, and
+checks an unsigned disk image made from it by attaching it read-only.
 Publication requires this job to succeed for tags with desktop support; only
-historical tags without desktop support may skip it. The publishing job does
-not download its unsigned artifact.
-The job also builds an unsigned disk image, attaches it read-only, checks its
-contents and detaches it. That image is not published. The macOS window still
-requires manual platform validation before distribution.
+historical tags without desktop support may skip it.
+
+It then signs a copy of the app inside-out with hardened runtime, notarizes and
+staples it, builds `Runyte-MAJOR.MINOR.PATCH.dmg` from that stapled app, and
+signs, notarizes and staples the image. `sign_macos.py verify` checks both
+signatures and tickets through codesign, spctl and stapler, and the image is
+attached read-only once more. The same stapled app goes into
+`runyte-desktop-<version>-universal-apple-darwin.tar.xz`, whose one top-level
+directory `runyte-desktop-MAJOR.MINOR.PATCH-universal-apple-darwin/` holds
+`Runyte.app`, `README.md` and `INSTALLATION.md`, for scripted installation.
+The job extracts that archive and checks
+the extracted app's signature, Gatekeeper assessment, ticket and reported
+edition before uploading both files as the `release-macos-desktop` artifact.
+
+Historical desktop tags whose `sign_macos.py` has no `--keychain` option are
+not signed on a retry: they keep `Runyte-<version>-unsigned.app.zip` as a
+workflow artifact only, and their release keeps its original eight files.
 
 `contrib/packaging/sign_macos.py` signs the app inside-out with hardened runtime,
-notarizes using a named existing Keychain profile, requires an Accepted status,
-and staples. Its `dmg` command signs/notarizes/staples the image without runtime
+notarizes using a named Keychain profile, requires an Accepted status, and
+staples. Its `dmg` command signs/notarizes/staples the image without runtime
 options; `verify` checks both signatures and tickets through codesign, spctl and
-stapler. `--dry-run` prints commands without invoking Apple tools. See the
-[packaging guide](../../contrib/packaging/README.md) for command forms. This
-workflow does not provision certificates, credentials, or entitlements.
+stapler. `--keychain` confines identity and profile lookups to one keychain
+file. `--dry-run` prints commands without invoking Apple tools. See the
+[packaging guide](../../contrib/packaging/README.md) for command forms. The
+workflow provisions no entitlements.
+
+### macOS signing secrets
+
+The macOS job reads five GitHub Actions repository secrets:
+
+| Secret | Contents |
+|---|---|
+| `MACOS_CERTIFICATE_P12_BASE64` | Base64 of the Developer ID Application certificate and private key exported as `.p12` |
+| `MACOS_CERTIFICATE_PASSWORD` | That `.p12` file's export password |
+| `NOTARY_API_KEY_P8_BASE64` | Base64 of the App Store Connect API key (`AuthKey_<key id>.p8`, Developer role) |
+| `NOTARY_API_KEY_ID` | That key's Key ID |
+| `NOTARY_API_ISSUER_ID` | The App Store Connect Issuer ID |
+
+Only the step that loads them receives them. It creates a keychain with a
+random password in the runner's temporary directory, imports the identity and,
+unless the `.p12` already carries it, Apple's Developer ID G2 intermediate
+(pinned by SHA-256), stores a
+`runyte-release-notary` notarytool profile in that keychain, and deletes the
+decoded files before it ends. Later steps receive only the keychain path and
+the identity's certificate hash, and a final step deletes the keychain even
+after a failure. A missing secret fails the job before anything is signed.
+Repository secrets are not available to pull requests from forks.
+
+The certificate expires five years after issue; renew it at
+developer.apple.com, export the new `.p12` and replace the first two secrets.
+To rotate the API key, create a new key in App Store Connect, replace the three
+notary secrets, then revoke the old key. If either the `.p12` or the `.p8`
+leaks, revoke it there first.
 
 ### Curl installation and updates
 
