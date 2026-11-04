@@ -64,7 +64,9 @@ machine, verifies its SHA-256 checksum, and installs `runyte` in `~/.local/bin`
 without sudo. It also creates `runed -> runyte` unless an unrelated `runed`
 already exists. It does not change configuration or shell startup files.
 A failed download, checksum or extraction leaves the existing editor intact.
-The script refuses to overwrite a desktop-edition installation.
+If the `runyte` it would replace is the desktop edition, the script updates the
+desktop edition instead; `--terminal` switches that installation to the terminal
+edition. `--desktop` installs the [desktop edition](#install-script-desktop-edition).
 
 You need `curl`, `tar` with xz support, `sha256sum` or `shasum`, and standard Unix
 utilities. Some distributions package xz separately as `xz-utils` or `xz`.
@@ -82,7 +84,8 @@ sh install.sh --version X.Y.Z --install-dir "$HOME/.local/bin"
 Replace `X.Y.Z` with a release version; omit `--version` for the latest release.
 Use an absolute install directory and keep that directory when updating.
 Historical archive names are supported. The installer refuses a symlink or
-directory at the destination `runyte` path.
+directory at the destination `runyte` path, except an absolute link into a
+`Runyte.app`, such as the one it creates for the macOS desktop edition.
 
 ### Release archives
 
@@ -154,6 +157,36 @@ and validation limits.
 
 The desktop edition supports Linux and macOS. There is no Windows desktop edition.
 
+### Install script (desktop edition)
+
+The [install script](#install-script-linux-and-macos) installs the desktop
+edition with `--desktop`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/runyte/runyte/main/install.sh | sh -s -- --desktop
+```
+
+Later runs of the same script, with or without `--desktop`, update the desktop
+edition, because the script keeps the edition it finds installed. Pass
+`--terminal` to switch back.
+
+- **Linux:** the script checks for glibc 2.39 or newer and the window's XCB and
+  XKB libraries (in the loader cache or `LD_LIBRARY_PATH`) before downloading, then installs `runyte` and `runed` in
+  `~/.local/bin` as for the terminal edition. With Python 3 available it also
+  registers the launcher and icons for your desktop account, as described
+  below; without it, `runyte --window` still works.
+- **macOS 11 or later:** the script checks that the downloaded app carries the
+  Runyte release team's Developer ID signature and passes Gatekeeper, installs
+  `Runyte.app` in `~/Applications` (choose another directory with
+  `--app-dir /absolute/path`, for example `--app-dir /Applications`), and links
+  `~/.local/bin/runyte` to the app's executable. Updates replace the app in the
+  directory it was installed in; if the new app cannot be put in place, the
+  previous one is restored. Switching back with `--terminal` leaves the app in
+  place.
+
+If the script cannot tell which edition an existing `runyte` is, because its
+`--version` fails, it asks you to choose with `--desktop` or `--terminal`.
+
 ### Linux release archives
 
 Download `runyte-desktop-vX.Y.Z-x86_64-unknown-linux-gnu.tar.xz` or
@@ -196,8 +229,9 @@ notarized, so macOS asks only its usual first-launch confirmation. To update,
 replace `/Applications/Runyte.app` with the newer one the same way.
 
 The same app is published as
-`runyte-desktop-vX.Y.Z-universal-apple-darwin.tar.xz`, listed in `SHA256SUMS`,
-for scripted installation.
+`runyte-desktop-vX.Y.Z-universal-apple-darwin.tar.xz`, listed in `SHA256SUMS`;
+the [install script](#install-script-desktop-edition) installs it with
+`--desktop` and puts `runyte` on your `PATH`.
 
 To build the app yourself instead, use the [macOS build dependencies](#macos-desktop-dependencies) and
 [desktop build command](#build-from-source). The [packaging guide](contrib/packaging/README.md#macos)
@@ -466,8 +500,13 @@ Window controls, media navigation and document preview are covered in the
 
 Update using the same method you used to install: rerun the terminal install
 script or `cargo install runyte --locked`, replace a manually downloaded
-package, or rebuild and install from source. Update desktop installations with
-a desktop archive or build; the terminal installer preserves them.
+package, or rebuild and install from source. The install script keeps the
+edition it finds, so it updates a desktop installation it made, or a desktop
+`runyte` executable in its install directory. A `runyte` link into a
+`Runyte.app`, including the disk-image link shown under
+[macOS](#macos), counts as a desktop installation, and the script updates that
+app where it is and makes `runed` a link to `runyte`; it refuses other
+symlinks, such as one to a manually extracted Linux archive.
 
 Save your work and restart running editors and persistent hosts after an update
 so every process uses the same version. If you have multiple installations,
@@ -475,7 +514,8 @@ check `command -v runyte` and `runyte --version` again. Re-register a Linux desk
 launcher if its executable path changed.
 
 To uninstall a script installation, remove its `runyte` executable and `runed`
-link from the chosen install directory. For Cargo, run `cargo uninstall runyte`
+link from the chosen install directory, and for the macOS desktop edition its
+`Runyte.app`. For Cargo, run `cargo uninstall runyte`
 and remove a manually created `runed` link. For a manual package or app, remove
 its directory and any command-line links you created. If you registered a Linux
 launcher, remove `com.runyte.Runyte.desktop` from
