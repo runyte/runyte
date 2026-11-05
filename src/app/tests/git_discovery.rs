@@ -45,13 +45,21 @@ fn git_health(app: &App) -> ServiceHealthEntry {
         .unwrap()
 }
 
+/// Whether the palette offers `git-refresh`, which it does exactly when the
+/// shared availability lets it run.
 fn refresh_available(app: &App) -> bool {
-    app.matching_commands()
+    let offered = app
+        .matching_commands()
         .iter()
-        .find(|row| row.name == "git-refresh")
-        .unwrap()
-        .availability
-        .is_available()
+        .any(|row| row.name == "git-refresh");
+    let spec = crate::command::resolve_command("git-refresh").unwrap();
+    assert_eq!(
+        offered,
+        app.command_capabilities()
+            .command_availability(spec)
+            .is_available()
+    );
+    offered
 }
 
 fn launch_failure() -> GitError {

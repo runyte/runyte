@@ -2081,10 +2081,26 @@ fn command_prompt_filters_and_completes_commands() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.handle_key(KeyStroke::new(KeyCode::Char(':'), Modifiers::NONE))
         .unwrap();
-    assert_eq!(app.matching_commands().len(), COMMANDS.len());
-    assert!(app.matching_commands().iter().any(|matched| {
-        matched.name == "path" && matched.spec.id == CommandId::Colon(ColonCommand::Path)
-    }));
+    // An empty query lists, once each, exactly the commands that can run in
+    // this scratch buffer; the rest of the registry is still there to type.
+    let capabilities = app.command_capabilities();
+    let applicable = COMMANDS
+        .iter()
+        .filter(|spec| capabilities.command_availability(spec).is_available())
+        .map(|spec| spec.id)
+        .collect::<Vec<_>>();
+    let offered = app
+        .matching_commands()
+        .iter()
+        .map(|matched| matched.spec.id)
+        .collect::<Vec<_>>();
+    assert_eq!(offered.len(), applicable.len());
+    assert!(applicable.iter().all(|id| offered.contains(id)));
+    assert!(offered.len() < COMMANDS.len());
+    assert!(offered.contains(&CommandId::Colon(ColonCommand::Quit)));
+    // A scratch buffer has no path to show.
+    assert!(!offered.contains(&CommandId::Colon(ColonCommand::Path)));
+    assert!(resolve_command("path").is_some());
 
     for ch in "the".chars() {
         app.handle_key(KeyStroke::new(KeyCode::Char(ch), Modifiers::NONE))
@@ -2319,23 +2335,26 @@ fn command_palette_searches_categories_descriptions_and_owned_availability() {
         ["service-health"]
     );
 
+    // Without syntax the outline cannot run, so the palette leaves it out
+    // rather than listing it dimmed; the reason stays with the registry for
+    // an explicit invocation to report.
     app.command = "outline".to_owned();
-    let outline = app.matching_commands();
-    assert_eq!(outline.len(), 1);
+    assert!(app.matching_commands().is_empty());
     assert_eq!(
-        outline[0].availability.reason(),
+        app.command_capabilities()
+            .command_availability(resolve_command("outline").unwrap())
+            .reason(),
         Some("syntax is unavailable for this buffer")
     );
 }
 
 #[test]
-fn session_commands_stay_in_the_palette_and_share_one_availability() {
+fn session_commands_leave_the_palette_but_share_one_availability() {
     let app = App::new(Config::default(), None).unwrap();
     let mut capabilities = app.command_capabilities();
     capabilities.persistent_session = persistent_session_availability(true, false);
     let matches = app.matching_commands_with_capabilities(&capabilities);
 
-    assert_eq!(matches.len(), COMMANDS.len());
     for name in [
         "session-attach",
         "session-list",
@@ -2343,12 +2362,13 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
         "session-rename",
         "session-clean",
     ] {
-        let matched = matches
-            .iter()
-            .find(|matched| matched.name == name)
-            .unwrap_or_else(|| panic!("{name} must remain in the command inventory"));
+        assert!(
+            matches.iter().all(|matched| matched.name != name),
+            "{name} cannot run here, so it is not offered"
+        );
+        let spec = resolve_command(name).expect("the registry keeps every spelling");
         assert_eq!(
-            matched.availability.reason(),
+            capabilities.command_availability(spec).reason(),
             Some(if cfg!(windows) {
                 if name == "session-attach" {
                     crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON
@@ -2362,14 +2382,7 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
             })
         );
     }
-    assert!(
-        matches
-            .iter()
-            .find(|matched| matched.name == "quit")
-            .unwrap()
-            .availability
-            .is_available()
-    );
+    assert!(matches.iter().any(|matched| matched.name == "quit"));
 
     // On Unix the namespace becomes available as soon as the workspace is in
     // persistent mode; nothing else gates it.
@@ -2436,15 +2449,15 @@ fn session_execution_reports_the_shared_unsupported_platform_reason_first() {
 }
 
 #[test]
-fn unavailable_palette_activation_stays_typed_and_does_not_mutate_editor_state() {
+fn unavailable_palette_activation_closes_the_palette_and_does_not_mutate_editor_state() {
     let mut app = App::new(Config::default(), None).unwrap();
     let text_before = text(&app);
     press(&mut app, ':');
     type_text(&mut app, "outline");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
-    assert_eq!(app.mode, Mode::Command);
-    assert_eq!(app.command, "outline");
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.command.is_empty());
     assert_eq!(text(&app), text_before);
     assert!(app.status.contains("unavailable"));
     assert!(app.list.is_none());
@@ -3341,12 +3354,19 @@ fn quit_here_refuses_to_degrade_to_plain_quit_without_a_shell_handoff() {
 
     type_command(&mut app, "qh");
 
+    // Without a handoff the command is not offered, and typing it closes the
+    // palette and explains why in the interaction line.
     assert!(!app.should_quit);
     assert!(app.quit_directory().is_none());
-    assert!(app.status_error);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.command.is_empty());
     assert!(app.status.contains("runyte()"));
     assert!(app.status.contains("README.md"));
     assert!(!app.status.contains("--cwd-file"));
+    assert!(
+        app.displayed_status_message()
+            .contains(":qh requires the runyte() shell function")
+    );
 }
 
 #[test]
@@ -3633,21 +3653,25 @@ fn unsupported_key_binding_echoes_its_message_inline() {
 }
 
 #[test]
-fn unavailable_colon_command_stays_typed_and_leaves_the_prior_echo_alone() {
+fn unavailable_colon_command_closes_the_palette_and_echoes_its_reason() {
     // command_capabilities().command_availability() marks `:lsp-status`
     // unavailable before it ever reaches execute()'s hint-based check,
-    // since no language-server manager is attached in a fresh App. This
-    // is the one deliberate exception documented in the resolved issue
-    // file: the palette owns the interaction line until it closes, so
-    // reporting here would mean closing it out from under whoever is
-    // still typing. The reason stays retained-only in `:not` instead,
-    // and the prior echo (here, none yet) is left exactly as it was.
+    // since no language-server manager is attached in a fresh App. The
+    // palette leaves such a command out, so nothing on screen could say
+    // why Enter did nothing while it stayed open: Enter closes it and
+    // echoes the reason inline, not styled as an error, and still retains
+    // it in `:not`.
     let mut app = App::new(Config::default(), None).unwrap();
     type_command(&mut app, "lsp-status");
-    assert_eq!(app.mode, Mode::Command);
-    assert_eq!(app.command, "lsp-status");
-    assert_eq!(app.displayed_status_message(), "");
-    assert!(app.status.contains("unavailable"));
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.command.is_empty());
+    assert!(
+        app.displayed_status_message().starts_with(":lsp-status (")
+            && app.displayed_status_message().contains("· unavailable: "),
+        "{}",
+        app.displayed_status_message()
+    );
+    assert!(!app.displayed_status_message_is_error());
     assert_eq!(app.unread_notification_counts().infos, 1);
 }
 

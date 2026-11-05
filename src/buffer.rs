@@ -3485,6 +3485,18 @@ impl Buffer {
             .entry_path(&self.text.to_string(), row)
     }
 
+    /// What the explorer row at `row` lists, as recorded when the listing was
+    /// read rather than as the filesystem says now. `None` for a row that
+    /// names no entry, such as a blank line or a heading.
+    pub fn directory_row_kind(&self, row: usize) -> Option<crate::fs_plan::EntryKind> {
+        let line = self.line_string(row);
+        self.directory
+            .as_ref()?
+            .entry_kind_at_line(&line, row)
+            .ok()
+            .flatten()
+    }
+
     pub fn directory_row_is_directory(&self, row: usize) -> bool {
         let line = self.line_string(row);
         self.directory_line_is_directory(row, &line)

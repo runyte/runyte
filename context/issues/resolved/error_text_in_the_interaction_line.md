@@ -107,6 +107,13 @@ found:
   before, and `unavailable_colon_command_stays_typed_and_leaves_the_prior_
   echo_alone` in `src/app.rs` pins that this is deliberate rather than an
   oversight.
+
+  *Later change ([#66](https://github.com/runyte/runyte/pull/66)):* the
+  palette now leaves such commands out instead of listing them dimmed with a
+  reason, so the open palette no longer showed why Enter did nothing. Enter
+  on one now closes the palette and echoes the reason through
+  `report_completed_action`; the test is now
+  `unavailable_colon_command_closes_the_palette_and_echoes_its_reason`.
 - `info_from("Git", "Git operation completed", summary)` in
   `apply_git_mutation_result` already updates the live echo first, via
   `update_action_feedback`, whenever there is one to update; it only falls

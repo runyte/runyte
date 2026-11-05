@@ -222,3 +222,26 @@ async fn attaching_a_worker_completes_initial_requests_and_stops_cleanly() {
     app.apply_to_buffer(0, &Transaction::insert(0, "// edit\n"));
     assert!(text(&app).starts_with("// edit\n"));
 }
+
+#[test]
+fn pending_syntax_leaves_the_outline_out_of_the_palette_until_the_tree_is_current() {
+    let fixture = SyntaxFixture::new("async-palette");
+    let path = fixture.file("main.rs", "fn main() {}\n");
+    let mut app = fixture.app(vec![path]);
+    app.command = "outline".to_owned();
+    assert!(app.matching_commands().is_empty());
+    assert_eq!(
+        app.command_capabilities()
+            .command_availability(crate::command::resolve_command("outline").unwrap())
+            .reason(),
+        Some("Syntax is still parsing")
+    );
+    assert!(app.apply_syntax_event(finished(&app, 0)));
+    assert_eq!(
+        app.matching_commands()
+            .iter()
+            .map(|row| row.spec.name)
+            .collect::<Vec<_>>(),
+        ["outline"]
+    );
+}

@@ -122,10 +122,10 @@ explorer with reviewed filesystem plans.
 (unless `--log PATH` is given), the recent-workspace list, persistent sessions,
 Git (no repository discovery, status-line branch, gutter marks, or Git views,
 even for a file inside a checkout), language servers, MCP, plugins, and
-integrated terminals. Their commands report `not available in editor mode`,
-and help and key hints grey them out. Pasting an image is refused too, because
-pasted images live in `.runyte/`. A session in editor mode stays in it; start
-`runyte` again for a workspace.
+integrated terminals. Their commands report `not available in editor mode`, help
+and key hints grey them out, and the command palette leaves them out. Pasting an
+image is refused too, because pasted images live in `.runyte/`. A session in
+editor mode stays in it; start `runyte` again for a workspace.
 
 **Search covers the directory in front of you.** `Space f`, `Space / f`, the
 all-files Finder, and the project content searches (`Space / s`, `Space / /`,
@@ -218,7 +218,7 @@ them.
 **In ide mode** (Unix) there is no host, so the session namespace is
 inert rather than a set of commands that each refuse. `Space Space` and
 `Space 1`–`Space 9` are greyed in the key hints, `:session-list`,
-`:session-attach`, `:session-stop`, and `:session-rename` are greyed in the
+`:session-attach`, `:session-stop`, and `:session-rename` are left out of the
 command palette, and invoking one answers `needs mux mode`.
 
 ### The session manager

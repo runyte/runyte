@@ -277,7 +277,16 @@ impl App {
         if !self.plugin_id_completion_open() {
             return None;
         }
-        let (_, prefix) = self.command.split_once(char::is_whitespace)?;
+        let (name, prefix) = self.command.split_once(char::is_whitespace)?;
+        // As with path arguments, a command that cannot run offers no rows.
+        let spec = crate::command::resolve_command(name)?;
+        if !self
+            .command_capabilities()
+            .command_availability(spec)
+            .is_available()
+        {
+            return None;
+        }
         let prefix = prefix.trim_start();
         Some(
             self.plugins

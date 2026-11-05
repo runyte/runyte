@@ -72,6 +72,162 @@ pub enum CommandCapability {
     Terminals,
 }
 
+/// What the active view must supply for a command to have a target.
+///
+/// A [`CommandCapability`] says whether a service can run a command at all;
+/// a context says whether the view in front of the reader gives it something
+/// to act on. The two are separate axes: key hints and help dim by
+/// capability, while command discovery also hides a command whose context
+/// is absent, and an explicitly typed one explains which context is missing.
+///
+/// Every context is independent of the arguments a command might be given,
+/// so a command that one argument could still make useful is never hidden.
+/// Evaluation reads only state the editor already owns, never the filesystem
+/// or a process, and treats a pane showing a terminal as having no document,
+/// whatever buffer is hidden beneath it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum CommandContext {
+    /// A document view rather than a terminal session.
+    Document,
+    /// A buffer with a file path whose parent directory can host a terminal.
+    FileDirectory,
+    /// An explorer listing a directory.
+    Explorer,
+    /// An explorer row naming a directory.
+    ExplorerDirectoryEntry,
+    /// At least one terminal session, running or retained after it exited.
+    TerminalSessions,
+    /// A pane showing a terminal session.
+    ActiveTerminal,
+    /// The terminal in this pane, or the one focused most recently.
+    TerminalOutput,
+    /// A document to send from and a running terminal to receive it.
+    TerminalSend,
+    /// An ordinary local file buffer.
+    LocalFile,
+    /// A document opened through a plugin provider.
+    ProviderDocument,
+    /// A comparison or comparison mark involving this view.
+    Comparison,
+    /// A text buffer that can be marked for, or joined to, a comparison.
+    ComparableBuffer,
+    /// A file inside the current Git working tree.
+    GitFile,
+    /// A Git diff target: a tracked file, a changed-file row, or a file row
+    /// in a revision comparison.
+    GitDiffTarget,
+    /// Files to stage, unstage or discard: a tracked file or the selected
+    /// changed-file rows.
+    GitFileChange,
+    /// A per-file unstaged Git diff.
+    GitUnstagedHunk,
+    /// A per-file staged Git diff.
+    GitStagedHunk,
+    /// One contiguous selection in a saved file.
+    GitSelectedLines,
+    /// A branch or worktree row to compare against.
+    GitComparisonRow,
+    /// A branch row to merge.
+    GitBranchRow,
+    /// A stash row.
+    GitStashRow,
+    /// The Git network with a later page loaded or available.
+    GitNetworkNextPage,
+    /// The Git network past its first page.
+    GitNetworkPreviousPage,
+    /// A loaded Git network page that captured refs.
+    GitNetworkRefs,
+    /// Queued or running Git work that can be cancelled.
+    GitWork,
+    /// An editable buffer to filter, with no filter already running.
+    PipeTarget,
+    /// A running shell filter.
+    RunningPipe,
+    /// A view with a path to show.
+    FilePath,
+    /// A view that can be read again from its source.
+    Reloadable,
+    /// A Markdown document, or the page rendered from one.
+    Markdown,
+    /// A text view in a frontend that can preview documents.
+    Preview,
+    /// A writable document.
+    Writable,
+    /// A writable document that a forced write applies to.
+    ForceWritable,
+    /// A writable document with somewhere to write without a new path.
+    WritableInPlace,
+    /// A pane that can close, or the focused directory tree.
+    ClosablePane,
+    /// More than one pane, or an active full-screen view to leave.
+    Fullscreen,
+    /// A boundary on the right of the active pane.
+    PaneEdgeRight,
+    /// A boundary on the left of the active pane.
+    PaneEdgeLeft,
+    /// A boundary above the active pane.
+    PaneEdgeTop,
+    /// A boundary below the active pane.
+    PaneEdgeBottom,
+    /// A frontend attached to a persistent session host.
+    PersistentAttachment,
+    /// A launcher that can receive a directory on quit.
+    QuitDirectoryHandoff,
+    /// A valid configured plugin to stop.
+    PluginStop,
+    /// A valid, enabled configured plugin not already starting.
+    PluginRestart,
+}
+
+impl CommandContext {
+    pub const ALL: &'static [Self] = &[
+        Self::Document,
+        Self::FileDirectory,
+        Self::Explorer,
+        Self::ExplorerDirectoryEntry,
+        Self::TerminalSessions,
+        Self::ActiveTerminal,
+        Self::TerminalOutput,
+        Self::TerminalSend,
+        Self::LocalFile,
+        Self::ProviderDocument,
+        Self::Comparison,
+        Self::ComparableBuffer,
+        Self::GitFile,
+        Self::GitDiffTarget,
+        Self::GitFileChange,
+        Self::GitUnstagedHunk,
+        Self::GitStagedHunk,
+        Self::GitSelectedLines,
+        Self::GitComparisonRow,
+        Self::GitBranchRow,
+        Self::GitStashRow,
+        Self::GitNetworkNextPage,
+        Self::GitNetworkPreviousPage,
+        Self::GitNetworkRefs,
+        Self::GitWork,
+        Self::PipeTarget,
+        Self::RunningPipe,
+        Self::FilePath,
+        Self::Reloadable,
+        Self::Markdown,
+        Self::Preview,
+        Self::Writable,
+        Self::ForceWritable,
+        Self::WritableInPlace,
+        Self::ClosablePane,
+        Self::Fullscreen,
+        Self::PaneEdgeRight,
+        Self::PaneEdgeLeft,
+        Self::PaneEdgeTop,
+        Self::PaneEdgeBottom,
+        Self::PersistentAttachment,
+        Self::QuitDirectoryHandoff,
+        Self::PluginStop,
+        Self::PluginRestart,
+    ];
+}
+
 /// Stable identities for commands that currently exist only on the colon
 /// surface.  Commands already represented by `EditorCommand` reuse that
 /// identity in the command inventory instead of acquiring a second one.
@@ -952,7 +1108,7 @@ editor_commands! {
     ),
     OpenTerminalDirectoryRoot => (
         "open-terminal-directory-root",
-        "Open terminal here"
+        "Open a terminal in the directory the explorer shows"
     ),
     OpenTerminalSelectedDirectory => (
         "open-terminal-selected-directory",
@@ -1671,6 +1827,92 @@ impl CommandId {
             Self::Colon(_) => None,
         }
     }
+
+    /// The target the active view must supply, beyond any capability.
+    ///
+    /// Only command-palette spellings carry a context: it decides discovery
+    /// and the explanation an explicitly typed command receives, and keys
+    /// reach their workflows' own guards unchanged.
+    pub const fn context(self) -> Option<CommandContext> {
+        use ColonCommand as Colon;
+        use CommandContext as Context;
+        use EditorCommand as Editor;
+
+        match self {
+            Self::Plugin(_) => None,
+            Self::Editor(command) => match command {
+                Editor::OpenTerminalFileDirectory => Some(Context::FileDirectory),
+                Editor::OpenTerminalDirectoryRoot
+                | Editor::OpenExplorerSystem
+                | Editor::OpenExplorerFinder
+                | Editor::OpenExplorerSession => Some(Context::Explorer),
+                Editor::OpenTerminalSelectedDirectory => Some(Context::ExplorerDirectoryEntry),
+                Editor::OpenTerminalSessionDirectory
+                | Editor::OpenTerminalList
+                | Editor::ShowTerminal => Some(Context::TerminalSessions),
+                Editor::RenameTerminal => Some(Context::ActiveTerminal),
+                Editor::CopyTerminalOutput => Some(Context::TerminalOutput),
+                Editor::SendToTerminal => Some(Context::TerminalSend),
+                Editor::MergeBranch => Some(Context::GitBranchRow),
+                // Their capabilities read the active buffer's conflict or
+                // branch row, which a pane showing a terminal does not have.
+                Editor::FetchBranch
+                | Editor::OpenGitConflict
+                | Editor::NextConflict
+                | Editor::PreviousConflict
+                | Editor::KeepConflictCurrent
+                | Editor::TakeConflictOther
+                | Editor::InspectConflictSides
+                | Editor::ResolveConflict
+                | Editor::ResolveConflictLiteralMarkers
+                | Editor::KeepConflictFileCurrent
+                | Editor::TakeConflictFileOther => Some(Context::Document),
+                Editor::NextGitNetworkPage => Some(Context::GitNetworkNextPage),
+                Editor::PreviousGitNetworkPage => Some(Context::GitNetworkPreviousPage),
+                Editor::DocumentOutline => Some(Context::Document),
+                Editor::ToggleMarkdownRender => Some(Context::Markdown),
+                Editor::PreviewDocument => Some(Context::Preview),
+                Editor::Save => Some(Context::Writable),
+                Editor::ForceSave => Some(Context::ForceWritable),
+                Editor::CloseWindow => Some(Context::ClosablePane),
+                Editor::ToggleFullscreen => Some(Context::Fullscreen),
+                _ => None,
+            },
+            Self::Colon(command) => match command {
+                Colon::DiffDisk => Some(Context::LocalFile),
+                Colon::DiffRemote => Some(Context::ProviderDocument),
+                Colon::DiffOff => Some(Context::Comparison),
+                Colon::DiffThis => Some(Context::ComparableBuffer),
+                Colon::Format => Some(Context::Document),
+                Colon::GitBlame | Colon::GitBlameFile => Some(Context::GitFile),
+                Colon::GitDiff | Colon::GitDiffSideBySide => Some(Context::GitDiffTarget),
+                Colon::GitStage | Colon::GitUnstage | Colon::GitDiscard => {
+                    Some(Context::GitFileChange)
+                }
+                Colon::GitStageHunk => Some(Context::GitUnstagedHunk),
+                Colon::GitUnstageHunk => Some(Context::GitStagedHunk),
+                Colon::GitStageLines => Some(Context::GitSelectedLines),
+                Colon::GitCompare => Some(Context::GitComparisonRow),
+                Colon::GitStashApply | Colon::GitStashDrop => Some(Context::GitStashRow),
+                Colon::GitNetworkChooseRef => Some(Context::GitNetworkRefs),
+                Colon::GitCancel => Some(Context::GitWork),
+                Colon::Pipe => Some(Context::PipeTarget),
+                Colon::PipeCancel => Some(Context::RunningPipe),
+                Colon::Path => Some(Context::FilePath),
+                Colon::Reload => Some(Context::Reloadable),
+                Colon::WriteQuit | Colon::WriteBufferClose => Some(Context::WritableInPlace),
+                Colon::ResizeRight => Some(Context::PaneEdgeRight),
+                Colon::ResizeLeft => Some(Context::PaneEdgeLeft),
+                Colon::ResizeTop => Some(Context::PaneEdgeTop),
+                Colon::ResizeBottom => Some(Context::PaneEdgeBottom),
+                Colon::Detach => Some(Context::PersistentAttachment),
+                Colon::QuitHere | Colon::ForceQuitHere => Some(Context::QuitDirectoryHandoff),
+                Colon::PluginStop => Some(Context::PluginStop),
+                Colon::PluginRestart => Some(Context::PluginRestart),
+                _ => None,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1718,6 +1960,10 @@ impl CommandSpec {
 
     pub const fn capability(self) -> Option<CommandCapability> {
         self.id.capability()
+    }
+
+    pub const fn context(self) -> Option<CommandContext> {
+        self.id.context()
     }
 }
 
@@ -3902,6 +4148,72 @@ mod tests {
                 parse_colon_command(name),
                 Err(CommandParseError::Unknown(name.to_owned()))
             );
+        }
+    }
+
+    /// A context missing from `CommandContext::ALL` would never be captured,
+    /// so every command needing it would be offered everywhere. The match has
+    /// no wildcard: a new variant fails to compile here until it is placed.
+    #[test]
+    fn command_context_inventory_names_every_variant_once() {
+        use CommandContext as Context;
+        let position = |context: Context| match context {
+            Context::Document => 0,
+            Context::FileDirectory => 1,
+            Context::Explorer => 2,
+            Context::ExplorerDirectoryEntry => 3,
+            Context::TerminalSessions => 4,
+            Context::ActiveTerminal => 5,
+            Context::TerminalOutput => 6,
+            Context::TerminalSend => 7,
+            Context::LocalFile => 8,
+            Context::ProviderDocument => 9,
+            Context::Comparison => 10,
+            Context::ComparableBuffer => 11,
+            Context::GitFile => 12,
+            Context::GitDiffTarget => 13,
+            Context::GitFileChange => 14,
+            Context::GitUnstagedHunk => 15,
+            Context::GitStagedHunk => 16,
+            Context::GitSelectedLines => 17,
+            Context::GitComparisonRow => 18,
+            Context::GitBranchRow => 19,
+            Context::GitStashRow => 20,
+            Context::GitNetworkNextPage => 21,
+            Context::GitNetworkPreviousPage => 22,
+            Context::GitNetworkRefs => 23,
+            Context::GitWork => 24,
+            Context::PipeTarget => 25,
+            Context::RunningPipe => 26,
+            Context::FilePath => 27,
+            Context::Reloadable => 28,
+            Context::Markdown => 29,
+            Context::Preview => 30,
+            Context::Writable => 31,
+            Context::ForceWritable => 32,
+            Context::WritableInPlace => 33,
+            Context::ClosablePane => 34,
+            Context::Fullscreen => 35,
+            Context::PaneEdgeRight => 36,
+            Context::PaneEdgeLeft => 37,
+            Context::PaneEdgeTop => 38,
+            Context::PaneEdgeBottom => 39,
+            Context::PersistentAttachment => 40,
+            Context::QuitDirectoryHandoff => 41,
+            Context::PluginStop => 42,
+            Context::PluginRestart => 43,
+        };
+        let mut seen = [false; 44];
+        for context in Context::ALL {
+            let index = position(*context);
+            assert!(!seen[index], "{context:?} is listed twice");
+            seen[index] = true;
+        }
+        assert!(seen.iter().all(|seen| *seen), "every context is captured");
+        for spec in COMMANDS {
+            if let Some(context) = spec.context() {
+                assert!(Context::ALL.contains(&context), "{}", spec.name);
+            }
         }
     }
 

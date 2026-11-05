@@ -271,6 +271,7 @@ impl FinderContentSource {
 // modules coordinate the lower-level owners imported above; they do not take
 // over Git processes, LSP transport, terminal emulation, buffer mutation, or
 // snapshot rendering from those existing boundaries.
+mod command_context;
 mod completion_support;
 mod config_reload;
 mod config_write;
@@ -2507,7 +2508,6 @@ pub struct CommandMatch<'a> {
     pub spec: MatchedCommandSpec<'a>,
     pub name: &'a str,
     pub category: CommandCategory,
-    pub availability: CommandAvailability,
 }
 
 /// Borrowed discovery metadata for either a built-in or runtime command.
@@ -2549,11 +2549,7 @@ pub struct PathHint {
 }
 
 impl CommandMatch<'_> {
-    fn new(
-        spec: &'static CommandSpec,
-        name: &'static str,
-        capabilities: &AppCapabilitySnapshot,
-    ) -> Self {
+    fn new(spec: &'static CommandSpec, name: &'static str) -> Self {
         Self {
             spec: MatchedCommandSpec {
                 id: spec.id,
@@ -2565,12 +2561,11 @@ impl CommandMatch<'_> {
             },
             name,
             category: spec.category(),
-            availability: capabilities.command_availability(spec),
         }
     }
 
-    fn canonical(spec: &'static CommandSpec, capabilities: &AppCapabilitySnapshot) -> Self {
-        Self::new(spec, spec.name, capabilities)
+    fn canonical(spec: &'static CommandSpec) -> Self {
+        Self::new(spec, spec.name)
     }
 
     /// The usage line retitled with the matched spelling.
@@ -2968,6 +2963,11 @@ pub struct App {
     pub command: String,
     pub command_cursor: usize,
     pub command_selection: usize,
+    /// The command chosen by moving through the palette, with the text it
+    /// was chosen for. Palette rows depend on the view, so one can move or
+    /// vanish while the palette is open; the selection follows the command
+    /// rather than its row. See [`App::selected_command_row`].
+    command_selection_anchor: Option<(String, CommandId)>,
     pub prompt_kind: PromptKind,
     directory_tree_prompt_target: Option<PathBuf>,
     directory_tree_delete: Option<FsPlan>,
@@ -3734,6 +3734,7 @@ impl App {
             command: String::new(),
             command_cursor: 0,
             command_selection: 0,
+            command_selection_anchor: None,
             prompt_kind: PromptKind::Command,
             directory_tree_prompt_target: None,
             directory_tree_delete: None,
