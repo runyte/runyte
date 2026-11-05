@@ -821,8 +821,9 @@ is not rollback.
   you.
 - Each of discovery's three local Git reads has a 30-second deadline and
   bounded output. A signal exit does not tell whether the child reached Git.
-- Other Git commands stay unavailable. Their palette reasons and the `git` row
-  in `:service-health` keep the last diagnostic during a retry.
+- Other Git commands stay unavailable, and the palette leaves them out. The
+  reason a typed one reports and the `git` row in `:service-health` keep the
+  last diagnostic during a retry.
 - A new failure replaces the diagnostic. Success clears it and either
   refreshes the repository or reports that the project is not in a Git
   repository, which offers no retry.

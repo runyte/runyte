@@ -543,6 +543,54 @@ impl App {
             .map(|(_, role)| *role)
     }
 
+    /// Why the network paging and ref commands have nothing to act on here,
+    /// read from the loaded pages without requesting one.
+    ///
+    /// Each answer is the refusal the matching command gives: paging needs
+    /// the network view and a page in that direction, while choosing a ref
+    /// needs only a loaded page that captured some.
+    pub(super) fn network_context(
+        &self,
+        context: crate::command::CommandContext,
+    ) -> Result<(), String> {
+        use crate::command::CommandContext as Context;
+        match context {
+            Context::GitNetworkNextPage | Context::GitNetworkPreviousPage
+                if !self.active_buffer().is_git_network() =>
+            {
+                Err("paging requires the Git network".to_owned())
+            }
+            Context::GitNetworkNextPage => {
+                let loaded = self.network.page + 1 < self.network.pages.len();
+                let available = self
+                    .network
+                    .pages
+                    .get(self.network.page)
+                    .is_some_and(|page| page.next.is_some());
+                if loaded || available {
+                    Ok(())
+                } else {
+                    Err("the commit network has no next page".to_owned())
+                }
+            }
+            Context::GitNetworkPreviousPage => {
+                if self.network.page > 0 {
+                    Ok(())
+                } else {
+                    Err("the commit network is on its first page".to_owned())
+                }
+            }
+            Context::GitNetworkRefs => match self.network.pages.get(self.network.page) {
+                None => Err("open the Git network before choosing a captured ref".to_owned()),
+                Some(page) if page.roots.iter().all(|root| root.references.is_empty()) => {
+                    Err("this generation has no captured refs; open all refs first".to_owned())
+                }
+                Some(_) => Ok(()),
+            },
+            _ => Ok(()),
+        }
+    }
+
     pub(super) fn choose_git_network_ref(&mut self) {
         let Some(page) = self.network.pages.get(self.network.page) else {
             self.action_failed("open the Git network before choosing a captured ref");

@@ -3145,38 +3145,22 @@ impl App {
                                 let category = matched.category.label();
                                 let label = format!("[{category}] :{}", matched.usage());
                                 let command_start = category.chars().count() + 3;
-                                let available = matched.availability.is_available();
                                 let aliases = matched.other_names().join(", ");
-                                // Only a row that cannot run says anything
-                                // about availability. A row that can run is
-                                // the ordinary case, and labelling it
-                                // "available" said nothing the rest of the
-                                // row did not already say.
-                                let availability = matched
-                                    .availability
-                                    .reason()
-                                    .map_or_else(String::new, |reason| {
-                                        format!(" · unavailable: {reason}")
-                                    });
-                                let mut row = row(
-                                    matched.spec.name,
-                                    label,
-                                    format!(
-                                        "{} · aliases: {}{availability}",
-                                        matched.spec.description,
-                                        if aliases.is_empty() { "-" } else { &aliases }
-                                    ),
-                                );
-                                row.available = available;
+                                // Every row offered can run here, so no row
+                                // speaks of availability; and a command with
+                                // no other spellings says nothing about them.
+                                let detail = if aliases.is_empty() {
+                                    matched.spec.description.to_owned()
+                                } else {
+                                    format!("{} · aliases: {aliases}", matched.spec.description)
+                                };
+                                let mut row = row(matched.spec.name, label, detail);
                                 row.muted = (0..command_start).collect();
-                                if available {
-                                    row.emphasis =
-                                        (command_start..row.label.chars().count()).collect();
-                                }
+                                row.emphasis = (command_start..row.label.chars().count()).collect();
                                 row
                             })
                             .collect(),
-                        (!matches.is_empty()).then_some(self.command_selection),
+                        self.selected_command_row(&matches),
                         None,
                     ));
                 }

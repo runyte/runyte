@@ -2081,10 +2081,26 @@ fn command_prompt_filters_and_completes_commands() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.handle_key(KeyStroke::new(KeyCode::Char(':'), Modifiers::NONE))
         .unwrap();
-    assert_eq!(app.matching_commands().len(), COMMANDS.len());
-    assert!(app.matching_commands().iter().any(|matched| {
-        matched.name == "path" && matched.spec.id == CommandId::Colon(ColonCommand::Path)
-    }));
+    // An empty query lists, once each, exactly the commands that can run in
+    // this scratch buffer; the rest of the registry is still there to type.
+    let capabilities = app.command_capabilities();
+    let applicable = COMMANDS
+        .iter()
+        .filter(|spec| capabilities.command_availability(spec).is_available())
+        .map(|spec| spec.id)
+        .collect::<Vec<_>>();
+    let offered = app
+        .matching_commands()
+        .iter()
+        .map(|matched| matched.spec.id)
+        .collect::<Vec<_>>();
+    assert_eq!(offered.len(), applicable.len());
+    assert!(applicable.iter().all(|id| offered.contains(id)));
+    assert!(offered.len() < COMMANDS.len());
+    assert!(offered.contains(&CommandId::Colon(ColonCommand::Quit)));
+    // A scratch buffer has no path to show.
+    assert!(!offered.contains(&CommandId::Colon(ColonCommand::Path)));
+    assert!(resolve_command("path").is_some());
 
     for ch in "the".chars() {
         app.handle_key(KeyStroke::new(KeyCode::Char(ch), Modifiers::NONE))
@@ -2319,23 +2335,26 @@ fn command_palette_searches_categories_descriptions_and_owned_availability() {
         ["service-health"]
     );
 
+    // Without syntax the outline cannot run, so the palette leaves it out
+    // rather than listing it dimmed; the reason stays with the registry for
+    // an explicit invocation to report.
     app.command = "outline".to_owned();
-    let outline = app.matching_commands();
-    assert_eq!(outline.len(), 1);
+    assert!(app.matching_commands().is_empty());
     assert_eq!(
-        outline[0].availability.reason(),
+        app.command_capabilities()
+            .command_availability(resolve_command("outline").unwrap())
+            .reason(),
         Some("syntax is unavailable for this buffer")
     );
 }
 
 #[test]
-fn session_commands_stay_in_the_palette_and_share_one_availability() {
+fn session_commands_leave_the_palette_but_share_one_availability() {
     let app = App::new(Config::default(), None).unwrap();
     let mut capabilities = app.command_capabilities();
     capabilities.persistent_session = persistent_session_availability(true, false);
     let matches = app.matching_commands_with_capabilities(&capabilities);
 
-    assert_eq!(matches.len(), COMMANDS.len());
     for name in [
         "session-attach",
         "session-list",
@@ -2343,12 +2362,13 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
         "session-rename",
         "session-clean",
     ] {
-        let matched = matches
-            .iter()
-            .find(|matched| matched.name == name)
-            .unwrap_or_else(|| panic!("{name} must remain in the command inventory"));
+        assert!(
+            matches.iter().all(|matched| matched.name != name),
+            "{name} cannot run here, so it is not offered"
+        );
+        let spec = resolve_command(name).expect("the registry keeps every spelling");
         assert_eq!(
-            matched.availability.reason(),
+            capabilities.command_availability(spec).reason(),
             Some(if cfg!(windows) {
                 if name == "session-attach" {
                     crate::service_health::PERSISTENT_SESSION_STANDALONE_REASON
@@ -2362,14 +2382,7 @@ fn session_commands_stay_in_the_palette_and_share_one_availability() {
             })
         );
     }
-    assert!(
-        matches
-            .iter()
-            .find(|matched| matched.name == "quit")
-            .unwrap()
-            .availability
-            .is_available()
-    );
+    assert!(matches.iter().any(|matched| matched.name == "quit"));
 
     // On Unix the namespace becomes available as soon as the workspace is in
     // persistent mode; nothing else gates it.
@@ -3341,9 +3354,12 @@ fn quit_here_refuses_to_degrade_to_plain_quit_without_a_shell_handoff() {
 
     type_command(&mut app, "qh");
 
+    // Without a handoff the command is not offered, and typing it explains
+    // why while leaving the typed text in the palette.
     assert!(!app.should_quit);
     assert!(app.quit_directory().is_none());
-    assert!(app.status_error);
+    assert_eq!(app.mode, Mode::Command);
+    assert_eq!(app.command, "qh");
     assert!(app.status.contains("runyte()"));
     assert!(app.status.contains("README.md"));
     assert!(!app.status.contains("--cwd-file"));

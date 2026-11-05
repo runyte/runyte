@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::command::{CommandCapability, CommandSpec};
+use crate::command::{CommandCapability, CommandContext, CommandId, CommandSpec};
 
 /// Contextual command availability captured once for a palette projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,15 +92,65 @@ pub struct AppCapabilitySnapshot {
     pub session_controls: CommandAvailability,
     pub workspace: CommandAvailability,
     pub terminals: CommandAvailability,
+    /// What the active view supplies, captured with the services so a
+    /// projection cannot pair a service state with a different view.
+    pub contexts: ContextSnapshot,
+}
+
+/// Which [`CommandContext`]s the active view lacks, each with its reason.
+///
+/// Anything not listed is supplied. The default supplies every context,
+/// which is what a caller that only cares about services wants.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ContextSnapshot {
+    missing: Vec<(CommandContext, String)>,
+}
+
+impl ContextSnapshot {
+    /// Captures every context through `availability`, called once each.
+    pub fn capture(mut availability: impl FnMut(CommandContext) -> CommandAvailability) -> Self {
+        Self {
+            missing: CommandContext::ALL
+                .iter()
+                .filter_map(|context| match availability(*context) {
+                    CommandAvailability::Available => None,
+                    CommandAvailability::Unavailable(reason) => Some((*context, reason)),
+                })
+                .collect(),
+        }
+    }
+
+    pub fn availability(&self, context: CommandContext) -> CommandAvailability {
+        self.missing
+            .iter()
+            .find(|(missing, _)| *missing == context)
+            .map_or(CommandAvailability::Available, |(_, reason)| {
+                CommandAvailability::Unavailable(reason.clone())
+            })
+    }
 }
 
 impl AppCapabilitySnapshot {
+    /// Whether `spec` can run here: platform first, then the service it
+    /// needs, then the target the active view must supply. The first missing
+    /// one is the reason, so a command that has no service never blames the
+    /// view for it.
     pub fn command_availability(&self, spec: &CommandSpec) -> CommandAvailability {
-        if let Some(reason) = spec.id.platform_unavailable() {
+        self.id_availability(spec.id)
+    }
+
+    pub fn id_availability(&self, id: CommandId) -> CommandAvailability {
+        if let Some(reason) = id.platform_unavailable() {
             return CommandAvailability::Unavailable(reason.to_owned());
         }
-        match spec.capability() {
-            Some(capability) => self.capability_availability(capability),
+        if let Some(capability) = id.capability() {
+            let availability = self.capability_availability(capability);
+            if !availability.is_available() {
+                return availability;
+            }
+        }
+        match id.context() {
+            Some(context) => self.contexts.availability(context),
             None => CommandAvailability::Available,
         }
     }
@@ -332,6 +382,7 @@ mod tests {
             ),
             workspace: CommandAvailability::Available,
             terminals: CommandAvailability::Available,
+            contexts: ContextSnapshot::default(),
         };
         let outline = crate::command::resolve_command("outline").unwrap();
         let status = crate::command::resolve_command("lsp-status").unwrap();

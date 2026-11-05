@@ -465,11 +465,15 @@ impl App {
     /// cannot be searched, selected, or yanked with Runyte's own semantics —
     /// the cells are a picture of the child's text, not the text — but a
     /// frozen copy is real text, and everything works on it.
-    pub(super) fn copy_terminal_output(&mut self) {
-        let Some(id) = self
-            .active_terminal()
+    /// The terminal whose output `copy_terminal_output` would freeze: the
+    /// one in this pane, otherwise the one focused most recently.
+    pub(super) fn terminal_output_target(&self) -> Option<TerminalId> {
+        self.active_terminal()
             .or_else(|| self.last_focused_terminal(|_| true))
-        else {
+    }
+
+    pub(super) fn copy_terminal_output(&mut self) {
+        let Some(id) = self.terminal_output_target() else {
             self.action_failed("no terminal to copy output from");
             return;
         };

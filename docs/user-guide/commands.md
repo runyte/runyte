@@ -2,8 +2,8 @@
 
 ### The command palette
 
-`:` opens the command palette: every command with its aliases, usage, and a
-short description, grouped by category.
+`:` opens the command palette: the commands that can run in the active view,
+with their aliases, usage, and a short description, grouped by category.
 
 Exact names and aliases rank first, followed by name or alias prefixes, then
 matches in descriptions and other metadata. For example, `:t` and `:term`
@@ -17,9 +17,26 @@ offer `:terminal` first, while `:tu` offers `:tutorial` first.
 | Enter | Run it |
 | Escape | Close the palette |
 
-- Commands whose service is unavailable for the active buffer stay listed but
-  dimmed, with a reason. Running one leaves the typed command and editor state
-  alone.
+- **The palette is contextual.** A command is listed only when it could run
+  here: its platform, mode, and frontend support it, the service it needs is
+  ready, and the active view supplies its target. Explorer actions appear in
+  an explorer, `:terminal-rename` in a pane showing a terminal, `:diff-off`
+  while a comparison is open, `:pipe-cancel` while a pipe runs. A pane showing
+  a terminal offers no document actions, whatever file it returns to; typing
+  one there, such as `:write`, reports `the active pane is showing a
+  terminal`. Leave the terminal (`Space t q`) to act on the document.
+- **Typing a hidden command still works as far as it can.** Every name and
+  alias resolves. Enter on one that cannot run here reports why, for example
+  `… is unavailable: the active view is not a directory buffer`, and leaves
+  the typed text, its arguments, and the editor as they were. It is never
+  replaced by another matching command.
+- Management and recovery entry points stay listed whenever they can run
+  themselves, even when what they manage is not ready: `:service-health`,
+  `:lsp-trust`, `:plugins`, `:git-refresh` after a failed discovery, and the
+  `:help` family. An entry point is not hidden because its list would be
+  empty.
+- The full inventory is the [command list](#command-list) below, and
+  `:help` documents every command whatever the active view.
 - `::` opens the plugin-only palette; see [Plugins](plugins.md#plugins).
 
 #### Path arguments
@@ -146,7 +163,7 @@ The working directory starts where Runyte was launched.
 | --- | --- | --- |
 | `:terminal [command]` | `t`, `term` | Run a program in this pane, or `$SHELL` |
 | `:terminal-file-directory [command]` | | Run from the active file's parent |
-| `:terminal-directory-root [command]` | | Run from the active explorer root |
+| `:terminal-directory-root [command]` | | Run in the directory the active explorer shows |
 | `:terminal-selected-directory [command]` | | Run from the selected directory entry |
 | `:terminal-session-directory <number\|name>` | | Run a shell from another terminal's safe directory |
 | `:terminals` | | List the running terminals and show one here |

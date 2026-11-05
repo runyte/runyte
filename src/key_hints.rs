@@ -959,6 +959,7 @@ mod tests {
             terminals: CommandAvailability::Unavailable(
                 crate::service_health::EDITOR_MODE_REASON.to_owned(),
             ),
+            contexts: crate::service_health::ContextSnapshot::default(),
         };
         let assert_fits = |row: &KeyHintRow| {
             let description = key_hint_description(row);
@@ -1133,6 +1134,7 @@ mod tests {
             session_controls: CommandAvailability::Available,
             workspace: CommandAvailability::Available,
             terminals: CommandAvailability::Available,
+            contexts: crate::service_health::ContextSnapshot::default(),
         };
         let mut hints = KeyHintState::default();
         hints.observe(event(' '), Mode::Normal, default_keymap());
@@ -1190,6 +1192,7 @@ mod tests {
             persistent_session,
             workspace: CommandAvailability::Available,
             terminals: CommandAvailability::Available,
+            contexts: crate::service_health::ContextSnapshot::default(),
         };
         let manager_row = |capabilities: &AppCapabilitySnapshot| {
             let mut hints = KeyHintState::default();

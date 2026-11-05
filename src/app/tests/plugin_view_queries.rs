@@ -74,14 +74,19 @@ fn observe_actions(app: &mut App) -> Source {
     source
 }
 
+/// Why the palette leaves plugin command `id` out, or `None` when it offers
+/// it. The palette offers exactly the commands their own preflight accepts.
 fn palette_reason(app: &App, id: u64) -> Option<String> {
-    app.plugin_command_matches("")
-        .into_iter()
-        .find(|entry| entry.spec.id == CommandId::Plugin(id))
-        .unwrap()
-        .availability
-        .reason()
-        .map(str::to_owned)
+    let listed = app
+        .plugin_command_matches("")
+        .iter()
+        .any(|entry| entry.spec.id == CommandId::Plugin(id));
+    let reason = app
+        .plugin_command_preflight(&app.plugins.commands[&id])
+        .err()
+        .map(|error| error.to_string());
+    assert_eq!(listed, reason.is_none(), "{reason:?}");
+    reason
 }
 
 #[test]
@@ -666,4 +671,21 @@ fn row_actions_changed_after_menu_open_are_rechecked_before_dispatch() {
         .unwrap();
     assert!(receiver.try_recv().is_err());
     assert!(app.status.contains("does not offer"));
+}
+
+/// A plugin command typed in full is completed by nothing while its own
+/// preflight refuses it, as a built-in hidden command is; Tab says why.
+#[test]
+fn a_typed_refused_plugin_command_is_not_completed_into_another() {
+    let (mut app, _, _receiver) = application(model(&["a"]));
+    query(&mut app, 1, true);
+    let name = app.plugins.commands[&1].name.clone();
+    app.mode = Mode::Command;
+    app.prompt_kind = PromptKind::Command;
+    app.command = name.clone();
+    app.command_cursor = name.chars().count();
+    assert_eq!(app.selected_command_row(&app.matching_commands()), None);
+    app.complete_selected_command();
+    assert_eq!(app.command, name);
+    assert!(app.status.contains("query pending"), "{}", app.status);
 }
