@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-use crate::terminal::{TerminalOutput, TerminalSessions, grid::SCROLLBACK_LIMIT, tests::session};
+use crate::terminal::{
+    TerminalOutput, TerminalSessions, grid::DEFAULT_SCROLLBACK_LINES, tests::session,
+};
 
 fn capture(session: &TerminalSession, region: Region) -> Snapshot {
     session
@@ -327,86 +329,109 @@ fn reading_live_output_leaves_frozen_review_attention_and_viewport_untouched() {
 #[test]
 fn lost_history_distinguishes_capacity_eviction_clear_and_emulator_reset() {
     let mut terminal = session(2, 1);
-    for _ in 0..SCROLLBACK_LIMIT + 3 {
+    for _ in 0..DEFAULT_SCROLLBACK_LINES + 3 {
         terminal.feed(b"x\r\n");
     }
     let result = capture(&terminal, Region::Tail);
-    assert_eq!(result.history_rows, SCROLLBACK_LIMIT);
+    assert_eq!(result.history_rows, DEFAULT_SCROLLBACK_LINES);
     assert_eq!(result.lost_history_rows, 3);
     terminal.feed(b"\x1b[3J");
     let cleared = capture(&terminal, Region::Tail);
     assert_eq!(cleared.history_rows, 0);
-    assert_eq!(cleared.lost_history_rows, SCROLLBACK_LIMIT as u64 + 3);
+    assert_eq!(
+        cleared.lost_history_rows,
+        DEFAULT_SCROLLBACK_LINES as u64 + 3
+    );
     assert_ne!(cleared.revision, result.revision);
     terminal.feed(b"\x1bc");
     assert_eq!(capture(&terminal, Region::Tail).lost_history_rows, 0);
 }
 
 #[test]
-fn review_eviction_is_not_live_history_loss_but_workspace_eviction_is() {
+fn terminal_history_limits_are_independent_and_reviews_survive_trimming() {
     let mut terminals = TerminalSessions::new();
-    let mut terminal = session(10, 2);
-    terminal.feed(b"one\r\ntwo\r\nthree");
-    let id = terminal.id();
-    terminal.begin_review();
-    let revision = terminal.read_revision();
-    terminals.sessions.insert(id, terminal);
-    terminals.set_memory_budget_for_test(10);
-    terminals.enforce_memory_budget();
-    let terminal = terminals.get(id).unwrap();
-    assert!(!terminal.reviewing());
-    assert!(terminal.history_truncated());
-    let result = capture(terminal, Region::Tail);
-    assert_eq!(result.lost_history_rows, 0);
-    assert_eq!(result.revision, revision);
-    let mut second = session(10, 1);
-    second.id = TerminalId(2);
-    terminals.sessions.insert(second.id, second);
+    terminals.set_scrollback_lines(3);
+    let first = terminals.insert_test_session(10, 2);
+    let second = terminals.insert_test_session(10, 2);
     terminals.apply(TerminalOutput::Bytes {
-        id: TerminalId(2),
-        bytes: b"other\r\n".to_vec(),
+        id: first,
+        bytes: b"one\r\ntwo\r\nthree\r\nfour".to_vec(),
     });
-    let result = capture(terminals.get(id).unwrap(), Region::Tail);
-    assert_eq!(result.lost_history_rows, 1);
-    assert_ne!(result.revision, revision);
-    assert_eq!(texts(&result), ["two", "three"]);
+    let terminal = terminals.get_mut(first).unwrap();
+    terminal.search_review("two", false).unwrap();
+    let view = terminal.view(2);
+    let revision = terminal.read_revision();
+    terminals.apply(TerminalOutput::Bytes {
+        id: second,
+        bytes: b"a\r\nb\r\nc\r\nd\r\ne\r\nf".to_vec(),
+    });
+    assert_eq!(terminals.get(first).unwrap().scrollback_rows(), 2);
+    assert_eq!(terminals.get(second).unwrap().scrollback_rows(), 3);
+    assert_eq!(terminals.get(first).unwrap().read_revision(), revision);
+    terminals.set_scrollback_lines(1);
+    let terminal = terminals.get_mut(first).unwrap();
+    assert_eq!(terminal.scrollback_rows(), 1);
+    assert_ne!(terminal.read_revision(), revision);
+    assert_eq!(terminal.view(2).rows, view.rows);
+    assert_eq!(terminal.review_selection_text(), "two");
+    let snapshot = capture(terminal, Region::Tail);
+    assert_eq!(texts(&snapshot), ["two", "three", "four"]);
+    assert_eq!(snapshot.lost_history_rows, 1);
+    terminal.scroll_to_live();
+    assert!(!terminal.reviewing());
+    terminals.set_scrollback_lines(4);
+    assert_eq!(terminals.get(first).unwrap().scrollback_rows(), 1);
+    let third = terminals.insert_test_session(10, 2);
+    terminals.apply(TerminalOutput::Bytes {
+        id: third,
+        bytes: b"1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7".to_vec(),
+    });
+    assert_eq!(terminals.get(third).unwrap().scrollback_rows(), 4);
 }
 
 #[test]
-fn alternate_screen_history_remains_charged_and_evictable() {
-    let mut terminals = TerminalSessions::new();
-    let mut older = session(10, 2);
-    older.feed(b"one\r\ntwo\r\nthree\r\nfour");
-    older.feed(b"\x1b[?1049hfull screen");
-    older.last_activity = std::time::UNIX_EPOCH;
-    let older_id = older.id();
-    let alternate = capture(&older, Region::Screen);
-    let revision = older.read_revision();
-    terminals.sessions.insert(older_id, older);
-    assert_eq!(terminals.retained_payload_bytes(), 20 * size_of::<Cell>());
-
-    let mut newer = session(10, 1);
-    newer.id = TerminalId(2);
-    newer.feed(b"fresh\r\n");
-    newer.last_activity = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1);
-    terminals.sessions.insert(newer.id(), newer);
-    terminals.set_memory_budget_for_test(20);
-    terminals.enforce_memory_budget();
-    assert_eq!(terminals.retained_payload_bytes(), 20 * size_of::<Cell>());
-    let older = terminals.get_mut(older_id).unwrap();
-    let after = capture(older, Region::Screen);
+fn alternate_screen_limit_changes_trim_primary_history_and_survive_reset() {
+    let mut terminal = session(10, 2);
+    terminal.feed(b"one\r\ntwo\r\nthree\r\nfour");
+    terminal.feed(b"\x1b[?1049hfull screen");
+    let alternate = capture(&terminal, Region::Screen);
+    let revision = terminal.read_revision();
+    terminal.set_scrollback_lines(1);
+    let after = capture(&terminal, Region::Screen);
     assert_eq!(after.rows, alternate.rows);
     assert!(after.alternate_screen);
     assert_eq!(after.lost_history_rows, 0);
     assert_ne!(after.revision, revision);
-    assert!(older.history_truncated());
-
-    older.feed(b"\x1b[?1049l");
-    let primary = capture(older, Region::Tail);
+    terminal.feed(b"\x1b[?1049l");
+    let primary = capture(&terminal, Region::Tail);
     assert_eq!(texts(&primary), ["two", "three", "four"]);
     assert_eq!(primary.history_rows, 1);
     assert_eq!(primary.lost_history_rows, 1);
-    assert_eq!(terminals.get(TerminalId(2)).unwrap().scrollback_rows(), 1);
+    terminal.feed(b"\x1bcone\r\ntwo\r\nthree\r\nfour");
+    assert_eq!(terminal.scrollback_rows(), 1);
+    terminal.set_scrollback_lines(0);
+    terminal.feed(b"\x1bcone\r\ntwo\r\nthree");
+    assert_eq!(terminal.scrollback_rows(), 0);
+    terminal.select_all_review();
+    assert_eq!(terminal.review_selection_text(), "two\nthree");
+}
+
+#[test]
+fn line_activation_reuses_review_and_refuses_to_replace_it_with_new_output() {
+    let mut terminal = session(10, 2);
+    terminal.feed(b"one\r\ntwo");
+    let first = terminal.emulator.grid().retained_lines().next().unwrap().0;
+    assert!(terminal.begin_review_at_line(first));
+    let frozen = terminal.view(2).rows;
+    terminal.set_scrollback_lines(0);
+    terminal.feed(b"\r\nthree\r\nfour");
+    let newest = terminal.emulator.grid().retained_lines().last().unwrap().0;
+    assert!(!terminal.begin_review_at_line(newest));
+    assert!(terminal.begin_review_at_line(first));
+    assert_eq!(terminal.view(2).rows, frozen);
+    terminal.scroll_to_live();
+    assert!(terminal.begin_review_at_line(newest));
+    assert_ne!(terminal.view(2).rows, frozen);
 }
 
 #[test]

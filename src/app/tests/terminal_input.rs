@@ -186,3 +186,41 @@ fn the_default_macro_records_and_replays_in_a_terminal() {
     }
     assert!(!app.status.contains("needs a buffer"), "{}", app.status);
 }
+
+#[test]
+fn review_movement_selection_and_copy_survive_multiple_busy_terminals() {
+    let (mut app, terminal) = terminal_app("{}");
+    app.terminals.set_scrollback_lines(2);
+    let other = app.terminals.insert_test_session(80, 24);
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"first\r\nsecond\r\nthird".to_vec(),
+    });
+    send(&mut app, "Ctrl-\\");
+    assert_eq!(app.mode, Mode::Normal);
+    send(&mut app, "k");
+    send(&mut app, "x");
+    assert_eq!(
+        app.terminals
+            .get_mut(terminal)
+            .unwrap()
+            .review_selection_text(),
+        "second"
+    );
+    let frozen = app.terminals.get(terminal).unwrap().view(24).rows;
+    for id in [terminal, other] {
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id,
+            bytes: b"\r\nnew output".repeat(100),
+        });
+        assert_eq!(app.terminals.get(id).unwrap().scrollback_rows(), 2);
+    }
+    app.terminals.set_scrollback_lines(0);
+    assert_eq!(app.terminals.get(terminal).unwrap().view(24).rows, frozen);
+    send(&mut app, "y");
+    assert_eq!(app.registers.get(&'"').unwrap().text, "second\n");
+    assert!(app.terminals.get(terminal).unwrap().reviewing());
+    send(&mut app, "i");
+    assert_eq!(app.mode, Mode::Insert);
+    assert!(!app.terminals.get(terminal).unwrap().reviewing());
+}

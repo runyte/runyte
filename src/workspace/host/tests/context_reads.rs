@@ -803,48 +803,64 @@ fn terminal_snapshot_types_offsets_and_closure_are_explicit() {
 }
 
 #[test]
-fn snapshots_share_terminal_history_budget_without_evicting_live_state() {
+fn context_snapshots_and_native_review_have_independent_retention() {
     let (_root, mut host, mut state) = fixture();
-    let id = host.app.terminals.insert_test_session(1, 2);
+    host.app.terminals.set_scrollback_lines(1);
+    let id = host.app.terminals.insert_test_session(10, 2);
     let handle = state.terminal_handle(id).unwrap();
-    let cell_bytes = std::mem::size_of::<crate::terminal::Cell>();
-    host.app.terminals.set_memory_budget_for_test(1);
     host.app.terminals.apply(TerminalOutput::Bytes {
         id,
         bytes: b"a\r\nb\r\nc".to_vec(),
     });
-    assert_eq!(host.app.terminals.retained_payload_bytes(), cell_bytes);
+    host.app
+        .terminals
+        .get_mut(id)
+        .unwrap()
+        .search_review("b", false)
+        .unwrap();
     let before = host.app.terminals.get(id).unwrap().view(3);
-    let capture = || Request::TerminalSnapshotOpen {
-        terminal: handle.clone(),
-        region: wire::Region::Tail,
-        expected_revision: None,
-        max_rows: 20,
-        max_bytes: 65536,
-        max_cells: 65536,
-    };
+    let opened = call(
+        &mut host,
+        &mut state,
+        Request::TerminalSnapshotOpen {
+            terminal: handle,
+            region: wire::Region::Tail,
+            expected_revision: None,
+            max_rows: 20,
+            max_bytes: 65536,
+            max_cells: 65536,
+        },
+    );
+    assert!(state.retained_bytes() > 0);
+    assert_eq!(host.app.terminals.get(id).unwrap().view(3), before);
     assert_eq!(
-        host.context_read_request(&mut state, &scopes(), capture())
+        host.reserve_context_capture(&state, wire::MAX_HOST_RETAINED_BYTES)
             .unwrap_err()
             .code,
         Code::LimitExceeded
     );
-    assert_eq!(host.app.terminals.get(id).unwrap().view(3), before);
-    host.app.terminals.set_memory_budget_for_test(200);
-    let opened = call(&mut host, &mut state, capture());
-    let charge = state.retained_bytes();
-    assert!(charge > 0);
-    host.app.terminals.set_external_retained_bytes(charge);
-    host.app
-        .terminals
-        .set_memory_budget_for_test(charge.div_ceil(cell_bytes) + 1);
     host.app.terminals.apply(TerminalOutput::Bytes {
         id,
         bytes: b"\r\nd\r\ne\r\nf".to_vec(),
     });
-    assert!(
-        host.app.terminals.retained_payload_bytes() + charge
-            <= host.app.terminals.retained_payload_limit()
+    assert_eq!(host.app.terminals.get(id).unwrap().scrollback_rows(), 1);
+    assert_eq!(
+        host.app
+            .terminals
+            .get_mut(id)
+            .unwrap()
+            .review_selection_text(),
+        "b"
+    );
+    host.app.terminals.set_scrollback_lines(0);
+    assert_eq!(host.app.terminals.get(id).unwrap().scrollback_rows(), 0);
+    assert_eq!(
+        host.app
+            .terminals
+            .get_mut(id)
+            .unwrap()
+            .review_selection_text(),
+        "b"
     );
     call(
         &mut host,
@@ -853,15 +869,8 @@ fn snapshots_share_terminal_history_budget_without_evicting_live_state() {
             snapshot: opened["snapshot"].as_str().unwrap().into(),
         },
     );
-    host.app
-        .terminals
-        .set_external_retained_bytes(state.retained_bytes());
-    let before = host.app.terminals.retained_payload_bytes();
-    host.app.terminals.apply(TerminalOutput::Bytes {
-        id,
-        bytes: b"\r\ng".to_vec(),
-    });
-    assert!(host.app.terminals.retained_payload_bytes() > before);
+    assert_eq!(state.retained_bytes(), 0);
+    assert!(host.app.terminals.get(id).unwrap().reviewing());
 }
 
 #[test]

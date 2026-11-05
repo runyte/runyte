@@ -6364,7 +6364,6 @@ impl App {
                             }
                             session.focus_review_selection(rows.max(1), scroll_offset);
                         }
-                        self.terminals.enforce_memory_budget();
                         if !found {
                             self.action_failed(format!("character not found: {character}"));
                         }
@@ -6472,7 +6471,6 @@ impl App {
                     session.goto_review_line(line, self.mode == Mode::Select);
                     session.focus_review_selection(rows.max(1), scroll_offset);
                 }
-                self.terminals.enforce_memory_budget();
             } else {
                 self.goto_line(line);
             }

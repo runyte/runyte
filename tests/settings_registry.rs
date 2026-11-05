@@ -258,3 +258,28 @@ fn the_registry_finds_every_listed_setting_by_key_and_nothing_else() {
     assert!(SettingRegistry::find("editor").is_none());
     assert!(SettingRegistry::find("").is_none());
 }
+
+#[test]
+fn terminal_history_default_and_numeric_validation_match_the_registry() {
+    let config = Config::default();
+    let setting = SettingId::TerminalScrollbackLines;
+    assert_eq!(config.terminal.scrollback_lines, 2000);
+    assert_eq!(
+        setting.configured_value(&config),
+        SettingValue::Integer(2000)
+    );
+    for value in [0, 2000, 100_000] {
+        assert!(
+            setting
+                .validate(&SettingValue::Integer(value), &config)
+                .is_ok()
+        );
+    }
+    assert!(
+        setting
+            .validate(&SettingValue::Integer(100_001), &config)
+            .is_err()
+    );
+    assert!(serde_yaml::from_str::<Config>("terminal: { scrollback_lines: -1 }").is_err());
+    assert!(serde_yaml::from_str::<Config>("terminal: { scrollback_lines: 1.5 }").is_err());
+}

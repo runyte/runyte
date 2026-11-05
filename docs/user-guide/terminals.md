@@ -287,8 +287,19 @@ titles.
 
 **Scrollback and performance:**
 
-- Scrollback is bounded at 5,000 lines per session and by a measured 64 MiB
-  retained-cell and review budget per workspace.
+- `terminal.scrollback_lines` keeps up to 2,000 history rows per terminal by
+  default, excluding the visible screen. Set it from 0 to 100,000 in the config
+  or settings page; 0 disables history but still allows visible-screen review
+  and copying. Reloading the config or saving the setting updates existing and
+  future terminals. Lowering it immediately drops the oldest live history;
+  raising it cannot restore discarded rows.
+- Each terminal can retain one frozen review snapshot independently of the
+  history limit. New output, other terminals, and history-limit changes leave
+  its text and selections intact. Returning to input releases it. A Finder
+  result outside an existing snapshot cannot replace that snapshot; return to
+  input before opening newer output for review.
+- There is no shared native terminal memory budget. Memory grows with the
+  number and width of terminals, retained history, and review snapshots.
 - Noisy sessions use independent bounded queues and round-robin byte and
   message budgets. PTY input is bounded and chunked.
 - Terminal and review output is never written to disk.

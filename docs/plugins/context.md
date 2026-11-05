@@ -219,8 +219,7 @@ Each capture visits at most 262,144 cells, returns at most 1,000 rows and
 terminal snapshot storage ceiling does not authorize a larger synchronous
 capture. At most two snapshots are retained per reader; buffer and terminal
 snapshots share an 8 MiB reader and 64 MiB host retention ceiling, with 30-second idle
-expiry. Host accounting also charges retained snapshots against its shared
-terminal payload budget. At most eight readers connect to one host, with
+expiry. These limits are independent of native terminal history and review. At most eight readers connect to one host, with
 sixteen outstanding requests each. Serialized replies still obey the frame
 ceiling after escaping and metadata are included.
 

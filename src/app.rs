@@ -3938,6 +3938,8 @@ impl App {
             }
         }
         app.sync_terminal_default_colors();
+        app.terminals
+            .set_scrollback_lines(app.config.terminal.scrollback_lines);
         if app.grammar.kind() == crate::command::GrammarKind::Vim {
             app.active_mut()
                 .mark_selection_semantics(SelectionSemantics::HalfOpen);

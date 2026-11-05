@@ -118,19 +118,8 @@ impl Emulator {
         }
     }
 
-    pub(super) fn retained_scrollback_cells(&self) -> usize {
-        self.primary.scrollback_cells()
-    }
-
-    pub(super) fn has_scrollback(&self) -> bool {
-        self.primary.scrollback_len() > 0
-    }
-
-    /// Primary history remains retained while the alternate screen is active.
-    pub(super) fn drop_oldest_scrollback(&mut self) -> Option<usize> {
-        self.primary
-            .drop_oldest_scrollback()
-            .then_some(self.primary.columns())
+    pub(super) fn set_scrollback_limit(&mut self, lines: usize) -> bool {
+        self.primary.set_scrollback_limit(lines)
     }
 
     pub fn alternate_screen(&self) -> bool {
@@ -345,7 +334,9 @@ impl Emulator {
         let rows = self.grid().rows();
         let primary_generation = self.allocate_grid_generation();
         let alternate_generation = self.allocate_grid_generation();
+        let scrollback_limit = self.primary.scrollback_limit();
         self.primary = Grid::with_generation(columns, rows, true, primary_generation);
+        self.primary.set_scrollback_limit(scrollback_limit);
         self.alternate = Grid::with_generation(columns, rows, false, alternate_generation);
         self.alternate_active = false;
         self.alternate_saved_cursor = false;

@@ -55,6 +55,7 @@ pub struct Config {
     pub mode: Option<RunMode>,
     pub plugins: Vec<crate::plugin::PluginConfig>,
     pub editor: EditorConfig,
+    pub terminal: TerminalConfig,
     pub indentation: crate::indentation::Overrides,
     pub workspace: WorkspaceConfig,
     pub lsp: LspConfig,
@@ -1133,11 +1134,29 @@ fn built_in_themes() -> HashMap<String, ThemeDefinition> {
     themes
 }
 
+/// Largest supported per-terminal history depth; allocation grows with output.
+pub(crate) const MAX_TERMINAL_SCROLLBACK_LINES: usize = 100_000;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TerminalConfig {
+    pub scrollback_lines: usize,
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            scrollback_lines: crate::terminal::DEFAULT_SCROLLBACK_LINES,
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             mode: None,
             editor: EditorConfig::default(),
+            terminal: TerminalConfig::default(),
             indentation: crate::indentation::Overrides::default(),
             workspace: WorkspaceConfig::default(),
             lsp: LspConfig::default(),
@@ -1460,6 +1479,11 @@ impl Config {
 
     pub(crate) fn validate_settings(&self) -> std::result::Result<(), String> {
         self.indentation.validate()?;
+        if self.terminal.scrollback_lines > MAX_TERMINAL_SCROLLBACK_LINES {
+            return Err(format!(
+                "terminal.scrollback_lines must be between 0 and {MAX_TERMINAL_SCROLLBACK_LINES}"
+            ));
+        }
         if !(8..=48).contains(&self.editor.font_size) {
             return Err("editor.font_size must be between 8 and 48".to_owned());
         }

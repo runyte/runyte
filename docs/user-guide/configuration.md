@@ -363,6 +363,16 @@ definitions, which are file-only.
 | `editor.preview_theme_colors` | `true` | boolean | Paint `:preview` Markdown, data and source pages in the active theme's colours. `false` keeps the light page. Applies immediately to open previews. |
 | `editor.command_mode_dim` | `true` | boolean | Gray out pane text while a command prompt is open. |
 
+#### Terminal settings
+
+| Setting | Default | Values | What it does |
+| --- | --- | --- | --- |
+| `terminal.scrollback_lines` | `2000` | 0–100000 | History rows per terminal, excluding the visible screen. `0` disables history. Saving or reloading applies immediately to existing and future terminals; reductions discard oldest live history but preserve frozen review snapshots. |
+
+Review snapshots do not count toward the history limit. See
+[Terminals](terminals.md) for retention
+and memory behavior.
+
 #### Workspace settings
 
 | Setting | Default | Values | What it does |

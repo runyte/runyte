@@ -347,14 +347,7 @@ impl TerminalEvents {
     }
 }
 
-/// Total payload retained by workspace scrollback and immutable review
-/// snapshots. Deriving the unit from the actual `Cell` representation keeps
-/// the nominal 64 MiB bound honest if that representation changes. Review
-/// text, indices, and search matches are converted into the same unit when the
-/// budget is enforced. Live screens are excluded and are never evicted.
-pub const WORKSPACE_TERMINAL_CELL_BYTES: usize = 64 * 1024 * 1024;
-pub const WORKSPACE_SCROLLBACK_CELLS: usize =
-    WORKSPACE_TERMINAL_CELL_BYTES / std::mem::size_of::<Cell>();
+pub use grid::DEFAULT_SCROLLBACK_LINES;
 
 /// One row of a prepared terminal view.
 pub type TerminalRow = Vec<Cell>;
@@ -1551,27 +1544,6 @@ impl TerminalSession {
         true
     }
 
-    fn review_cells(&self) -> usize {
-        self.review.as_ref().map_or(0, |review| {
-            let cell_size = std::mem::size_of::<Cell>();
-            let cells = review
-                .lines
-                .iter()
-                .map(|line| line.cells.capacity())
-                .sum::<usize>();
-            let auxiliary_bytes = review.text.capacity()
-                + review.matches.capacity() * std::mem::size_of::<Range>()
-                + review.selection.len() * std::mem::size_of::<Range>()
-                + review.lines.capacity() * std::mem::size_of::<ReviewLine>()
-                + review
-                    .lines
-                    .iter()
-                    .map(|line| line.char_columns.capacity() * std::mem::size_of::<usize>())
-                    .sum::<usize>();
-            cells.saturating_add(auxiliary_bytes.div_ceil(cell_size))
-        })
-    }
-
     pub fn rename(&mut self, name: Option<String>) -> Result<(), &'static str> {
         if let Some(name) = name.as_ref()
             && (name.is_empty() || name.len() > 128 || name.chars().any(char::is_control))
@@ -1781,14 +1753,13 @@ impl TerminalSession {
             .saturating_add(1)
     }
 
-    /// Captures current retained output and places the review caret on one
-    /// stable line. An identity evicted from bounded history is not silently
-    /// retargeted to the row that reused its former index.
+    /// Places the review caret on one stable line, capturing live output only
+    /// when there is no review. A line outside an existing snapshot is refused
+    /// rather than replacing frozen text or retargeting a reused row index.
     pub fn begin_review_at_line(&mut self, line_id: TerminalLineId) -> bool {
-        if self.retained_line_row(line_id).is_none() {
+        if self.review.is_none() && self.retained_line_row(line_id).is_none() {
             return false;
         }
-        self.discard_review();
         self.begin_review();
         let Some(row) = self
             .review
@@ -1799,6 +1770,17 @@ impl TerminalSession {
         };
         self.goto_review_line(row + 1, false);
         true
+    }
+
+    /// Trims live history without replacing frozen review.
+    fn set_scrollback_lines(&mut self, lines: usize) {
+        if self.emulator.set_scrollback_limit(lines) {
+            self.read_revision = self.read_revision.wrapping_add(1);
+            self.content_revision = self.content_revision.wrapping_add(1);
+            self.revision = self.revision.wrapping_add(1);
+            self.scroll = self.scroll.min(self.emulator.grid().scrollback_len());
+            self.history_truncated = true;
+        }
     }
 
     /// Applies bytes the child wrote, answering any query they contained.
@@ -2759,8 +2741,7 @@ pub struct TerminalSessions {
     sessions: BTreeMap<TerminalId, TerminalSession>,
     #[cfg_attr(not(any(unix, windows)), allow(dead_code))]
     next: u64,
-    cell_budget: usize,
-    external_retained_bytes: usize,
+    scrollback_lines: usize,
     events: TerminalEventSender,
     receiver: Option<TerminalEvents>,
     default_colors: DefaultColors,
@@ -2793,6 +2774,7 @@ impl TerminalSessions {
         let mut session = tests::session(columns, rows);
         session.id = id;
         session.number = Some(self.free_number());
+        session.set_scrollback_lines(self.scrollback_lines);
         self.sessions.insert(id, session);
         id
     }
@@ -2806,8 +2788,7 @@ impl TerminalSessions {
         Self {
             sessions: BTreeMap::new(),
             next: 1,
-            cell_budget: WORKSPACE_SCROLLBACK_CELLS,
-            external_retained_bytes: 0,
+            scrollback_lines: DEFAULT_SCROLLBACK_LINES,
             events: TerminalEventSender(Arc::clone(&shared)),
             receiver: Some(TerminalEvents(shared)),
             default_colors: DefaultColors::default(),
@@ -2831,9 +2812,13 @@ impl TerminalSessions {
         self.default_colors
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_memory_budget_for_test(&mut self, cells: usize) {
-        self.cell_budget = cells;
+    /// Applies the history limit to existing and subsequently opened terminals.
+    /// Frozen reviews remain owned by their terminals until input resumes.
+    pub fn set_scrollback_lines(&mut self, lines: usize) {
+        self.scrollback_lines = lines;
+        for session in self.sessions.values_mut() {
+            session.set_scrollback_lines(lines);
+        }
     }
 
     /// Hands the output stream to the loop that will drive it. Once.
@@ -3020,6 +3005,7 @@ impl TerminalSessions {
         };
         let mut emulator = Emulator::new(columns, rows);
         emulator.set_default_colors(self.default_colors);
+        emulator.set_scrollback_limit(self.scrollback_lines);
         let number = Some(self.free_number());
         self.sessions.insert(
             id,
@@ -3098,73 +3084,6 @@ impl TerminalSessions {
                     }
                     session.revision = session.revision.wrapping_add(1);
                 }
-            }
-        }
-        self.enforce_memory_budget();
-    }
-
-    /// Shared history/review allocation charge, excluding live screen cells.
-    pub fn retained_payload_bytes(&self) -> usize {
-        self.sessions
-            .values()
-            .map(|session| session.emulator.retained_scrollback_cells() + session.review_cells())
-            .sum::<usize>()
-            .saturating_mul(std::mem::size_of::<Cell>())
-    }
-
-    pub fn retained_payload_limit(&self) -> usize {
-        self.cell_budget.saturating_mul(std::mem::size_of::<Cell>())
-    }
-
-    /// Reserve context captures without changing terminal presentation. Future
-    /// native/output budget enforcement accounts for these immutable captures.
-    pub fn set_external_retained_bytes(&mut self, bytes: usize) {
-        self.external_retained_bytes = bytes;
-    }
-
-    pub fn enforce_memory_budget(&mut self) {
-        let mut cells = self
-            .sessions
-            .values()
-            .map(|session| session.emulator.retained_scrollback_cells() + session.review_cells())
-            .sum::<usize>();
-        let available_cells = self.cell_budget.saturating_sub(
-            self.external_retained_bytes
-                .div_ceil(std::mem::size_of::<Cell>()),
-        );
-        while cells > available_cells {
-            // Review snapshots are reproducible convenience state and retain
-            // a second copy of cells. Evict the least-recently-active one as a
-            // unit before discarding the sole retained scrollback copy.
-            let review_candidate = self
-                .sessions
-                .iter()
-                .filter(|(_, session)| session.review.is_some())
-                .min_by_key(|(id, session)| (session.last_activity, **id))
-                .map(|(id, _)| *id);
-            if let Some(id) = review_candidate {
-                let session = self.sessions.get_mut(&id).expect("candidate exists");
-                cells = cells.saturating_sub(session.review_cells());
-                session.discard_review();
-                session.history_truncated = true;
-                continue;
-            }
-            let candidate = self
-                .sessions
-                .iter()
-                .filter(|(_, session)| session.emulator.has_scrollback())
-                .min_by_key(|(id, session)| (session.last_activity, **id))
-                .map(|(id, _)| *id);
-            let Some(id) = candidate else {
-                break;
-            };
-            let session = self.sessions.get_mut(&id).expect("candidate is live");
-            if let Some(width) = session.emulator.drop_oldest_scrollback() {
-                session.read_revision = session.read_revision.wrapping_add(1);
-                cells = cells.saturating_sub(width);
-                session.scroll = session.scroll.min(session.emulator.grid().scrollback_len());
-                session.history_truncated = true;
-                session.revision = session.revision.wrapping_add(1);
             }
         }
     }
@@ -3492,10 +3411,10 @@ mod tests {
         session.feed(b"one\r\ntwo\r\nthree");
         session.scroll_back(1);
         assert_eq!(session.scroll(), 1);
-        for _ in 0..grid::SCROLLBACK_LIMIT + 50 {
+        for _ in 0..grid::DEFAULT_SCROLLBACK_LINES + 50 {
             session.feed(b"\r\nx");
         }
-        assert_eq!(session.scroll(), grid::SCROLLBACK_LIMIT);
+        assert_eq!(session.scroll(), grid::DEFAULT_SCROLLBACK_LINES);
     }
 
     #[test]
@@ -3651,15 +3570,6 @@ mod tests {
     }
 
     #[test]
-    fn workspace_cell_budget_is_derived_from_the_measured_cell_size() {
-        assert!(std::mem::size_of::<Cell>() > 0);
-        assert!(std::mem::size_of::<Cell>() <= 64);
-        let measured = WORKSPACE_SCROLLBACK_CELLS * std::mem::size_of::<Cell>();
-        assert!(measured <= WORKSPACE_TERMINAL_CELL_BYTES);
-        assert!(WORKSPACE_TERMINAL_CELL_BYTES - measured < std::mem::size_of::<Cell>());
-    }
-
-    #[test]
     fn review_motion_and_copy_take_whole_joined_cells() {
         let mut session = session(12, 3);
         session.feed("a👍🏽b".as_bytes());
@@ -3703,17 +3613,6 @@ mod tests {
         let review = session.review.as_ref().unwrap();
         assert_eq!(review.matches.first(), Some(&Range::new(0, 1)));
         assert_eq!(review.matches.last().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn review_memory_accounting_includes_search_matches() {
-        let mut session = session(80, 20);
-        session.feed(&vec![b'a'; 1_000]);
-        session.ensure_review();
-        let before = session.review_cells();
-
-        assert_eq!(session.search_review("a", false).unwrap(), 1_000);
-        assert!(session.review_cells() > before);
     }
 
     #[test]

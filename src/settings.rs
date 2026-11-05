@@ -68,6 +68,7 @@ pub enum SettingId {
     EditorTerminalThemeColors,
     EditorPreviewThemeColors,
     EditorAutoCloseTerminal,
+    TerminalScrollbackLines,
     RunMode,
     SessionStrip,
     WorkspaceIdleRetirementMinutes,
@@ -416,6 +417,18 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         persistence: PersistencePolicy::ConfigFile,
     },
     SettingDescriptor {
+        id: SettingId::TerminalScrollbackLines,
+        key: "terminal.scrollback_lines",
+        title: "Terminal scrollback lines",
+        description: "History rows per terminal; 0 disables history, existing reviews stay intact",
+        value_type: SettingType::Integer {
+            minimum: 0,
+            maximum: crate::config::MAX_TERMINAL_SCROLLBACK_LINES,
+        },
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
         id: SettingId::EditorAutoCloseTerminal,
         key: "editor.auto_close_terminal",
         title: "Auto close terminal",
@@ -531,6 +544,7 @@ impl SettingId {
         Self::EditorCommandModeDim,
         Self::EditorTerminalThemeColors,
         Self::EditorPreviewThemeColors,
+        Self::TerminalScrollbackLines,
         Self::EditorAutoCloseTerminal,
         Self::RunMode,
         Self::SessionStrip,
@@ -603,6 +617,9 @@ impl SettingId {
             }
             Self::EditorFastPaneKeys => SettingValue::Boolean(config.editor.fast_pane_keys),
             Self::EditorSelectingMotions => SettingValue::Boolean(config.editor.selecting_motions),
+            Self::TerminalScrollbackLines => {
+                SettingValue::Integer(config.terminal.scrollback_lines)
+            }
             Self::EditorAutoCloseTerminal => {
                 SettingValue::Boolean(config.editor.auto_close_terminal)
             }
@@ -774,6 +791,9 @@ impl SettingId {
             }
             (Self::EditorCommandModeDim, SettingValue::Boolean(value)) => {
                 config.editor.command_mode_dim = *value;
+            }
+            (Self::TerminalScrollbackLines, SettingValue::Integer(value)) => {
+                config.terminal.scrollback_lines = *value;
             }
             (Self::EditorAutoCloseTerminal, SettingValue::Boolean(value)) => {
                 config.editor.auto_close_terminal = *value;
