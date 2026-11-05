@@ -38,7 +38,10 @@ fn child_fixture() {
             ])
             .spawn()
             .unwrap();
-        std::fs::write("grandchild.pid", child.id().to_string()).unwrap();
+        // The test parses this file as soon as it can read it, so it must
+        // appear with its contents rather than empty and then filled.
+        std::fs::write("grandchild.pending", child.id().to_string()).unwrap();
+        std::fs::rename("grandchild.pending", "grandchild.pid").unwrap();
         Some(child)
     } else {
         None

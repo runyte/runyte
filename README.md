@@ -247,7 +247,9 @@ curl -fsSL https://raw.githubusercontent.com/runyte/runyte/main/install.sh | sh
 
 The script verifies the release checksum and installs `runyte` and `runed` in
 `~/.local/bin`, without sudo. Add that directory to `PATH` if needed. Linux
-archives require glibc 2.35 or newer. For Windows, use the x86-64 ZIP from
+archives require glibc 2.35 or newer. Add `sh -s -- --desktop` in place of `sh`
+to install the [desktop edition](INSTALLATION.md#install-script-desktop-edition)
+instead. For Windows, use the x86-64 ZIP from
 [GitHub Releases](https://github.com/runyte/runyte/releases) and follow the
 [Windows instructions](INSTALLATION.md#windows).
 
@@ -261,8 +263,9 @@ cargo install runyte --locked
 
 ### Desktop edition
 
-Download the Linux **desktop** archive for your CPU from
-[GitHub Releases](https://github.com/runyte/runyte/releases), then follow the
+Install it with `install.sh --desktop` as shown above, or download the Linux
+**desktop** archive for your CPU from
+[GitHub Releases](https://github.com/runyte/runyte/releases) and follow the
 [desktop installation steps](INSTALLATION.md#desktop-edition). Linux desktop
 archives require glibc 2.39 or newer and a working Vulkan driver. On macOS 11 or
 later, download the signed and notarized `Runyte-X.Y.Z.dmg` from releases after

@@ -417,7 +417,11 @@ fn native_startup_fixture() {
                 .stderr(Stdio::null())
                 .spawn()
                 .unwrap();
-            fs::write(root.join("descendant-pid"), child.id().to_string()).unwrap();
+            // The parent parses this marker as soon as it exists.
+            write_atomic(
+                &root.join("descendant-pid"),
+                child.id().to_string().as_bytes(),
+            );
             child.wait().unwrap();
             return;
         }
@@ -505,6 +509,12 @@ fn fixture() -> (TestRuntimeRoot, EndpointLocation) {
     let root = TestRuntimeRoot::new("native-startup").unwrap();
     let endpoint = location(root.path());
     (root, endpoint)
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) {
+    let pending = path.with_extension("pending");
+    fs::write(&pending, bytes).unwrap();
+    fs::rename(pending, path).unwrap();
 }
 
 async fn await_marker(path: &Path) {
