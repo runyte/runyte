@@ -4284,15 +4284,25 @@ impl App {
                 let availability =
                     spec.map(|spec| self.command_capabilities().command_availability(spec));
                 if let Some(CommandAvailability::Unavailable(reason)) = availability {
-                    // Deliberately does not call report_completed_action: the
-                    // palette is still open (the same "correctable input"
-                    // treatment as a schema error below), and the
-                    // interaction line is the palette's own text until it
-                    // closes. Echoing here would mean closing it out from
-                    // under whoever is still typing, which is exactly the
-                    // "notifications never replace [the prompt]" rule this
-                    // stays retained-only for; see the resolved issue file.
-                    self.mark_unavailable(format!("{description} is unavailable: {reason}"));
+                    // The palette leaves this command out, so while it is
+                    // open nothing on screen could say why Enter did
+                    // nothing. Close it as an attempted command does and
+                    // echo the refusal in the interaction line instead.
+                    // Nothing runs, so no editor state changes.
+                    self.command.clear();
+                    self.command_cursor = 0;
+                    self.command_selection = 0;
+                    self.command_selection_anchor = None;
+                    self.mode = Mode::Normal;
+                    self.mark_unavailable(reason.clone());
+                    self.report_completed_action(
+                        &format!(":{name}"),
+                        &description,
+                        CommandOutcome::Unavailable(reason),
+                    );
+                    if let Some(mode) = self.grammar.preferred_mode() {
+                        self.mode = mode;
+                    }
                     return Ok(());
                 }
                 let has_argument = command

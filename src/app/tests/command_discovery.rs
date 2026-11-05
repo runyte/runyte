@@ -161,26 +161,27 @@ fn a_typed_hidden_command_explains_itself_without_running_or_redirecting() {
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     assert_eq!(app.command, "terminal-directory-root");
 
+    // Enter closes the palette, as an attempted command does, so the
+    // refusal is echoed where it can be seen rather than behind the prompt.
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(app.mode, Mode::Command);
-    assert_eq!(app.command, "terminal-directory-root");
-    assert!(
-        app.status
-            .contains("is unavailable: the active view is not a directory buffer"),
-        "{}",
-        app.status
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.command.is_empty());
+    assert_eq!(
+        app.displayed_status_message(),
+        ":terminal-directory-root (Open a terminal in the directory the explorer shows · \
+         unavailable: the active view is not a directory buffer)"
     );
+    assert!(!app.displayed_status_message_is_error());
     assert!(app.terminals.is_empty());
     assert_eq!(app.active().buffer, buffer);
 
-    // Arguments survive the refusal too, and an alias resolves the same way.
-    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    // A command with arguments is refused the same way, and an alias
+    // resolves to its command's reason.
     type_command(&mut app, "terminal-show 1");
-    assert_eq!(app.command, "terminal-show 1");
+    assert_eq!(app.mode, Mode::Normal);
     assert!(app.status.contains("there are no terminal sessions"));
-    key(&mut app, KeyCode::Escape, Modifiers::NONE);
     type_command(&mut app, "do");
-    assert_eq!(app.command, "do");
+    assert_eq!(app.mode, Mode::Normal);
     assert!(app.status.contains("no comparison is open"));
     assert_eq!(app.active().buffer, buffer);
 
@@ -241,7 +242,7 @@ fn explorer_rows_decide_where_a_selected_directory_terminal_starts() {
             .find(|row| app.active_buffer().line_string(*row).trim_end() == name)
             .unwrap_or_else(|| panic!("{name} is listed"))
     };
-    let child = row_of(&app, &format!("child{}", std::path::MAIN_SEPARATOR));
+    let child = row_of(&app, "child/");
     set_cursor(&mut app, child, 0);
     assert_offers(&mut app, &["terminal-selected-directory"]);
     let file = row_of(&app, "note.txt");
@@ -628,7 +629,8 @@ fn editor_mode_leaves_workspace_services_out_of_discovery() {
     );
     assert_offers(&mut app, &["help", "open", "write", "quit"]);
     type_command(&mut app, "terminal");
-    assert_eq!(app.command, "terminal");
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.terminals.is_empty());
     assert!(
         app.status
             .contains(crate::service_health::EDITOR_MODE_REASON),

@@ -435,9 +435,10 @@ therefore never carries an availability clause, and the row's detail names
 other spellings only when the command has some.
 
 Explicit invocation is separate from discovery. Every registered name and
-alias still resolves; Enter on one the palette leaves out reports the reason
-through command feedback, keeps the typed text and arguments, and changes no
-editor state. Argument rows — path hints and plugin IDs — follow the same
+alias still resolves; Enter on one the palette leaves out closes the palette,
+echoes the reason as command feedback in the interaction line, and changes no
+other editor state. The palette is closed because, with the row absent, nothing
+on screen could otherwise say why Enter did nothing. Argument rows — path hints and plugin IDs — follow the same
 availability as the command they complete. A palette selection belongs to
 the command chosen rather than to its row: when rows shift while the palette
 is open the selection follows that command, and if it has gone, completion

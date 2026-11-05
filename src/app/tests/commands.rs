@@ -2449,15 +2449,15 @@ fn session_execution_reports_the_shared_unsupported_platform_reason_first() {
 }
 
 #[test]
-fn unavailable_palette_activation_stays_typed_and_does_not_mutate_editor_state() {
+fn unavailable_palette_activation_closes_the_palette_and_does_not_mutate_editor_state() {
     let mut app = App::new(Config::default(), None).unwrap();
     let text_before = text(&app);
     press(&mut app, ':');
     type_text(&mut app, "outline");
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
-    assert_eq!(app.mode, Mode::Command);
-    assert_eq!(app.command, "outline");
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.command.is_empty());
     assert_eq!(text(&app), text_before);
     assert!(app.status.contains("unavailable"));
     assert!(app.list.is_none());
@@ -3354,15 +3354,19 @@ fn quit_here_refuses_to_degrade_to_plain_quit_without_a_shell_handoff() {
 
     type_command(&mut app, "qh");
 
-    // Without a handoff the command is not offered, and typing it explains
-    // why while leaving the typed text in the palette.
+    // Without a handoff the command is not offered, and typing it closes the
+    // palette and explains why in the interaction line.
     assert!(!app.should_quit);
     assert!(app.quit_directory().is_none());
-    assert_eq!(app.mode, Mode::Command);
-    assert_eq!(app.command, "qh");
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.command.is_empty());
     assert!(app.status.contains("runyte()"));
     assert!(app.status.contains("README.md"));
     assert!(!app.status.contains("--cwd-file"));
+    assert!(
+        app.displayed_status_message()
+            .contains(":qh requires the runyte() shell function")
+    );
 }
 
 #[test]
@@ -3649,21 +3653,25 @@ fn unsupported_key_binding_echoes_its_message_inline() {
 }
 
 #[test]
-fn unavailable_colon_command_stays_typed_and_leaves_the_prior_echo_alone() {
+fn unavailable_colon_command_closes_the_palette_and_echoes_its_reason() {
     // command_capabilities().command_availability() marks `:lsp-status`
     // unavailable before it ever reaches execute()'s hint-based check,
-    // since no language-server manager is attached in a fresh App. This
-    // is the one deliberate exception documented in the resolved issue
-    // file: the palette owns the interaction line until it closes, so
-    // reporting here would mean closing it out from under whoever is
-    // still typing. The reason stays retained-only in `:not` instead,
-    // and the prior echo (here, none yet) is left exactly as it was.
+    // since no language-server manager is attached in a fresh App. The
+    // palette leaves such a command out, so nothing on screen could say
+    // why Enter did nothing while it stayed open: Enter closes it and
+    // echoes the reason inline, not styled as an error, and still retains
+    // it in `:not`.
     let mut app = App::new(Config::default(), None).unwrap();
     type_command(&mut app, "lsp-status");
-    assert_eq!(app.mode, Mode::Command);
-    assert_eq!(app.command, "lsp-status");
-    assert_eq!(app.displayed_status_message(), "");
-    assert!(app.status.contains("unavailable"));
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.command.is_empty());
+    assert!(
+        app.displayed_status_message().starts_with(":lsp-status (")
+            && app.displayed_status_message().contains("· unavailable: "),
+        "{}",
+        app.displayed_status_message()
+    );
+    assert!(!app.displayed_status_message_is_error());
     assert_eq!(app.unread_notification_counts().infos, 1);
 }
 

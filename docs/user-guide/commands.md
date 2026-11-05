@@ -26,10 +26,10 @@ offer `:terminal` first, while `:tu` offers `:tutorial` first.
   one there, such as `:write`, reports `the active pane is showing a
   terminal`. Leave the terminal (`Space t q`) to act on the document.
 - **Typing a hidden command still works as far as it can.** Every name and
-  alias resolves. Enter on one that cannot run here reports why, for example
-  `… is unavailable: the active view is not a directory buffer`, and leaves
-  the typed text, its arguments, and the editor as they were. It is never
-  replaced by another matching command.
+  alias resolves. Enter on one that cannot run here closes the palette and
+  reports why in the interaction line, for example
+  `… · unavailable: the active view is not a directory buffer`, leaving the
+  editor as it was. It is never replaced by another matching command.
 - Management and recovery entry points stay listed whenever they can run
   themselves, even when what they manage is not ready: `:service-health`,
   `:lsp-trust`, `:plugins`, `:git-refresh` after a failed discovery, and the
