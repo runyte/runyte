@@ -165,6 +165,7 @@ impl App {
         self.note_config_deprecations(&loaded);
         self.persisted_config = loaded;
         self.config = effective;
+        self.sync_terminal_scrollback();
         self.config_file_read = file_read;
         // Dispatch, help, and key hints all read `self.keymap`, so replacing
         // the compiled maps and re-selecting through `sync_keymap` is what

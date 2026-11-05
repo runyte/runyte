@@ -155,10 +155,9 @@ impl WorkspaceHost {
         let used = self
             .context
             .retained_reader_bytes()
-            .saturating_add(state.retained_bytes())
-            .saturating_add(self.app.terminals.retained_payload_bytes());
+            .saturating_add(state.retained_bytes());
         let charge = bytes.saturating_add(state.prefix.len() + 24);
-        if used.saturating_add(charge) > self.app.terminals.retained_payload_limit() {
+        if used.saturating_add(charge) > wire::MAX_HOST_RETAINED_BYTES {
             return Err(Error::new(
                 Code::LimitExceeded,
                 "Workspace retained context budget exhausted",

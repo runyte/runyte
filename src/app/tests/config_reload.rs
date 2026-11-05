@@ -692,3 +692,56 @@ fn font_size_reload_preserves_running_value_and_records_next_window_default() {
     );
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn terminal_scrollback_applies_at_start_reload_and_persist_without_replacing_review() {
+    let (mut app, path) = editor(
+        "terminal-history.yaml",
+        "terminal:\n  scrollback_lines: 3\n",
+    );
+    let id = app.terminals.insert_test_session(10, 2);
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id,
+        bytes: b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\nsix".to_vec(),
+    });
+    assert_eq!(app.terminals.get(id).unwrap().scrollback_rows(), 3);
+    app.terminals
+        .get_mut(id)
+        .unwrap()
+        .search_review("three", false)
+        .unwrap();
+    fs::write(&path, "terminal:\n  scrollback_lines: 1\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert_eq!(app.terminals.get(id).unwrap().scrollback_rows(), 1);
+    assert_eq!(
+        app.terminals.get_mut(id).unwrap().review_selection_text(),
+        "three"
+    );
+    assert!(
+        app.persist_selected_setting(SettingId::TerminalScrollbackLines, SettingValue::Integer(0))
+    );
+    assert_eq!(app.terminals.get(id).unwrap().scrollback_rows(), 0);
+    assert_eq!(
+        app.terminals.get_mut(id).unwrap().review_selection_text(),
+        "three"
+    );
+    assert_eq!(
+        Config::load(Some(&path))
+            .unwrap()
+            .0
+            .terminal
+            .scrollback_lines,
+        0
+    );
+    let next = app.terminals.insert_test_session(10, 2);
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: next,
+        bytes: b"a\r\nb\r\nc".to_vec(),
+    });
+    assert_eq!(app.terminals.get(next).unwrap().scrollback_rows(), 0);
+    fs::write(&path, "terminal:\n  scrollback_lines: 100001\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert!(app.status_error);
+    assert_eq!(app.config.terminal.scrollback_lines, 0);
+    fs::remove_file(path).unwrap();
+}

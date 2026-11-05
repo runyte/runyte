@@ -2162,8 +2162,8 @@ fn a_terminal_refresh_reads_only_what_the_child_added() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
-    let keeper = crate::terminal::grid::SCROLLBACK_LIMIT;
-    let initial = (0..crate::terminal::grid::SCROLLBACK_LIMIT + 64)
+    let keeper = crate::terminal::grid::DEFAULT_SCROLLBACK_LINES;
+    let initial = (0..crate::terminal::grid::DEFAULT_SCROLLBACK_LINES + 64)
         .map(|row| {
             if row == keeper {
                 "keeper needle\r\n".to_owned()
@@ -2211,7 +2211,7 @@ fn a_terminal_refresh_reads_only_what_the_child_added() {
         passes += 1;
     }
     // Re-reading the whole session would take a pass for every 128 of its
-    // 5000 retained rows. Only the row the child added, and the screen it
+    // 2000 retained rows. Only the row the child added, and the screen it
     // may have rewritten, are worth revisiting.
     assert!(
         passes <= 2,
@@ -2279,7 +2279,7 @@ fn terminal_content_selection_follows_stable_line_identity_through_eviction() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.open_terminal_at(Some(terminal_fixture_command()), root.clone());
     let terminal = app.active_terminal().unwrap();
-    let initial = (0..crate::terminal::grid::SCROLLBACK_LIMIT + 64)
+    let initial = (0..crate::terminal::grid::DEFAULT_SCROLLBACK_LINES + 64)
         .map(|row| format!("stable-repeat {row}\r\n"))
         .collect::<String>();
     app.apply_terminal_output(TerminalOutput::Bytes {
@@ -2581,7 +2581,7 @@ fn terminal_content_activation_captures_before_a_shorter_pane_resize() {
 
 #[cfg(unix)]
 #[test]
-fn terminal_content_activation_enforces_the_review_memory_budget_immediately() {
+fn terminal_content_activation_keeps_review_with_scrollback_disabled() {
     let root = temporary("project-finder-terminal-activation-budget");
     fs::create_dir_all(&root).unwrap();
     let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
@@ -2599,15 +2599,12 @@ fn terminal_content_activation_enforces_the_review_memory_budget_immediately() {
     app.open_project_grep().unwrap();
     type_text(&mut app, "budget-identity-match");
     settle_finder(&mut app);
-    app.terminals.set_memory_budget_for_test(0);
+    app.terminals.set_scrollback_lines(0);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
-    assert_eq!(app.active_terminal(), None);
-    assert!(!app.terminals.get(terminal).unwrap().reviewing());
-    assert_eq!(
-        app.status,
-        "that terminal line exceeds the retained review budget"
-    );
+    assert_eq!(app.active_terminal(), Some(terminal));
+    assert!(app.terminals.get(terminal).unwrap().reviewing());
+    assert_eq!(app.mode, Mode::Normal);
 
     close_test_terminal(&mut app, terminal);
     close_test_terminals(&mut app);
@@ -5944,4 +5941,47 @@ fn configured_report_hints_follow_removed_arrows_and_rebound_navigation() {
     assert_eq!(app.list.as_ref().unwrap().report_offset, 0);
     key(&mut app, KeyCode::Function(9), Modifiers::NONE);
     assert_eq!(app.list.as_ref().unwrap().report_offset, 1);
+}
+
+#[test]
+fn reducing_terminal_history_invalidates_quiet_finder_results() {
+    let root = temporary("project-finder-terminal-history-setting");
+    fs::create_dir_all(&root).unwrap();
+    let ports = HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+        String::new(),
+    )))));
+    let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    let config_path = root.join("config.yaml");
+    fs::write(&config_path, "terminal:\n  scrollback_lines: 2000\n").unwrap();
+    app.note_loaded_config(&config_path);
+    let id = app.terminals.insert_test_session(80, 2);
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id,
+        bytes: b"unique-history-needle\r\nsecond\r\nthird\r\nfourth".to_vec(),
+    });
+    app.open_project_grep().unwrap();
+    type_text(&mut app, "unique-history-needle");
+    settle_finder(&mut app);
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| matches!(item.target, ResourceTarget::TerminalLocation { .. }))
+    );
+    fs::write(&config_path, "terminal:\n  scrollback_lines: 0\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert!(app.finder_terminals_dirty());
+    settle_finder(&mut app);
+    assert!(
+        app.finder
+            .as_ref()
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| !matches!(item.target, ResourceTarget::TerminalLocation { .. }))
+    );
+    app.terminals.close(id);
+    fs::remove_dir_all(root).unwrap();
 }

@@ -50,11 +50,16 @@ sequences; they never fall through to basic commands sharing their final byte.
 `tests/terminal_sequences.rs` covers screen cells, cursor, rendition, alternate
 screen state, and device replies.
 
-The shared retention budget counts primary-screen scrollback even while its
-alternate screen is visible. Oldest-history eviction leaves both live screens
-intact and reports the lost primary rows when that screen is restored. The
-regression is `alternate_screen_history_remains_charged_and_evictable` in
-`src/terminal/tests/read.rs`.
+`terminal.scrollback_lines` bounds each primary screen independently, defaulting
+to 2,000 history rows (0–100,000). Live screens and native review snapshots are
+outside that limit; no shared native terminal byte budget evicts reviews.
+Changes trim primary history even while the alternate screen is visible,
+leave both live screens and existing reviews intact, and report lost primary
+rows when that screen is restored. Emulator reset preserves the configured
+limit. External context snapshots retain their separate reader/host bounds.
+Regressions live in `src/terminal/tests/read.rs`, including
+`alternate_screen_limit_changes_trim_primary_history_and_survive_reset` and
+`terminal_history_limits_are_independent_and_reviews_survive_trimming`.
 
 ## Unix PTY descriptor ownership
 
@@ -223,8 +228,8 @@ clipped prefix. Plain trailing spaces are omitted, blank rows and combining
 marks remain, and a wide glyph or base-plus-combining sequence is not split.
 
 The dedicated read revision changes conservatively on output chunks, input
-(typing, pastes, agent text and agent Enter), resize, exit and shared history
-eviction. Native review/scroll changes do not change
+(typing, pastes, agent text and agent Enter), resize, exit and configured history
+trimming. Native review/scroll changes do not change
 it. Lost-history counts refer to retired rows missing from the active grid,
 not eviction of a frozen review. Alternate screens return only their current
 screen; a full emulator reset begins a new history-loss baseline. Owned results
@@ -257,7 +262,8 @@ and the real-PTY delayed Enter are covered in
 writes and the guarded Enter; it never exposes raw input or other keys.
 Queued text is cancelled on native input, mode changes, terminal exit and
 revocation. Started partial writes have an uncertain outcome and are never
-replayed. Context snapshots share the existing terminal retention budget.
+replayed. Context snapshots have independent 8 MiB per-reader and 64 MiB
+per-host retention limits, without charging native terminal history or review.
 
 The window prefix is `Ctrl-w` by default and may be moved by `keys.window`.
 Terminal Insert reserves the effective prefix for Runyte's complete window

@@ -467,13 +467,6 @@ impl WorkspaceHost {
         for reader in self.context.readers.values_mut() {
             reader.reads.expire();
         }
-        self.app.terminals.set_external_retained_bytes(
-            self.context
-                .readers
-                .values()
-                .map(|reader| reader.reads.retained_bytes())
-                .sum(),
-        );
         if std::mem::take(&mut self.app.context_ui.channel_page_requested) {
             let page = self.context_channel_page();
             self.context.channel_page_revision = self.context.channel.revision();
@@ -723,13 +716,6 @@ impl WorkspaceHost {
         self.context.channel.disconnect(id);
         self.context_channel_changed();
         self.context_cancel_enters(id);
-        self.app.terminals.set_external_retained_bytes(
-            self.context
-                .readers
-                .values()
-                .map(|reader| reader.reads.retained_bytes())
-                .sum(),
-        );
     }
 
     #[cfg(windows)]
@@ -821,7 +807,6 @@ impl WorkspaceHost {
         self.context.retirement_permit.take();
         self.context.events.take();
         self.context.storage.take();
-        self.app.terminals.set_external_retained_bytes(0);
         result
     }
 
@@ -1141,13 +1126,6 @@ impl WorkspaceHost {
         }
         let lease = reader.lease.clone();
         self.context.readers.insert(id, reader);
-        self.app.terminals.set_external_retained_bytes(
-            self.context
-                .readers
-                .values()
-                .map(|reader| reader.reads.retained_bytes())
-                .sum(),
-        );
         let value = match result {
             Ok(mut result) => {
                 if let Some(object) = result.as_object_mut() {

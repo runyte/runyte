@@ -995,7 +995,6 @@ impl App {
                         session.goto_review_offset(offset, self.mode == Mode::Select);
                         session.focus_review_selection(rows.max(1), scroll_offset);
                     }
-                    self.terminals.enforce_memory_budget();
                 } else {
                     self.jump_to_word(offset);
                 }

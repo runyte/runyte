@@ -359,6 +359,7 @@ impl TerminalSessions {
         }
         let mut session = pending.session.take().expect("pending session");
         session.emulator.set_default_colors(self.default_colors);
+        session.set_scrollback_lines(self.scrollback_lines);
         // Numbered on arrival rather than on preparation: a handoff that is
         // cancelled never held a number another terminal had to skip.
         session.number = Some(self.free_number());

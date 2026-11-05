@@ -138,7 +138,7 @@ fn lost_or_edited_rows_do_not_connect_unrelated_url_fragments() {
     }
     let mut terminal = session(8, 2);
     terminal.feed(b"https://example.com/long/path");
-    while terminal.emulator.grid_mut().drop_oldest_scrollback() {}
+    terminal.set_scrollback_lines(0);
     assert_eq!(
         target_at(&mut terminal, "long").as_deref(),
         Some("com/long")
