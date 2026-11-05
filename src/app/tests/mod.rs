@@ -180,6 +180,7 @@ fn production_source() -> String {
 }
 
 mod async_syntax;
+mod command_discovery;
 mod commands;
 mod comparisons;
 mod config_reload;

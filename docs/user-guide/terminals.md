@@ -11,7 +11,7 @@ showing it.
 | `:terminal` (`:term`, `:t`), `Space t n`, `Ctrl-w t` | `$SHELL` on Unix, `%COMSPEC%` (else `cmd.exe`) on Windows, in the editor working directory. Not available in [editor mode](workspaces-and-persistent-sessions.md#editor-mode). |
 | `:terminal htop` | That command line |
 | `:terminal-file-directory [command]` | From the active file's parent |
-| `:terminal-directory-root [command]` | From the active explorer's root |
+| `:terminal-directory-root [command]` | In the directory the active explorer shows |
 | `:terminal-selected-directory [command]` | From the selected directory entry |
 | `:terminal-session-directory <number\|name>` | A shell in another terminal's last safe directory |
 | `Tab t` in an explorer | A terminal in the directory the explorer shows |

@@ -350,6 +350,12 @@ async fn response_ignoring_visuals(client: &mut LocalClient) -> HostResponse {
     }
 }
 
+/// Waits until the host has answered Git discovery for the project.
+///
+/// The palette offers only commands that can run, so a Git command waiting
+/// on discovery is simply absent there. The service-health report is where
+/// the waiting itself is described, so it is reopened until its Git row no
+/// longer says discovery is in progress.
 async fn wait_for_git_discovery(endpoint: &LocalEndpoint) {
     let mut client = LocalClient::connect(endpoint, geometry(), true)
         .await
@@ -358,48 +364,62 @@ async fn wait_for_git_discovery(endpoint: &LocalEndpoint) {
         response(&mut client).await,
         HostResponse::Welcome { .. }
     ));
-    for event in [
+    let key = |code| {
         InputEvent::from(runyte::input::KeyStroke::new(
-            runyte::input::KeyCode::Char(':'),
+            code,
             runyte::input::Modifiers::NONE,
-        )),
-        InputEvent::Text("git-worktrees".to_owned()),
-    ] {
-        client
-            .send(&ClientRequest::Input {
-                presented_frame: None,
-                event: event.into(),
-                repeated: false,
-            })
-            .await
-            .unwrap();
-    }
-    loop {
-        match response(&mut client).await {
-            HostResponse::Frame { frame } => {
-                let row = frame
-                    .overlays
-                    .iter()
-                    .find(|overlay| overlay.title == "Commands")
-                    .and_then(|overlay| {
-                        overlay
-                            .rows
-                            .iter()
-                            .find(|row| row.label.contains(":git-worktrees"))
-                    });
-                if row.is_some_and(|row| {
-                    row.available || !row.detail.contains("discovery is still in progress")
-                }) {
-                    break;
+        ))
+    };
+    'report: loop {
+        for event in [
+            key(runyte::input::KeyCode::Char(':')),
+            InputEvent::Text("service-health".to_owned()),
+            key(runyte::input::KeyCode::Enter),
+        ] {
+            client
+                .send(&ClientRequest::Input {
+                    presented_frame: None,
+                    event: event.into(),
+                    repeated: false,
+                })
+                .await
+                .unwrap();
+        }
+        loop {
+            match response(&mut client).await {
+                HostResponse::Frame { frame } => {
+                    let Some(git) = frame
+                        .overlays
+                        .iter()
+                        .filter(|overlay| overlay.title == "Service health")
+                        .flat_map(|overlay| &overlay.rows)
+                        .find(|row| row.label == "git")
+                    else {
+                        continue;
+                    };
+                    let pending = git.detail.contains("discovery is still in progress");
+                    client
+                        .send(&ClientRequest::Input {
+                            presented_frame: None,
+                            event: key(runyte::input::KeyCode::Escape).into(),
+                            repeated: false,
+                        })
+                        .await
+                        .unwrap();
+                    if !pending {
+                        break 'report;
+                    }
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    continue 'report;
                 }
+                HostResponse::TerminalDamage { .. } => {
+                    client.send(&ClientRequest::Resynchronize).await.unwrap();
+                }
+                HostResponse::EditorDamage { .. } => {
+                    client.send(&ClientRequest::Resynchronize).await.unwrap();
+                }
+                response => panic!("expected a Git discovery frame, got {response:?}"),
             }
-            HostResponse::TerminalDamage { .. } => {
-                client.send(&ClientRequest::Resynchronize).await.unwrap();
-            }
-            HostResponse::EditorDamage { .. } => {
-                client.send(&ClientRequest::Resynchronize).await.unwrap();
-            }
-            response => panic!("expected a Git discovery frame, got {response:?}"),
         }
     }
     client.send(&ClientRequest::Detach).await.unwrap();

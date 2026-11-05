@@ -504,7 +504,7 @@ impl App {
 impl App {
     /// Shared discovery/admission checks include negotiated row availability.
     /// Snapshot encoding and queue admission remain execution-time checks.
-    fn plugin_command_preflight(&self, command: &RuntimeCommand) -> Result<()> {
+    pub(super) fn plugin_command_preflight(&self, command: &RuntimeCommand) -> Result<()> {
         // Native Stop must remain available while work is busy or cancelling.
         if command.local == "stop" {
             return Ok(());
@@ -583,6 +583,11 @@ impl App {
                 {
                     return false;
                 }
+                // The runtime applicability the invocation itself checks,
+                // so a command that would be refused here is not offered.
+                if self.plugin_command_preflight(c).is_err() {
+                    return false;
+                }
                 if query.chars().any(char::is_whitespace) && exact.is_some() {
                     return exact.is_some_and(|exact| exact.id == c.id);
                 }
@@ -622,10 +627,6 @@ impl App {
                     command.palette_name()
                 },
                 category: crate::command::CommandCategory::Editing,
-                availability: match self.plugin_command_preflight(command) {
-                    Ok(()) => super::CommandAvailability::Available,
-                    Err(error) => super::CommandAvailability::Unavailable(error.to_string()),
-                },
             })
             .collect()
     }

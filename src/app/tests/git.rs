@@ -8710,13 +8710,16 @@ fn fetch_capability_explains_untracked_local_upstreams_in_colon_and_tab_discover
         .unwrap()
         .to_owned();
     assert!(reason.contains("configure a remote upstream"));
+    // The palette leaves out what cannot run; typing it still explains why.
     let commands = app.matching_commands();
-    assert_eq!(
+    assert!(
         commands
             .iter()
-            .find(|command| command.name == "git-fetch-branch")
-            .unwrap()
-            .availability
+            .all(|command| command.name != "git-fetch-branch")
+    );
+    assert_eq!(
+        app.command_capabilities()
+            .command_availability(crate::command::resolve_command("git-fetch-branch").unwrap())
             .reason(),
         Some(reason.as_str())
     );

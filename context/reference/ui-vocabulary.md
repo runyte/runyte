@@ -391,8 +391,8 @@ signals, and each one answers a different question.
   reference use: both final semantic columns occupy the pinned run, so clipping
   identity columns cannot separate or hide either one.
 - **Row emphasis** — the colours a row assigns to its own parts: the matched
-  characters of a fuzzy query, the active parameter of a signature, an
-  available command's name in the theme's `command` colour against its muted
+  characters of a fuzzy query, the active parameter of a signature, a
+  command's name in the theme's `command` colour against its muted
   category, an action's mnemonic label against its muted description. It answers *what about this
   row*, and the other two signals never repaint it. The selection therefore
   contributes a background and no foreground, so a row's columns still read
@@ -422,6 +422,30 @@ deliberate exception, and they omit only the marker. They are narrow by
 design and sit against the source text they describe, where two borrowed
 columns cost more than the marker adds; the selection ground alone says which
 candidate is selected.
+
+## Command discovery
+
+The `:` palette is a contextual list: it offers only the commands that can
+run in the active view, and a command that cannot is absent rather than
+dimmed. One rule covers every restriction — platform, mode, frontend, the
+service capability a command needs, and the target its view must supply
+(`CommandContext`, evaluated from the active pane's content, so a pane
+showing a terminal or native media has no text document). A palette row
+therefore never carries an availability clause, and the row's detail names
+other spellings only when the command has some.
+
+Explicit invocation is separate from discovery. Every registered name and
+alias still resolves; Enter on one the palette leaves out closes the palette,
+echoes the reason as command feedback in the interaction line, and changes no
+other editor state. The palette is closed because, with the row absent, nothing
+on screen could otherwise say why Enter did nothing. Argument rows — path hints and plugin IDs — follow the same
+availability as the command they complete. A palette selection belongs to
+the command chosen rather than to its row: when rows shift while the palette
+is open the selection follows that command, and if it has gone, completion
+refuses instead of taking the row's new occupant.
+
+Key hints and help keep their own presentation, dimming by capability with a
+reason, and the manual still documents the full registry.
 
 ## Key legend
 
@@ -637,8 +661,9 @@ finishes. Initial syntax completion contributes colours and command availability
 without resetting the selection, viewport, wrapping, or undo history. Pending
 syntax uses the ordinary text rendering path and introduces no loading overlay.
 `Space x` and `mm` remain discoverable but dimmed until a current tree is present;
-hints and the palette distinguish `Syntax is still parsing` from an unsupported
-language or failed parse. Routine completion is silent. Language-service health
+hints and an explicitly typed command distinguish `Syntax is still parsing` from
+an unsupported language or failed parse, while the palette leaves the outline
+out until it can run. Routine completion is silent. Language-service health
 reports pending work or failure through the existing service-health surface.
 
 ## Plugins
@@ -650,6 +675,8 @@ filters out built-ins. Registered unique aliases display as `::name`; full
 alias is absent or ambiguous. Completion preserves typed arguments, and removing
 the second colon returns to the ordinary palette. Help, hints and argument prompts
 prefer the active alias from the same runtime registry.
+Both palettes leave out a runtime command its own invocation preflight would
+refuse, so `:` and `::` share one applicability rule.
 They introduce no new pane content or overlay. Acceptance and completion use
 the interaction line; stale, closed and read-only results produce protective
 warning notifications, process/protocol failures produce errors, and explicit

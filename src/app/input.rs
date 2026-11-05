@@ -347,6 +347,7 @@ impl App {
             },
             workspace: CommandAvailability::Available,
             terminals: CommandAvailability::Available,
+            contexts: self.command_contexts(),
         };
         // Without a workspace these services were never started, and the
         // reason that helps is the one naming how to get a workspace rather
@@ -378,12 +379,22 @@ impl App {
         self.matching_commands_with_capabilities(&capabilities)
     }
 
+    /// The palette rows for the typed text: commands that can run here.
+    ///
+    /// A command whose platform, service or target is missing is left out
+    /// rather than listed dimmed, so what is offered is what would act. The
+    /// registry still resolves every spelling: a hidden command typed in
+    /// full is refused with its reason on Enter, and its typed text and the
+    /// editor are left as they were.
     pub(super) fn matching_commands_with_capabilities(
         &self,
         capabilities: &AppCapabilitySnapshot,
     ) -> Vec<CommandMatch<'_>> {
         let trimmed = self.command.trim();
         let query = trimmed.split_whitespace().next().unwrap_or_default();
+        let applicable = |spec: &&'static crate::command::CommandSpec| {
+            capabilities.command_availability(spec).is_available()
+        };
         if trimmed.starts_with(':') {
             let mut matches = self.plugin_command_matches(trimmed);
             matches.sort_by_key(|matched| {
@@ -396,15 +407,22 @@ impl App {
             // command once under its canonical name.
             let mut commands = COMMANDS
                 .iter()
-                .map(|spec| CommandMatch::canonical(spec, capabilities))
+                .filter(applicable)
+                .map(CommandMatch::canonical)
                 .collect::<Vec<_>>();
             commands.extend(self.plugin_command_matches(""));
             commands.sort_by_key(|matched| matched.name);
             return commands;
         }
-        if trimmed.chars().any(char::is_whitespace) && resolve_command(query).is_some() {
-            return resolve_command(query)
-                .map(|spec| CommandMatch::canonical(spec, capabilities))
+        if trimmed.chars().any(char::is_whitespace)
+            && let Some(spec) = resolve_command(query)
+        {
+            // Arguments follow a complete spelling, so the row is that
+            // command or nothing: never another command that happens to
+            // match the arguments as text.
+            return Some(spec)
+                .filter(applicable)
+                .map(CommandMatch::canonical)
                 .into_iter()
                 .collect();
         }
@@ -414,6 +432,7 @@ impl App {
             .collect::<Vec<_>>();
         let mut matches = COMMANDS
             .iter()
+            .filter(applicable)
             .filter_map(|spec| {
                 let matched_name = spec.names().find(|name| name.starts_with(query));
                 let haystack = format!(
@@ -428,8 +447,8 @@ impl App {
                 (matched_name.is_some() || terms.iter().all(|term| haystack.contains(term))).then(
                     || {
                         matched_name.map_or_else(
-                            || CommandMatch::canonical(spec, capabilities),
-                            |name| CommandMatch::new(spec, name, capabilities),
+                            || CommandMatch::canonical(spec),
+                            |name| CommandMatch::new(spec, name),
                         )
                     },
                 )
@@ -471,6 +490,15 @@ impl App {
             CommandArguments::Required(ArgumentKind::Path)
                 | CommandArguments::Optional(ArgumentKind::Path)
         ) {
+            return None;
+        }
+        // A command that cannot run here offers no argument rows either:
+        // Enter explains why, as it does for the command's own row.
+        if !self
+            .command_capabilities()
+            .command_availability(spec)
+            .is_available()
+        {
             return None;
         }
         Some(self.path_hints_for(argument))
@@ -4256,15 +4284,25 @@ impl App {
                 let availability =
                     spec.map(|spec| self.command_capabilities().command_availability(spec));
                 if let Some(CommandAvailability::Unavailable(reason)) = availability {
-                    // Deliberately does not call report_completed_action: the
-                    // palette is still open (the same "correctable input"
-                    // treatment as a schema error below), and the
-                    // interaction line is the palette's own text until it
-                    // closes. Echoing here would mean closing it out from
-                    // under whoever is still typing, which is exactly the
-                    // "notifications never replace [the prompt]" rule this
-                    // stays retained-only for; see the resolved issue file.
-                    self.mark_unavailable(format!("{description} is unavailable: {reason}"));
+                    // The palette leaves this command out, so while it is
+                    // open nothing on screen could say why Enter did
+                    // nothing. Close it as an attempted command does and
+                    // echo the refusal in the interaction line instead.
+                    // Nothing runs, so no editor state changes.
+                    self.command.clear();
+                    self.command_cursor = 0;
+                    self.command_selection = 0;
+                    self.command_selection_anchor = None;
+                    self.mode = Mode::Normal;
+                    self.mark_unavailable(reason.clone());
+                    self.report_completed_action(
+                        &format!(":{name}"),
+                        &description,
+                        CommandOutcome::Unavailable(reason),
+                    );
+                    if let Some(mode) = self.grammar.preferred_mode() {
+                        self.mode = mode;
+                    }
                     return Ok(());
                 }
                 let has_argument = command
@@ -4303,9 +4341,13 @@ impl App {
             }
             Some(Action::Previous) => self.select_previous_command(),
             Some(Action::Next) => self.select_next_command(),
-            Some(Action::First) => self.command_selection = 0,
+            Some(Action::First) => {
+                self.command_selection = 0;
+                self.anchor_command_selection();
+            }
             Some(Action::Last) => {
                 self.command_selection = self.command_hint_count().saturating_sub(1);
+                self.anchor_command_selection();
             }
             Some(Action::Complete) => self.complete_selected_command(),
             None if matches!(key.code, KeyCode::Char(_))
@@ -5849,6 +5891,7 @@ impl App {
         self.command.clear();
         self.command_cursor = 0;
         self.command_selection = 0;
+        self.command_selection_anchor = None;
         self.program_action_menu = None;
         self.prompt_revision = self.prompt_revision.wrapping_add(1);
         self.begin_search_preview();
@@ -5879,6 +5922,7 @@ impl App {
         self.command.clear();
         self.command_cursor = 0;
         self.command_selection = 0;
+        self.command_selection_anchor = None;
         self.program_action_menu = None;
         self.prompt_kind = PromptKind::Command;
         // Abandoning the prompt abandons the file with it, so a later prompt
@@ -7021,15 +7065,86 @@ impl App {
     fn select_next_command(&mut self) {
         let count = self.command_hint_count();
         if count > 0 {
-            self.command_selection = (self.command_selection + 1) % count;
+            self.command_selection = match self.current_command_row() {
+                Some(row) => (row + 1) % count,
+                None => 0,
+            };
+            self.anchor_command_selection();
         }
     }
 
     fn select_previous_command(&mut self) {
         let count = self.command_hint_count();
         if count > 0 {
-            self.command_selection = (self.command_selection + count - 1) % count;
+            self.command_selection = match self.current_command_row() {
+                Some(row) => (row + count - 1) % count,
+                None => count - 1,
+            };
+            self.anchor_command_selection();
         }
+    }
+
+    /// Which palette row is selected among `matches`.
+    ///
+    /// A command chosen by moving through the rows stays selected while the
+    /// rows shift beneath it, as they do when a job finishes or a terminal
+    /// closes with the palette open. Once that command is no longer offered
+    /// nothing is selected, so completing refuses rather than taking
+    /// whichever command moved into its row.
+    ///
+    /// Typing the exact spelling of a command that cannot run here selects
+    /// nothing either, until a row is chosen deliberately: the rows offered
+    /// are other commands, and completing to one of them would turn what was
+    /// typed into a different command.
+    pub fn selected_command_row(&self, matches: &[CommandMatch<'_>]) -> Option<usize> {
+        match &self.command_selection_anchor {
+            Some((text, id)) if *text == self.command => {
+                matches.iter().position(|matched| matched.spec.id == *id)
+            }
+            _ if self.typed_command_refusal().is_some() => None,
+            _ => (!matches.is_empty()).then(|| self.command_selection.min(matches.len() - 1)),
+        }
+    }
+
+    /// Why the command whose complete spelling is typed cannot run here, as
+    /// Enter would report it, or `None` when it can or none is typed.
+    fn typed_command_refusal(&self) -> Option<String> {
+        let typed = self.command.trim();
+        if typed.is_empty() || typed.contains(char::is_whitespace) {
+            return None;
+        }
+        if let Some(spec) = resolve_command(typed) {
+            let reason = self
+                .command_capabilities()
+                .command_availability(spec)
+                .reason()?
+                .to_owned();
+            return Some(format!("{} is unavailable: {reason}", spec.description));
+        }
+        // A plugin spelling, in `:` or `::`, is hidden by its own preflight.
+        let command = self.plugin_command_named(typed)?;
+        let error = self.plugin_command_preflight(command).err()?;
+        Some(format!("{} is unavailable: {error}", command.description))
+    }
+
+    /// The selected row of whichever rows the palette shows.
+    fn current_command_row(&self) -> Option<usize> {
+        if self.matching_plugin_hints().is_some() || self.matching_path_hints().is_some() {
+            return Some(self.command_selection);
+        }
+        self.selected_command_row(&self.matching_commands())
+    }
+
+    /// Remembers the command now selected, when the rows are commands.
+    fn anchor_command_selection(&mut self) {
+        self.command_selection_anchor =
+            if self.matching_plugin_hints().is_some() || self.matching_path_hints().is_some() {
+                None
+            } else {
+                self.matching_commands()
+                    .get(self.command_selection)
+                    .map(|matched| (self.command.clone(), matched.spec.id))
+            };
     }
 
     /// Accepts the selected finder-path row. The whole prompt is one path, so
@@ -7108,7 +7223,28 @@ impl App {
             return;
         }
         let matches = self.matching_commands();
-        let Some(matched) = matches.get(self.command_selection).cloned() else {
+        let Some(matched) = self
+            .selected_command_row(&matches)
+            .and_then(|row| matches.get(row))
+            .cloned()
+        else {
+            drop(matches);
+            if let Some(refusal) = self.typed_command_refusal() {
+                // A hidden command typed in full is completed by nothing:
+                // the rows on offer are other commands.
+                self.mark_unavailable(refusal);
+            } else if self
+                .command_selection_anchor
+                .as_ref()
+                .is_some_and(|(text, _)| *text == self.command)
+            {
+                // The command chosen has gone since it was selected. Taking
+                // the row's new occupant would complete a command nobody
+                // chose, so the selection starts over instead.
+                self.command_selection = 0;
+                self.command_selection_anchor = None;
+                self.mark_unavailable("the selected command is no longer available here");
+            }
             return;
         };
         let argument = self

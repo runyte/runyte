@@ -246,6 +246,21 @@ impl App {
             .map_or(100, |area| usize::from(area.width.saturating_sub(8)))
     }
 
+    /// Whether the active revision comparison's caret row names a file, or
+    /// `None` when the active buffer is not a revision comparison at all.
+    ///
+    /// The row rule [`Self::open_revision_file`] applies, read without
+    /// acting, so command discovery offers a diff exactly where it opens one.
+    pub(super) fn revision_file_row_selected(&self) -> Option<bool> {
+        let buffer = self.active().buffer;
+        let document = self.git_state.comparisons.documents.get(&buffer)?;
+        let row = self.active_buffer().offset_to_row(self.active().head());
+        Some(
+            row.checked_sub(4)
+                .is_some_and(|row| row < document.comparison.files.len()),
+        )
+    }
+
     pub(super) fn open_revision_file(&mut self, split: bool) -> bool {
         let buffer = self.active().buffer;
         let Some(document) = self.git_state.comparisons.documents.get(&buffer) else {

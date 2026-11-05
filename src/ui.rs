@@ -4985,25 +4985,6 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
                 } else {
                     format!("  aliases: {}", others.join(", "))
                 };
-                let available = matched.availability.is_available();
-                let primary = if available {
-                    app.theme.command
-                } else {
-                    app.theme.muted
-                };
-                let foreground = if available {
-                    app.theme.foreground
-                } else {
-                    app.theme.muted
-                };
-                // A row that cannot run says why, once. It used to say so
-                // twice — a `[unavailable]` badge as well as the reason — and
-                // the badge repeated what the muted row and the clause after
-                // the description already carried.
-                let unavailable = matched
-                    .availability
-                    .reason()
-                    .map_or_else(String::new, |reason| format!("  unavailable: {reason}"));
                 ListItem::new(Line::from(vec![
                     Span::styled(
                         format!("[{:<13}] ", matched.category.label()),
@@ -5011,11 +4992,13 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
                     ),
                     Span::styled(
                         format!(":{:<24}", matched.usage()),
-                        Style::default().fg(primary),
+                        Style::default().fg(app.theme.command),
                     ),
-                    Span::styled(matched.spec.description, Style::default().fg(foreground)),
+                    Span::styled(
+                        matched.spec.description,
+                        Style::default().fg(app.theme.foreground),
+                    ),
                     Span::styled(aliases, Style::default().fg(app.theme.muted)),
-                    Span::styled(unavailable, Style::default().fg(app.theme.muted)),
                 ]))
             })
             .collect()
@@ -5054,8 +5037,7 @@ fn draw_command_palette(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Re
         .highlight_style(selection_style(&app.theme))
         .highlight_symbol(selection_marker(&app.theme))
         .highlight_spacing(HighlightSpacing::Always);
-    let selected =
-        (!matches.is_empty()).then_some(app.command_selection.min(matches.len().saturating_sub(1)));
+    let selected = app.selected_command_row(&matches);
     let mut state = ListState::default().with_selected(selected);
     frame.render_widget(Clear, area);
     StatefulWidget::render(list, area, frame.buffer_mut(), &mut state);
@@ -9634,16 +9616,24 @@ mod tests {
     }
 
     #[test]
-    fn command_palette_labels_categories_and_contextually_unavailable_rows() {
-        let backend = TestBackend::new(100, 12);
-        let mut terminal = Terminal::new(backend).unwrap();
+    fn command_palette_labels_categories_and_leaves_out_unavailable_rows() {
+        let render = |app: &mut App| {
+            let backend = TestBackend::new(100, 12);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal
+                .draw(|frame| render_test_frame(frame, app, &KeyHintState::default()))
+                .unwrap();
+            terminal.backend().buffer().clone()
+        };
+        let text = |buffer: &ratatui::buffer::Buffer| -> String {
+            buffer
+                .content
+                .iter()
+                .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+                .collect()
+        };
         let mut app = App::new(Config::default(), None).unwrap();
-        app.handle_key(crate::input::KeyStroke::new(
-            crate::input::KeyCode::Char(':'),
-            crate::input::Modifiers::NONE,
-        ))
-        .unwrap();
-        for character in "outline".chars() {
+        for character in ":outline".chars() {
             app.handle_key(crate::input::KeyStroke::new(
                 crate::input::KeyCode::Char(character),
                 crate::input::Modifiers::NONE,
@@ -9651,29 +9641,26 @@ mod tests {
             .unwrap();
         }
 
-        terminal
-            .draw(|frame| render_test_frame(frame, &mut app, &KeyHintState::default()))
-            .unwrap();
-        let rendered: String = terminal
-            .backend()
-            .buffer()
-            .content
-            .iter()
-            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
-            .collect();
-        assert!(rendered.contains("[Syntax"));
-        // The row no longer carries an `[unavailable]` badge: it recedes into
-        // the muted role instead, and the reason still follows the row. The
-        // badge said the same thing a third time.
-        assert!(!rendered.contains("[unavailable]"));
-        let buffer = terminal.backend().buffer().clone();
-        let (name, row) = find_text(&buffer, ":outline").expect("the palette lists the command");
-        let theme = TuiTheme::new(&app.theme);
-        assert_eq!(
-            buffer[(name, row)].fg,
-            theme.muted,
-            "a command that cannot run gives up the palette's command colour"
+        // A scratch buffer has no syntax tree, so the outline is not offered
+        // at all rather than offered dimmed with a reason.
+        let buffer = render(&mut app);
+        let rendered = text(&buffer);
+        assert!(rendered.contains("No matching commands"), "{rendered}");
+        assert!(!rendered.contains("[Syntax"), "{rendered}");
+        assert!(!rendered.contains("unavailable"));
+
+        app.command = "zen".to_owned();
+        app.command_cursor = 3;
+        let buffer = render(&mut app);
+        let rendered = text(&buffer);
+        assert!(rendered.contains("[View"), "{rendered}");
+        assert!(
+            !rendered.contains("aliases"),
+            "no other spellings, no aliases clause"
         );
+        let (name, row) = find_text(&buffer, ":zen").expect("the palette lists the command");
+        let theme = TuiTheme::new(&app.theme);
+        assert_eq!(buffer[(name, row)].fg, theme.command);
     }
 
     #[test]

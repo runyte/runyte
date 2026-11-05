@@ -5905,6 +5905,153 @@ impl App {
         paths
     }
 
+    /// Why a Git command has no target in the active view, read from rows
+    /// and caches this module already projected.
+    ///
+    /// Each answer is the first refusal the matching workflow gives, so
+    /// command discovery offers a Git action exactly where it would act.
+    /// Nothing here asks Git: a repository that the service has yet to
+    /// describe is the capability's question, answered before this one.
+    pub(super) fn git_target_context(
+        &self,
+        context: crate::command::CommandContext,
+    ) -> Result<(), String> {
+        use crate::command::CommandContext as Context;
+        let buffer = self.active_buffer();
+        let row = || buffer.offset_to_row(self.active().head());
+        match context {
+            Context::GitFile => self.git_file_context(),
+            Context::GitDiffTarget => match self.revision_file_row_selected() {
+                Some(true) => Ok(()),
+                Some(false) => Err("this row is not a file".to_owned()),
+                None if buffer.is_git_status() => {
+                    if self.changed_entry_at_cursor().is_some() {
+                        Ok(())
+                    } else {
+                        Err("this row is not a file".to_owned())
+                    }
+                }
+                None => self.git_file_context(),
+            },
+            Context::GitFileChange if buffer.is_git_status() => {
+                if !self.any_changed_file_selected() {
+                    Err("no files are selected".to_owned())
+                } else {
+                    Ok(())
+                }
+            }
+            Context::GitFileChange => self.git_file_context(),
+            Context::GitUnstagedHunk | Context::GitStagedHunk => {
+                if self.ports.git_service.is_none() {
+                    return Err("partial staging requires the asynchronous Git service".to_owned());
+                }
+                let Some((_, scope)) = self.git_state.diff_buffers.get(&self.active().buffer)
+                else {
+                    return Err("hunk staging is available in a per-file Git diff view".to_owned());
+                };
+                match (context, scope) {
+                    (Context::GitUnstagedHunk, DiffScope::Staged) => {
+                        Err("this is a staged diff; use git-unstage-hunk".to_owned())
+                    }
+                    (Context::GitStagedHunk, DiffScope::Unstaged) => {
+                        Err("this is not a staged diff; use git-stage-hunk".to_owned())
+                    }
+                    _ => Ok(()),
+                }
+            }
+            Context::GitSelectedLines => {
+                if self.ports.git_service.is_none() {
+                    Err("partial staging requires the asynchronous Git service".to_owned())
+                } else if buffer.kind != BufferKind::File || buffer.path.is_none() {
+                    Err("selected-line staging requires a saved file buffer".to_owned())
+                } else if self.active().selection.len() != 1 {
+                    Err(
+                        "selected-line staging currently accepts one contiguous selection"
+                            .to_owned(),
+                    )
+                } else {
+                    Ok(())
+                }
+            }
+            Context::GitComparisonRow if buffer.is_git_branches() => self.branch_row_context(row()),
+            Context::GitComparisonRow if buffer.is_git_worktrees() => {
+                if self.git_state.worktree_rows.get(row()).is_some() {
+                    Ok(())
+                } else {
+                    Err("this row is not a worktree".to_owned())
+                }
+            }
+            Context::GitComparisonRow => Err("select a branch or worktree to compare".to_owned()),
+            Context::GitBranchRow if buffer.is_git_branches() => self.branch_row_context(row()),
+            Context::GitBranchRow => Err("select a branch in the branch list to merge".to_owned()),
+            Context::GitStashRow if !buffer.is_git_stash() => {
+                Err("stash actions are only available in the stash list".to_owned())
+            }
+            Context::GitStashRow => {
+                if self.git_state.stash_rows.get(row()).is_some() {
+                    Ok(())
+                } else {
+                    Err("this row is not a stash".to_owned())
+                }
+            }
+            Context::GitWork => {
+                if self.git_state.progress.is_empty() {
+                    Err("no Git operation is queued or running".to_owned())
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether the selection covers a changed-file row, which is when
+    /// [`Self::selected_changed_files`] is non-empty, answered at the first
+    /// such row rather than by collecting every path.
+    fn any_changed_file_selected(&self) -> bool {
+        let pane = self.active();
+        let buffer = &self.buffers[pane.buffer];
+        pane.selection.ranges().iter().any(|range| {
+            let first = buffer.offset_to_row(range.from());
+            let last = buffer.offset_to_row(range.to().min(buffer.len_chars()));
+            (first..=last)
+                .any(|row| matches!(self.git_state.status_entries.get(row), Some(Some(_))))
+        })
+    }
+
+    /// The file rule shared by blame, diff, staging and discard outside the
+    /// changed-file list: a file buffer inside the current working tree.
+    fn git_file_context(&self) -> Result<(), String> {
+        let Some(repository) = self.git.repository() else {
+            return Err("this project is not in a Git repository".to_owned());
+        };
+        let Some(path) = self.active_buffer().path.as_deref() else {
+            return Err("this buffer has no file behind it".to_owned());
+        };
+        if repository.contains(path) {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} is outside {}",
+                path.display(),
+                repository.workdir().display()
+            ))
+        }
+    }
+
+    fn branch_row_context(&self, row: usize) -> Result<(), String> {
+        if self
+            .git_state
+            .branch_rows
+            .get(row)
+            .is_some_and(|row| row.branch.is_some() || row.remote.is_some())
+        {
+            Ok(())
+        } else {
+            Err("this row is not a branch".to_owned())
+        }
+    }
+
     /// The row the caret is on in the changed-file list, when it names a file.
     fn changed_entry_at_cursor(&self) -> Option<crate::git::StatusEntry> {
         let pane = self.active();

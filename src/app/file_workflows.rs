@@ -3307,13 +3307,32 @@ impl App {
         }
     }
 
-    pub(super) fn resize_pane_edge(&mut self, dx: i32, dy: i32, delta: i16) -> Result<()> {
-        let tree_boundary = self.directory_tree.visible
+    /// Why `resize_pane_edge(dx, dy, _)` would find no boundary to move.
+    ///
+    /// The same geometry the resize reads, without resizing, so command
+    /// discovery offers exactly the directions with an edge.
+    pub(super) fn pane_edge_context(&self, dx: i32, dy: i32) -> Result<(), &'static str> {
+        if self.pane_edge_touches_tree(dx, dy) && self.directory_tree_geometry.is_some() {
+            return Ok(());
+        }
+        if self.directory_tree.focused {
+            return Err("directory tree has no boundary in that direction");
+        }
+        if self.pane_neighbor(dx, dy).is_none() {
+            return Err("active pane has no boundary in that direction");
+        }
+        Ok(())
+    }
+
+    fn pane_edge_touches_tree(&self, dx: i32, dy: i32) -> bool {
+        self.directory_tree.visible
             && self.maximized.is_none()
             && ((self.directory_tree.focused && dx > 0)
-                || (!self.directory_tree.focused
-                    && dx < 0
-                    && self.pane_neighbor(dx, dy).is_none()));
+                || (!self.directory_tree.focused && dx < 0 && self.pane_neighbor(dx, dy).is_none()))
+    }
+
+    pub(super) fn resize_pane_edge(&mut self, dx: i32, dy: i32, delta: i16) -> Result<()> {
+        let tree_boundary = self.pane_edge_touches_tree(dx, dy);
         if tree_boundary && let Some((tree, editor)) = self.directory_tree_geometry {
             let editor_width = editor.width;
             let width = tree.width;
