@@ -726,7 +726,6 @@ impl App {
                 session.collapse_review_selection();
                 session.focus_review_selection(page, scroll_offset);
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 self.enter_normal_mode();
                 true
             }
@@ -740,7 +739,6 @@ impl App {
                 };
                 session.focus_review_selection(page, scroll_offset);
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 true
             }
             Command::SelectAll => {
@@ -748,7 +746,6 @@ impl App {
                 session.focus_review_selection(page, scroll_offset);
                 self.mode = Mode::Select;
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 true
             }
             Command::CollapseSelection => {
@@ -756,14 +753,12 @@ impl App {
                 session.focus_review_selection(page, scroll_offset);
                 self.mode = Mode::Normal;
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 true
             }
             Command::KeepPrimarySelection => {
                 session.keep_primary_review_selection();
                 session.focus_review_selection(page, scroll_offset);
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 self.status("kept primary selection");
                 true
             }
@@ -785,14 +780,12 @@ impl App {
                     self.mode = Mode::Select;
                 }
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 true
             }
             Command::CopySelectionDown | Command::CopySelectionUp => {
                 let copied = session.copy_review_selection(command == Command::CopySelectionDown);
                 session.focus_review_selection(page, scroll_offset);
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 if !copied {
                     self.action_failed("no room for another cursor");
                 }
@@ -810,7 +803,6 @@ impl App {
             Command::GotoWord => {
                 let targets = session.visible_review_word_targets(page);
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 match JumpLabels::with_visible_lengths(targets) {
                     Some(labels) => {
                         self.status(format!("jump to word: {} labels", labels.len()));
@@ -875,7 +867,6 @@ impl App {
                 session.move_review(motion, self.mode == Mode::Select);
                 session.focus_review_selection(page, scroll_offset);
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 true
             }
             Command::EnterInsertMode
@@ -898,14 +889,12 @@ impl App {
                 session.begin_review();
                 session.scroll_back(1);
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 true
             }
             Command::ScrollViewDown => {
                 session.begin_review();
                 session.scroll_forward(1);
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 true
             }
             Command::Search => {
@@ -938,7 +927,6 @@ impl App {
                     text.push('\n');
                 }
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 self.write_selected_register(Register {
                     text,
                     linewise: transient_line_selection,
@@ -958,7 +946,6 @@ impl App {
                     text.push('\n');
                 }
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 match self.ports.clipboard().write(&text) {
                     Ok(()) => self.status("terminal review selection yanked to system clipboard"),
                     Err(error) => self.error_from(
@@ -1015,7 +1002,6 @@ impl App {
             Command::Undo => {
                 let outcome = session.undo_sent_text();
                 let _ = session;
-                self.terminals.enforce_memory_budget();
                 match outcome {
                     SentTextUndo::Erased(characters) => self.status(format!(
                         "asked the child to erase {characters} pasted character{}",
@@ -1062,7 +1048,6 @@ impl App {
         if result.as_ref().is_ok_and(|count| *count > 0) {
             session.focus_review_selection(rows.max(1), scroll_offset);
         }
-        self.terminals.enforce_memory_budget();
         match result {
             Ok(0) => self.status("no terminal review matches"),
             Ok(count) => self.status(format!(

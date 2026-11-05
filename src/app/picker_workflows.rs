@@ -1426,16 +1426,16 @@ impl App {
                     .get_mut(terminal)
                     .is_some_and(|session| session.begin_review_at_line(line_id));
                 if !captured {
-                    self.action_failed("that terminal line is no longer retained");
-                    return;
-                }
-                self.terminals.enforce_memory_budget();
-                if !self
-                    .terminals
-                    .get(terminal)
-                    .is_some_and(TerminalSession::reviewing)
-                {
-                    self.action_failed("that terminal line exceeds the retained review budget");
+                    let message = if self
+                        .terminals
+                        .get(terminal)
+                        .is_some_and(TerminalSession::reviewing)
+                    {
+                        "that line is outside the current review; return to terminal input first"
+                    } else {
+                        "that terminal line is no longer retained"
+                    };
+                    self.action_failed(message);
                     return;
                 }
                 // Capture before moving the terminal: the destination pane may

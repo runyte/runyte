@@ -17,12 +17,8 @@ use std::collections::VecDeque;
 
 use unicode_width::UnicodeWidthChar;
 
-/// How many lines of scrollback one terminal keeps.
-///
-/// Bounded because a terminal that never forgets is a memory leak with a
-/// cursor. Five thousand lines is about what a person scrolls back through
-/// looking for the command before last, and costs a few megabytes at most.
-pub const SCROLLBACK_LIMIT: usize = 5_000;
+/// Default primary-screen history depth, independently for each terminal.
+pub const DEFAULT_SCROLLBACK_LINES: usize = 2_000;
 
 /// A colour a cell names.
 ///
@@ -88,8 +84,8 @@ pub struct Pen {
 
 /// Code points a cell holds after its first. The longest standard emoji, a
 /// kiss with two skin tones, has nine; one more is spare. A cell still owns
-/// no heap allocation, and the workspace budget is in bytes, so a larger
-/// cell means fewer scrollback cells rather than more memory.
+/// no heap allocation. History is bounded in rows per terminal, so wider
+/// terminals and larger cells use more memory for the same history depth.
 pub const COMBINING_CAPACITY: usize = 10;
 
 /// One grid cell.
@@ -268,6 +264,7 @@ pub struct Grid {
     lines: Vec<Line>,
     line_ids: Vec<LineMetadata>,
     scrollback: VecDeque<Line>,
+    scrollback_limit: usize,
     scrollback_ids: VecDeque<LineMetadata>,
     /// Whether lines leaving the top are kept. False for the alternate screen,
     /// which by definition has no history.
@@ -313,6 +310,7 @@ impl Grid {
                 .map(|local| LineMetadata::new(TerminalLineId::new(generation, local as u64)))
                 .collect(),
             scrollback: VecDeque::new(),
+            scrollback_limit: DEFAULT_SCROLLBACK_LINES,
             scrollback_ids: VecDeque::new(),
             keeps_history,
             retired: 0,
@@ -372,17 +370,23 @@ impl Grid {
             )
     }
 
-    pub fn scrollback_cells(&self) -> usize {
-        self.scrollback.iter().map(Vec::len).sum()
+    pub(super) fn scrollback_limit(&self) -> usize {
+        self.scrollback_limit
     }
 
-    /// Drops the oldest retained line for the workspace-wide memory budget.
-    pub fn drop_oldest_scrollback(&mut self) -> bool {
-        let dropped = self.scrollback.pop_front().is_some();
-        if dropped {
+    /// Trims only primary history; screen contents and row identities survive.
+    pub(super) fn set_scrollback_limit(&mut self, lines: usize) -> bool {
+        self.scrollback_limit = lines;
+        self.trim_scrollback()
+    }
+
+    fn trim_scrollback(&mut self) -> bool {
+        let trimmed = self.scrollback.len() > self.scrollback_limit;
+        while self.scrollback.len() > self.scrollback_limit {
+            self.scrollback.pop_front();
             self.scrollback_ids.pop_front();
         }
-        dropped
+        trimmed
     }
 
     pub fn scroll_region(&self) -> (usize, usize) {
@@ -555,10 +559,7 @@ impl Grid {
         self.scrollback.push_back(line);
         self.scrollback_ids.push_back(line_id);
         self.retired = self.retired.wrapping_add(1);
-        while self.scrollback.len() > SCROLLBACK_LIMIT {
-            self.scrollback.pop_front();
-            self.scrollback_ids.pop_front();
-        }
+        self.trim_scrollback();
     }
 
     fn allocate_line_id(&mut self) -> LineMetadata {
@@ -1429,13 +1430,13 @@ mod tests {
 
     #[test]
     fn bulk_scroll_retains_only_newest_history_and_delete_lines_retains_none() {
-        let rows = SCROLLBACK_LIMIT + 4;
+        let rows = DEFAULT_SCROLLBACK_LINES + 4;
         let mut grid = Grid::new(1, rows, true);
         write(&mut grid, &"x".repeat(rows));
         let identities = grid.line_ids.iter().map(|line| line.id).collect::<Vec<_>>();
         grid.scroll_up(rows, Pen::default());
         assert_eq!(grid.retired(), rows as u64);
-        assert_eq!(grid.scrollback_len(), SCROLLBACK_LIMIT);
+        assert_eq!(grid.scrollback_len(), DEFAULT_SCROLLBACK_LINES);
         assert_eq!(grid.scrollback_ids.front().unwrap().id, identities[4]);
         assert_eq!(grid.scrollback_ids.back().unwrap().id, identities[rows - 1]);
         assert!(
@@ -1486,11 +1487,11 @@ mod tests {
     #[test]
     fn retirement_keeps_counting_after_the_scrollback_limit() {
         let mut grid = Grid::new(4, 1, true);
-        for _ in 0..SCROLLBACK_LIMIT + 10 {
+        for _ in 0..DEFAULT_SCROLLBACK_LINES + 10 {
             grid.index(Pen::default());
         }
-        assert_eq!(grid.scrollback_len(), SCROLLBACK_LIMIT);
-        assert_eq!(grid.retired(), SCROLLBACK_LIMIT as u64 + 10);
+        assert_eq!(grid.scrollback_len(), DEFAULT_SCROLLBACK_LINES);
+        assert_eq!(grid.retired(), DEFAULT_SCROLLBACK_LINES as u64 + 10);
     }
 
     #[test]

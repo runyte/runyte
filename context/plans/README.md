@@ -56,6 +56,10 @@ Proposed work:
 
 The retained completed records cover:
 
+- [Per-terminal scrollback and stable review](completed/PLAN_TERMINAL_SCROLLBACK.md):
+  configurable history depth per terminal, frozen native review independent of
+  history limits, and separate external context retention ([#62](https://github.com/runyte/runyte/issues/62));
+
 - [Configurable UI actions](completed/PLAN_CONFIGURABLE_UI_ACTIONS.md): shared,
   scoped keyboard and pointer actions, structural input boundaries, captured
   native ownership, and effective bindings across terminal and native surfaces

@@ -750,6 +750,9 @@ impl App {
             return false;
         }
         self.sync_keymap();
+        if setting == SettingId::TerminalScrollbackLines {
+            self.sync_terminal_scrollback();
+        }
         if setting == SettingId::NotificationsHistoryLimit {
             self.notifications
                 .set_limit(self.config.notifications.history_limit);
@@ -806,6 +809,15 @@ impl App {
         self.theme = theme;
         self.theme_name = name;
         self.sync_terminal_default_colors();
+    }
+
+    pub(super) fn sync_terminal_scrollback(&mut self) {
+        self.terminals
+            .set_scrollback_lines(self.config.terminal.scrollback_lines);
+        let ids = self.terminals.ids();
+        for id in ids {
+            self.note_terminal_finder_change(id);
+        }
     }
 
     pub(super) fn sync_terminal_default_colors(&mut self) {

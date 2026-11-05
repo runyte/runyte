@@ -58,7 +58,10 @@ fn pending_terminal_fast_output_is_gated_until_install_and_arguments_remain_lite
     assert!(sessions.get(id).is_none());
     assert!(output.try_recv().is_err());
     assert!(!sessions.events.0.state.lock().unwrap().sessions[&id].active);
+    sessions.set_scrollback_lines(0);
     assert_eq!(sessions.install_prepared(pending).unwrap(), id);
+    sessions.get_mut(id).unwrap().feed(&b"line\r\n".repeat(20));
+    assert_eq!(sessions.get(id).unwrap().scrollback_rows(), 0);
     // Numbered on arrival, like a terminal the editor opened itself.
     assert_eq!(sessions.get(id).unwrap().number(), Some(1));
     // Owner stop after handoff must leave the native terminal and its output.
