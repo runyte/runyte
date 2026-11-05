@@ -4034,9 +4034,12 @@ mod tests {
             })
             .await
             .unwrap();
-        let failure = tokio::time::timeout(Duration::from_secs(3), server.recv())
-            .await
-            .expect("stalled write did not time out");
+        let failure = tokio::time::timeout(
+            CONNECTION_WRITE_STALL + Duration::from_secs(3),
+            server.recv(),
+        )
+        .await
+        .expect("stalled write did not time out");
         let Some(ServerEvent::TransportFailure {
             id: failed,
             message,

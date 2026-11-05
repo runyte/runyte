@@ -40,7 +40,7 @@ pub(super) const RESPONSE_CAPACITY: usize = 64;
 /// task or keep the host's interactive attachment occupied indefinitely, but
 /// the budget measures a stall rather than a whole message: see
 /// `write_message_with_timeout`.
-pub(super) const CONNECTION_WRITE_STALL: Duration = Duration::from_secs(2);
+pub(super) const CONNECTION_WRITE_STALL: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub enum ServerEvent<P = Option<u32>> {
