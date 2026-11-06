@@ -28,7 +28,7 @@ fn image(bytes: &[u8]) -> Option<StrongPtr> {
     unsafe {
         let data =
             NSData::dataWithBytes_length_(nil, bytes.as_ptr().cast(), bytes.len() as NSUInteger);
-        let image = NSImage::alloc(nil).initWithData_(data);
+        let image = NSImage::initWithData_(NSImage::alloc(nil), data);
         (image != nil).then(|| StrongPtr::new(image))
     }
 }
