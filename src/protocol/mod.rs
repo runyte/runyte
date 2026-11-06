@@ -218,8 +218,9 @@ use crate::workspace::{
 // Version 88 adds native media, preview and overflow-dismiss pointer action masks.
 // Version 89 distinguishes acknowledged preview focus handoffs from generic forwarding.
 // Version 90 adds the preview-zoom pointer action mask.
-// Version 91 distinguishes deliberate workspace opens from transport reconnects.
-pub const VERSION: u32 = 91;
+// Version 91 is used by the parallel preview change (#78).
+// Version 92 distinguishes deliberate workspace opens from transport reconnects.
+pub const VERSION: u32 = 92;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1616,7 +1617,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 91);
+        assert_eq!(VERSION, 92);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

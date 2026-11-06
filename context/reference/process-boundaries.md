@@ -159,7 +159,9 @@ and layout mutation; bundled frontends render the rectangle and report lost
 pointer capture. Cancellation clears the gesture and outline without applying
 a drop. Matching client and host protocol versions are required.
 
-Private protocol version 91 adds a `workspace_open` boolean to `Hello`.
+Private protocol version 92 adds a `workspace_open` boolean to `Hello`.
+Version 91 is used by the parallel preview change ([#78](https://github.com/runyte/runyte/pull/78));
+matching builds of this opening-intent contract require version 92.
 Only an interactive client may set it. Deliberate launch, attachment and
 workspace switching request a host-owned workspace echo; transport-only
 reconnections leave it false. The host retains discovery origin and decides
