@@ -93,6 +93,10 @@ fn isolate_runyte_children(command: &mut Command) {
         .env("XDG_CONFIG_HOME", test_cache_dir())
         .env("XDG_STATE_HOME", test_runtime_dir().join("state"))
         .env(
+            "RUNYTE_TEST_STATE_HOME",
+            test_runtime_dir().join("state/runyte"),
+        )
+        .env(
             "RUNYTE_ALL_HOSTS_DIR",
             test_runtime_dir().join("runyte/all-hosts"),
         )
