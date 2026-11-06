@@ -56,21 +56,31 @@ with no repository:
 
 A launch naming a file outside the launch directory, such as
 `runyte /etc/hosts` from `~/Downloads`, is not made one either: it is about
-that file, not about where the shell happened to be. These launches refuse;
-run `runyte --init DIRECTORY` to make a directory a workspace deliberately, or
-use `runyte --editor`.
+that file, not about where the shell happened to be. These launches refuse. The message names the mode, whether a flag or the
+`mode` setting selected it, where discovery started, and why the directory
+was not adopted. Open a project with `cd DIRECTORY && runyte`, make a
+workspace deliberately with `runyte --init DIRECTORY`, or edit without one
+with `runyte --editor`. A mux refusal instead offers
+`runyte --mux DIRECTORY` to open or create a workspace from the current
+directory, or `runyte --init DIRECTORY` to create one only. Replace
+`DIRECTORY` with the desired directory; quote paths containing spaces or shell
+characters. Displayed paths abbreviate your home directory as `~`.
 
 A launch that fails after making its workspace, for example because it has no
-terminal, leaves the `.runyte/` it created. mux launches, `--wait`, and session commands never create a
-workspace: run an ide launch or `--init` there first.
+terminal, leaves the `.runyte/` it created. A mux launch without a selector,
+`--wait`, and lifecycle management commands never create a workspace: run an
+ide launch or `--init` there first. An explicit directory attachment can
+create one, as described below.
 
 **`--init DIRECTORY`** creates the configured state directory (`.runyte/` by
 default) in exactly that directory, prints how to open it, and exits without
-starting the editor:
+starting the editor. Windows PowerShell uses
+`Set-Location -LiteralPath PATH; if ($?) { runyte }` for the ide opening
+command:
 
 ```
 initialized a workspace in /path/to/project
-open it with: runyte /path/to/project   or   runyte --mux /path/to/project
+open it with: cd '/path/to/project' && runyte   or   runyte --mux '/path/to/project'
 ```
 
 - An existing state directory is used as is, never reset or removed, and the

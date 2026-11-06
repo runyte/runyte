@@ -164,6 +164,15 @@ Details:
   exits with an explanation instead of starting a terminal that cannot tell
   file contents from input events.
 
+When a workspace launch refuses, its message names the mode and whether a
+flag or the `mode` setting selected it, the directory searched and, for ide,
+why that directory was not made a workspace. It lists commands to open a
+project, create a workspace, or (in ide mode) edit without one. A directory
+argument to ide opens an explorer; to choose a different workspace, use
+`cd DIRECTORY && runyte`. Mux can choose one directly with
+`runyte --mux DIRECTORY`. Replace `DIRECTORY` with the desired directory and
+quote paths containing spaces or shell characters.
+
 Inside the editor, press `Space` then `?` for contextual help. See
 [Help, hints, and the tutorial](the-screen.md#help-hints-and-the-tutorial).
 

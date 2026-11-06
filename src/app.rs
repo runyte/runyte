@@ -3420,9 +3420,35 @@ impl App {
     /// Builds editor state with every requested startup file already open.
     pub fn new_with_targets(config: Config, targets: Vec<LaunchTarget>) -> Result<Self> {
         let launch_directory = std::env::current_dir()?;
-        let project_root = project_root::discover(&launch_directory, &config.workspace.state)?
-            .ok_or_else(|| anyhow::anyhow!(project_root::NO_WORKSPACE_HERE))?;
+        let project_root = Self::discover_startup_workspace(
+            &config,
+            &launch_directory,
+            user_home_directory().as_deref(),
+        )?;
         Self::new_in_project_with_targets(config, targets, project_root)
+    }
+
+    fn discover_startup_workspace(
+        config: &Config,
+        launch_directory: &Path,
+        home: Option<&Path>,
+    ) -> Result<PathBuf> {
+        let project_root = project_root::discover(launch_directory, &config.workspace.state)?
+            .map(|workspace| workspace.root)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    project_root::WorkspaceRequirement::new(
+                        if config.mode() == crate::config::RunMode::Mux {
+                            project_root::WorkspaceMode::Mux
+                        } else {
+                            project_root::WorkspaceMode::Ide
+                        },
+                        false
+                    )
+                    .refusal(launch_directory, None, home)
+                )
+            })?;
+        Ok(project_root)
     }
 
     /// Builds editor state after startup has discovered or explicitly
