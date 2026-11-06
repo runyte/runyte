@@ -870,3 +870,52 @@ fn startup_failure_retains_bounded_readable_diagnostic_chain() {
     assert!(!text.contains('\u{1b}'));
     assert!(!text.is_empty());
 }
+
+#[test]
+fn first_close_survives_both_failure_orders_and_the_observation_gap() {
+    use super::{publish_worker_failure, request_window_close};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+    let state = || {
+        (
+            AtomicBool::new(false),
+            Mutex::new(None),
+            AtomicBool::new(false),
+        )
+    };
+
+    // Failure is already published: the close callback quits directly.
+    let (requested, failure, done) = state();
+    publish_worker_failure(&requested, &failure, &done, "failed".into());
+    assert!(request_window_close(&requested, || failure
+        .lock()
+        .unwrap()
+        .is_some()));
+    assert!(requested.load(Ordering::Acquire));
+
+    // Close arrives first: completion wakes the window with done set.
+    let (requested, failure, done) = state();
+    assert!(!request_window_close(&requested, || failure
+        .lock()
+        .unwrap()
+        .is_some()));
+    publish_worker_failure(&requested, &failure, &done, "failed".into());
+    assert!(done.load(Ordering::Acquire));
+
+    // Deterministically publish failure after the callback observed None but
+    // before that observation returns. The old check-then-store order loses
+    // this first close; no timing or concurrent scheduling is needed here.
+    let (requested, failure, done) = state();
+    let quit_directly = request_window_close(&requested, || {
+        let failed = failure.lock().unwrap().is_some();
+        publish_worker_failure(&requested, &failure, &done, "failed".into());
+        failed
+    });
+    assert!(!quit_directly);
+    assert!(
+        done.load(Ordering::Acquire),
+        "completion lost the first close"
+    );
+}

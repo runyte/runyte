@@ -793,6 +793,25 @@ fn startup_failure_text(error: &anyhow::Error) -> String {
     message
 }
 
+/// Publish close before observing failure: the worker must either see close,
+/// or this observation must see its completed failure.
+fn request_window_close(close_requested: &AtomicBool, failed: impl FnOnce() -> bool) -> bool {
+    close_requested.store(true, Ordering::Release);
+    failed()
+}
+
+fn publish_worker_failure(
+    close_requested: &AtomicBool,
+    failure: &Mutex<Option<String>>,
+    done: &AtomicBool,
+    message: String,
+) {
+    *failure.lock().unwrap() = Some(message);
+    if close_requested.load(Ordering::Acquire) {
+        done.store(true, Ordering::Release);
+    }
+}
+
 pub(crate) fn launch(
     worker: Box<dyn FnOnce() -> anyhow::Result<()> + Send>,
     font_size: usize,
@@ -852,13 +871,12 @@ pub(crate) fn launch(
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(worker))
                 .unwrap_or_else(|_| Err(anyhow::anyhow!("editor worker panicked")));
             if let Err(error) = &result {
-                *completion.failure.lock().unwrap() = Some(startup_failure_text(error));
-                // A close acquired while startup was still running also ends
-                // a worker that subsequently fails. Store the failure first so
-                // either this check or the close callback observes the race.
-                if completion.close_requested.load(Ordering::Acquire) {
-                    completion.done.store(true, Ordering::Release);
-                }
+                publish_worker_failure(
+                    &completion.close_requested,
+                    &completion.failure,
+                    &completion.done,
+                    startup_failure_text(error),
+                );
             } else {
                 completion.done.store(true, Ordering::Release);
             }
@@ -891,11 +909,12 @@ pub(crate) fn launch(
             move |window, cx| {
                 let close = bridge.clone();
                 window.on_window_should_close(cx, move |_, cx| {
-                    if close.failure.lock().unwrap().is_some() {
+                    if request_window_close(&close.close_requested, || {
+                        close.failure.lock().unwrap().is_some()
+                    }) {
                         cx.quit();
                         return true;
                     }
-                    close.close_requested.store(true, Ordering::Release);
                     let (w, h) = *close.dimensions.lock().unwrap();
                     close.send(Event::Resize(w, h));
                     false
