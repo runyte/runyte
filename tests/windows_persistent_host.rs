@@ -1415,9 +1415,9 @@ fn foreground_out_of_tree_host_refuses_foreign_writable_state_root_before_writes
     }
     runtime().block_on(async {
         let fixture = Fixture::new();
-        let parent = fixture.root.create_private_dir("state").unwrap();
-        let state = parent.join("runyte");
-        fs::create_dir(&state).unwrap();
+        // Explicitly set the current-user owner before broadening the DACL.
+        // Plain directory creation can choose a group owner with an elevated token.
+        let state = fixture.root.create_private_dir("runyte").unwrap();
         let directory = OpenOptions::new()
             .access_mode(FILE_GENERIC_READ | WRITE_DAC)
             .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
@@ -1467,6 +1467,7 @@ fn foreground_out_of_tree_host_refuses_foreign_writable_state_root_before_writes
                 .arg("--project-root")
                 .arg(&fixture.project)
                 .env("RUNYTE_TEST_OUT_OF_TREE_ROOT", &fixture.project)
+                .env("XDG_STATE_HOME", fixture.root.path())
                 .env("RUNYTE_TEST_STATE_HOME", &state)
                 .spawn()
                 .unwrap(),
