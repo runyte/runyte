@@ -409,6 +409,14 @@ fn refusal_sites_report_the_full_mode_source_search_and_recovery() {
     for (args, source) in [
         (vec![target.to_str().unwrap()], "the mode setting"),
         (vec!["--ide", target.to_str().unwrap()], "the --ide flag"),
+        (
+            vec![
+                "--config",
+                config.to_str().unwrap(),
+                target.to_str().unwrap(),
+            ],
+            "file or directory targets override mode: mux",
+        ),
     ] {
         let output = runyte(&owner, &directory, &args);
         assert_eq!(
@@ -464,11 +472,25 @@ fn suggested_commands_work_from_the_refused_launch_directory() {
                         .unwrap();
                     let stderr = String::from_utf8_lossy(&opened.stderr);
                     assert!(!stderr.contains("needs a workspace"), "{hint}: {stderr}");
+                    let state = destination.join(".runyte");
+                    if hint.starts_with("cd ") {
+                        assert!(!standalone_logs(&state).is_empty(), "{hint}: {stderr}");
+                    } else {
+                        assert!(state.join("host.log").is_file(), "{hint}: {stderr}");
+                    }
                 }
             } else if advice.contains("--editor") {
+                assert!(stderr.starts_with("Error: "), "{script}: {stderr}");
+                assert_eq!(output.status.code(), Some(1));
                 assert!(!launch.join(".runyte").exists());
             } else {
-                assert!(destination.join(".runyte").is_dir(), "{script}: {stderr}");
+                let state = destination.join(".runyte");
+                assert!(state.is_dir(), "{script}: {stderr}");
+                if mode == WorkspaceMode::Ide {
+                    assert!(!standalone_logs(&state).is_empty(), "{script}: {stderr}");
+                } else {
+                    assert!(state.join("host.log").is_file(), "{script}: {stderr}");
+                }
             }
             // A null-terminal mux attachment may have started a host. Always
             // stop the exact private fixture workspace before its owner drops.

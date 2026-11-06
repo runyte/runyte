@@ -1361,7 +1361,7 @@ async fn run(
                         project_root::discover(&directory, &state)?
                             .map(|workspace| workspace.root)
                             .with_context(|| {
-                                workspace_requirement(&arguments).refusal(
+                                workspace_requirement(&arguments, RunMode::Mux).refusal(
                                     &directory,
                                     None,
                                     crate::app::user_home_directory().as_deref(),
@@ -1678,7 +1678,7 @@ async fn run(
             let project_root = project_root::discover(&launch_directory, &config.workspace.state)?
                 .map(|workspace| workspace.root)
                 .with_context(|| {
-                    workspace_requirement(&arguments).refusal(
+                    workspace_requirement(&arguments, config.mode()).refusal(
                         &launch_directory,
                         None,
                         crate::app::user_home_directory().as_deref(),
@@ -1718,13 +1718,13 @@ async fn run(
                     &reserved_user_roots,
                     &user_home_directories(),
                     &targets,
-                    workspace_requirement(&arguments),
+                    workspace_requirement(&arguments, config.mode()),
                 )?;
                 startup.mark(StartupPhase::ProjectResolvedAutomatically);
                 adopted_workspace = true;
                 project_root
             }
-            None => anyhow::bail!(workspace_requirement(&arguments).refusal(
+            None => anyhow::bail!(workspace_requirement(&arguments, config.mode()).refusal(
                 &launch_directory,
                 None,
                 crate::app::user_home_directory().as_deref()
@@ -2580,7 +2580,10 @@ fn user_home_directories() -> Vec<PathBuf> {
     environment.into_iter().chain(account).collect()
 }
 
-fn workspace_requirement(arguments: &LaunchArguments) -> project_root::WorkspaceRequirement {
+fn workspace_requirement(
+    arguments: &LaunchArguments,
+    configured: RunMode,
+) -> project_root::WorkspaceRequirement {
     let mut requirement = project_root::WorkspaceRequirement::new(
         if arguments.mode == LaunchMode::Standalone {
             project_root::WorkspaceMode::Ide
@@ -2600,6 +2603,13 @@ fn workspace_requirement(arguments: &LaunchArguments) -> project_root::Workspace
         if let Some(flag) = flag {
             requirement.source = project_root::ModeSource::Flag(flag);
         }
+    }
+    if !arguments.mode_explicit
+        && arguments.mode == LaunchMode::Standalone
+        && !arguments.targets.is_empty()
+        && configured == RunMode::Mux
+    {
+        requirement.source = project_root::ModeSource::PositionalTargets;
     }
     requirement
 }
@@ -5461,7 +5471,7 @@ async fn run_parent_request(
             arguments.workspace_selector.as_deref(),
             &directory,
             &state,
-            workspace_requirement(arguments),
+            workspace_requirement(arguments, RunMode::Mux),
         )?;
         let selector = selector.as_path();
         control
@@ -6061,7 +6071,7 @@ async fn run_native_persistent(
             None => project_root::discover(&directory, &config.workspace.state)?
                 .map(|workspace| workspace.root)
                 .with_context(|| {
-                    workspace_requirement(arguments).refusal(
+                    workspace_requirement(arguments, config.mode()).refusal(
                         &directory,
                         None,
                         crate::app::user_home_directory().as_deref(),

@@ -67,8 +67,10 @@ directory, or `runyte --init DIRECTORY` to create one only. Replace
 characters. Displayed paths abbreviate your home directory as `~`.
 
 A launch that fails after making its workspace, for example because it has no
-terminal, leaves the `.runyte/` it created. mux launches, `--wait`, and session commands never create a
-workspace: run an ide launch or `--init` there first.
+terminal, leaves the `.runyte/` it created. A mux launch without a selector,
+`--wait`, and lifecycle management commands never create a workspace: run an
+ide launch or `--init` there first. An explicit directory attachment can
+create one, as described below.
 
 **`--init DIRECTORY`** creates the configured state directory (`.runyte/` by
 default) in exactly that directory, prints how to open it, and exits without

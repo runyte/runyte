@@ -67,6 +67,7 @@ pub enum WorkspaceMode {
 pub enum ModeSource {
     Flag(&'static str),
     Setting,
+    PositionalTargets,
 }
 
 impl WorkspaceRequirement {
@@ -94,6 +95,9 @@ impl WorkspaceRequirement {
         let source = match self.source {
             ModeSource::Flag(flag) => format!("the {flag} flag"),
             ModeSource::Setting => "the mode setting".to_owned(),
+            ModeSource::PositionalTargets => {
+                "file or directory targets override mode: mux".to_owned()
+            }
         };
         let mut message = format!(
             "runyte needs a workspace in {mode} mode ({source}), and none was found in {} or any directory above it.",
