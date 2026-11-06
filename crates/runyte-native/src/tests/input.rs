@@ -886,21 +886,25 @@ fn first_close_survives_both_failure_orders_and_the_observation_gap() {
         )
     };
 
-    // Failure is already published: the close callback quits directly.
+    // Failure is already published: close schedules asynchronous completion.
+    // The platform callback must return before the done gate calls quit.
     let (requested, failure, done) = state();
     publish_worker_failure(&requested, &failure, &done, "failed".into());
-    assert!(request_window_close(&requested, || failure
+    assert!(!done.load(Ordering::Acquire), "failure must wait for close");
+    assert!(request_window_close(&requested, &done, || failure
         .lock()
         .unwrap()
         .is_some()));
     assert!(requested.load(Ordering::Acquire));
+    assert!(done.load(Ordering::Acquire));
 
     // Close arrives first: completion wakes the window with done set.
     let (requested, failure, done) = state();
-    assert!(!request_window_close(&requested, || failure
+    assert!(!request_window_close(&requested, &done, || failure
         .lock()
         .unwrap()
         .is_some()));
+    assert!(!done.load(Ordering::Acquire));
     publish_worker_failure(&requested, &failure, &done, "failed".into());
     assert!(done.load(Ordering::Acquire));
 
@@ -908,12 +912,12 @@ fn first_close_survives_both_failure_orders_and_the_observation_gap() {
     // before that observation returns. The old check-then-store order loses
     // this first close; no timing or concurrent scheduling is needed here.
     let (requested, failure, done) = state();
-    let quit_directly = request_window_close(&requested, || {
+    let wake_completion = request_window_close(&requested, &done, || {
         let failed = failure.lock().unwrap().is_some();
         publish_worker_failure(&requested, &failure, &done, "failed".into());
         failed
     });
-    assert!(!quit_directly);
+    assert!(!wake_completion);
     assert!(
         done.load(Ordering::Acquire),
         "completion lost the first close"

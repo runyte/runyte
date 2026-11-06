@@ -795,9 +795,17 @@ fn startup_failure_text(error: &anyhow::Error) -> String {
 
 /// Publish close before observing failure: the worker must either see close,
 /// or this observation must see its completed failure.
-fn request_window_close(close_requested: &AtomicBool, failed: impl FnOnce() -> bool) -> bool {
+fn request_window_close(
+    close_requested: &AtomicBool,
+    done: &AtomicBool,
+    failed: impl FnOnce() -> bool,
+) -> bool {
     close_requested.store(true, Ordering::Release);
-    failed()
+    let failed = failed();
+    if failed {
+        done.store(true, Ordering::Release);
+    }
+    failed
 }
 
 fn publish_worker_failure(
@@ -908,15 +916,17 @@ pub(crate) fn launch(
             },
             move |window, cx| {
                 let close = bridge.clone();
-                window.on_window_should_close(cx, move |_, cx| {
-                    if request_window_close(&close.close_requested, || {
+                window.on_window_should_close(cx, move |_, _| {
+                    if request_window_close(&close.close_requested, &close.done, || {
                         close.failure.lock().unwrap().is_some()
                     }) {
-                        cx.quit();
-                        return true;
+                        // X11 retains its client borrow during this callback.
+                        // Quit through the async completion gate after it returns.
+                        let _ = close.wake.try_send(());
+                    } else {
+                        let (w, h) = *close.dimensions.lock().unwrap();
+                        close.send(Event::Resize(w, h));
                     }
-                    let (w, h) = *close.dimensions.lock().unwrap();
-                    close.send(Event::Resize(w, h));
                     false
                 });
                 cx.new(|cx| NativeView::new(bridge, font_size, window, cx))

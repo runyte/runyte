@@ -340,6 +340,7 @@ try:
         close_window(); p.wait(timeout=15)
         assert p.returncode != 0, 'refused startup succeeded'
         diagnostic = (root/'window.log').read_text()
+        assert 'panicked at' not in diagnostic, ('refusal close panicked', diagnostic)
         expected = 'invalid YAML' if args.startup_failure == 'config' else 'overlaps per-user Runyte storage'
         assert expected in diagnostic, ('refusal lost its diagnostic', diagnostic)
         print('PASS: visible graphical ' + args.startup_failure + ' refusal persists until close without editor input')
