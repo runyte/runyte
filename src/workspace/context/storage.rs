@@ -760,6 +760,10 @@ pub fn environment_fingerprint() -> String {
         std::env::var_os("XDG_STATE_HOME"),
         #[cfg(debug_assertions)]
         std::env::var_os("RUNYTE_TEST_STATE_HOME"),
+        // Keep ordinary debug/release fingerprints identical without reading
+        // the fixture selector in release builds.
+        #[cfg(not(debug_assertions))]
+        None,
     ];
     fingerprint_paths(&paths)
 }

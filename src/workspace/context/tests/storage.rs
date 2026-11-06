@@ -525,11 +525,15 @@ fn environment_fingerprint_is_lexical_length_delimited_and_state_scoped() {
         Some(OsString::from("/runtime")),
         Some(OsString::from("/cache")),
         Some(OsString::from("/state-a")),
+        None,
     ];
     let mut other = first.clone();
     other[2] = Some(OsString::from("/state-b"));
     assert_ne!(fingerprint_paths(&first), fingerprint_paths(&other));
     assert_eq!(fingerprint_paths(&first), fingerprint_paths(&first));
+    let mut fixture = first.clone();
+    fixture[3] = Some(OsString::from("/fixture-state/runyte"));
+    assert_ne!(fingerprint_paths(&first), fingerprint_paths(&fixture));
     assert_ne!(
         fingerprint_paths(&[None]),
         fingerprint_paths(&[Some(OsString::new())])
