@@ -322,7 +322,10 @@ fn app_consumes_shared_startup_admission_and_cloned_config_rechecks_changed_alia
     let initial = fixture.create_private_dir("reserved").unwrap();
     let alias = fixture.join("alias");
     symlink(&initial, &alias).unwrap();
-    let safety = Arc::new(StartupSafety::capture_with(std::slice::from_ref(&alias), || None));
+    let safety = Arc::new(StartupSafety::capture_with(
+        std::slice::from_ref(&alias),
+        || None,
+    ));
     let location = StateLocation::in_tree(&project, Path::new(".runyte"));
     safety.validate(&project, &location).unwrap();
     let checks = safety.normalizations.load(Ordering::Relaxed);
@@ -346,4 +349,46 @@ fn app_consumes_shared_startup_admission_and_cloned_config_rechecks_changed_alia
         .err()
         .unwrap();
     assert!(error.to_string().contains("overlaps per-user"), "{error:#}");
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_app_construction_closes_admission_before_theme_or_project_resolution_errors() {
+    use std::{os::unix::fs::symlink, sync::Arc};
+    for invalid_theme in [true, false] {
+        let fixture = TestRuntimeRoot::new("state-failed").unwrap();
+        let project = fixture.create_private_dir("project").unwrap();
+        let initial = fixture.create_private_dir("reserved").unwrap();
+        let alias = fixture.join("alias");
+        symlink(&initial, &alias).unwrap();
+        let safety = Arc::new(StartupSafety::capture_with(
+            std::slice::from_ref(&alias),
+            || None,
+        ));
+        let location = StateLocation::in_tree(&project, Path::new(".runyte"));
+        safety.validate(&project, &location).unwrap();
+        let mut config = crate::config::Config::default();
+        config.lsp.enable = false;
+        config.startup_safety = Some(safety.clone());
+        let cloned = config.clone();
+        let requested = if invalid_theme {
+            config.themes.clear();
+            project.clone()
+        } else {
+            fixture.join("unavailable-project")
+        };
+        let error = crate::app::App::new_in_project(config, None, requested)
+            .err()
+            .unwrap();
+        if invalid_theme {
+            assert!(error.to_string().contains("unknown theme"), "{error:#}");
+        }
+        assert!(safety.admission.lock().unwrap().closed);
+        std::fs::remove_file(&alias).unwrap();
+        symlink(&project, &alias).unwrap();
+        let error = crate::app::App::new_in_project(cloned, None, &project)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("overlaps per-user"), "{error:#}");
+    }
 }

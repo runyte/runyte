@@ -29,9 +29,9 @@ per-user state root, including canonical existing ancestors to detect aliases.
 The [approved cost boundary](https://github.com/runyte/runyte/issues/72#issuecomment-6683697808)
 permits bounded safety checks once at startup: user roots and canonical
 reservations are captured once, and the selected project/location admission
-is reused through CLI, application and host startup. App consumes that
-admission; a later startup using a cloned configuration captures fresh safety
-information. This applies to the new state-root checks, not preexisting
+is reused through CLI, application and host startup. App scopes and consumes
+that admission even if construction fails before storage validation; a later
+startup using a cloned configuration captures fresh safety information. This applies to the new state-root checks, not preexisting
 workspace discovery/layout checks. Regression tests count root resolution and
 canonical normalization and verify admission reuse and fresh alias checks.
 

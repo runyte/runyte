@@ -3421,6 +3421,8 @@ impl App {
 
     /// Builds editor state with every requested startup file already open.
     pub fn new_with_targets(config: Config, targets: Vec<LaunchTarget>) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         let launch_directory = std::env::current_dir()?;
         let project_root = Self::discover_startup_workspace(
             &config,
@@ -3502,6 +3504,8 @@ impl App {
         project_root: impl AsRef<Path>,
         startup: &mut StartupTrace,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         let project_root = project_root.as_ref().canonicalize()?;
         Self::new_with_boundaries(
             config,
@@ -3541,6 +3545,8 @@ impl App {
         startup: &mut StartupTrace,
         environment: crate::cli::Environment,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         Self::new_with_boundaries(
             config,
             targets,
@@ -3577,6 +3583,8 @@ impl App {
         startup: &mut StartupTrace,
         environment: crate::cli::Environment,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         Self::new_with_boundaries(
             config,
             targets,
@@ -3634,6 +3642,8 @@ impl App {
         defer_syntax: bool,
         editor_mode: bool,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         let (theme_name, theme) = config.startup_theme()?;
         startup.mark(StartupPhase::ThemeResolved);
         let state_location =

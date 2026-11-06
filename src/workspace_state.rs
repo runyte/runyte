@@ -151,6 +151,18 @@ pub struct StartupSafety {
     normalizations: std::sync::atomic::AtomicUsize,
 }
 
+/// Keeps a constructor's captured admission scoped even when an earlier step
+/// fails before storage admission. Nested constructor guards share ownership.
+pub(crate) struct StartupSafetyGuard(Option<std::sync::Arc<StartupSafety>>);
+
+impl Drop for StartupSafetyGuard {
+    fn drop(&mut self) {
+        if let Some(safety) = &self.0 {
+            safety.close();
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct Admission {
     closed: bool,
@@ -158,6 +170,10 @@ struct Admission {
 }
 
 impl StartupSafety {
+    pub(crate) fn close_on_exit(captured: Option<&std::sync::Arc<Self>>) -> StartupSafetyGuard {
+        StartupSafetyGuard(captured.cloned())
+    }
+
     pub fn capture(reserved: &[PathBuf]) -> Self {
         Self::capture_with(reserved, user_state_root)
     }

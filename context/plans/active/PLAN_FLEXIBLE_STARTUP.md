@@ -1,6 +1,6 @@
 # Flexible startup
 
-Status: approved, not started. Tracking issue:
+Status: in progress; current implementation status is on the tracking issue:
 [#71](https://github.com/runyte/runyte/issues/71). Work items:
 [#72](https://github.com/runyte/runyte/issues/72),
 [#73](https://github.com/runyte/runyte/issues/73),
