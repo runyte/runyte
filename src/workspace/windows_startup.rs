@@ -146,6 +146,7 @@ impl HostStartup {
                 .args(self.targets.iter().map(|path| absolute(path)));
         }
         command.current_dir(directory);
+        command.env_remove(crate::project_root::STARTUP_ORIGIN_ENV);
         for (name, value) in &self.env {
             if let Some(value) = value {
                 command.env(name, value);

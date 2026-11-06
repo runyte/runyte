@@ -116,11 +116,13 @@ async fn native_hello_preserves_identity_role_features_and_directory_handoff() {
             native_media,
             directory_handoff,
             project_root_bytes,
+            workspace_open,
         } = hello
         else {
             panic!("native client did not send Hello first");
         };
         assert!(!native_media);
+        assert!(!workspace_open);
         assert_eq!(protocol, PROTOCOL_VERSION);
         assert_eq!(client_version, CLIENT_VERSION);
         assert_eq!(received_geometry, geometry().into());

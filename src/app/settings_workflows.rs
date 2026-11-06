@@ -431,11 +431,13 @@ impl App {
     }
 
     pub fn push_notification(&mut self, notification: NotificationDraft) {
+        self.note_startup_notification(&notification);
         self.notifications.push(notification);
         self.refresh_notification_buffers();
     }
 
     pub(crate) fn push_background_notification(&mut self, notification: NotificationDraft) {
+        self.note_startup_notification(&notification);
         self.notifications.push(notification);
         self.notifications_refresh_pending = true;
     }

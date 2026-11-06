@@ -72,6 +72,7 @@ pub(super) struct ConnectedPeer {
     pub(super) responses: ResponseSender,
     pub(super) interactive: bool,
     pub(super) directory_handoff: bool,
+    pub(super) workspace_open: bool,
     pub(super) geometry: FrameGeometry,
 }
 
@@ -133,6 +134,7 @@ impl Clients {
             responses,
             interactive,
             directory_handoff,
+            workspace_open,
             geometry,
         } = connection;
         let attachment_generation = (!interactive).then_some(self.active).flatten();
@@ -196,6 +198,9 @@ impl Clients {
                 // whose launcher pinned the private handoff parent.
                 host.app_mut().set_quit_directory_handoff(directory_handoff);
                 host.app_mut().note_frontend_attached();
+                if workspace_open {
+                    host.app_mut().note_workspace_opened();
+                }
                 host.note_plugin_frontend(true);
                 self.publish_frame(host);
             }

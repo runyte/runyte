@@ -86,6 +86,7 @@ fn isolate_runyte_children(command: &mut Command) {
     command
         .env_remove(runyte::workspace::parent::ENVIRONMENT)
         .env("XDG_CONFIG_HOME", test_cache_dir())
+        .env("XDG_STATE_HOME", test_runtime_dir().join("state"))
         .env(
             "RUNYTE_ALL_HOSTS_DIR",
             test_runtime_dir().join("runyte/all-hosts"),
@@ -2234,6 +2235,7 @@ async fn a_repeated_handshake_is_rejected_without_poisoning_the_control_connecti
 
     client
         .send(&ClientRequest::Hello {
+            workspace_open: false,
             protocol: PROTOCOL_VERSION,
             features: vec![
                 FeatureGroup::Control,
@@ -5038,6 +5040,7 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     // asynchronous Git discovery let Enter arrive while that command was still
     // unavailable.
     wait_for_terminal_screen(&output, "linked-ready.txt").await;
+    wait_for_terminal_screen(&output, "(Git root), attached to the running session").await;
     type_colon_command(&mut terminal, "session-attach ..");
     wait_for_interactive_attachment(
         &mut source,
@@ -5047,6 +5050,8 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
         Some(&output),
     )
     .await;
+
+    wait_for_terminal_screen(&output, "(Git root), attached to the running session").await;
 
     // The client that came back is the one that started.
     assert_eq!(switcher.0.as_ref().unwrap().id(), client_pid);
@@ -6242,5 +6247,151 @@ async fn double_force_quit_ends_standalone_terminal_processes() {
     assert!(wait_child(child.0.as_mut().unwrap()).await.success());
     child.0.take();
     assert_force_quit_processes(&root, false);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn workspace_echo_distinguishes_deliberate_attachment_from_transport_reconnect() {
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        fs::remove_dir_all(root).unwrap();
+        return;
+    };
+    let mut control = connect_control(&endpoint).await;
+    let mut client = LocalClient::connect_for_workspace_open(
+        &endpoint,
+        tui_geometry(),
+        true,
+        false,
+        false,
+        true,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        response(&mut client).await,
+        HostResponse::Welcome { .. }
+    ));
+    let first = next_idle_frame(&mut client).await;
+    assert!(
+        first
+            .editor
+            .status
+            .interaction_line
+            .contains("(Git root), attached to the running session"),
+        "{}",
+        first.editor.status.interaction_line
+    );
+    send_input_expect_frame(&mut client, InputEvent::Key(KeyStroke::char('g'))).await;
+    send_input_expect_frame(&mut client, InputEvent::Key(KeyStroke::char('l'))).await;
+    let action = wait_for_frame(&mut client, "the action replacing startup", |frame| {
+        frame.editor.status.interaction_line == "g l (Move to line end)"
+    })
+    .await;
+    client.send(&ClientRequest::Detach).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut client).await,
+        HostResponse::Detached { .. }
+    ));
+    drop(client);
+    // A new socket alone is not a deliberate opening. Reconnect and a frame
+    // resynchronization both leave the person's last action intact.
+    let mut reconnect = LocalClient::connect(&endpoint, tui_geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut reconnect).await,
+        HostResponse::Welcome { .. }
+    ));
+    let frame = next_idle_frame(&mut reconnect).await;
+    assert_eq!(
+        frame.editor.status.interaction_line,
+        action.editor.status.interaction_line
+    );
+    assert_eq!(
+        resynchronized_frame(&mut reconnect, "reconnect resynchronization")
+            .await
+            .editor
+            .status
+            .interaction_line,
+        action.editor.status.interaction_line
+    );
+    reconnect.send(&ClientRequest::Detach).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut reconnect).await,
+        HostResponse::Detached { .. }
+    ));
+    drop(reconnect);
+    // A native attachment requests the same semantic feedback as the TUI.
+    let mut attached =
+        LocalClient::connect_for_workspace_open(&endpoint, tui_geometry(), true, false, true, true)
+            .await
+            .unwrap();
+    assert!(matches!(
+        response(&mut attached).await,
+        HostResponse::Welcome { .. }
+    ));
+    let frame = next_idle_frame(&mut attached).await;
+    assert!(
+        frame
+            .editor
+            .status
+            .interaction_line
+            .contains("(Git root), attached to the running session"),
+        "{}",
+        frame.editor.status.interaction_line
+    );
+    attached.send(&ClientRequest::Detach).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut attached).await,
+        HostResponse::Detached { .. }
+    ));
+    drop(attached);
+    shutdown(&mut control).await;
+    assert!(host.0.take().unwrap().wait().unwrap().success());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn mux_cli_opening_echo_names_a_started_then_running_session() {
+    use std::io::Write;
+    let root = project();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    for expected in [
+        "(Git root), started a session",
+        "(Git root), attached to the running session",
+    ] {
+        let (child, mut terminal) = spawn_in_pty(
+            bundled_runyte()
+                .arg("--mux")
+                .current_dir(&root)
+                .env("XDG_RUNTIME_DIR", test_runtime_dir())
+                .env("XDG_CACHE_HOME", test_cache_dir())
+                .env(
+                    "RUNYTE_STARTUP_WORKSPACE_ORIGIN",
+                    format!("{}:adoption", runyte::workspace::workspace_id(&root)),
+                ),
+        );
+        let mut child = ChildGuard(Some(child));
+        let output = capture_terminal_output(&terminal);
+        wait_for_terminal_screen(&output, expected).await;
+        terminal.write_all(b":detach\r").unwrap();
+        terminal.flush().unwrap();
+        assert!(wait_child(child.0.as_mut().unwrap()).await.success());
+        let _ = child.0.take().unwrap().wait();
+    }
+    let mut control = connect_control(&endpoint).await;
+    shutdown(&mut control).await;
     fs::remove_dir_all(root).unwrap();
 }

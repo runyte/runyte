@@ -721,9 +721,13 @@ async fn connect_attachment(
     // The same deadline bounds connection, Welcome and the first complete
     // decoded frame. A silent or half-speaking host never strands raw mode.
     let (mut client, current) = tokio::time::timeout(INITIAL_FRAME_BUDGET, async {
-        let mut client =
-            BufferedLocalClient::connect_with_handoff(metadata, geometry, directory_handoff)
-                .await?;
+        let mut client = BufferedLocalClient::connect_for_workspace_open(
+            metadata,
+            geometry,
+            directory_handoff,
+            true,
+        )
+        .await?;
         match client.recv_handshake().await? {
             Some(response @ HostResponse::Welcome { .. }) => {
                 validate_welcome(&response, true).map_err(anyhow::Error::msg)?;

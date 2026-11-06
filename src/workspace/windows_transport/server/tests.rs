@@ -79,6 +79,7 @@ fn bind_with_budget(
 
 fn hello(metadata: &EndpointMetadata) -> ClientRequest {
     ClientRequest::Hello {
+        workspace_open: false,
         protocol: crate::protocol::VERSION,
         features: vec![
             FeatureGroup::Control,

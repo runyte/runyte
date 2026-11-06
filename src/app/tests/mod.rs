@@ -239,6 +239,7 @@ mod tutorial;
 #[cfg(windows)]
 mod windows_session_manager;
 mod workspace;
+mod workspace_startup;
 
 use commands::{type_command, type_text, vim_app};
 use editing_and_buffers::MemoryClipboard;

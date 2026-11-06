@@ -55,6 +55,7 @@ pub enum ServerEvent<P = Option<u32>> {
         directory_handoff: bool,
         /// Whether the interactive frontend can render media projections.
         native_media: bool,
+        workspace_open: bool,
         responses: ResponseSender,
     },
     Request {
@@ -434,6 +435,7 @@ where
         geometry,
         native_media,
         directory_handoff,
+        workspace_open,
     } = hello
     else {
         bail!("workspace client did not begin with a handshake")
@@ -509,6 +511,7 @@ where
             interactive,
             native_media,
             directory_handoff,
+            workspace_open,
             responses,
         })
         .await
@@ -896,6 +899,7 @@ mod tests {
     #[cfg(windows)]
     fn control_hello(project: Vec<u8>, protocol: u32) -> ClientRequest {
         ClientRequest::Hello {
+            workspace_open: false,
             protocol,
             features: vec![
                 FeatureGroup::Control,
@@ -1148,6 +1152,7 @@ mod tests {
             write_message(
                 &mut client,
                 &ClientRequest::Hello {
+                    workspace_open: false,
                     protocol: PROTOCOL_VERSION,
                     features: vec![
                         FeatureGroup::Control,

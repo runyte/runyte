@@ -41,7 +41,13 @@ workspace state directory (`.runyte/`). A working copy wins over a nearer state
 directory. When neither exists, an ide launch makes the launch directory the
 workspace, as Helix uses its working directory: it creates `.runyte/` there,
 says so in a notification, and later launches from it or from a directory below
-it find the same workspace. See
+it find the same workspace. The interaction line echoes the chosen workspace
+and how it was found: a Git, Jujutsu or Subversion root, an existing state
+directory, or a workspace created by this launch. A persistent session also
+says whether it started or was already running. The echo appears on launch,
+deliberate attachment and session switching, and stays until another action
+replaces it. Startup warnings and errors take priority; editor mode has no
+workspace echo. See
 [Where workspace state lives](configuration.md#where-workspace-state-lives).
 
 Some directories are never made a workspace this way, because a `.runyte/` in
