@@ -66,10 +66,7 @@ pub(super) fn open_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        launch::{LaunchPosition, LaunchTarget},
-        test_support::TestRuntimeRoot,
-    };
+    use crate::{launch::LaunchTarget, test_support::TestRuntimeRoot};
 
     #[test]
     fn only_marked_graphical_targets_choose_a_directory_and_become_absolute() {
@@ -183,6 +180,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn launch_admission_validates_whole_payload_and_preserves_caret_policy() {
+        use crate::launch::LaunchPosition;
+
         let root = TestRuntimeRoot::new("graphical-admission").unwrap();
         let path = root.join("notes.txt");
         fs::write(&path, "one\n文 abc\nthree").unwrap();
