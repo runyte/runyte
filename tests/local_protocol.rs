@@ -6395,3 +6395,40 @@ async fn mux_cli_opening_echo_names_a_started_then_running_session() {
     shutdown(&mut control).await;
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn created_mux_cli_echo_becomes_existing_state_on_reattach() {
+    use std::io::Write;
+    let root = project();
+    fs::remove_dir_all(root.join(".git")).unwrap();
+    let endpoint = LocalEndpoint::discover_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    for (reason, session) in [
+        ("(created, state in ", ", started a session"),
+        ("(.runyte)", ", attached to the running session"),
+    ] {
+        let (child, mut terminal) = spawn_in_pty(
+            bundled_runyte()
+                .arg("--mux")
+                .arg(&root)
+                .current_dir(&root)
+                .env("XDG_RUNTIME_DIR", test_runtime_dir())
+                .env("XDG_CACHE_HOME", test_cache_dir()),
+        );
+        let mut child = ChildGuard(Some(child));
+        let output = capture_terminal_output(&terminal);
+        wait_for_terminal_screen(&output, reason).await;
+        wait_for_terminal_screen(&output, session).await;
+        terminal.write_all(b":detach\r").unwrap();
+        terminal.flush().unwrap();
+        assert!(wait_child(child.0.as_mut().unwrap()).await.success());
+        let _ = child.0.take().unwrap().wait();
+    }
+    let mut control = connect_control(&endpoint).await;
+    shutdown(&mut control).await;
+    fs::remove_dir_all(root).unwrap();
+}

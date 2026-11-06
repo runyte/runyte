@@ -262,3 +262,42 @@ fn configured_state_marker_is_named_in_the_workspace_echo() {
     assert!(app.displayed_status_message().contains("…"));
     assert!(!app.displayed_status_message().contains(".runyte"));
 }
+
+#[test]
+fn created_origin_belongs_only_to_the_initial_persistent_opening() {
+    for created in [
+        CreatedBy::Adoption,
+        CreatedBy::Init,
+        CreatedBy::AttachDirectory,
+    ] {
+        let (mut app, _root) = fixture();
+        app.persistent_session = true;
+        app.note_workspace_origin(WorkspaceOrigin::Created(created));
+        app.note_persistent_launch(true);
+        app.finish_workspace_startup();
+        app.note_workspace_opened();
+        assert!(
+            app.displayed_status_message()
+                .contains("(created, state in ")
+        );
+        assert!(
+            app.displayed_status_message()
+                .ends_with(", started a session")
+        );
+        for _ in 0..2 {
+            app.note_workspace_opened();
+            assert_eq!(
+                app.displayed_status_message(),
+                "Workspace ~/project (.runyte), attached to the running session"
+            );
+        }
+        assert_eq!(
+            app.notifications()
+                .entries()
+                .iter()
+                .filter(|notice| notice.title == "Created a workspace")
+                .count(),
+            1
+        );
+    }
+}

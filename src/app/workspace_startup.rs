@@ -95,6 +95,16 @@ impl App {
     pub(crate) fn note_workspace_opened(&mut self) {
         let attached = self.workspace_startup.opened;
         self.workspace_startup.opened = true;
+        // Creation belongs to the launch which made the directory. A later
+        // attachment uses the marker now known to exist, without rediscovery.
+        if attached
+            && matches!(
+                self.workspace_startup.origin,
+                Some(WorkspaceOrigin::Created(_))
+            )
+        {
+            self.workspace_startup.origin = Some(WorkspaceOrigin::StateDirectory);
+        }
         self.echo_workspace(attached);
     }
 
