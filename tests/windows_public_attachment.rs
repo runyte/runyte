@@ -533,6 +533,9 @@ fn public_persistent_attachment_fixture() {
         .arg("--config")
         .arg(&config)
         .current_dir(&root)
+        // Keep the exact refusal independent of inherited CI backtraces.
+        .env("RUST_BACKTRACE", "0")
+        .env("RUST_LIB_BACKTRACE", "0")
         .env("HOME", root.join("home"))
         .env("XDG_STATE_HOME", root.join("state"))
         .output()

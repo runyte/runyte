@@ -51,6 +51,10 @@ fn command(program: &Path, owner: &Path, directory: &Path, arguments: &[&str]) -
         .args(arguments)
         .current_dir(directory)
         .env_remove(runyte::workspace::parent::ENVIRONMENT)
+        // Assert the CLI message independently of the test runner's optional
+        // panic/error backtraces, including CI's RUST_BACKTRACE setting.
+        .env("RUST_BACKTRACE", "0")
+        .env("RUST_LIB_BACKTRACE", "0")
         .env("HOME", process_dir(owner, "home"))
         .env("XDG_STATE_HOME", process_dir(owner, "state"))
         .env("XDG_CONFIG_HOME", process_dir(owner, "config"))
