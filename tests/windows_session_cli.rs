@@ -1390,9 +1390,12 @@ fn home_init_and_bare_or_explicit_mux_keep_one_native_host_without_a_home_marker
         let output = cli(&root, &home, &args);
         let error = String::from_utf8_lossy(&output.stderr);
         assert!(!output.status.success());
+        // This launcher has no console. Require the persistent attachment's
+        // console setup boundary, with its specific native failure.
         assert!(
-            error.contains("failed to enable terminal raw mode"),
-            "home resolution must reach the frontend: {error}"
+            error.contains("cannot prepare Windows console for persistent session attachment")
+                && error.contains("(os error 6)"),
+            "home resolution must reach persistent attachment console setup: {error}"
         );
         let after = location.read_ready().unwrap().unwrap();
         assert_eq!(before.process, after.process);
