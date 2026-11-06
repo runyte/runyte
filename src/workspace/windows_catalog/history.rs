@@ -155,13 +155,30 @@ pub async fn snapshot_with_history_in_scope(
     configured_state: &Path,
     include_hidden: bool,
 ) -> Result<HistorySnapshot> {
+    let safety = scope.capture_safety();
+    snapshot_with_history_in_scope_with_safety(
+        scope,
+        current,
+        configured_state,
+        include_hidden,
+        &safety,
+    )
+    .await
+}
+
+pub(crate) async fn snapshot_with_history_in_scope_with_safety(
+    scope: &DiscoveryScope,
+    current: Option<&KnownReadLocation>,
+    configured_state: &Path,
+    include_hidden: bool,
+    safety: &crate::workspace_state::StartupSafety,
+) -> Result<HistorySnapshot> {
     let history_path = scope
         .cache_root()?
         .map(|cache| cache.join("workspaces.json"));
     let remembered = read_recents(history_path.as_deref())?;
     let mut present = BTreeMap::new();
     let mut known = Vec::with_capacity(remembered.len());
-    let safety = scope.capture_safety();
     for entry in &remembered {
         ensure!(
             !present.contains_key(&entry.project_root),
@@ -170,7 +187,7 @@ pub async fn snapshot_with_history_in_scope(
         let state = crate::project_root::resolve_state_location_with_safety(
             &entry.project_root,
             configured_state,
-            &safety,
+            safety,
         )?
         .into_path_buf();
         known.push(scope.known_read_location(&entry.project_root, &state)?);
@@ -185,7 +202,7 @@ pub async fn snapshot_with_history_in_scope(
     }
     // No partial result or write survives a failed exact ready/peer observation.
     let live = snapshot_locations(scope, current, &known, include_hidden, false).await?;
-    let names = stopped_names::observe(scope, configured_state, &remembered, &live, &safety)?;
+    let names = stopped_names::observe(scope, configured_state, &remembered, &live, safety)?;
     merge(live, remembered, present, history_path, names)
 }
 

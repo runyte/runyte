@@ -1069,12 +1069,15 @@ impl Worker {
     /// The target's exact ready file may exist without a registry or history
     /// entry. Observe it explicitly in addition to the frozen namespaces and
     /// inventory before deciding that no host owns the worktree.
-    async fn observe_worktree_cancellable(&self, path: &Path) -> Result<ControlSnapshot> {
-        let safety = self.scope.capture_safety();
+    async fn observe_worktree_cancellable(
+        &self,
+        path: &Path,
+        safety: &crate::workspace_state::StartupSafety,
+    ) -> Result<ControlSnapshot> {
         let state = crate::project_root::resolve_state_location_with_safety(
             path,
             &self.configured_state,
-            &safety,
+            safety,
         )?
         .into_path_buf();
         let target = self.scope.known_read_location(path, &state)?;
@@ -1083,11 +1086,12 @@ impl Worker {
         tokio::select! {
             biased;
             _ = stop.changed() => anyhow::bail!("native catalog is shutting down"),
-            result = ControlSnapshot::observe_at(
+            result = ControlSnapshot::observe_at_with_safety(
                 &self.scope,
                 Some(&target),
                 &self.configured_state,
                 true,
+                safety,
             ) => result,
         }
     }
@@ -1112,7 +1116,7 @@ impl Worker {
                 .is_none_or(|current| current.project_root() != path),
             "cannot remove the worktree this native host is using"
         );
-        let snapshot = self.observe_worktree_cancellable(path).await?;
+        let snapshot = self.observe_worktree_cancellable(path, &safety).await?;
         let live = reviewed_worktree_live(&snapshot, path)?.map(|(_, row)| row);
         self.snapshot = Some(snapshot);
         Ok(live)
@@ -1291,7 +1295,7 @@ impl Worker {
             .map(|cache| cache.join("workspaces.json"));
         // Include the owner inventory as well as configured namespaces. An
         // incomplete or ambiguous observation cannot authorize deletion.
-        let snapshot = self.observe_worktree_cancellable(path).await?;
+        let snapshot = self.observe_worktree_cancellable(path, &safety).await?;
         let live = reviewed_worktree_live(&snapshot, path)?;
         ensure!(
             live.as_ref().map(|(_, row)| row.selection()) == reviewed_live,
@@ -1306,7 +1310,7 @@ impl Worker {
             None
         };
         lease.verify_live_identity()?;
-        let after = self.observe_worktree_cancellable(path).await?;
+        let after = self.observe_worktree_cancellable(path, &safety).await?;
         ensure!(
             reviewed_worktree_live(&after, path)?.is_none(),
             "worktree session remains live after stop"
@@ -1356,7 +1360,8 @@ impl Worker {
             Ok(_) => anyhow::bail!("worktree directory still exists"),
         }
         self.recover()?;
-        let after = self.observe_worktree_cancellable(path).await?;
+        let safety = self.scope.capture_safety();
+        let after = self.observe_worktree_cancellable(path, &safety).await?;
         ensure!(
             reviewed_worktree_live(&after, path)?.is_none(),
             "worktree session reappeared after Git removal"

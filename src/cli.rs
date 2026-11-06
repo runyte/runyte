@@ -5752,15 +5752,6 @@ async fn run_native_wait(
     let (config, config_path) = Config::load(arguments.config.as_deref())?;
     startup_trace.mark(StartupPhase::ConfigLoaded);
     let directory = std::env::current_dir()?;
-    let requested = match arguments.project_root.as_deref() {
-        Some(root) => resolve_requested_project_root(&directory, root)?,
-        None => match project_root::discover_with_home(&directory, &config.workspace.state)?
-            .map(|workspace| workspace.root)
-        {
-            Some(root) => root,
-            None => resolve_requested_project_root(&directory, &directory)?,
-        },
-    };
     let paths = arguments
         .targets
         .iter()
@@ -5785,13 +5776,32 @@ async fn run_native_wait(
         reserved_user_roots,
         roots,
     })?;
-    let state = project_root::resolve_state_root(&requested, &config.workspace.state);
+    let safety = scope.capture_safety();
+    let requested = match arguments.project_root.as_deref() {
+        Some(root) => resolve_requested_project_root(&directory, root)?,
+        None => match project_root::discover_with_home_safety(
+            &directory,
+            &config.workspace.state,
+            &safety,
+        )?
+        .map(|workspace| workspace.root)
+        {
+            Some(root) => root,
+            None => resolve_requested_project_root(&directory, &directory)?,
+        },
+    };
+    let state = project_root::resolve_state_location_with_safety(
+        &requested,
+        &config.workspace.state,
+        &safety,
+    )?
+    .into_path_buf();
     let current = scope.known_read_location(&requested, &state)?;
     let controls = tokio::select! {
         biased;
         event = termination.recv() => return Err(terminated(event)),
         _ = parent.wait() => anyhow::bail!("wait request lost its launching process before admission"),
-        result = ControlSnapshot::observe_at(&scope, Some(&current), &config.workspace.state, false) => result?,
+        result = ControlSnapshot::observe_at_with_safety(&scope, Some(&current), &config.workspace.state, false, &safety) => result?,
     };
     // A directory with two live publications has no implicit winner. Keep
     // the selected exact publication through the entire wait request.
@@ -5811,7 +5821,8 @@ async fn run_native_wait(
                 None => requested,
                 Some(HistoryTarget::Live { .. }) => unreachable!(),
             };
-            let layout = scope.initialize_layout(&project, &config.workspace.state)?;
+            let layout =
+                scope.initialize_layout_with_safety(&project, &config.workspace.state, &safety)?;
             let location = layout.publication_location()?;
             let mut startup = NativeHostStartup::new(std::env::current_exe()?);
             startup.env = layout.detached_environment()?;
@@ -6151,18 +6162,23 @@ async fn run_native_persistent(
         reserved_user_roots,
         roots,
     })?;
+    let safety = scope.capture_safety();
     let current = if arguments.workspace_selector.is_none() {
         Some(match arguments.project_root.as_deref() {
             Some(root) => resolve_requested_project_root(&directory, root)?,
-            None => project_root::discover_with_home(&directory, &config.workspace.state)?
-                .map(|workspace| workspace.root)
-                .with_context(|| {
-                    workspace_requirement(arguments, config.mode()).refusal(
-                        &directory,
-                        None,
-                        crate::app::user_home_directory().as_deref(),
-                    )
-                })?,
+            None => project_root::discover_with_home_safety(
+                &directory,
+                &config.workspace.state,
+                &safety,
+            )?
+            .map(|workspace| workspace.root)
+            .with_context(|| {
+                workspace_requirement(arguments, config.mode()).refusal(
+                    &directory,
+                    None,
+                    crate::app::user_home_directory().as_deref(),
+                )
+            })?,
         })
     } else {
         None
@@ -6174,15 +6190,20 @@ async fn run_native_persistent(
         .expect("persistent attachment has a selector or current directory");
     let current_read = current
         .as_deref()
-        .map(|project| {
-            let state = project_root::resolve_state_root(project, &config.workspace.state);
-            scope.known_read_location(project, &state)
+        .map(|project| -> Result<_> {
+            let state = project_root::resolve_state_location_with_safety(
+                project,
+                &config.workspace.state,
+                &safety,
+            )?
+            .into_path_buf();
+            Ok(scope.known_read_location(project, &state)?)
         })
         .transpose()?;
     let controls = tokio::select! {
         biased;
         event = termination.recv() => return Err(terminated(event)),
-        result = ControlSnapshot::observe_at(&scope, current_read.as_ref(), &config.workspace.state, false) => result?,
+        result = ControlSnapshot::observe_at_with_safety(&scope, current_read.as_ref(), &config.workspace.state, false, &safety) => result?,
     };
     let selected = controls.history().select(selector, Some(&directory))?;
     if let Some(event) = termination.pending_event().await {
@@ -6203,7 +6224,11 @@ async fn run_native_persistent(
                 None => workspace_selector_path(selector, &directory),
                 Some(HistoryTarget::Live { .. }) => unreachable!(),
             };
-            let layout = scope.initialize_layout(&requested, &config.workspace.state)?;
+            let layout = scope.initialize_layout_with_safety(
+                &requested,
+                &config.workspace.state,
+                &safety,
+            )?;
             let location = layout.publication_location()?;
             let mut startup = NativeHostStartup::new(std::env::current_exe()?);
             startup.env = layout.detached_environment()?;
@@ -6302,8 +6327,15 @@ async fn run_native_control_cli(
         reserved_user_roots,
         roots,
     })?;
-    let mut controls =
-        ControlSnapshot::observe(&scope, &config.workspace.state, arguments.include_hidden).await?;
+    let safety = scope.capture_safety();
+    let mut controls = ControlSnapshot::observe_at_with_safety(
+        &scope,
+        None,
+        &config.workspace.state,
+        arguments.include_hidden,
+        &safety,
+    )
+    .await?;
     match arguments.mode {
         LaunchMode::ListSessions => {
             print!(
@@ -6350,7 +6382,7 @@ async fn run_native_control_cli(
                 let directory = launch_directory.as_deref().context(
                     "--session-restart requires a workspace selector or current project",
                 )?;
-                Some(project_root::discover_with_home(directory, &config.workspace.state)?.map(|workspace| workspace.root).context(
+                Some(project_root::discover_with_home_safety(directory, &config.workspace.state, &safety)?.map(|workspace| workspace.root).context(
                     "--session-restart requires a workspace selector or discoverable current project",
                 )?)
             } else {
@@ -6371,7 +6403,12 @@ async fn run_native_control_cli(
             };
             let original = publication.metadata().clone();
             let project = original.project_root()?;
-            let state = project_root::resolve_state_root(&project, &config.workspace.state);
+            let state = project_root::resolve_state_location_with_safety(
+                &project,
+                &config.workspace.state,
+                &safety,
+            )?
+            .into_path_buf();
             let layout = ResolvedLayout::from_scope(scope.clone(), &project, state)?;
             let location = layout.publication_location()?;
             let mut replacement = NativeHostStartup::new(std::env::current_exe()?);
