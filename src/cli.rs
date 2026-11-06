@@ -2805,6 +2805,7 @@ fn initialize_attached_directory(
     initialize_attached_directory_with_safety(requested, display_selector, state, &safety)
 }
 
+#[cfg(any(unix, test))]
 fn initialize_attached_directory_with_safety(
     requested: &Path,
     display_selector: &Path,

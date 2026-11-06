@@ -1343,9 +1343,14 @@ fn captured_manager_rename_refuses_real_replacement_at_same_location() {
 fn home_init_and_bare_or_explicit_mux_keep_one_native_host_without_a_home_marker() {
     let root = TestRuntimeRoot::new("native-home").unwrap();
     let home = root.create_private_dir("home").unwrap();
-    let config = root.create_private_dir("config/runyte").unwrap();
-    root.create_private_dir("cache/runyte").unwrap();
-    fs::write(config.join("config.yaml"), "lsp:\n  enable: false\n").unwrap();
+    let config = root.create_private_dir("config").unwrap().join("runyte");
+    root.create_private_dir("cache").unwrap();
+    root.atomic_write_private(
+        &config,
+        OsStr::new("config.yaml"),
+        b"lsp:\n  enable: false\n",
+    )
+    .unwrap();
     let state = runyte::workspace_state::StateLocation::out_of_tree(
         &home,
         &root.join("config/.fixture-state/runyte"),
