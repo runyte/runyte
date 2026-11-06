@@ -317,38 +317,41 @@ fn app_consumes_shared_startup_admission_and_cloned_config_rechecks_changed_alia
         os::unix::fs::symlink,
         sync::{Arc, atomic::Ordering},
     };
-    let fixture = TestRuntimeRoot::new("state-fresh").unwrap();
-    let project = fixture.create_private_dir("project").unwrap();
-    let initial = fixture.create_private_dir("reserved").unwrap();
-    let alias = fixture.join("alias");
-    symlink(&initial, &alias).unwrap();
-    let safety = Arc::new(StartupSafety::capture_with(
-        std::slice::from_ref(&alias),
-        || None,
-    ));
-    let location = StateLocation::in_tree(&project, Path::new(".runyte"));
-    safety.validate(&project, &location).unwrap();
-    let checks = safety.normalizations.load(Ordering::Relaxed);
-    let mut config = crate::config::Config::default();
-    config.lsp.enable = false;
-    config.startup_safety = Some(safety.clone());
-    let cloned = config.clone();
-    let app = crate::app::App::new_in_project(config, None, &project).unwrap();
-    assert!(app.config.startup_safety.is_none());
-    assert_eq!(safety.normalizations.load(Ordering::Relaxed), checks);
-    assert!(safety.admission.lock().unwrap().closed);
-    let yaml = app.config.to_yaml().unwrap();
-    assert!(!yaml.contains("startup_safety"));
-    let reloaded: crate::config::Config = serde_yaml::from_str(&yaml).unwrap();
-    assert!(reloaded.startup_safety.is_none());
-    std::fs::remove_file(&alias).unwrap();
-    symlink(&project, &alias).unwrap();
-    // The clone still carries the old Arc, but App must recapture its raw
-    // reservations because the first startup consumed that admission.
-    let error = crate::app::App::new_in_project(cloned, None, &project)
-        .err()
-        .unwrap();
-    assert!(error.to_string().contains("overlaps per-user"), "{error:#}");
+    for explicit_root in [true, false] {
+        let fixture = TestRuntimeRoot::new("state-fresh").unwrap();
+        let project = fixture.create_private_dir("project").unwrap();
+        let initial = fixture.create_private_dir("reserved").unwrap();
+        let alias = fixture.join("alias");
+        symlink(&initial, &alias).unwrap();
+        let safety = Arc::new(if explicit_root {
+            StartupSafety::capture_with(std::slice::from_ref(&alias), || None)
+        } else {
+            StartupSafety::capture(std::slice::from_ref(&alias))
+        });
+        let location = StateLocation::in_tree(&project, Path::new(".runyte"));
+        safety.validate(&project, &location).unwrap();
+        let checks = safety.normalizations.load(Ordering::Relaxed);
+        let mut config = crate::config::Config::default();
+        config.lsp.enable = false;
+        config.startup_safety = Some(safety.clone());
+        let cloned = config.clone();
+        let app = crate::app::App::new_in_project(config, None, &project).unwrap();
+        assert!(app.config.startup_safety.is_none());
+        assert_eq!(safety.normalizations.load(Ordering::Relaxed), checks);
+        assert!(safety.admission.lock().unwrap().closed);
+        let yaml = app.config.to_yaml().unwrap();
+        assert!(!yaml.contains("startup_safety"));
+        let reloaded: crate::config::Config = serde_yaml::from_str(&yaml).unwrap();
+        assert!(reloaded.startup_safety.is_none());
+        std::fs::remove_file(&alias).unwrap();
+        symlink(&project, &alias).unwrap();
+        // The clone still carries the old Arc, but App must recapture its raw
+        // reservations because the first startup consumed that admission.
+        let error = crate::app::App::new_in_project(cloned, None, &project)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("overlaps per-user"), "{error:#}");
+    }
 }
 
 #[cfg(unix)]

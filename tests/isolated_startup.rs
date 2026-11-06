@@ -25,7 +25,12 @@ fn isolated_library_constructor_helper() {
 
     HeadlessEditor::new_in(&project).unwrap();
     HeadlessEditor::new_deferred_in(&project).unwrap();
-    App::new_in_project(isolated_startup_config(Config::default()), None, &project).unwrap();
+    let config = isolated_startup_config(Config::default());
+    let cloned = config.clone();
+    App::new_in_project(config, None, &project).unwrap();
+    // Closing the first admission must retain its explicit fixture source
+    // when this clone captures fresh canonical reservations.
+    App::new_in_project(cloned, None, &project).unwrap();
     assert!(!project.join(".runyte").exists());
 }
 

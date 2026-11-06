@@ -146,9 +146,16 @@ impl StateLocation {
 pub struct StartupSafety {
     reserved: Vec<(PathBuf, PathBuf)>,
     user_root: Option<(PathBuf, PathBuf)>,
+    user_root_source: UserRootSource,
     admission: std::sync::Mutex<Admission>,
     #[cfg(test)]
     normalizations: std::sync::atomic::AtomicUsize,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum UserRootSource {
+    Account,
+    Explicit,
 }
 
 /// Keeps a constructor's captured admission scoped even when an earlier step
@@ -175,19 +182,21 @@ impl StartupSafety {
     }
 
     pub fn capture(reserved: &[PathBuf]) -> Self {
-        Self::capture_with(reserved, user_state_root)
+        Self {
+            user_root_source: UserRootSource::Account,
+            ..Self::capture_with(reserved, user_state_root)
+        }
     }
 
     fn capture_for_location(reserved: &[PathBuf], location: &StateLocation) -> Self {
-        Self::capture_with(reserved, || {
-            if matches!(location, StateLocation::InTree(_)) {
-                user_state_root()
-            } else {
-                None
-            }
-        })
+        match location {
+            StateLocation::InTree(_) => Self::capture(reserved),
+            StateLocation::OutOfTree(_) => Self::capture_with(reserved, || None),
+        }
     }
 
+    /// Injects a fixed raw root source. A later startup re-canonicalizes those
+    /// paths instead of falling back to the account/environment resolver.
     pub fn capture_with(
         reserved: &[PathBuf],
         resolve_user_root: impl FnOnce() -> Option<PathBuf>,
@@ -204,6 +213,7 @@ impl StartupSafety {
                 let normalized = crate::project_root::comparable_path(&path);
                 (path, normalized)
             }),
+            user_root_source: UserRootSource::Explicit,
             admission: std::sync::Mutex::new(Admission::default()),
             #[cfg(test)]
             normalizations: std::sync::atomic::AtomicUsize::new(count),
@@ -223,7 +233,13 @@ impl StartupSafety {
                 .iter()
                 .map(|(path, _)| path.clone())
                 .collect::<Vec<_>>();
-            return std::sync::Arc::new(Self::capture(&roots));
+            let refreshed = match captured.user_root_source {
+                UserRootSource::Account => Self::capture(&roots),
+                UserRootSource::Explicit => Self::capture_with(&roots, || {
+                    captured.user_root.as_ref().map(|(path, _)| path.clone())
+                }),
+            };
+            return std::sync::Arc::new(refreshed);
         }
         std::sync::Arc::new(Self::capture(&reserved()))
     }
