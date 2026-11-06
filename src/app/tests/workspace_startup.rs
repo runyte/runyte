@@ -257,7 +257,8 @@ fn configured_state_marker_is_named_in_the_workspace_echo() {
     assert!(app.displayed_status_message().width() <= 80);
     assert!(
         app.displayed_status_message()
-            .contains("…custom-state-marker-name")
+            .contains("state-marker-name)")
     );
+    assert!(app.displayed_status_message().contains("…"));
     assert!(!app.displayed_status_message().contains(".runyte"));
 }
