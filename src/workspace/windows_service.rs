@@ -1070,7 +1070,13 @@ impl Worker {
     /// entry. Observe it explicitly in addition to the frozen namespaces and
     /// inventory before deciding that no host owns the worktree.
     async fn observe_worktree_cancellable(&self, path: &Path) -> Result<ControlSnapshot> {
-        let state = crate::project_root::resolve_state_root(path, &self.configured_state);
+        let safety = self.scope.capture_safety();
+        let state = crate::project_root::resolve_state_location_with_safety(
+            path,
+            &self.configured_state,
+            &safety,
+        )?
+        .into_path_buf();
         let target = self.scope.known_read_location(path, &state)?;
         let mut stop = self.stop.clone();
         ensure!(!*stop.borrow(), "native catalog is shutting down");
@@ -1088,7 +1094,13 @@ impl Worker {
 
     async fn inspect_worktree_teardown(&mut self, path: &Path) -> Result<Option<WorkspaceRow>> {
         self.recover()?;
-        let state = crate::project_root::resolve_state_root(path, &self.configured_state);
+        let safety = self.scope.capture_safety();
+        let state = crate::project_root::resolve_state_location_with_safety(
+            path,
+            &self.configured_state,
+            &safety,
+        )?
+        .into_path_buf();
         let layout = ResolvedLayout::from_scope(self.scope.clone(), path, state)?;
         ensure!(
             layout.project_root() == path,
@@ -1254,7 +1266,13 @@ impl Worker {
         reviewed_live: Option<WorkspaceSelection>,
     ) -> Result<PreparedWorktreeTeardown> {
         self.recover()?;
-        let state = crate::project_root::resolve_state_root(path, &self.configured_state);
+        let safety = self.scope.capture_safety();
+        let state = crate::project_root::resolve_state_location_with_safety(
+            path,
+            &self.configured_state,
+            &safety,
+        )?
+        .into_path_buf();
         let layout = ResolvedLayout::from_scope(self.scope.clone(), path, state)?;
         ensure!(
             layout.project_root() == path,

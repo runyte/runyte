@@ -819,6 +819,7 @@ async fn refresh_options(
     // whose directory has gone while its host keeps running. Only the rows a
     // listing offers to open are drawn from the ones still on disk.
     let openable = listable_recents(remembered.clone());
+    let safety = crate::workspace_state::StartupSafety::capture(&[]);
     let mut rows = Vec::with_capacity(hosts.len());
     for host in hosts {
         rows.push(inspect_host_with_attention(host, attention).await);
@@ -843,7 +844,8 @@ async fn refresh_options(
         // registration can be lost while its host keeps the endpoint. Reading
         // the endpoint itself is the only answer that agrees with what a
         // connecting client will find there.
-        if let Some(row) = published_row(&project_root, name.clone(), state, runtime).await {
+        if let Some(row) = published_row(&project_root, name.clone(), state, runtime, &safety).await
+        {
             rows.push(row);
             continue;
         }
@@ -926,8 +928,9 @@ async fn published_row(
     name: Option<String>,
     state: &Path,
     runtime: Option<&Path>,
+    safety: &crate::workspace_state::StartupSafety,
 ) -> Option<WorkspaceRow> {
-    let endpoint = published_endpoint(project_root, state, runtime).ok()?;
+    let endpoint = published_endpoint_with_safety(project_root, state, runtime, safety).ok()?;
     let host = endpoint.published_host().ok().flatten()?;
     if !host.speaks_current_protocol() {
         return Some(WorkspaceRow {
@@ -1110,12 +1113,22 @@ fn published_endpoint(
     state: &Path,
     runtime: Option<&Path>,
 ) -> Result<LocalEndpoint> {
-    let state_root = project_root::resolve_state_root(project_root, state);
+    let safety = crate::workspace_state::StartupSafety::capture(&[]);
+    published_endpoint_with_safety(project_root, state, runtime, &safety)
+}
+
+fn published_endpoint_with_safety(
+    project_root: &Path,
+    state: &Path,
+    runtime: Option<&Path>,
+    safety: &crate::workspace_state::StartupSafety,
+) -> Result<LocalEndpoint> {
+    let location = project_root::resolve_state_location_with_safety(project_root, state, safety)?;
     match runtime {
         Some(runtime) => {
-            LocalEndpoint::discover_with_runtime(&state_root, project_root, Some(runtime))
+            LocalEndpoint::discover_selected_with_runtime(&location, project_root, Some(runtime))
         }
-        None => LocalEndpoint::discover(&state_root, project_root),
+        None => LocalEndpoint::discover_location(&location, project_root),
     }
 }
 

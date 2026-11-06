@@ -43,11 +43,7 @@ impl App {
                 format!(
                     "Created a workspace in {}; its state is in {}",
                     self.project_root.display(),
-                    project_root::resolve_state_root(
-                        &self.project_root,
-                        &self.config.workspace.state
-                    )
-                    .display()
+                    self.state_root.display()
                 ),
             ));
         }
@@ -128,10 +124,8 @@ impl App {
             &self.project_root,
             self.home_directory.as_deref(),
         );
-        let state = project_root::display_workspace_path(
-            &project_root::resolve_state_root(&self.project_root, &self.config.workspace.state),
-            self.home_directory.as_deref(),
-        );
+        let state =
+            project_root::display_workspace_path(&self.state_root, self.home_directory.as_deref());
         let session = if self.persistent_session {
             if attached {
                 ", attached to the running session"
@@ -147,6 +141,7 @@ impl App {
             WorkspaceOrigin::VersionControl(VersionControl::Jujutsu) => "Jujutsu root",
             WorkspaceOrigin::VersionControl(VersionControl::Subversion) => "Subversion root",
             WorkspaceOrigin::StateDirectory => &configured_marker,
+            WorkspaceOrigin::Home => "home workspace",
             WorkspaceOrigin::Created(_) => "created, state in ",
         };
         // Reserve the explanation before shortening paths. Eighty columns is

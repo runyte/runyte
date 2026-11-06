@@ -418,39 +418,50 @@ pub(super) async fn run(
     config.startup_safety = Some(safety.clone());
     startup.mark(StartupPhase::ProjectResolutionStarted);
     let mut workspace_origin = None;
-    let project =
-        match arguments.project_root.as_deref() {
-            Some(requested) => {
-                let project = resolve_requested_project_root(&launch_directory, requested)?;
-                let inherited = arguments
-                    .detached_host
-                    .then(|| std::env::var(project_root::STARTUP_ORIGIN_ENV).ok())
-                    .flatten();
-                workspace_origin = Some(project_root::startup_origin(
-                    &project,
-                    &config.workspace.state,
-                    inherited.as_deref(),
-                )?);
-                startup.mark(StartupPhase::ProjectResolvedAutomatically);
-                project
-            }
-            None if arguments.detached_host => {
-                anyhow::bail!("internal native host requires an explicit --project-root")
-            }
-            None => {
-                let project = project_root::discover(&launch_directory, &config.workspace.state)?
-                .map(|workspace| { workspace_origin = Some(workspace.origin); workspace.root })
-                .context(
-                    "no project workspace was found; pass --project-root for foreground --serve",
-                )?;
-                startup.mark(StartupPhase::ProjectResolvedAutomatically);
-                project
-            }
-        };
+    let project = match arguments.project_root.as_deref() {
+        Some(requested) => {
+            let project = resolve_requested_project_root(&launch_directory, requested)?;
+            let inherited = arguments
+                .detached_host
+                .then(|| std::env::var(project_root::STARTUP_ORIGIN_ENV).ok())
+                .flatten();
+            workspace_origin = Some(project_root::startup_origin_with_safety(
+                &project,
+                &config.workspace.state,
+                inherited.as_deref(),
+                &safety,
+            )?);
+            startup.mark(StartupPhase::ProjectResolvedAutomatically);
+            project
+        }
+        None if arguments.detached_host => {
+            anyhow::bail!("internal native host requires an explicit --project-root")
+        }
+        None => {
+            let project = project_root::discover_with_home_safety(
+                &launch_directory,
+                &config.workspace.state,
+                &safety,
+            )?
+            .map(|workspace| {
+                workspace_origin = Some(workspace.origin);
+                workspace.root
+            })
+            .context(
+                "no project workspace was found; pass --project-root for foreground --serve",
+            )?;
+            startup.mark(StartupPhase::ProjectResolvedAutomatically);
+            project
+        }
+    };
     if let Some(parent) = supervisor.as_ref() {
         parent.ensure_alive()?;
     }
-    let location = project_root::resolve_state_location(&project, &config.workspace.state);
+    let location = project_root::resolve_state_location_with_safety(
+        &project,
+        &config.workspace.state,
+        &safety,
+    )?;
     if matches!(location, project_root::StateLocation::OutOfTree(_)) {
         location.prepare_with_safety(&project, &safety)?;
     } else {

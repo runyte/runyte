@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Runtime workspace storage, independent of workspace discovery. Selecting
-//! out-of-tree storage is explicit. Ordinary in-tree placement selection never
-//! asks for account paths; reservation validation resolves its protected root
-//! separately. The home-workspace policy is owned by project_root.
+//! out-of-tree storage is explicit. Startup captures account and home paths
+//! once for placement and reservation validation. The home-workspace policy
+//! is owned by project_root.
 
 use std::path::{Path, PathBuf};
 
@@ -147,6 +147,7 @@ pub struct StartupSafety {
     reserved: Vec<(PathBuf, PathBuf)>,
     user_root: Option<(PathBuf, PathBuf)>,
     user_root_source: UserRootSource,
+    homes: Vec<(PathBuf, PathBuf)>,
     admission: std::sync::Mutex<Admission>,
     #[cfg(test)]
     normalizations: std::sync::atomic::AtomicUsize,
@@ -184,7 +185,11 @@ impl StartupSafety {
     pub fn capture(reserved: &[PathBuf]) -> Self {
         Self {
             user_root_source: UserRootSource::Account,
-            ..Self::capture_with(reserved, user_state_root)
+            ..Self::capture_with_homes(
+                reserved,
+                user_state_root,
+                &crate::project_root::user_home_directories(),
+            )
         }
     }
 
@@ -201,9 +206,29 @@ impl StartupSafety {
         reserved: &[PathBuf],
         resolve_user_root: impl FnOnce() -> Option<PathBuf>,
     ) -> Self {
+        Self::capture_with_homes(reserved, resolve_user_root, &[])
+    }
+
+    /// Injects exact home identities as well as the state root. No account paths
+    /// are consulted, including when this capture is refreshed.
+    pub fn capture_with_homes(
+        reserved: &[PathBuf],
+        resolve_user_root: impl FnOnce() -> Option<PathBuf>,
+        homes: &[PathBuf],
+    ) -> Self {
         let user_root = resolve_user_root();
+        let homes = homes
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .filter_map(|home| {
+                home.canonicalize()
+                    .ok()
+                    .map(|canonical| (home.clone(), canonical))
+            })
+            .collect::<Vec<_>>();
         #[cfg(test)]
-        let count = reserved.len() + usize::from(user_root.is_some());
+        let count = reserved.len() + usize::from(user_root.is_some()) + homes.len();
         Self {
             reserved: reserved
                 .iter()
@@ -214,6 +239,7 @@ impl StartupSafety {
                 (path, normalized)
             }),
             user_root_source: UserRootSource::Explicit,
+            homes,
             admission: std::sync::Mutex::new(Admission::default()),
             #[cfg(test)]
             normalizations: std::sync::atomic::AtomicUsize::new(count),
@@ -235,13 +261,27 @@ impl StartupSafety {
                 .collect::<Vec<_>>();
             let refreshed = match captured.user_root_source {
                 UserRootSource::Account => Self::capture(&roots),
-                UserRootSource::Explicit => Self::capture_with(&roots, || {
-                    captured.user_root.as_ref().map(|(path, _)| path.clone())
-                }),
+                UserRootSource::Explicit => Self::capture_with_homes(
+                    &roots,
+                    || captured.user_root.as_ref().map(|(path, _)| path.clone()),
+                    &captured
+                        .homes
+                        .iter()
+                        .map(|(raw, _)| raw.clone())
+                        .collect::<Vec<_>>(),
+                ),
             };
             return std::sync::Arc::new(refreshed);
         }
         std::sync::Arc::new(Self::capture(&reserved()))
+    }
+
+    pub(crate) fn is_home(&self, project: &Path) -> bool {
+        self.homes.iter().any(|(_, home)| home == project)
+    }
+
+    pub(crate) fn state_root(&self) -> Option<&Path> {
+        self.user_root.as_ref().map(|(raw, _)| raw.as_path())
     }
 
     pub fn validate(&self, project: &Path, location: &StateLocation) -> Result<()> {

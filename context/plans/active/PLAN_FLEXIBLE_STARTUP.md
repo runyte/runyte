@@ -28,7 +28,7 @@ it refuses, why and what to run instead.
 | Finder, Dock, application menu | editor mode in `/` (macOS) or the launcher's directory | the configured mode in `~`; ide/mux use the home workspace |
 | `cd ~ && runyte` (ide) | refuses: home is not adopted | the home workspace |
 | `cd ~ && runyte --mux` | refuses: no workspace | the home workspace, starting or attaching its session |
-| `runyte --init ~`, `runyte -a ~` | creates `~/.runyte/`, which every later launch below `~` discovers | the home workspace; nothing is written into `~` |
+| `runyte --init ~`, `runyte -a ~` | creates `~/.runyte/`, which every later launch below `~` discovers | the home workspace; no relative workspace marker is created in `~` |
 | `cd ~/scratch && runyte` (no repository) | adopts `~/scratch`, creating `~/scratch/.runyte/` | unchanged |
 | No usable workspace | `no workspace here; run runyte --init DIRECTORY to create one` | names the mode, where it looked, why, and commands that work from here |
 | Any ide/mux startup | status line shows the path only | the interaction line also says how the workspace was found |
@@ -39,7 +39,8 @@ it refuses, why and what to run instead.
   (`.runyte/` by default). No project marker files.
 - The home workspace applies only when the launch directory is exactly a home
   directory and discovery found nothing. Subdirectories never discover it.
-- Runyte never creates a new state directory inside the home directory. An
+- Runyte never creates a new relative workspace state directory in home. The
+  separate per-user state area can be beneath home on Linux and macOS. An
   existing `~/.runyte/`, or a checkout whose work tree is `~`, still wins.
 - The filesystem root, the temporary directory, and shared or foreign-owned
   directories are never adopted automatically.
@@ -189,6 +190,12 @@ needed. An ignored macOS `XDG_STATE_HOME` alone is insufficient isolation.
   `Tab s` on `~` go through the same check, so they reach the same workspace
   ID and never create `~/.runyte/`. The check belongs in `initialize`, or in a
   wrapper every route calls, so no route bypasses it.
+- **Existing home checkouts** ([confirmed decision](https://github.com/runyte/runyte/issues/73#issuecomment-6692604069)): a home Git, Jujutsu or Subversion root keeps
+  its version-control provenance and ordinary project scans. If its configured
+  relative state directory already exists, keep it. Otherwise its new state
+  lives in the per-user state area, including with an absolute `workspace.state`. This keeps
+  the invariant that Runyte creates no new state directory in home; it does
+  not change placement outside home.
 - **Contained scans**: the file picker, the project finder and workspace grep
   use the contained boundary (`scan_boundary`) when the workspace origin is
   `Home`, and skip `~/Library` on macOS. The skip is a fixed exclusion for the

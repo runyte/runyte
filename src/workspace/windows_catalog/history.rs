@@ -161,12 +161,18 @@ pub async fn snapshot_with_history_in_scope(
     let remembered = read_recents(history_path.as_deref())?;
     let mut present = BTreeMap::new();
     let mut known = Vec::with_capacity(remembered.len());
+    let safety = scope.capture_safety();
     for entry in &remembered {
         ensure!(
             !present.contains_key(&entry.project_root),
             "recent history contains duplicate project identity"
         );
-        let state = crate::project_root::resolve_state_root(&entry.project_root, configured_state);
+        let state = crate::project_root::resolve_state_location_with_safety(
+            &entry.project_root,
+            configured_state,
+            &safety,
+        )?
+        .into_path_buf();
         known.push(scope.known_read_location(&entry.project_root, &state)?);
         let exists = match entry.project_root.metadata() {
             Ok(metadata) => metadata.is_dir(),
@@ -179,7 +185,7 @@ pub async fn snapshot_with_history_in_scope(
     }
     // No partial result or write survives a failed exact ready/peer observation.
     let live = snapshot_locations(scope, current, &known, include_hidden, false).await?;
-    let names = stopped_names::observe(scope, configured_state, &remembered, &live)?;
+    let names = stopped_names::observe(scope, configured_state, &remembered, &live, &safety)?;
     merge(live, remembered, present, history_path, names)
 }
 

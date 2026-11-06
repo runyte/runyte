@@ -382,9 +382,9 @@ impl LocalEndpoint {
 
     /// Discovers the endpoint against an explicit user runtime directory.
     ///
-    /// [`Self::discover`] reads `XDG_RUNTIME_DIR`, which tests must not
-    /// publish endpoints into. They pass their own private directory here so
-    /// the runtime root stays injectable instead of process-global.
+    /// This convenience route still resolves production home placement.
+    /// Fixtures use [`Self::discover_in_tree_with_runtime`] for a known in-tree
+    /// path or [`Self::discover_location_with`] for an injected placement.
     pub fn discover_with_runtime(
         state_root: &Path,
         project_root: &Path,
@@ -404,6 +404,16 @@ impl LocalEndpoint {
                 &short_runtime_base(),
             );
         }
+        Self::discover_in_tree_with_runtime(state_root, project_root, runtime)
+    }
+
+    /// Explicit placement for callers with an injected in-tree fixture. This
+    /// never resolves account homes, per-user state, or environment storage.
+    pub fn discover_in_tree_with_runtime(
+        state_root: &Path,
+        project_root: &Path,
+        runtime: Option<&Path>,
+    ) -> Result<Self> {
         if let Some(runtime) = runtime.filter(|runtime| prepare_runtime_root(runtime)) {
             let runyte = runtime.join("runyte");
             let id = workspace_id(project_root);
@@ -421,6 +431,23 @@ impl LocalEndpoint {
             );
         }
         Self::new(state_root, project_root)
+    }
+
+    /// A captured placement with an explicit runtime selection. Keep the
+    /// caller's placement instead of repeating home/account discovery.
+    pub(crate) fn discover_selected_with_runtime(
+        location: &crate::workspace_state::StateLocation,
+        project: &Path,
+        runtime: Option<&Path>,
+    ) -> Result<Self> {
+        match location {
+            crate::workspace_state::StateLocation::InTree(state) => {
+                Self::discover_in_tree_with_runtime(state, project, runtime)
+            }
+            crate::workspace_state::StateLocation::OutOfTree(_) => {
+                Self::discover_location_with(location, project, runtime, &short_runtime_base())
+            }
+        }
     }
 
     pub fn new(state_root: &Path, project_root: &Path) -> Result<Self> {

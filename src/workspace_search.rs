@@ -44,6 +44,7 @@ pub(crate) struct WorkspaceSearchRequest {
     /// are then passed over rather than failing the search, because such a
     /// search starts in system directories the reader only partly owns.
     pub contained: bool,
+    pub excluded: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -162,6 +163,7 @@ pub(crate) fn perform(
         &request.matcher,
         request.show_hidden,
         request.contained,
+        request.excluded.as_deref(),
         &open_paths,
         &cancelled,
     )?
@@ -175,6 +177,13 @@ pub(crate) fn perform(
     for snapshot in request.open_buffers {
         if cancelled() {
             return Ok(None);
+        }
+        if request
+            .excluded
+            .as_ref()
+            .is_some_and(|excluded| snapshot.path.starts_with(excluded))
+        {
+            continue;
         }
         let Some((live, live_limited)) =
             matches_in_rope(&snapshot.path, &snapshot.text, &request.matcher, &cancelled)
@@ -200,6 +209,7 @@ fn workspace_matches(
     matcher: &Regex,
     show_hidden: bool,
     contained: bool,
+    excluded: Option<&Path>,
     open_paths: &HashSet<&Path>,
     cancelled: &impl Fn() -> bool,
 ) -> Result<Option<(Vec<WorkspaceMatch>, bool)>> {
@@ -247,6 +257,9 @@ fn workspace_matches(
         for entry in entries.into_iter().rev() {
             if cancelled() {
                 return Ok(None);
+            }
+            if excluded.is_some_and(|excluded| entry.path() == excluded) {
+                continue;
             }
             let name = entry.file_name();
             let name = name.to_string_lossy();
@@ -438,6 +451,7 @@ mod tests {
             show_hidden: false,
             open_buffers: Vec::new(),
             contained: false,
+            excluded: None,
         };
 
         assert!(perform(request, || true).unwrap().is_none());
@@ -452,6 +466,7 @@ mod tests {
             show_hidden: false,
             open_buffers: Vec::new(),
             contained: false,
+            excluded: None,
         };
 
         assert!(perform(request, || false).is_err());
@@ -471,6 +486,7 @@ mod tests {
                 show_hidden: false,
                 open_buffers: Vec::new(),
                 contained: false,
+                excluded: None,
             })
             .unwrap();
 

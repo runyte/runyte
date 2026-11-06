@@ -123,12 +123,19 @@ impl App {
         }
     }
 
+    pub(super) fn home_scan_exclusion(&self) -> Option<PathBuf> {
+        (self.home_workspace && cfg!(target_os = "macos"))
+            .then(|| self.project_root.join("Library"))
+    }
+
     /// The ignore-aware scope a scan rooted at `root` uses. Editor mode
     /// starts scans from arbitrary system directories, so its scans are
     /// contained: one filesystem, a stricter entry cap, and no walk from `/`
     /// or a virtual filesystem.
     pub(super) fn ignoring_scan_scope(&self, root: PathBuf) -> ScanScope {
-        if self.editor_mode {
+        if self.home_workspace {
+            ScanScope::home(Some(self.project_root.clone()), self.home_scan_exclusion())
+        } else if self.editor_mode {
             ScanScope::contained(Some(root))
         } else {
             ScanScope::ignoring(&self.project_root)
@@ -137,7 +144,9 @@ impl App {
 
     /// The scope for a scan that consults no ignore file.
     pub(super) fn unfiltered_scan_scope(&self) -> ScanScope {
-        if self.editor_mode {
+        if self.home_workspace {
+            ScanScope::home(None, self.home_scan_exclusion())
+        } else if self.editor_mode {
             ScanScope::contained(None)
         } else {
             ScanScope::Everything

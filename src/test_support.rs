@@ -39,13 +39,23 @@ pub fn isolated_startup_config(mut config: crate::config::Config) -> crate::conf
     config
 }
 
-/// Pairs existing configuration-isolated builders with fixture-owned state.
-/// Keeping it below the fixture's configuration root avoids orphaned siblings.
-pub fn state_environment(config_home: &std::path::Path) -> [(&'static str, PathBuf); 2] {
+/// Pairs configuration-isolated builders with fixture-owned state and home
+/// selectors. No child needs account lookup merely to classify its workspace.
+/// Keeping these paths below the fixture root avoids orphaned siblings.
+pub fn state_environment(config_home: &std::path::Path) -> [(&'static str, PathBuf); 5] {
     let state = config_home.join(".fixture-state");
     [
         ("XDG_STATE_HOME", state.clone()),
         ("RUNYTE_TEST_STATE_HOME", state.join("runyte")),
+        ("HOME", config_home.join(".fixture-home")),
+        (
+            "RUNYTE_TEST_ACCOUNT_HOME",
+            config_home.join(".fixture-home"),
+        ),
+        (
+            "RUNYTE_TEST_LOCAL_APP_DATA",
+            config_home.join(".fixture-local-app-data"),
+        ),
     ]
 }
 

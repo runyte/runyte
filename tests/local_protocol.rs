@@ -666,7 +666,7 @@ async fn persistent_cursor_case(width: u16, height: u16) {
         .map(|n| format!("{n:03} {}\n", "visible document text ".repeat(5)))
         .collect::<String>();
     fs::write(root.join("other.txt"), lines).unwrap();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -2050,7 +2050,7 @@ async fn host_process_group_signals_always_name_an_owned_group() {
     let root = project();
     git(&root, &["add", "note.txt", "other.txt"]);
     git(&root, &["commit", "--quiet", "-m", "base"]);
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -2088,7 +2088,7 @@ async fn host_process_group_signals_always_name_an_owned_group() {
 #[tokio::test]
 async fn revision_protocol_is_stale_safe_undoable_and_bounded() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -2233,7 +2233,7 @@ async fn revision_protocol_is_stale_safe_undoable_and_bounded() {
 #[tokio::test]
 async fn a_repeated_handshake_is_rejected_without_poisoning_the_control_connection() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -2290,7 +2290,7 @@ async fn a_repeated_handshake_is_rejected_without_poisoning_the_control_connecti
 #[tokio::test]
 async fn completing_wait_buffers_transitions_from_partial_to_completed() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -2373,7 +2373,7 @@ async fn completing_wait_buffers_transitions_from_partial_to_completed() {
 #[tokio::test]
 async fn a_wait_rejects_another_waits_buffer_without_losing_either_request() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -2477,7 +2477,7 @@ async fn a_wait_rejects_another_waits_buffer_without_losing_either_request() {
 #[tokio::test]
 async fn an_edited_scratchpad_leaves_a_workspace_clean_enough_to_stop() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -2558,7 +2558,7 @@ async fn an_edited_scratchpad_leaves_a_workspace_clean_enough_to_stop() {
 #[tokio::test]
 async fn wait_cli_completes_without_stopping_host_or_unrelated_buffers() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -2616,7 +2616,7 @@ async fn wait_cli_completes_without_stopping_host_or_unrelated_buffers() {
 #[tokio::test]
 async fn killing_the_host_fails_an_outstanding_wait_process() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -2671,7 +2671,7 @@ async fn killing_the_host_fails_an_outstanding_wait_process() {
 #[tokio::test]
 async fn killing_the_host_fails_an_attached_persistent_tui() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -2728,7 +2728,7 @@ async fn git_commit_wait_closes_its_buffer_without_detaching_an_existing_tui() {
         root.join(".git/hooks/post-commit.behavior"),
         "dd if=/dev/zero bs=1024 count=128 2>/dev/null | tr '\\000' x\nprintf '\\npost-commit-output-complete\\n'\n",
     ).unwrap();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -2900,7 +2900,7 @@ async fn git_commit_wait_tui_completes_through_write_quit() {
 
     let root = project();
     git(&root, &["add", "note.txt", "other.txt"]);
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -3081,7 +3081,7 @@ async fn wait_paths_are_resolved_in_the_callers_directory_without_utf8_loss() {
         .iter()
         .map(|name| nested.join(name))
         .collect::<Vec<_>>();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -3161,7 +3161,7 @@ async fn persistent_worktree_switch_detaches_to_a_new_root_without_retargeting_t
         &["worktree", "add", "--quiet", "-b", "linked", "linked"],
     );
     let linked = root.join("linked").canonicalize().unwrap();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -3354,13 +3354,13 @@ async fn worktree_switch_reuses_the_destination_host_through_the_real_tui_launch
         &["worktree", "add", "--quiet", "-b", "linked", "linked"],
     );
     let linked = root.join("linked").canonicalize().unwrap();
-    let source_endpoint = LocalEndpoint::discover_with_runtime(
+    let source_endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
     )
     .unwrap();
-    let linked_endpoint = LocalEndpoint::discover_with_runtime(
+    let linked_endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &linked.join(".runyte"),
         &linked,
         Some(test_runtime_dir()),
@@ -3465,7 +3465,7 @@ async fn incompatible_worktree_host_returns_the_tui_to_its_source() {
         fs::remove_dir_all(root).unwrap();
         return;
     };
-    let source_endpoint = LocalEndpoint::discover_with_runtime(
+    let source_endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -3544,7 +3544,7 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
     git(&root, &["add", "note.txt", "other.txt"]);
     git(&root, &["commit", "--quiet", "-m", "base"]);
     let created = root.join("created-from-ui");
-    let source_endpoint = LocalEndpoint::discover_with_runtime(
+    let source_endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -3596,7 +3596,7 @@ async fn creating_a_worktree_starts_and_attaches_its_persistent_session() {
     let mut destination = loop {
         if created.is_dir() {
             let canonical = created.canonicalize().unwrap();
-            let endpoint = LocalEndpoint::discover_with_runtime(
+            let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
                 &canonical.join(".runyte"),
                 &canonical,
                 Some(test_runtime_dir()),
@@ -3666,7 +3666,7 @@ async fn persistent_tui_opens_async_log_and_shared_commit_detail() {
         git(&root, &["add", "note.txt"]);
         git(&root, &["commit", "--quiet", "-m", subject]);
     }
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -3726,7 +3726,7 @@ async fn persistent_tui_opens_async_log_and_shared_commit_detail() {
 #[tokio::test]
 async fn wait_without_a_host_starts_one_and_attaches_the_invoking_terminal() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -3825,7 +3825,7 @@ async fn wait_without_a_host_starts_one_and_attaches_the_invoking_terminal() {
 #[tokio::test]
 async fn attached_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -3878,7 +3878,7 @@ async fn attached_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
 #[tokio::test]
 async fn queued_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -3940,7 +3940,7 @@ async fn queued_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
 #[tokio::test]
 async fn handed_off_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -4009,7 +4009,7 @@ async fn handed_off_wait_client_exits_and_cancels_when_its_terminal_is_lost() {
 #[tokio::test]
 async fn redirected_stdin_uses_dev_tty_for_terminal_loss() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -4073,7 +4073,7 @@ async fn redirected_stdin_uses_dev_tty_for_terminal_loss() {
 #[tokio::test]
 async fn controlling_terminal_loss_preserves_the_hangup_exit_status() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -4126,7 +4126,7 @@ async fn controlling_terminal_loss_preserves_the_hangup_exit_status() {
 #[tokio::test]
 async fn durable_completion_wins_a_race_with_terminal_loss() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -4170,7 +4170,7 @@ async fn durable_completion_wins_a_race_with_terminal_loss() {
 #[tokio::test]
 async fn terminal_loss_recovery_is_bounded_when_the_host_stops_responding() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -4228,7 +4228,7 @@ async fn terminal_loss_recovery_is_bounded_when_the_host_stops_responding() {
 #[tokio::test]
 async fn wait_client_exits_when_its_launching_process_dies() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -4374,7 +4374,7 @@ async fn wait_client_exits_when_its_launching_process_dies() {
 #[tokio::test]
 async fn durable_completion_wins_a_race_with_launcher_loss() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -4448,7 +4448,7 @@ async fn durable_completion_wins_a_race_with_launcher_loss() {
 #[tokio::test]
 async fn signalling_a_wait_client_cancels_its_durable_request() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -4523,9 +4523,12 @@ fn publish_incompatible_endpoint(
 ) -> Option<(LocalEndpoint, tokio::net::UnixListener, u32)> {
     use std::os::unix::fs::PermissionsExt;
 
-    let endpoint =
-        LocalEndpoint::discover_with_runtime(&root.join(".runyte"), root, Some(test_runtime_dir()))
-            .unwrap();
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
+        &root.join(".runyte"),
+        root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
     let directory = endpoint.metadata().parent().unwrap();
     fs::create_dir_all(directory).unwrap();
     fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
@@ -4762,7 +4765,7 @@ async fn a_live_incompatible_host_is_listed_and_can_be_force_stopped() {
 #[tokio::test]
 async fn wait_terminal_hangup_is_not_reported_as_success() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -4842,7 +4845,7 @@ async fn wait_terminal_hangup_is_not_reported_as_success() {
 #[tokio::test]
 async fn an_interactive_quit_flushes_its_shutdown_response_without_a_control_client() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -4887,7 +4890,7 @@ async fn a_shutting_down_host_finishes_its_last_message_before_exiting() {
         "abcdefghijklmnopqrstuvwxyz\n".repeat(80_000),
     )
     .unwrap();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -4977,13 +4980,13 @@ async fn relative_workspace_attach_uses_editor_cwd_and_keeps_one_client_process(
     let linked = root.join("linked").canonicalize().unwrap();
     fs::write(root.join("source-ready.txt"), b"source\n").unwrap();
     fs::write(linked.join("linked-ready.txt"), b"linked\n").unwrap();
-    let source_endpoint = LocalEndpoint::discover_with_runtime(
+    let source_endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
     )
     .unwrap();
-    let linked_endpoint = LocalEndpoint::discover_with_runtime(
+    let linked_endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &linked.join(".runyte"),
         &linked,
         Some(test_runtime_dir()),
@@ -5118,7 +5121,7 @@ async fn quit_return_scenario(terminate: bool) {
         git(directory, &["init", "--quiet"]);
         let filename = format!("session-{index}-ready.txt");
         fs::write(directory.join(&filename), "ready\n").unwrap();
-        let endpoint = LocalEndpoint::discover_with_runtime(
+        let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
             &directory.join(".runyte"),
             directory,
             Some(runtime.path()),
@@ -5248,9 +5251,12 @@ async fn reattachment_refreshes_session_strip_before_the_periodic_observation() 
         let root = storage
             .create_private_dir(format!("project-{count}"))
             .unwrap();
-        let endpoint =
-            LocalEndpoint::discover_with_runtime(&root.join(".runyte"), &root, Some(&runtime))
-                .unwrap();
+        let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
+            &root.join(".runyte"),
+            &root,
+            Some(&runtime),
+        )
+        .unwrap();
         let child = bundled_runyte()
             .arg("--serve")
             .arg("--project-root")
@@ -5403,7 +5409,7 @@ async fn exercise_parent_wait_route(route: &str) {
     let prompt = outside.join("prompt.txt");
     fs::write(&prompt, "original\n").unwrap();
     let result_path = root.join("parent-result");
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -5611,7 +5617,7 @@ async fn integrated_parent_attach_reports_completion_only_after_outer_acknowledg
     let root = project();
     let destination = project();
     let result_path = root.join("attach-result");
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -5700,13 +5706,13 @@ async fn integrated_attach_switches_real_outer_tui_and_returns_to_original_shell
     let destination = project();
     fs::write(root.join("source-ready.txt"), "source\n").unwrap();
     fs::write(destination.join("destination-ready.txt"), "destination\n").unwrap();
-    let source_endpoint = LocalEndpoint::discover_with_runtime(
+    let source_endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
     )
     .unwrap();
-    let destination_endpoint = LocalEndpoint::discover_with_runtime(
+    let destination_endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &destination.join(".runyte"),
         &destination,
         Some(test_runtime_dir()),
@@ -5839,7 +5845,7 @@ async fn native_media_capability_and_projection_survive_frontend_handoff() {
     let image = root.join("image.png");
     fs::write(&pdf, b"%PDF\0fixture").unwrap();
     fs::write(&image, b"\x89PNG\0fixture").unwrap();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -6266,7 +6272,7 @@ async fn double_force_quit_ends_standalone_terminal_processes() {
 #[tokio::test]
 async fn workspace_echo_distinguishes_deliberate_attachment_from_transport_reconnect() {
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -6375,7 +6381,7 @@ async fn workspace_echo_distinguishes_deliberate_attachment_from_transport_recon
 async fn mux_cli_opening_echo_names_a_started_then_running_session() {
     use std::io::Write;
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),
@@ -6414,7 +6420,7 @@ async fn created_mux_cli_echo_becomes_existing_state_on_reattach() {
     use std::io::Write;
     let root = project();
     fs::remove_dir_all(root.join(".git")).unwrap();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(test_runtime_dir()),

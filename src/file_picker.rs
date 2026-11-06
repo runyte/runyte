@@ -106,13 +106,16 @@ pub enum ScanScope {
     /// Read no ignore file at all. The reserved names, the workspace state
     /// directory, symlinks, and the hidden-file rule still apply.
     Everything,
-    /// A scan with no workspace behind it, begun from wherever the reader
+    /// A home-workspace scan, or one with no workspace behind it, begun where the reader
     /// is. Ignore files are read from `from` down when it is given, as
     /// `Ignoring` does, and none at all otherwise. The walk is bounded by
     /// [`crate::scan_boundary`]: it refuses the filesystem root and virtual
     /// filesystems, stays on the root's filesystem, and stops after
     /// [`crate::scan_boundary::CONTAINED_SCAN_ENTRY_LIMIT`] entries.
-    Contained { from: Option<PathBuf> },
+    Contained {
+        from: Option<PathBuf>,
+        excluded: Option<PathBuf>,
+    },
 }
 
 impl ScanScope {
@@ -121,16 +124,28 @@ impl ScanScope {
         Self::Ignoring { from: from.into() }
     }
 
-    /// A bounded scan for a session without a workspace.
+    /// A bounded scan without a fixed exclusion.
     pub fn contained(from: Option<PathBuf>) -> Self {
-        Self::Contained { from }
+        Self::Contained {
+            from,
+            excluded: None,
+        }
+    }
+
+    /// Fixed home-only exclusion, retained across toggles and rescans. An
+    /// explicitly opened excluded directory remains a valid scan root.
+    pub fn home(from: Option<PathBuf>, excluded: Option<PathBuf>) -> Self {
+        Self::Contained { from, excluded }
     }
 
     /// The directory ignore rules are inherited from, if any are read.
     fn ignore_root(&self) -> Option<&Path> {
         match self {
-            Self::Ignoring { from } | Self::Contained { from: Some(from) } => Some(from),
-            Self::Everything | Self::Contained { from: None } => None,
+            Self::Ignoring { from }
+            | Self::Contained {
+                from: Some(from), ..
+            } => Some(from),
+            Self::Everything | Self::Contained { from: None, .. } => None,
         }
     }
 
@@ -649,8 +664,10 @@ impl FilePicker {
             (ScanScope::Everything, Some(root)) => Some(format!("all files in {root}")),
             // Without a workspace the root is never implied: the scope moves
             // with the active directory, so the title always names it.
-            (ScanScope::Contained { from: Some(_) }, _) => Some(self.root.display().to_string()),
-            (ScanScope::Contained { from: None }, _) => {
+            (ScanScope::Contained { from: Some(_), .. }, _) => {
+                Some(self.root.display().to_string())
+            }
+            (ScanScope::Contained { from: None, .. }, _) => {
                 Some(format!("all files in {}", self.root.display()))
             }
         }
@@ -3432,7 +3449,8 @@ fn scan_with(
                 continue;
             }
             let is_directory = file_type.is_dir();
-            if name_text == ".git"
+            if matches!(scope, ScanScope::Contained { excluded: Some(excluded), .. } if path == *excluded)
+                || name_text == ".git"
                 || name_text == ".runyte"
                 || path == state_root
                 || (!show_hidden && name_text.starts_with('.'))
@@ -4057,8 +4075,13 @@ mod tests {
         }
         let workspace = root.join(".runyte");
 
-        let (paths, _, limited) =
-            scan_files(&root, &ScanScope::contained(None), &workspace, false).unwrap();
+        let (paths, _, limited) = scan_files(
+            &root,
+            &ScanScope::home(None, Some(root.join("Library"))),
+            &workspace,
+            false,
+        )
+        .unwrap();
         assert!(limited, "reading the dotfiles spent the budget");
         assert!(paths.is_empty());
 
@@ -4066,6 +4089,24 @@ mod tests {
             scan_files(&root, &ScanScope::Everything, &workspace, false).unwrap();
         assert!(!limited);
         assert!(paths.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn home_scans_exclude_library_in_both_modes_but_allow_an_explicit_root() {
+        let root = temporary("home-library");
+        fs::create_dir_all(root.join("Library")).unwrap();
+        fs::write(root.join("visible.txt"), "visible").unwrap();
+        fs::write(root.join("Library/private.txt"), "private").unwrap();
+        for from in [Some(root.clone()), None] {
+            let scope = ScanScope::home(from, Some(root.join("Library")));
+            let (paths, _, limited) = scan_files(&root, &scope, &root.join("state"), true).unwrap();
+            assert_eq!(paths, [ScanEntry::file(root.join("visible.txt"))]);
+            assert!(!limited);
+            let (paths, _, _) =
+                scan_files(&root.join("Library"), &scope, &root.join("state"), true).unwrap();
+            assert_eq!(paths, [ScanEntry::file(root.join("Library/private.txt"))]);
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

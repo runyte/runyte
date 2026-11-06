@@ -318,6 +318,8 @@ runyte --mux              # open a persistent session in a project
 
 A workspace is a version-control working copy or a directory holding
 `.runyte/`; ide mode creates one in the launch directory when there is none.
+Exactly in home, ide and mux use a home workspace whose state lives in the
+per-user state directory, without creating `~/.runyte/`.
 Use `runyte --help` for all command-line options.
 
 ## Help

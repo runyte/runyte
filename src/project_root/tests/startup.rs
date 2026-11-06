@@ -11,6 +11,7 @@ fn origin_handoff_is_bounded_and_does_not_rediscover_a_resolved_host() {
         WorkspaceOrigin::VersionControl(VersionControl::Jujutsu),
         WorkspaceOrigin::VersionControl(VersionControl::Subversion),
         WorkspaceOrigin::StateDirectory,
+        WorkspaceOrigin::Home,
         WorkspaceOrigin::Created(CreatedBy::Adoption),
         WorkspaceOrigin::Created(CreatedBy::Init),
         WorkspaceOrigin::Created(CreatedBy::AttachDirectory),

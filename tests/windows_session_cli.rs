@@ -204,10 +204,14 @@ fn enter_restart_breakaway_job() -> OwnedHandle {
 }
 
 fn private_environment(command: &mut Command, root: &TestRuntimeRoot) {
+    runyte::test_support::isolate_user_paths(command, root.path());
     command
         .envs(runyte::test_support::state_environment(
             std::path::Path::new(&(root.join("config"))),
         ))
+        .env("HOME", root.join("home"))
+        .env("RUNYTE_TEST_ACCOUNT_HOME", root.join("home"))
+        .env("RUNYTE_TEST_LOCAL_APP_DATA", root.join("local-app-data"))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
@@ -1329,4 +1333,71 @@ fn captured_manager_rename_refuses_real_replacement_at_same_location() {
         name_before
     );
     runtime.block_on(owner.shutdown()).unwrap();
+}
+
+/// Native startup has a separate directory-initialization and catalog path.
+/// Use a fixture-owned live host to exercise bare/explicit mux resolution
+/// without asking the runner for a detached breakaway process.
+#[cfg(debug_assertions)]
+#[test]
+fn home_init_and_bare_or_explicit_mux_keep_one_native_host_without_a_home_marker() {
+    let root = TestRuntimeRoot::new("native-home").unwrap();
+    let home = root.create_private_dir("home").unwrap();
+    let config = root.create_private_dir("config/runyte").unwrap();
+    root.create_private_dir("cache/runyte").unwrap();
+    fs::write(config.join("config.yaml"), "lsp:\n  enable: false\n").unwrap();
+    let state = runyte::workspace_state::StateLocation::out_of_tree(
+        &home,
+        &root.join("config/.fixture-state/runyte"),
+    );
+    let initialized = cli(&root, root.path(), &["--init", home.to_str().unwrap()]);
+    assert!(
+        initialized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&initialized.stderr)
+    );
+    assert!(state.as_path().is_dir());
+    assert!(!home.join(".runyte").exists());
+    let layout = ResolvedLayout::resolve(LocationInputs {
+        project_root: home.clone(),
+        state_root: state.as_path().to_owned(),
+        reserved_user_roots: vec![config],
+        roots: CapturedRoots {
+            cache_home: Some(root.join("cache")),
+            inventory_override: Some(root.join("inventory")),
+            ..CapturedRoots::default()
+        },
+    })
+    .unwrap();
+    let _host = start_host(&root, &layout);
+    let _cleanup = RestartCleanup {
+        root: &root,
+        cwd: &home,
+        selector: home.to_str().unwrap(),
+    };
+    let location = layout.publication_location().unwrap();
+    let before = location.read_ready().unwrap().unwrap();
+    for args in [
+        vec!["--mux"],
+        vec!["-a"],
+        vec!["--mux", home.to_str().unwrap()],
+    ] {
+        let output = cli(&root, &home, &args);
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success());
+        assert!(
+            error.contains("failed to enable terminal raw mode"),
+            "home resolution must reach the frontend: {error}"
+        );
+        let after = location.read_ready().unwrap().unwrap();
+        assert_eq!(before.process, after.process);
+        assert_eq!(after.project_root().unwrap(), home);
+        assert!(!home.join(".runyte").exists());
+    }
+    assert_eq!(
+        fs::read_dir(root.join("config/.fixture-state/runyte/workspaces"))
+            .unwrap()
+            .count(),
+        1
+    );
 }
