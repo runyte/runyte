@@ -353,8 +353,15 @@ pub(super) fn resolve_workspace_endpoint_with_runtime(
     let requested = requested
         .canonicalize()
         .with_context(|| format!("cannot resolve workspace {}", requested.display()))?;
-    let project_root =
-        project_root::discover(&requested, state)?.context(project_root::NO_WORKSPACE_HERE)?;
+    let project_root = project_root::discover(&requested, state)?
+        .map(|workspace| workspace.root)
+        .with_context(|| {
+            project_root::WorkspaceRequirement::new(project_root::WorkspaceMode::Mux, true).refusal(
+                &requested,
+                None,
+                crate::app::user_home_directory().as_deref(),
+            )
+        })?;
     let state_root = project_root::resolve_state_root(&project_root, state);
     let mut reserved_user_roots = config_path
         .map(|path| config::config_root_for(path, &project_root))

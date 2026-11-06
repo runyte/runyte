@@ -423,6 +423,7 @@ pub(super) async fn run(
         }
         None => {
             let project = project_root::discover(&launch_directory, &config.workspace.state)?
+                .map(|workspace| workspace.root)
                 .context(
                     "no project workspace was found; pass --project-root for foreground --serve",
                 )?;

@@ -1359,7 +1359,14 @@ async fn run(
                     };
                     Some(
                         project_root::discover(&directory, &state)?
-                            .context(project_root::NO_WORKSPACE_HERE)?,
+                            .map(|workspace| workspace.root)
+                            .with_context(|| {
+                                workspace_requirement(&arguments, RunMode::Mux).refusal(
+                                    &directory,
+                                    None,
+                                    crate::app::user_home_directory().as_deref(),
+                                )
+                            })?,
                     )
                 } else {
                     None
@@ -1669,7 +1676,14 @@ async fn run(
         // belongs to. Naming a directory creates one; this does not.
         _ if attaching_current => {
             let project_root = project_root::discover(&launch_directory, &config.workspace.state)?
-                .context(project_root::NO_WORKSPACE_HERE)?;
+                .map(|workspace| workspace.root)
+                .with_context(|| {
+                    workspace_requirement(&arguments, config.mode()).refusal(
+                        &launch_directory,
+                        None,
+                        crate::app::user_home_directory().as_deref(),
+                    )
+                })?;
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
@@ -1682,7 +1696,9 @@ async fn run(
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
-        None => match project_root::discover(&launch_directory, &config.workspace.state)? {
+        None => match project_root::discover(&launch_directory, &config.workspace.state)?
+            .map(|workspace| workspace.root)
+        {
             Some(project_root) => {
                 startup.mark(StartupPhase::ProjectResolvedAutomatically);
                 project_root
@@ -1702,12 +1718,17 @@ async fn run(
                     &reserved_user_roots,
                     &user_home_directories(),
                     &targets,
+                    workspace_requirement(&arguments, config.mode()),
                 )?;
                 startup.mark(StartupPhase::ProjectResolvedAutomatically);
                 adopted_workspace = true;
                 project_root
             }
-            None => anyhow::bail!(project_root::NO_WORKSPACE_HERE),
+            None => anyhow::bail!(workspace_requirement(&arguments, config.mode()).refusal(
+                &launch_directory,
+                None,
+                crate::app::user_home_directory().as_deref()
+            )),
         },
     };
     let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
@@ -2559,6 +2580,43 @@ fn user_home_directories() -> Vec<PathBuf> {
     environment.into_iter().chain(account).collect()
 }
 
+fn workspace_requirement(
+    arguments: &LaunchArguments,
+    configured: RunMode,
+) -> project_root::WorkspaceRequirement {
+    let mut requirement = project_root::WorkspaceRequirement::new(
+        if arguments.mode == LaunchMode::Standalone {
+            project_root::WorkspaceMode::Ide
+        } else {
+            project_root::WorkspaceMode::Mux
+        },
+        arguments.mode_explicit,
+    );
+    if arguments.mode_explicit {
+        let flag = match arguments.mode {
+            LaunchMode::Serve => Some("--serve"),
+            LaunchMode::Wait => Some("--wait"),
+            LaunchMode::RestartSession => Some("--session-restart"),
+            LaunchMode::StopSession => Some("--session-stop"),
+            _ => None,
+        };
+        if let Some(flag) = flag {
+            requirement.source = project_root::ModeSource::Flag(flag);
+        }
+    }
+    if !arguments.mode_explicit
+        && arguments.mode == LaunchMode::Standalone
+        && configured == RunMode::Mux
+    {
+        if !arguments.targets.is_empty() {
+            requirement.source = project_root::ModeSource::PositionalTargets;
+        } else if arguments.window {
+            requirement.source = project_root::ModeSource::WindowLaunch;
+        }
+    }
+    requirement
+}
+
 /// Whether this launch runs in editor mode: standalone, with no workspace.
 /// `--editor` asks for it, and so does `mode: editor` when no mode option is
 /// given and nothing names a workspace; the launch directory never decides.
@@ -2589,16 +2647,18 @@ fn initialize_workspace(
         .canonicalize()
         .is_ok_and(|root| project_root::resolve_state_root(&root, configured_state).is_dir());
     let project_root = project_root::initialize(&requested, configured_state, reserved_user_roots)?;
-    let root = project_root.display();
+    let root = project_root::display_workspace_path(
+        &project_root,
+        crate::app::user_home_directory().as_deref(),
+    );
+    let argument = project_root::workspace_shell_argument(&project_root);
     if existed {
         writeln!(output, "{root} is already a workspace")?;
     } else {
         writeln!(output, "initialized a workspace in {root}")?;
     }
-    writeln!(
-        output,
-        "open it with: runyte {root}   or   runyte --mux {root}"
-    )?;
+    let ide = project_root::ide_open_command(&argument);
+    writeln!(output, "open it with: {ide}   or   runyte --mux {argument}")?;
     Ok(())
 }
 
@@ -5379,11 +5439,19 @@ fn parent_attach_selector(
     selector: Option<&Path>,
     directory: &Path,
     configured_state: &Path,
+    requirement: project_root::WorkspaceRequirement,
 ) -> Result<PathBuf> {
     match selector {
         Some(selector) => Ok(selector.to_path_buf()),
         None => project_root::discover(directory, configured_state)?
-            .context(project_root::NO_WORKSPACE_HERE),
+            .map(|workspace| workspace.root)
+            .with_context(|| {
+                requirement.refusal(
+                    directory,
+                    None,
+                    crate::app::user_home_directory().as_deref(),
+                )
+            }),
     }
 }
 
@@ -5402,8 +5470,12 @@ async fn run_parent_request(
         .context("owning Runyte host did not answer")??;
     if arguments.mode == LaunchMode::Persistent {
         let state = Config::load(arguments.config.as_deref())?.0.workspace.state;
-        let selector =
-            parent_attach_selector(arguments.workspace_selector.as_deref(), &directory, &state)?;
+        let selector = parent_attach_selector(
+            arguments.workspace_selector.as_deref(),
+            &directory,
+            &state,
+            workspace_requirement(arguments, RunMode::Mux),
+        )?;
         let selector = selector.as_path();
         control
             .send(&ClientRequest::ParentAttach {
@@ -5599,7 +5671,9 @@ async fn run_native_wait(
     let directory = std::env::current_dir()?;
     let requested = match arguments.project_root.as_deref() {
         Some(root) => resolve_requested_project_root(&directory, root)?,
-        None => match project_root::discover(&directory, &config.workspace.state)? {
+        None => match project_root::discover(&directory, &config.workspace.state)?
+            .map(|workspace| workspace.root)
+        {
             Some(root) => root,
             None => resolve_requested_project_root(&directory, &directory)?,
         },
@@ -5998,7 +6072,14 @@ async fn run_native_persistent(
         Some(match arguments.project_root.as_deref() {
             Some(root) => resolve_requested_project_root(&directory, root)?,
             None => project_root::discover(&directory, &config.workspace.state)?
-                .context(project_root::NO_WORKSPACE_HERE)?,
+                .map(|workspace| workspace.root)
+                .with_context(|| {
+                    workspace_requirement(arguments, config.mode()).refusal(
+                        &directory,
+                        None,
+                        crate::app::user_home_directory().as_deref(),
+                    )
+                })?,
         })
     } else {
         None
@@ -6186,7 +6267,7 @@ async fn run_native_control_cli(
                 let directory = launch_directory.as_deref().context(
                     "--session-restart requires a workspace selector or current project",
                 )?;
-                Some(project_root::discover(directory, &config.workspace.state)?.context(
+                Some(project_root::discover(directory, &config.workspace.state)?.map(|workspace| workspace.root).context(
                     "--session-restart requires a workspace selector or discoverable current project",
                 )?)
             } else {
@@ -9345,7 +9426,7 @@ mod tests {
         assert_eq!(
             String::from_utf8(output).unwrap(),
             format!(
-                "initialized a workspace in {0}\nopen it with: runyte {0}   or   runyte --mux {0}\n",
+                "initialized a workspace in {0}\nopen it with: cd '{0}' && runyte   or   runyte --mux '{0}'\n",
                 canonical.display()
             )
         );
@@ -9384,22 +9465,90 @@ mod tests {
         let plain = root.path().join("plain");
         std::fs::create_dir(&plain).unwrap();
 
-        let error = super::parent_attach_selector(None, &plain, state).unwrap_err();
-        assert!(error.to_string().contains("no workspace here"), "{error}");
+        let error = super::parent_attach_selector(
+            None,
+            &plain,
+            state,
+            crate::project_root::WorkspaceRequirement::new(
+                crate::project_root::WorkspaceMode::Mux,
+                true,
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            crate::project_root::WorkspaceRequirement::new(
+                crate::project_root::WorkspaceMode::Mux,
+                true
+            )
+            .refusal(&plain, None, None)
+        );
         assert!(!plain.join(".runyte").exists());
 
         let project = root.path().join("project");
         std::fs::create_dir_all(project.join(".runyte")).unwrap();
         std::fs::create_dir(project.join("src")).unwrap();
         assert_eq!(
-            super::parent_attach_selector(None, &project.join("src"), state).unwrap(),
+            super::parent_attach_selector(
+                None,
+                &project.join("src"),
+                state,
+                crate::project_root::WorkspaceRequirement::new(
+                    crate::project_root::WorkspaceMode::Mux,
+                    true
+                )
+            )
+            .unwrap(),
             project.canonicalize().unwrap()
         );
 
         // A named selector is the caller's decision and passes unchanged.
         assert_eq!(
-            super::parent_attach_selector(Some(&plain), &project, state).unwrap(),
+            super::parent_attach_selector(
+                Some(&plain),
+                &project,
+                state,
+                crate::project_root::WorkspaceRequirement::new(
+                    crate::project_root::WorkspaceMode::Mux,
+                    true
+                )
+            )
+            .unwrap(),
             plain
+        );
+    }
+
+    #[test]
+    fn window_mux_fallback_names_its_source_and_positional_target_precedence() {
+        for (args, source) in [
+            (
+                vec!["--window"],
+                "window launch uses ide instead of mode: mux",
+            ),
+            (
+                vec!["--window", "notes.md"],
+                "file or directory targets override mode: mux",
+            ),
+        ] {
+            let arguments = LaunchArguments::parse_from(args.into_iter().map(Into::into)).unwrap();
+            assert!(!super::uses_automatic_persistent_mode(
+                &arguments,
+                RunMode::Mux
+            ));
+            let requirement = super::workspace_requirement(&arguments, RunMode::Mux);
+            assert_eq!(requirement.mode, crate::project_root::WorkspaceMode::Ide);
+            assert_eq!(
+                requirement.refusal(Path::new("/fixture"), None, None),
+                format!(
+                    "runyte needs a workspace in ide mode ({source}), and none was found in /fixture or any directory above it.\n  Open a project:      {}\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor",
+                    crate::project_root::ide_open_command("DIRECTORY")
+                )
+            );
+        }
+        let explicit = LaunchArguments::parse_from(["--window", "--ide"].map(Into::into)).unwrap();
+        assert_eq!(
+            super::workspace_requirement(&explicit, RunMode::Mux).source,
+            crate::project_root::ModeSource::Flag("--ide")
         );
     }
 
