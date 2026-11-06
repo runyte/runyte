@@ -107,8 +107,8 @@ When one of these fails, recoverable edits are preserved.
 - **`:session-clean`** is available inside the editor. On Linux and macOS use
   `runyte --session-clean`.
 - **A bare `runyte`** with `mode: mux` attaches only to a project it can
-  discover, and otherwise refuses without creating a workspace, as a bare `-a`
-  does. `-a DIRECTORY` makes that directory a workspace; `--init` only creates
+  discover, including the exact home-directory fallback, and otherwise refuses
+  without creating a workspace, as a bare `-a` does. `-a DIRECTORY` makes that directory a workspace; `--init` only creates
   one.
 - **`--serve`** stops the host when the process that launched it exits.
 - **Plugins** can request the `processes` capability for managed native helper
@@ -135,8 +135,9 @@ Details:
 
 - **Workspaces.** `runyte FILE` opens the file in the workspace the current
   directory belongs to. Outside any workspace the current directory becomes
-  one when the file is inside it. In your home directory, a temporary or
-  shared directory, or the filesystem root, or for a file elsewhere, it
+  one when the file is inside it. Exactly in home, ide and mux use a home
+  workspace with state in the per-user state area. In a temporary or shared directory,
+  or the filesystem root, or for a file elsewhere, ide
   refuses and suggests `runyte --init DIRECTORY`; use `runed FILE` to edit
   without one. See [Finding the workspace](workspaces-and-persistent-sessions.md#starting-a-workspace).
 

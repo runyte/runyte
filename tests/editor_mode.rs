@@ -55,10 +55,11 @@ fn command(program: &Path, owner: &Path, directory: &Path, arguments: &[&str]) -
         // panic/error backtraces, including CI's RUST_BACKTRACE setting.
         .env("RUST_BACKTRACE", "0")
         .env("RUST_LIB_BACKTRACE", "0")
-        .env("HOME", process_dir(owner, "home"))
         .envs(runyte::test_support::state_environment(
             std::path::Path::new(&(process_dir(owner, "config"))),
         ))
+        .env("HOME", process_dir(owner, "home"))
+        .env("RUNYTE_TEST_ACCOUNT_HOME", process_dir(owner, "home"))
         .env("XDG_STATE_HOME", process_dir(owner, "state"))
         .env(
             "RUNYTE_TEST_STATE_HOME",
@@ -179,7 +180,7 @@ fn an_ide_launch_naming_a_file_elsewhere_makes_no_workspace() {
 }
 
 #[test]
-fn the_home_directory_is_not_made_a_workspace_by_an_ide_launch() {
+fn the_home_directory_uses_out_of_tree_state_for_an_ide_launch() {
     let owner = TestRuntimeRoot::new("ide-in-home").unwrap();
     let home = owner.join("home");
     fs::create_dir_all(&home).unwrap();
@@ -197,11 +198,13 @@ fn the_home_directory_is_not_made_a_workspace_by_an_ide_launch() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
+    assert!(!stderr.contains("not made one automatically"), "{stderr}");
     assert!(
-        stderr.contains("the home directory is not made one automatically"),
+        process_dir(&owner, "state")
+            .join("runyte/workspaces")
+            .is_dir(),
         "{stderr}"
     );
-    assert!(stderr.contains("runyte --init DIRECTORY"), "{stderr}");
     assert!(!home.join(".runyte").exists());
 }
 

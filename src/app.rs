@@ -3138,6 +3138,7 @@ pub struct App {
     path_listings: RefCell<DirectoryListings>,
     pub project_root: PathBuf,
     pub state_root: PathBuf,
+    home_workspace: bool,
     /// Editor mode: a standalone session with no workspace. `project_root`
     /// then only names the launch directory, which relative paths are
     /// displayed against; nothing scoped to a project reads it, and
@@ -3420,7 +3421,16 @@ impl App {
     }
 
     /// Builds editor state with every requested startup file already open.
-    pub fn new_with_targets(config: Config, targets: Vec<LaunchTarget>) -> Result<Self> {
+    pub fn new_with_targets(mut config: Config, targets: Vec<LaunchTarget>) -> Result<Self> {
+        config.startup_safety = Some(crate::workspace_state::StartupSafety::for_startup(
+            config.startup_safety.take(),
+            || {
+                [config::default_config_root(), external_open::cache_root()]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            },
+        ));
         let _startup_safety =
             crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         let launch_directory = std::env::current_dir()?;
@@ -3437,21 +3447,29 @@ impl App {
         launch_directory: &Path,
         home: Option<&Path>,
     ) -> Result<PathBuf> {
-        let project_root = project_root::discover(launch_directory, &config.workspace.state)?
-            .map(|workspace| workspace.root)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    project_root::WorkspaceRequirement::new(
-                        if config.mode() == crate::config::RunMode::Mux {
-                            project_root::WorkspaceMode::Mux
-                        } else {
-                            project_root::WorkspaceMode::Ide
-                        },
-                        false
-                    )
-                    .refusal(launch_directory, None, home)
+        let safety = crate::workspace_state::StartupSafety::for_startup(
+            config.startup_safety.clone(),
+            Vec::new,
+        );
+        let project_root = project_root::discover_with_home_safety(
+            launch_directory,
+            &config.workspace.state,
+            &safety,
+        )?
+        .map(|workspace| workspace.root)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                project_root::WorkspaceRequirement::new(
+                    if config.mode() == crate::config::RunMode::Mux {
+                        project_root::WorkspaceMode::Mux
+                    } else {
+                        project_root::WorkspaceMode::Ide
+                    },
+                    false
                 )
-            })?;
+                .refusal(launch_directory, None, home)
+            )
+        })?;
         Ok(project_root)
     }
 
@@ -3650,20 +3668,36 @@ impl App {
             crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         let (theme_name, theme) = config.startup_theme()?;
         startup.mark(StartupPhase::ThemeResolved);
-        let state_location =
-            project_root::resolve_state_location(&project_root, &config.workspace.state);
-        let state_root = state_location.as_path().to_owned();
-        let plugin_state_anchor = state_location.plugin_anchor(
-            crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?,
-        );
         let captured = config.startup_safety.take();
-        if !editor_mode {
-            let safety = crate::workspace_state::StartupSafety::for_startup(captured, || {
+        let safety = (!editor_mode).then(|| {
+            crate::workspace_state::StartupSafety::for_startup(captured.clone(), || {
                 [config::default_config_root(), external_open::cache_root()]
                     .into_iter()
                     .flatten()
                     .collect()
-            });
+            })
+        });
+        let state_location = match safety.as_ref() {
+            Some(safety) => project_root::resolve_state_location_with_safety(
+                &project_root,
+                &config.workspace.state,
+                safety,
+            )?,
+            None => project_root::StateLocation::in_tree(&project_root, &config.workspace.state),
+        };
+        let home_workspace = safety
+            .as_ref()
+            .is_some_and(|safety| safety.is_home(&project_root))
+            && project_root::exact_origin_with_safety(
+                &project_root,
+                &config.workspace.state,
+                safety.as_deref().unwrap(),
+            )? == project_root::WorkspaceOrigin::Home;
+        let state_root = state_location.as_path().to_owned();
+        let plugin_state_anchor = state_location.plugin_anchor(
+            crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?,
+        );
+        if let Some(safety) = safety {
             let admission = safety.validate(&project_root, &state_location);
             safety.close();
             admission?;
@@ -3862,6 +3896,7 @@ impl App {
             prompt_revision: 0,
             project_root,
             state_root,
+            home_workspace,
             editor_mode,
             running_as_root: false,
             plugin_state_anchor,

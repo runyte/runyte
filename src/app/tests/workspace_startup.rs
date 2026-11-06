@@ -19,6 +19,7 @@ fn fixture() -> (App, TestRuntimeRoot) {
     .unwrap();
     app.home_directory = Some(root.path().to_owned());
     app.project_root = root.join("project");
+    app.state_root = app.project_root.join(".runyte");
     app.note_loaded_config(&root.join("config.yaml"));
     (app, root)
 }
@@ -37,6 +38,10 @@ fn workspace_opening_echo_preserves_every_discovery_origin_and_created_event() {
         (
             WorkspaceOrigin::VersionControl(VersionControl::Subversion),
             "Workspace ~/project (Subversion root)",
+        ),
+        (
+            WorkspaceOrigin::Home,
+            "Workspace ~/project (home workspace)",
         ),
         (
             WorkspaceOrigin::StateDirectory,
@@ -300,4 +305,64 @@ fn created_origin_belongs_only_to_the_initial_persistent_opening() {
             1
         );
     }
+}
+
+#[test]
+fn home_policy_is_captured_for_finder_and_search_without_changing_editor_mode() {
+    use crate::{file_picker::ScanScope, workspace_state::StartupSafety};
+    let fixture = TestRuntimeRoot::new("home-app").unwrap();
+    let home = fixture.create_private_dir("home").unwrap();
+    let config = Config {
+        startup_safety: Some(Arc::new(StartupSafety::capture_with_homes(
+            &[],
+            || Some(fixture.join("state/runyte")),
+            std::slice::from_ref(&home),
+        ))),
+        ..Config::default()
+    };
+    let mut app = App::new_in_project(config, None, &home).unwrap();
+    assert!(app.home_workspace);
+    assert!(!app.is_editor_mode());
+    let excluded = cfg!(target_os = "macos").then(|| home.join("Library"));
+    assert_eq!(
+        app.ignoring_scan_scope(home.clone()),
+        ScanScope::home(Some(home.clone()), excluded.clone())
+    );
+    assert_eq!(app.unfiltered_scan_scope(), ScanScope::home(None, excluded));
+    let (service, requests) = crate::workspace_search::WorkspaceSearchService::controlled();
+    app.attach_workspace_search(service);
+    app.open_global_search("needle", SearchMode::Sensitive);
+    let request = requests.recv().unwrap();
+    assert!(request.contained);
+    assert_eq!(request.excluded, app.home_scan_exclusion());
+    app.home_directory = Some(fixture.join("different-environment-home"));
+    app.note_workspace_origin(WorkspaceOrigin::Home);
+    app.finish_workspace_startup();
+    assert!(!app.displayed_status_message().contains("Workspace ~"));
+    app.persistent_session = true;
+    app.note_workspace_opened();
+    app.note_workspace_opened();
+    assert!(app.displayed_status_message().contains("home workspace"));
+    assert!(
+        app.displayed_status_message()
+            .contains("attached to the running session")
+    );
+    assert!(!home.join(".runyte").exists());
+    std::fs::create_dir(home.join(".git")).unwrap();
+    std::fs::write(home.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let config = Config {
+        startup_safety: Some(Arc::new(StartupSafety::capture_with_homes(
+            &[],
+            || Some(fixture.join("state/runyte")),
+            std::slice::from_ref(&home),
+        ))),
+        ..Config::default()
+    };
+    let checkout = App::new_in_project(config, None, &home).unwrap();
+    assert!(!checkout.home_workspace);
+    assert_eq!(
+        checkout.ignoring_scan_scope(home.clone()),
+        ScanScope::ignoring(&home)
+    );
+    assert_eq!(checkout.state_root, app.state_root);
 }

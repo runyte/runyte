@@ -353,29 +353,37 @@ pub(super) fn resolve_workspace_endpoint_with_runtime(
     let requested = requested
         .canonicalize()
         .with_context(|| format!("cannot resolve workspace {}", requested.display()))?;
-    let project_root = project_root::discover(&requested, state)?
-        .map(|workspace| workspace.root)
-        .with_context(|| {
-            project_root::WorkspaceRequirement::new(project_root::WorkspaceMode::Mux, true).refusal(
-                &requested,
-                None,
-                crate::app::user_home_directory().as_deref(),
-            )
-        })?;
-    let state_root = project_root::resolve_state_root(&project_root, state);
-    let mut reserved_user_roots = config_path
-        .map(|path| config::config_root_for(path, &project_root))
+    let discovered = project_root::discover(&requested, state)?;
+    let candidate = discovered
+        .as_ref()
+        .map_or(requested.as_path(), |found| found.root.as_path());
+    let mut reserved = config_path
+        .map(|path| config::config_root_for(path, candidate))
         .into_iter()
         .collect::<Vec<_>>();
-    if let Some(cache_root) = external_open::cache_root() {
-        reserved_user_roots.push(cache_root);
+    if let Some(cache) = external_open::cache_root() {
+        reserved.push(cache);
     }
-    project_root::resolve_state_location(&project_root, state).validate(&reserved_user_roots)?;
+    let safety = crate::workspace_state::StartupSafety::capture(&reserved);
+    let project_root = match discovered {
+        Some(found) => Some(found),
+        None => project_root::discover_with_home_safety(&requested, state, &safety)?,
+    }
+    .map(|found| found.root)
+    .with_context(|| {
+        project_root::WorkspaceRequirement::new(project_root::WorkspaceMode::Mux, true).refusal(
+            &requested,
+            None,
+            crate::app::user_home_directory().as_deref(),
+        )
+    })?;
+    let location = project_root::resolve_state_location_with_safety(&project_root, state, &safety)?;
+    safety.validate(&project_root, &location)?;
     match runtime {
         Some(runtime) => {
-            LocalEndpoint::discover_with_runtime(&state_root, &project_root, Some(runtime))
+            LocalEndpoint::discover_selected_with_runtime(&location, &project_root, Some(runtime))
         }
-        None => LocalEndpoint::discover(&state_root, &project_root),
+        None => LocalEndpoint::discover_location(&location, &project_root),
     }
 }
 
@@ -418,7 +426,7 @@ pub struct HostStartup {
     /// module derives from the endpoint. Tests inject their private
     /// `XDG_CACHE_HOME` here so a spawned host cannot register itself in the
     /// person's real cache, the same reason
-    /// [`LocalEndpoint::discover_with_runtime`] takes an explicit runtime root.
+    /// [`LocalEndpoint::discover_in_tree_with_runtime`] takes explicit fixture roots.
     pub env: Vec<(OsString, OsString)>,
     /// What the failure message calls this host, for example `"restarted"`.
     pub description: &'static str,

@@ -270,8 +270,12 @@ fn geometry() -> FrameGeometry {
 }
 
 fn endpoint_for(root: &Path) -> LocalEndpoint {
-    LocalEndpoint::discover_with_runtime(&root.join(".runyte"), root, Some(&test_runtime_dir(root)))
-        .unwrap()
+    LocalEndpoint::discover_in_tree_with_runtime(
+        &root.join(".runyte"),
+        root,
+        Some(&test_runtime_dir(root)),
+    )
+    .unwrap()
 }
 
 fn serve(root: &Path, extra: &[&str]) -> ChildGuard {

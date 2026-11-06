@@ -1242,13 +1242,17 @@ impl App {
             })
             .collect();
         let directory = self.is_editor_mode().then(|| root.clone());
+        let excluded = (root == self.project_root)
+            .then(|| self.home_scan_exclusion())
+            .flatten();
         let request = WorkspaceSearchRequest {
             id,
             root,
             matcher,
             show_hidden: self.config.editor.show_hidden_files,
             open_buffers,
-            contained: self.is_editor_mode(),
+            contained: self.is_editor_mode() || self.home_workspace,
+            excluded,
         };
         self.pending_workspace_search = Some(super::PendingWorkspaceSearch {
             id,

@@ -27,6 +27,7 @@ use anyhow::{Context, Result, bail};
 pub enum WorkspaceOrigin {
     VersionControl(VersionControl),
     StateDirectory,
+    Home,
     Created(CreatedBy),
 }
 
@@ -39,6 +40,7 @@ impl WorkspaceOrigin {
             Self::VersionControl(VersionControl::Jujutsu) => "jj",
             Self::VersionControl(VersionControl::Subversion) => "svn",
             Self::StateDirectory => "state",
+            Self::Home => "home",
             Self::Created(CreatedBy::Adoption) => "adoption",
             Self::Created(CreatedBy::Init) => "init",
             Self::Created(CreatedBy::AttachDirectory) => "attach-directory",
@@ -59,6 +61,7 @@ impl WorkspaceOrigin {
             "jj" => Self::VersionControl(VersionControl::Jujutsu),
             "svn" => Self::VersionControl(VersionControl::Subversion),
             "state" => Self::StateDirectory,
+            "home" => Self::Home,
             "adoption" => Self::Created(CreatedBy::Adoption),
             "init" => Self::Created(CreatedBy::Init),
             "attach-directory" => Self::Created(CreatedBy::AttachDirectory),
@@ -67,10 +70,21 @@ impl WorkspaceOrigin {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn startup_origin(
     root: &Path,
     state: &Path,
     inherited: Option<&str>,
+) -> io::Result<WorkspaceOrigin> {
+    let safety = crate::workspace_state::StartupSafety::capture(&[]);
+    startup_origin_with_safety(root, state, inherited, &safety)
+}
+
+pub(crate) fn startup_origin_with_safety(
+    root: &Path,
+    state: &Path,
+    inherited: Option<&str>,
+    safety: &crate::workspace_state::StartupSafety,
 ) -> io::Result<WorkspaceOrigin> {
     let captured = inherited
         .filter(|value| value.len() <= 64)
@@ -82,15 +96,30 @@ pub(crate) fn startup_origin(
         });
     match captured {
         Some(origin) => Ok(origin),
-        None => exact_origin(root, state),
+        None => exact_origin_with_safety(root, state, safety),
     }
 }
 
 /// Exact explicitly selected root, as opposed to discovery from a launch
 /// directory. Used before initialization to retain whether this launch made it.
+#[cfg(test)]
 pub(crate) fn exact_origin(root: &Path, state: &Path) -> io::Result<WorkspaceOrigin> {
-    Ok(discover_candidates(&[root], state)?.map_or(
-        WorkspaceOrigin::Created(CreatedBy::AttachDirectory),
+    let safety = crate::workspace_state::StartupSafety::capture(&[]);
+    exact_origin_with_safety(root, state, &safety)
+}
+
+pub(crate) fn exact_origin_with_safety(
+    root: &Path,
+    state: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+) -> io::Result<WorkspaceOrigin> {
+    let root = root.canonicalize()?;
+    Ok(discover_candidates(&[&root], state)?.map_or(
+        if safety.is_home(&root) {
+            WorkspaceOrigin::Home
+        } else {
+            WorkspaceOrigin::Created(CreatedBy::AttachDirectory)
+        },
         |workspace| workspace.origin,
     ))
 }
@@ -276,7 +305,8 @@ pub fn initialize_with_safety(
         "project directory {} is not a directory",
         project_root.display()
     );
-    let location = resolve_state_location(&project_root, configured_state_root);
+    let location =
+        resolve_state_location_with_safety(&project_root, configured_state_root, safety)?;
     safety.validate(&project_root, &location)?;
     if matches!(location, StateLocation::OutOfTree(_)) {
         location.prepare_with_safety(&project_root, safety)?;
@@ -328,8 +358,7 @@ fn discover_candidates(
 /// Some directories are refused rather than adopted, because a state
 /// directory in them would be discovered by every later launch from a
 /// directory below with no repository, quietly making all of it one
-/// workspace: the home directory, as the environment and the account database
-/// each name it in `homes`; the filesystem root; the temporary directory; and
+/// workspace: the filesystem root; the temporary directory; and
 /// on Unix a directory other accounts can write to or that another account
 /// owns, where one person's state would capture another's launches. A launch
 /// naming a target outside the directory is refused too: it is about that
@@ -345,7 +374,11 @@ pub fn adopt(
     targets: &[PathBuf],
     requirement: WorkspaceRequirement,
 ) -> Result<PathBuf> {
-    let safety = crate::workspace_state::StartupSafety::capture(reserved_user_roots);
+    let safety = crate::workspace_state::StartupSafety::capture_with_homes(
+        reserved_user_roots,
+        crate::workspace_state::user_state_root,
+        homes,
+    );
     adopt_with_safety(
         directory,
         configured_state_root,
@@ -378,8 +411,6 @@ pub fn adopt_with_safety(
         .find(|target| !lexical(target).starts_with(&typed));
     let refusal = if directory.parent().is_none() {
         Some("the filesystem root is not made one automatically".to_owned())
-    } else if homes.iter().any(|home| is(home)) {
-        Some("the home directory is not made one automatically".to_owned())
     } else if is(&std::env::temp_dir()) {
         Some("the temporary directory is not made one automatically".to_owned())
     } else if let Some(sharing) = shared_directory(&directory)? {
@@ -390,7 +421,7 @@ pub fn adopt_with_safety(
             display_workspace_path(target, homes.first().map(PathBuf::as_path)),
             display_workspace_path(&directory, homes.first().map(PathBuf::as_path))
         ))
-    } else if !is_usable_relative_marker(configured_state_root) {
+    } else if !safety.is_home(&directory) && !is_usable_relative_marker(configured_state_root) {
         Some("none is made automatically while workspace.state is an absolute path".to_owned())
     } else {
         None
@@ -457,14 +488,94 @@ fn shared_directory(_directory: &Path) -> io::Result<Option<&'static str>> {
     Ok(None)
 }
 
+/// Home is an exact-directory fallback, never an upward discovery marker.
+/// Unit fixtures supply homes through StartupSafety instead of account lookup.
+pub(crate) fn user_home_directories() -> Vec<PathBuf> {
+    if cfg!(test) {
+        return Vec::new();
+    }
+    crate::app::user_home_directory()
+        .into_iter()
+        .chain(crate::user_paths::system_home_directory())
+        .collect()
+}
+
+pub fn discover_with_home(start: &Path, state: &Path) -> io::Result<Option<DiscoveredWorkspace>> {
+    let safety = crate::workspace_state::StartupSafety::capture(&[]);
+    discover_with_home_safety(start, state, &safety)
+}
+
+pub(crate) fn discover_with_home_safety(
+    start: &Path,
+    state: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+) -> io::Result<Option<DiscoveredWorkspace>> {
+    if let Some(found) = discover(start, state)? {
+        return Ok(Some(found));
+    }
+    let root = start.canonicalize()?;
+    if !safety.is_home(&root) {
+        return Ok(None);
+    }
+    let refused = if root.parent().is_none() {
+        Some("the filesystem root")
+    } else if std::env::temp_dir()
+        .canonicalize()
+        .is_ok_and(|temp| temp == root)
+    {
+        Some("the temporary directory")
+    } else {
+        shared_directory(&root)?
+    };
+    if let Some(reason) = refused {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{reason} is not made a home workspace automatically"),
+        ));
+    }
+    Ok(Some(DiscoveredWorkspace {
+        root,
+        origin: WorkspaceOrigin::Home,
+    }))
+}
+
+pub(crate) fn resolve_state_location_with_safety(
+    project: &Path,
+    configured: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+) -> Result<StateLocation> {
+    if safety.is_home(project)
+        && !(is_usable_relative_marker(configured) && project.join(configured).is_dir())
+    {
+        let root = safety
+            .state_root()
+            .context("cannot resolve per-user state for the home workspace")?;
+        return Ok(StateLocation::out_of_tree(project, root));
+    }
+    Ok(resolve_fixture_state_location(project, configured))
+}
+
 /// Resolves the configured runtime path against its owning project directory.
 pub fn resolve_state_root(project_root: &Path, configured_state_root: &Path) -> PathBuf {
     resolve_state_location(project_root, configured_state_root).into_path_buf()
 }
 
-/// Resolves placement once. Ordinary workspaces stay in-tree; #73 will supply
-/// home-workspace selection here. Debug fixtures can select one exact project.
+/// Home roots without an existing relative state directory use per-user state,
+/// including home checkouts. Other roots retain their configured placement.
 pub fn resolve_state_location(project_root: &Path, configured: &Path) -> StateLocation {
+    let homes = user_home_directories();
+    if homes
+        .iter()
+        .any(|home| home.canonicalize().is_ok_and(|home| home == project_root))
+        && !(is_usable_relative_marker(configured) && project_root.join(configured).is_dir())
+        && let Some(root) = crate::workspace_state::user_state_root()
+    {
+        return StateLocation::out_of_tree(project_root, &root);
+    }
+    resolve_fixture_state_location(project_root, configured)
+}
+
+fn resolve_fixture_state_location(project_root: &Path, configured: &Path) -> StateLocation {
     #[cfg(debug_assertions)]
     if std::env::var_os("RUNYTE_TEST_OUT_OF_TREE_ROOT")
         .is_some_and(|root| Path::new(&root) == project_root)
@@ -974,24 +1085,7 @@ mod tests {
     }
 
     #[test]
-    fn adoption_refuses_the_home_directory_and_the_filesystem_root() {
-        let home = tempfile();
-        let other = tempfile();
-
-        let refused = adopt(
-            &home,
-            std::path::Path::new(".runyte"),
-            &[],
-            &[other.clone(), home.clone()],
-            &[],
-            super::WorkspaceRequirement::new(super::WorkspaceMode::Ide, false),
-        )
-        .unwrap_err()
-        .to_string();
-        assert!(refused.contains("the home directory"), "{refused}");
-        assert!(refused.contains("runyte --init DIRECTORY"), "{refused}");
-        assert!(!home.join(".runyte").exists());
-
+    fn adoption_refuses_the_filesystem_root() {
         let root = std::path::Path::new(if cfg!(windows) { "C:\\" } else { "/" });
         let refused = adopt(
             root,
@@ -1004,9 +1098,6 @@ mod tests {
         .unwrap_err()
         .to_string();
         assert!(refused.contains("the filesystem root"), "{refused}");
-
-        fs::remove_dir_all(home).unwrap();
-        fs::remove_dir_all(other).unwrap();
     }
 
     #[test]
@@ -1420,3 +1511,7 @@ mod tests {
 #[cfg(test)]
 #[path = "project_root/tests/startup.rs"]
 mod startup_tests;
+
+#[cfg(test)]
+#[path = "project_root/tests/home.rs"]
+mod home_tests;

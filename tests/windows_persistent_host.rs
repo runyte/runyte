@@ -91,6 +91,7 @@ impl Fixture {
                 cache_home: Some(cache),
                 local_app_data: None,
                 inventory_override: Some(root.join("inventory")),
+                ..CapturedRoots::default()
             },
         })
         .unwrap();
@@ -978,7 +979,8 @@ fn foreground_serve_discovers_an_existing_project_without_prompting() {
                 cache_home: Some(fixture.root.join("cache")),
                 local_app_data: None,
                 inventory_override: Some(fixture.root.join("inventory")),
-            },
+            ..CapturedRoots::default()
+},
         })
         .unwrap();
         let mut process = Process(fixture.foreground_command().spawn().unwrap());
@@ -1217,6 +1219,7 @@ fn foreground_parent_helper() {
                 cache_home: Some(root.join("cache")),
                 local_app_data: None,
                 inventory_override: Some(root.join("inventory")),
+                ..CapturedRoots::default()
             },
         })
         .unwrap();

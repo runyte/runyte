@@ -739,7 +739,7 @@ async fn a_targetless_host_starts_on_the_about_page() {
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -798,7 +798,7 @@ async fn detach_reattach_preserves_live_editor_and_refuses_a_second_tui() {
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -956,7 +956,7 @@ async fn tutorial_persistent_lesson_completes_across_a_real_client_reattachment(
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -1047,7 +1047,7 @@ async fn terminal_pid_output_and_input_survive_detach_disconnect_and_reattach() 
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -1250,7 +1250,7 @@ async fn hidden_terminal_output_while_detached_is_unread_after_reattach() {
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -1410,7 +1410,7 @@ async fn detach_reattach_preserves_notification_history_and_unread_state() {
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -1574,7 +1574,7 @@ async fn killed_host_leaves_files_intact_and_its_endpoint_is_recoverable() {
             .spawn()
             .unwrap()
     };
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -1657,7 +1657,7 @@ async fn sessions_list_rename_restart_and_resolve_by_id_name_or_directory() {
             .spawn()
             .unwrap()
     };
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -1783,7 +1783,7 @@ async fn a_new_workspace_is_listed_and_resolved_by_its_default_directory_name() 
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -1903,7 +1903,7 @@ async fn an_exact_name_wins_over_another_hosts_id_prefix() {
     let named_root = project();
     let prefixed_root = project();
     let endpoint = |root: &Path| {
-        LocalEndpoint::discover_with_runtime(
+        LocalEndpoint::discover_in_tree_with_runtime(
             &root.join(".runyte"),
             root,
             Some(sandbox.runtime_dir()),
@@ -1972,7 +1972,7 @@ async fn an_unusable_cache_registry_falls_back_to_the_runtime_registry() {
             .spawn()
             .unwrap(),
     ));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2019,7 +2019,7 @@ async fn an_unusable_cache_registry_falls_back_to_the_runtime_registry() {
 async fn racing_starts_for_one_workspace_both_reach_the_winning_host() {
     let sandbox = TestSandbox::new();
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2148,7 +2148,7 @@ fn persistent_launch_without_controlling_terminal_helper() {
 async fn persistent_mode_starts_the_missing_workspace_before_it_reaches_a_terminal() {
     let sandbox = TestSandbox::new();
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2205,7 +2205,7 @@ async fn detached_host_keeps_the_requested_editor_directory_below_the_project_ro
     let root = project();
     let nested = root.join("nested");
     fs::create_dir(&nested).unwrap();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2265,7 +2265,7 @@ async fn detached_host_rejects_a_working_directory_outside_its_project_before_sp
     let root = project();
     let outside = root.with_extension("outside");
     fs::create_dir(&outside).unwrap();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2293,7 +2293,7 @@ async fn detached_host_rejects_a_working_directory_outside_its_project_before_sp
 async fn missing_startup_executable_is_diagnosed_as_a_replaced_client() {
     let sandbox = TestSandbox::new();
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2316,7 +2316,7 @@ async fn missing_startup_executable_is_diagnosed_as_a_replaced_client() {
 async fn an_existing_startup_target_keeps_the_generic_spawn_diagnosis() {
     let sandbox = TestSandbox::new();
     let root = project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2344,7 +2344,7 @@ async fn an_existing_startup_target_keeps_the_generic_spawn_diagnosis() {
 async fn detached_host_serves_a_project_it_could_not_have_discovered() {
     let sandbox = TestSandbox::new();
     let root = plain_project();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2408,7 +2408,7 @@ async fn quit_here_reports_its_directory_to_a_handoff_capable_client() {
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2497,7 +2497,7 @@ async fn first_open_lsp_choice_is_host_owned_and_refusal_survives_restart() {
         ),
     )
     .unwrap();
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2644,7 +2644,7 @@ done
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2757,7 +2757,7 @@ tr 'a-z' 'A-Z'
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2847,7 +2847,7 @@ async fn terminal_edition_host_accepts_preview_from_a_window_attachment() {
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),
@@ -2953,7 +2953,8 @@ async fn delayed_stop_host_helper() {
     };
     let runtime = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").unwrap());
     let endpoint =
-        LocalEndpoint::discover_with_runtime(&root.join(".runyte"), &root, Some(&runtime)).unwrap();
+        LocalEndpoint::discover_in_tree_with_runtime(&root.join(".runyte"), &root, Some(&runtime))
+            .unwrap();
     let mut server = LocalServer::bind(&endpoint).await.unwrap();
     let mut clients = std::collections::HashMap::new();
     while let Some(event) = server.recv().await {
@@ -3040,7 +3041,7 @@ async fn session_stop_waits_past_acknowledgement_and_endpoint_cleanup() {
     ] {
         let sandbox = TestSandbox::new();
         let root = project();
-        let endpoint = LocalEndpoint::discover_with_runtime(
+        let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
             &root.join(".runyte"),
             &root,
             Some(sandbox.runtime_dir()),

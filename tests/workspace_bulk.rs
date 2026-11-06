@@ -315,7 +315,7 @@ fn detached_host_exits_and_unpublishes_when_its_test_runner_is_killed() {
         panic!("supervised host did not publish its endpoint: {status:?}: {stderr}");
     }
 
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &project.join(".runyte"),
         &project.canonicalize().unwrap(),
         Some(&runtime),

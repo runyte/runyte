@@ -79,6 +79,7 @@ fn stale_disk_matches_in_open_buffers_do_not_exhaust_workspace_search() {
             text: Text::from_str("unsaved replacement\n"),
         }],
         contained: false,
+        excluded: None,
     };
 
     let (matches, limited) = perform(request, || false).unwrap().unwrap();
@@ -106,6 +107,7 @@ fn workspace_search_combines_live_and_unopened_matches_without_duplicates() {
             text: Text::from_str("changed\nneedle live\n"),
         }],
         contained: false,
+        excluded: None,
     };
 
     let (matches, limited) = perform(request, || false).unwrap().unwrap();
@@ -134,6 +136,7 @@ fn a_contained_search_refuses_the_filesystem_root() {
         show_hidden: false,
         open_buffers: Vec::new(),
         contained: true,
+        excluded: None,
     };
 
     let error = perform(request, || false).unwrap_err();
@@ -159,6 +162,7 @@ fn a_contained_search_spends_its_budget_on_hidden_entries_too() {
         show_hidden: false,
         open_buffers: Vec::new(),
         contained,
+        excluded: None,
     };
 
     let (matches, limited) = perform(request(true), || false).unwrap().unwrap();
@@ -193,6 +197,7 @@ fn a_contained_search_passes_over_directories_it_cannot_read() {
         show_hidden: false,
         open_buffers: Vec::new(),
         contained,
+        excluded: None,
     };
 
     let contained = perform(request(true), || false);
@@ -206,4 +211,36 @@ fn a_contained_search_passes_over_directories_it_cannot_read() {
         project.is_err(),
         "a project search still reports the failure"
     );
+}
+
+#[test]
+fn home_search_excludes_library_disk_and_snapshots_but_an_explicit_root_can_search_it() {
+    let fixture = crate::test_support::TestRuntimeRoot::new("home-grep").unwrap();
+    let root = fixture.create_private_dir("home").unwrap();
+    let library = root.join("Library");
+    std::fs::create_dir(&library).unwrap();
+    std::fs::write(root.join("visible.txt"), "needle").unwrap();
+    let hidden = library.join("private.txt");
+    std::fs::write(&hidden, "needle").unwrap();
+    let request = |root, excluded| WorkspaceSearchRequest {
+        id: 1,
+        root,
+        excluded,
+        matcher: Regex::new("needle").unwrap(),
+        show_hidden: true,
+        open_buffers: vec![WorkspaceSearchSnapshot {
+            path: hidden.clone(),
+            text: Text::from_str("needle unsaved"),
+        }],
+        contained: true,
+    };
+    let (matches, limited) = perform(request(root.clone(), Some(library.clone())), || false)
+        .unwrap()
+        .unwrap();
+    assert!(!limited);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].path, root.join("visible.txt"));
+    let (matches, _) = perform(request(library, None), || false).unwrap().unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].path, hidden);
 }

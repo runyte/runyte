@@ -213,7 +213,8 @@ async fn attach_exact_with_options(
     cwd_handoff: Option<&PreparedCwdHandoff>,
 ) -> Result<()> {
     let depth = terminal_color_depth();
-    let guard = TerminalGuard::enter(mouse_enabled)?;
+    let guard = TerminalGuard::enter(mouse_enabled)
+        .context("cannot prepare Windows console for persistent session attachment")?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let geometry = ui::frame_geometry(terminal.size()?.into());
     let result = tokio::select! {

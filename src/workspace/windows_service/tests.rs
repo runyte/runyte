@@ -239,6 +239,7 @@ fn fixture(name: &str) -> (TestRuntimeRoot, DiscoveryScope) {
             cache_home: None,
             local_app_data: None,
             inventory_override: None,
+            ..CapturedRoots::default()
         },
     })
     .unwrap();

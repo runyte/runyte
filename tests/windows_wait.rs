@@ -61,10 +61,18 @@ fn ensure_foreground_host(
         .join(runyte::workspace::workspace_id(&project))
         .join("endpoint.json");
     let configured_state = Config::default().workspace.state;
-    let state = runyte::project_root::resolve_state_root(&project, &configured_state);
+    let state = runyte::workspace_state::StateLocation::in_tree(&project, &configured_state)
+        .into_path_buf();
     let scope = DiscoveryScope::resolve(DiscoveryInputs {
         reserved_user_roots: vec![root.join("config"), root.join("cache")],
-        roots: CapturedRoots::capture(),
+        roots: CapturedRoots {
+            runtime_root: Some(root.join("runtime")),
+            cache_home: Some(root.join("cache")),
+            inventory_override: Some(root.join("inventory")),
+            home_paths: vec![root.join("home")],
+            user_state_root: Some(root.join("config/.fixture-state/runyte")),
+            ..CapturedRoots::default()
+        },
     })
     .unwrap();
     let current = scope.known_read_location(&project, &state).unwrap();

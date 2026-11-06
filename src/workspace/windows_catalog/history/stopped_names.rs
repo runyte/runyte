@@ -24,6 +24,7 @@ pub(super) fn observe(
     configured_state: &Path,
     remembered: &[RecentEntry],
     live: &CatalogSnapshot,
+    safety: &crate::workspace_state::StartupSafety,
 ) -> Result<StoppedNames> {
     let mut observations = BTreeMap::new();
     for entry in remembered {
@@ -39,7 +40,12 @@ pub(super) fn observe(
             live.absent_projects().contains(&entry.project_root),
             "stored name requires a complete configured vacancy observation"
         );
-        let state = crate::project_root::resolve_state_root(&entry.project_root, configured_state);
+        let state = crate::project_root::resolve_state_location_with_safety(
+            &entry.project_root,
+            configured_state,
+            safety,
+        )?
+        .into_path_buf();
         scope.known_read_location(&entry.project_root, &state)?;
         let stored =
             NameStore::read_existing(&state, &crate::workspace::workspace_id(&entry.project_root))?;

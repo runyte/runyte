@@ -17,6 +17,15 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-06 — exact home workspace
+
+[#73](https://github.com/runyte/runyte/issues/73) captures canonical home
+identities alongside startup safety roots. CLI initialization and App startup
+reuse that capture; scanner policies retain the home-workspace decision, with
+no home lookup during traversal or drawing. The startup echo reads the selected
+state path. Home project scans reuse the existing 20,000-entry contained scan
+budget. No controlled startup benchmark ran; no latency change is claimed.
+
 ## 2026-11-06 — out-of-tree state foundation
 
 [#72](https://github.com/runyte/runyte/issues/72) adds explicit out-of-tree

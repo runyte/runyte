@@ -1358,7 +1358,7 @@ async fn run(
                         None => Config::load(arguments.config.as_deref())?.0.workspace.state,
                     };
                     Some(
-                        project_root::discover(&directory, &state)?
+                        project_root::discover_with_home(&directory, &state)?
                             .map(|workspace| workspace.root)
                             .with_context(|| {
                                 workspace_requirement(&arguments, RunMode::Mux).refusal(
@@ -1690,18 +1690,22 @@ async fn run(
         // `-a` with no selector uses the workspace the launch directory
         // belongs to. Naming a directory creates one; this does not.
         _ if attaching_current => {
-            let project_root = project_root::discover(&launch_directory, &config.workspace.state)?
-                .map(|workspace| {
-                    workspace_origin = Some(workspace.origin);
-                    workspace.root
-                })
-                .with_context(|| {
-                    workspace_requirement(&arguments, config.mode()).refusal(
-                        &launch_directory,
-                        None,
-                        crate::app::user_home_directory().as_deref(),
-                    )
-                })?;
+            let project_root = project_root::discover_with_home_safety(
+                &launch_directory,
+                &config.workspace.state,
+                startup_safety.as_deref().expect("workspace startup safety"),
+            )?
+            .map(|workspace| {
+                workspace_origin = Some(workspace.origin);
+                workspace.root
+            })
+            .with_context(|| {
+                workspace_requirement(&arguments, config.mode()).refusal(
+                    &launch_directory,
+                    None,
+                    crate::app::user_home_directory().as_deref(),
+                )
+            })?;
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
@@ -1715,20 +1719,24 @@ async fn run(
                 .detached_host
                 .then(|| std::env::var(project_root::STARTUP_ORIGIN_ENV).ok())
                 .flatten();
-            workspace_origin = Some(project_root::startup_origin(
+            workspace_origin = Some(project_root::startup_origin_with_safety(
                 &project_root,
                 &config.workspace.state,
                 inherited.as_deref(),
+                startup_safety.as_deref().expect("workspace startup safety"),
             )?);
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
-        None => match project_root::discover(&launch_directory, &config.workspace.state)?.map(
-            |workspace| {
-                workspace_origin = Some(workspace.origin);
-                workspace.root
-            },
-        ) {
+        None => match project_root::discover_with_home_safety(
+            &launch_directory,
+            &config.workspace.state,
+            startup_safety.as_deref().expect("workspace startup safety"),
+        )?
+        .map(|workspace| {
+            workspace_origin = Some(workspace.origin);
+            workspace.root
+        }) {
             Some(project_root) => {
                 startup.mark(StartupPhase::ProjectResolvedAutomatically);
                 project_root
@@ -1748,7 +1756,9 @@ async fn run(
                     startup_safety
                         .as_deref()
                         .expect("workspace adoption safety"),
-                    &user_home_directories(),
+                    &crate::app::user_home_directory()
+                        .into_iter()
+                        .collect::<Vec<_>>(),
                     &targets,
                     workspace_requirement(&arguments, config.mode()),
                 )?;
@@ -1765,8 +1775,15 @@ async fn run(
             )),
         },
     };
-    let state_location =
-        project_root::resolve_state_location(&project_root, &config.workspace.state);
+    let state_location = if editor {
+        project_root::StateLocation::in_tree(&project_root, &config.workspace.state)
+    } else {
+        project_root::resolve_state_location_with_safety(
+            &project_root,
+            &config.workspace.state,
+            startup_safety.as_deref().expect("workspace startup safety"),
+        )?
+    };
     let state_root = state_location.as_path().to_owned();
     if !editor {
         let safety = startup_safety.as_deref().expect("workspace startup safety");
@@ -1810,7 +1827,7 @@ async fn run(
         }
         #[cfg(unix)]
         {
-            let endpoint = LocalEndpoint::discover(&state_root, &project_root)?;
+            let endpoint = LocalEndpoint::discover_location(&state_location, &project_root)?;
             let cwd_file = arguments.cwd_file.clone();
             return match arguments.mode {
                 LaunchMode::Persistent => {
@@ -2038,7 +2055,7 @@ async fn run(
             if show_startup_about {
                 app.app_mut().execute(about_invocation()?)?;
             }
-            let endpoint = LocalEndpoint::discover(&state_root, &project_root)?;
+            let endpoint = LocalEndpoint::discover_location(&state_location, &project_root)?;
             if let Some(recorded) = recorded_workspace.as_ref() {
                 endpoint.store_name_if_absent(&recorded.name)?;
             }
@@ -2604,18 +2621,6 @@ fn uses_automatic_persistent_mode(arguments: &LaunchArguments, configured: RunMo
         && configured == RunMode::Mux
 }
 
-/// The home directory as the environment and as the account database name
-/// it. They differ under `sudo -E` and in some containers, and a workspace
-/// adopted at either would capture the launches below it.
-fn user_home_directories() -> Vec<PathBuf> {
-    let environment = crate::app::user_home_directory();
-    #[cfg(any(unix, windows))]
-    let account = crate::user_paths::system_home_directory();
-    #[cfg(not(any(unix, windows)))]
-    let account = None;
-    environment.into_iter().chain(account).collect()
-}
-
 fn workspace_requirement(
     arguments: &LaunchArguments,
     configured: RunMode,
@@ -2697,9 +2702,10 @@ fn initialize_workspace_with_safety(
     } else {
         launch_directory.join(requested)
     };
-    let existed = requested
-        .canonicalize()
-        .is_ok_and(|root| project_root::resolve_state_root(&root, configured_state).is_dir());
+    let existed = requested.canonicalize().is_ok_and(|root| {
+        project_root::resolve_state_location_with_safety(&root, configured_state, safety)
+            .is_ok_and(|location| location.as_path().is_dir())
+    });
     let project_root = project_root::initialize_with_safety(&requested, configured_state, safety)?;
     let root = project_root::display_workspace_path(
         &project_root,
@@ -2773,7 +2779,8 @@ async fn resolve_attached_workspace(
     )
     .await?
     .unwrap_or_else(|| workspace_selector_path(selector, working_directory));
-    let origin = project_root::exact_origin(&requested, &config.workspace.state)?;
+    let origin =
+        project_root::exact_origin_with_safety(&requested, &config.workspace.state, safety)?;
     let root = initialize_attached_directory_with_safety(
         &requested,
         selector,
@@ -2787,7 +2794,7 @@ async fn resolve_attached_workspace(
 ///
 /// `display_selector` remains the spelling in an unknown-selector error even
 /// when a relative path has already been joined to the editor directory.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg(test)]
 fn initialize_attached_directory(
     requested: &Path,
     display_selector: &Path,
@@ -2798,6 +2805,7 @@ fn initialize_attached_directory(
     initialize_attached_directory_with_safety(requested, display_selector, state, &safety)
 }
 
+#[cfg(any(unix, test))]
 fn initialize_attached_directory_with_safety(
     requested: &Path,
     display_selector: &Path,
@@ -4680,18 +4688,24 @@ async fn prepare_switch_target(
     if let Some(cache_root) = external_open::cache_root() {
         reserved_user_roots.push(cache_root);
     }
-    let origin = project_root::exact_origin(&requested, &config.workspace.state)?;
-    let requested = initialize_attached_directory(
+    let safety = crate::workspace_state::StartupSafety::capture(&reserved_user_roots);
+    let origin =
+        project_root::exact_origin_with_safety(&requested, &config.workspace.state, &safety)?;
+    let requested = initialize_attached_directory_with_safety(
         &requested,
         selector,
         &config.workspace.state,
-        &reserved_user_roots,
+        &safety,
     )?;
     let startup = HostStartup::new(std::env::current_exe()?, "destination")
         .with_config(config_path)
         .with_workspace_origin(Some(origin));
-    let state_root = project_root::resolve_state_root(&requested, &config.workspace.state);
-    let endpoint = LocalEndpoint::discover(&state_root, &requested)?;
+    let location = project_root::resolve_state_location_with_safety(
+        &requested,
+        &config.workspace.state,
+        &safety,
+    )?;
+    let endpoint = LocalEndpoint::discover_location(&location, &requested)?;
     if endpoint.project_root() == current.project_root() {
         return Ok(None);
     }
@@ -5513,7 +5527,7 @@ fn parent_attach_selector(
 ) -> Result<PathBuf> {
     match selector {
         Some(selector) => Ok(selector.to_path_buf()),
-        None => project_root::discover(directory, configured_state)?
+        None => project_root::discover_with_home(directory, configured_state)?
             .map(|workspace| workspace.root)
             .with_context(|| {
                 requirement.refusal(
@@ -5739,15 +5753,6 @@ async fn run_native_wait(
     let (config, config_path) = Config::load(arguments.config.as_deref())?;
     startup_trace.mark(StartupPhase::ConfigLoaded);
     let directory = std::env::current_dir()?;
-    let requested = match arguments.project_root.as_deref() {
-        Some(root) => resolve_requested_project_root(&directory, root)?,
-        None => match project_root::discover(&directory, &config.workspace.state)?
-            .map(|workspace| workspace.root)
-        {
-            Some(root) => root,
-            None => resolve_requested_project_root(&directory, &directory)?,
-        },
-    };
     let paths = arguments
         .targets
         .iter()
@@ -5772,13 +5777,32 @@ async fn run_native_wait(
         reserved_user_roots,
         roots,
     })?;
-    let state = project_root::resolve_state_root(&requested, &config.workspace.state);
+    let safety = scope.capture_safety();
+    let requested = match arguments.project_root.as_deref() {
+        Some(root) => resolve_requested_project_root(&directory, root)?,
+        None => match project_root::discover_with_home_safety(
+            &directory,
+            &config.workspace.state,
+            &safety,
+        )?
+        .map(|workspace| workspace.root)
+        {
+            Some(root) => root,
+            None => resolve_requested_project_root(&directory, &directory)?,
+        },
+    };
+    let state = project_root::resolve_state_location_with_safety(
+        &requested,
+        &config.workspace.state,
+        &safety,
+    )?
+    .into_path_buf();
     let current = scope.known_read_location(&requested, &state)?;
     let controls = tokio::select! {
         biased;
         event = termination.recv() => return Err(terminated(event)),
         _ = parent.wait() => anyhow::bail!("wait request lost its launching process before admission"),
-        result = ControlSnapshot::observe_at(&scope, Some(&current), &config.workspace.state, false) => result?,
+        result = ControlSnapshot::observe_at_with_safety(&scope, Some(&current), &config.workspace.state, false, &safety) => result?,
     };
     // A directory with two live publications has no implicit winner. Keep
     // the selected exact publication through the entire wait request.
@@ -5798,7 +5822,8 @@ async fn run_native_wait(
                 None => requested,
                 Some(HistoryTarget::Live { .. }) => unreachable!(),
             };
-            let layout = scope.initialize_layout(&project, &config.workspace.state)?;
+            let layout =
+                scope.initialize_layout_with_safety(&project, &config.workspace.state, &safety)?;
             let location = layout.publication_location()?;
             let mut startup = NativeHostStartup::new(std::env::current_exe()?);
             startup.env = layout.detached_environment()?;
@@ -6138,18 +6163,23 @@ async fn run_native_persistent(
         reserved_user_roots,
         roots,
     })?;
+    let safety = scope.capture_safety();
     let current = if arguments.workspace_selector.is_none() {
         Some(match arguments.project_root.as_deref() {
             Some(root) => resolve_requested_project_root(&directory, root)?,
-            None => project_root::discover(&directory, &config.workspace.state)?
-                .map(|workspace| workspace.root)
-                .with_context(|| {
-                    workspace_requirement(arguments, config.mode()).refusal(
-                        &directory,
-                        None,
-                        crate::app::user_home_directory().as_deref(),
-                    )
-                })?,
+            None => project_root::discover_with_home_safety(
+                &directory,
+                &config.workspace.state,
+                &safety,
+            )?
+            .map(|workspace| workspace.root)
+            .with_context(|| {
+                workspace_requirement(arguments, config.mode()).refusal(
+                    &directory,
+                    None,
+                    crate::app::user_home_directory().as_deref(),
+                )
+            })?,
         })
     } else {
         None
@@ -6161,15 +6191,20 @@ async fn run_native_persistent(
         .expect("persistent attachment has a selector or current directory");
     let current_read = current
         .as_deref()
-        .map(|project| {
-            let state = project_root::resolve_state_root(project, &config.workspace.state);
-            scope.known_read_location(project, &state)
+        .map(|project| -> Result<_> {
+            let state = project_root::resolve_state_location_with_safety(
+                project,
+                &config.workspace.state,
+                &safety,
+            )?
+            .into_path_buf();
+            Ok(scope.known_read_location(project, &state)?)
         })
         .transpose()?;
     let controls = tokio::select! {
         biased;
         event = termination.recv() => return Err(terminated(event)),
-        result = ControlSnapshot::observe_at(&scope, current_read.as_ref(), &config.workspace.state, false) => result?,
+        result = ControlSnapshot::observe_at_with_safety(&scope, current_read.as_ref(), &config.workspace.state, false, &safety) => result?,
     };
     let selected = controls.history().select(selector, Some(&directory))?;
     if let Some(event) = termination.pending_event().await {
@@ -6190,7 +6225,11 @@ async fn run_native_persistent(
                 None => workspace_selector_path(selector, &directory),
                 Some(HistoryTarget::Live { .. }) => unreachable!(),
             };
-            let layout = scope.initialize_layout(&requested, &config.workspace.state)?;
+            let layout = scope.initialize_layout_with_safety(
+                &requested,
+                &config.workspace.state,
+                &safety,
+            )?;
             let location = layout.publication_location()?;
             let mut startup = NativeHostStartup::new(std::env::current_exe()?);
             startup.env = layout.detached_environment()?;
@@ -6289,8 +6328,15 @@ async fn run_native_control_cli(
         reserved_user_roots,
         roots,
     })?;
-    let mut controls =
-        ControlSnapshot::observe(&scope, &config.workspace.state, arguments.include_hidden).await?;
+    let safety = scope.capture_safety();
+    let mut controls = ControlSnapshot::observe_at_with_safety(
+        &scope,
+        None,
+        &config.workspace.state,
+        arguments.include_hidden,
+        &safety,
+    )
+    .await?;
     match arguments.mode {
         LaunchMode::ListSessions => {
             print!(
@@ -6337,7 +6383,7 @@ async fn run_native_control_cli(
                 let directory = launch_directory.as_deref().context(
                     "--session-restart requires a workspace selector or current project",
                 )?;
-                Some(project_root::discover(directory, &config.workspace.state)?.map(|workspace| workspace.root).context(
+                Some(project_root::discover_with_home_safety(directory, &config.workspace.state, &safety)?.map(|workspace| workspace.root).context(
                     "--session-restart requires a workspace selector or discoverable current project",
                 )?)
             } else {
@@ -6358,7 +6404,12 @@ async fn run_native_control_cli(
             };
             let original = publication.metadata().clone();
             let project = original.project_root()?;
-            let state = project_root::resolve_state_root(&project, &config.workspace.state);
+            let state = project_root::resolve_state_location_with_safety(
+                &project,
+                &config.workspace.state,
+                &safety,
+            )?
+            .into_path_buf();
             let layout = ResolvedLayout::from_scope(scope.clone(), &project, state)?;
             let location = layout.publication_location()?;
             let mut replacement = NativeHostStartup::new(std::env::current_exe()?);
@@ -7963,10 +8014,10 @@ MODES:
                          authenticated integrated terminal uses its parent
 
     A workspace is a Git, Jujutsu or Subversion working copy, or a directory
-    holding .runyte, found from the launch directory or above it. Without one,
-    ide makes the launch directory a workspace unless it is the home
-    directory, a shared or temporary directory, or the filesystem root, or a
-    target lies outside it; mux refuses. runyte --init DIRECTORY creates one.
+    holding .runyte, found from the launch directory or above it. Exactly in
+    home, ide and mux use out-of-tree state. Elsewhere ide makes the launch
+    directory a workspace unless it is shared, temporary, the filesystem root,
+    or a target lies outside it; mux refuses. runyte --init DIRECTORY creates one.
     As root only editor mode runs; for system files set SUDO_EDITOR=runed and
     use sudoedit.
 
