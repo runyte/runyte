@@ -12,6 +12,8 @@
 //! tests type names that exist and insist they are offered, at sizes where an
 //! unfiltered bound could only find them by luck.
 
+use runyte::test_support::isolated_startup_config;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -93,7 +95,12 @@ fn editor(root: &Path) -> App {
     if !active.exists() {
         fs::write(&active, "").unwrap();
     }
-    App::new_in_project(Config::default(), Some(active.clone()), root).unwrap()
+    App::new_in_project(
+        isolated_startup_config(Config::default()),
+        Some(active.clone()),
+        root,
+    )
+    .unwrap()
 }
 
 /// The labels the insert-mode popup offers after typing `path`, filtered the

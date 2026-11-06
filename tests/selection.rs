@@ -5,6 +5,8 @@
 //! These drive the real key dispatch path rather than calling editing helpers
 //! directly, so a binding that is registered but unreachable fails here.
 
+use runyte::test_support::isolated_startup_config;
+
 use runyte::{
     app::App,
     buffer::Position,
@@ -16,7 +18,7 @@ use runyte::{
 };
 
 fn app_with(text: &str) -> App {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     app.buffers[0].apply(&Transaction::insert(0, text));
     app.panes.get_mut(&0).unwrap().selection = Selection::point(0);
     app

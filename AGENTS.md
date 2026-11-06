@@ -342,6 +342,12 @@ registry.
   through `note_loaded_config`; one that answers an "open with" prompt must
   point `app.programs` at a temporary directory, as `tests/key_hints.rs`
   already does. Keep environment-derived paths injectable for that reason.
+- Direct `App` constructors in integration tests link a normally compiled
+  library. Wrap their configuration with `test_support::isolated_startup_config`
+  (or provide explicit fixture-owned `StartupSafety`) so storage reservation
+  capture cannot resolve real user roots. The headless isolated constructor
+  supplies reservations from its caller-owned project root. This does not
+  replace the separate configuration and program-cache injections above.
 - Every subprocess fixture that launches an editor or persistent-session host
   must isolate configuration, cache, state, runtime and account-home paths in
   its command builder, including launches through shells or helper processes.

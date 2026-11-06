@@ -1,9 +1,43 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Narrow shared contracts used by process-level tests and their production
+//! Narrow shared contracts for isolated test fixtures and their production
 //! test hooks.
 
 use std::{ffi::OsStr, path::PathBuf};
+
+/// Captures only paths derived from a caller-owned fixture; no account or
+/// environment-derived user roots enter this admission. Direct App tests use
+/// this separately from their existing clipboard/program-cache injection.
+pub(crate) fn fixture_startup_safety(
+    root: &std::path::Path,
+) -> std::sync::Arc<crate::workspace_state::StartupSafety> {
+    std::sync::Arc::new(crate::workspace_state::StartupSafety::capture_with(
+        &[root.join("fixture-config"), root.join("fixture-cache")],
+        || Some(root.join("fixture-state/runyte")),
+    ))
+}
+
+/// Gives legacy direct App tests fresh, fixture-owned storage reservations.
+/// The process-owned directory remains alive for every constructor and is
+/// removed on ordinary process exit. This changes no environment variables.
+#[cfg(any(unix, windows))]
+pub fn isolated_startup_config(mut config: crate::config::Config) -> crate::config::Config {
+    static ROOT: std::sync::OnceLock<TestRuntimeRoot> = std::sync::OnceLock::new();
+    extern "C" fn cleanup() {
+        if let Some(root) = ROOT.get() {
+            root.cleanup_if_owned();
+        }
+    }
+    let root = ROOT.get_or_init(|| {
+        let root = TestRuntimeRoot::new("app-safety").expect("allocate App safety fixture");
+        // SAFETY: the C callback takes no arguments and accesses only a
+        // process-lifetime OnceLock. Cleanup verifies the fixture owner marker.
+        assert_eq!(unsafe { libc::atexit(cleanup) }, 0);
+        root
+    });
+    config.startup_safety = Some(fixture_startup_safety(root.path()));
+    config
+}
 
 /// Pairs existing configuration-isolated builders with fixture-owned state.
 /// Keeping it below the fixture's configuration root avoids orphaned siblings.

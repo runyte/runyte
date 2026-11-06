@@ -2,6 +2,8 @@
 
 #![cfg(windows)]
 
+use runyte::test_support::isolated_startup_config;
+
 use runyte::{
     app::App,
     command::parse_named_command,
@@ -1142,7 +1144,12 @@ fn manager_controls_exact_real_publication_and_waits_for_force_exit() {
         std::path::PathBuf::from(".runyte"),
     )
     .unwrap();
-    let mut app = App::new_in_project(Config::default(), None, selected.project_root()).unwrap();
+    let mut app = App::new_in_project(
+        isolated_startup_config(Config::default()),
+        None,
+        selected.project_root(),
+    )
+    .unwrap();
     app.attach_workspace_service(service.clone());
     app.execute(parse_named_command("session-list", None).unwrap())
         .unwrap();
@@ -1254,7 +1261,12 @@ fn captured_manager_rename_refuses_real_replacement_at_same_location() {
         std::path::PathBuf::from(".runyte"),
     )
     .unwrap();
-    let mut app = App::new_in_project(Config::default(), None, layout.project_root()).unwrap();
+    let mut app = App::new_in_project(
+        isolated_startup_config(Config::default()),
+        None,
+        layout.project_root(),
+    )
+    .unwrap();
     app.attach_workspace_service(service.clone());
     app.execute(parse_named_command("session-list", None).unwrap())
         .unwrap();

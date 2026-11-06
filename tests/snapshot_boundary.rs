@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use runyte::test_support::isolated_startup_config;
+
 #[test]
 fn normal_editor_snapshot_has_no_frontend_or_raw_service_types() {
     let source = include_str!("../src/snapshot.rs");
@@ -121,7 +123,12 @@ fn attached(host: &mut WorkspaceHost) -> Vec<String> {
 fn lsp_permission_explanation_aligns_and_wraps_in_both_frontends() {
     let project = TempProject::new("lsp-explanation");
     let storage = TempProject::new("lsp-trust");
-    let mut app = App::new_in_project(Config::default(), None, project.path()).unwrap();
+    let mut app = App::new_in_project(
+        isolated_startup_config(Config::default()),
+        None,
+        project.path(),
+    )
+    .unwrap();
     app.configure_lsp_trust(Some(storage.path().join("trust")));
     let expected = app
         .list
@@ -202,7 +209,12 @@ fn lsp_permission_storage_failure_is_visible_with_and_without_preview() {
     let project = TempProject::new("lsp-error-project");
     let storage = TempProject::new("lsp-error-storage");
     let directory = storage.path().join("trust");
-    let mut app = App::new_in_project(Config::default(), None, project.path()).unwrap();
+    let mut app = App::new_in_project(
+        isolated_startup_config(Config::default()),
+        None,
+        project.path(),
+    )
+    .unwrap();
     app.configure_lsp_trust(Some(directory.clone()));
     fs::write(&directory, "blocked").unwrap();
     app.handle_key(KeyStroke::plain(KeyCode::End)).unwrap();
@@ -252,7 +264,7 @@ fn press(app: &mut App, character: char) {
 }
 
 fn list_editor() -> App {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     app.list = Some(ListPicker::new(
         "Commits",
         vec![
@@ -314,7 +326,7 @@ fn the_two_renderers_agree_about_a_result_list_query_line() {
 
 #[test]
 fn the_finder_keeps_its_query_line_before_and_after_its_first_character() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     for character in [' ', '/', 'f'] {
         press(&mut app, character);
     }
@@ -351,7 +363,7 @@ fn the_finder_keeps_its_query_line_before_and_after_its_first_character() {
 
 #[test]
 fn a_completing_prompt_publishes_no_query_of_its_own() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     press(&mut app, ':');
     for character in "open ".chars() {
         press(&mut app, character);
@@ -412,7 +424,12 @@ fn a_finder_preview_is_drawn_for_every_shape_the_selected_entry_can_have() {
 
     // Rooted at the throwaway project rather than at whatever workspace the
     // test process happens to have been started in.
-    let mut app = App::new_in_project(Config::default(), None, project.path()).unwrap();
+    let mut app = App::new_in_project(
+        isolated_startup_config(Config::default()),
+        None,
+        project.path(),
+    )
+    .unwrap();
     press(&mut app, ' ');
     press(&mut app, 'f');
 
@@ -484,8 +501,12 @@ fn the_buffer_action_menu_names_its_buffer_and_lists_that_buffer_s_actions() {
     let project = TempProject::new("buffer-action-menu");
     let path = project.path().join("notes.txt");
     fs::write(&path, "before").unwrap();
-    let mut app =
-        App::new_in_project(Config::default(), Some(path.clone()), project.path()).unwrap();
+    let mut app = App::new_in_project(
+        isolated_startup_config(Config::default()),
+        Some(path.clone()),
+        project.path(),
+    )
+    .unwrap();
 
     press(&mut app, ' ');
     press(&mut app, 'b');

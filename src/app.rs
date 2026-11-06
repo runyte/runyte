@@ -3617,8 +3617,12 @@ impl App {
     ) -> Result<Self> {
         let project_root = project_root.as_ref().canonicalize()?;
         let mut startup = StartupTrace::new();
+        let config = Config {
+            startup_safety: Some(crate::test_support::fixture_startup_safety(&project_root)),
+            ..Config::default()
+        };
         Self::new_with_boundaries(
-            Config::default(),
+            config,
             Vec::new(),
             project_root.clone(),
             &mut startup,

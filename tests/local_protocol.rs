@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 #![cfg(unix)]
 
+use runyte::test_support::isolated_startup_config;
+
 #[cfg(not(target_os = "macos"))]
 use std::os::unix::ffi::OsStringExt;
 use std::{
@@ -6128,7 +6130,8 @@ fn media_protocol_bounds_and_page_changes_require_complete_frames() {
     let storage = TestRuntimeRoot::new("media-protocol-bounds").unwrap();
     let path = storage.join("document.pdf");
     fs::write(&path, b"%PDF\0fixture").unwrap();
-    let mut app = App::new_in_project(Config::default(), None, &storage).unwrap();
+    let mut app =
+        App::new_in_project(isolated_startup_config(Config::default()), None, &storage).unwrap();
     app.native_media = true;
     app.open_native_target(LaunchTarget::new(&path)).unwrap();
     app.update_native_media_pages(&path, 4);

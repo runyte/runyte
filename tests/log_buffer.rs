@@ -7,6 +7,8 @@
 //! of the process. Every state therefore has to be reached in order, inside a
 //! single test, in a binary that owns its own process.
 
+use runyte::test_support::isolated_startup_config;
+
 use std::{fs, path::PathBuf, time::Duration};
 
 use runyte::{
@@ -43,7 +45,7 @@ fn open_log(app: &mut App) -> (String, bool, String) {
 fn the_log_page_reports_what_this_process_can_actually_read() {
     let root = temporary("root");
     fs::create_dir_all(&root).unwrap();
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
 
     let (message, error, text) = open_log(&mut app);
     assert!(error, "{message}");

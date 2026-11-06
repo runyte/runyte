@@ -2,6 +2,8 @@
 
 #![cfg(windows)]
 
+use runyte::test_support::isolated_startup_config;
+
 use runyte::{
     app::{App, CommandOutcome},
     command::{parse_colon_command, resolve_command},
@@ -21,7 +23,12 @@ fn native_explorer_opening_agrees_with_keys_hints_and_help() {
         keymap::{Binding, BindingScope, Key, Keymap, default_keymap},
     };
     let root = TestRuntimeRoot::new("windows-keys").unwrap();
-    let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
+    let mut app = App::new_in_project(
+        isolated_startup_config(Config::default()),
+        None,
+        root.path(),
+    )
+    .unwrap();
     let commands = [EditorCommand::OpenExplorerSystem];
     let bindings = commands
         .iter()
@@ -80,7 +87,12 @@ fn native_explorer_opening_agrees_with_keys_hints_and_help() {
 #[test]
 fn public_and_deferred_commands_agree_with_palette_availability() {
     let root = TestRuntimeRoot::new("windows-commands").unwrap();
-    let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
+    let mut app = App::new_in_project(
+        isolated_startup_config(Config::default()),
+        None,
+        root.path(),
+    )
+    .unwrap();
     let plugins = resolve_command("plugins").unwrap();
     assert!(plugins.id.platform_unavailable().is_none());
     assert!(
@@ -187,7 +199,7 @@ fn invalid_plugin_configuration_still_publishes_a_manager_without_a_worker_runti
         "plugins:\n  - id: example\n    enabled: true\n    executable: cmd.exe\n",
     )
     .unwrap();
-    let app = App::new_in_project(config, None, root.path()).unwrap();
+    let app = App::new_in_project(isolated_startup_config(config), None, root.path()).unwrap();
     let mut host = WorkspaceHost::new(app);
     assert!(host.start_plugins().is_some());
     assert!(host.start_plugins().is_none());
@@ -204,7 +216,12 @@ fn binary_open_offers_a_program_prompt_without_loading_binary_text() {
     let root = TestRuntimeRoot::new("windows-binary").unwrap();
     let path = root.path().join("image.bin");
     std::fs::write(&path, [0, 1, 2, 3]).unwrap();
-    let mut app = App::new_in_project(Config::default(), None, root.path()).unwrap();
+    let mut app = App::new_in_project(
+        isolated_startup_config(Config::default()),
+        None,
+        root.path(),
+    )
+    .unwrap();
     let before = app.active_buffer().to_string();
     app.execute(
         runyte::command::CommandInvocation::from_parts(
@@ -238,7 +255,8 @@ async fn native_lsp_requires_permission_and_missing_servers_fail_nonfatally_afte
         },
     );
     let (handle, mut events) = lsp::spawn(config.lsp.clone(), project.clone());
-    let mut app = App::new_in_project(config, Some(file), &project).unwrap();
+    let mut app =
+        App::new_in_project(isolated_startup_config(config), Some(file), &project).unwrap();
     app.configure_lsp_trust(Some(root.join("cache/lsp-trust")));
     app.attach_lsp(handle.clone());
     assert_eq!(
