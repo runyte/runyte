@@ -1333,7 +1333,7 @@ impl App {
         }
         self.preview_generation = self.preview_generation.wrapping_add(1);
         // Retain at most eight captures; engine state belongs exclusively to the frontend.
-        if self.document_previews.len() >= 8
+        if self.document_previews.len() >= crate::document_preview::MAX_CAPTURES
             && !self.document_previews.contains_key(&self.active_pane)
             && let Some(oldest) = self
                 .document_previews

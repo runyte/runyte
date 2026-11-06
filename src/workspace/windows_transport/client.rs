@@ -60,7 +60,7 @@ impl LocalClient {
         let peer = stream.peer().clone();
         let (reader, writer) = tokio::io::split(stream);
         let mut client = Self {
-            reader: MessageReader::new(reader),
+            reader: MessageReader::host_responses(reader),
             writer: Some(writer),
             peer,
         };

@@ -26,10 +26,11 @@ pub use crate::protocol::{
 
 #[cfg(test)]
 use super::transport_shared::{
-    CONNECTION_WRITE_STALL, RESPONSE_CAPACITY, request_allowed_for_role, write_message_with_timeout,
+    CONNECTION_WRITE_STALL, MAX_MESSAGE_BYTES, RESPONSE_CAPACITY, request_allowed_for_role,
+    write_message_with_timeout,
 };
 use super::transport_shared::{
-    FrameCoalescer, MAX_MESSAGE_BYTES, MessageReader, serve_connection, write_client_message,
+    FrameCoalescer, MAX_HOST_MESSAGE_BYTES, MessageReader, serve_connection, write_client_message,
     write_message,
 };
 pub use super::transport_shared::{
@@ -1795,7 +1796,7 @@ impl LocalClient {
             .with_context(|| format!("cannot attach to workspace host {}", socket.display()))?;
         let (reader, writer) = stream.into_split();
         let mut client = Self {
-            reader: MessageReader::new(reader),
+            reader: MessageReader::host_responses(reader),
             writer: Some(writer),
         };
         let mut hello = client_hello(endpoint, geometry, interactive, directory_handoff);
@@ -1999,9 +2000,9 @@ impl BlockingMessageReader {
                 .iter()
                 .position(|byte| *byte == b'\n')
                 .map_or(available.len(), |position| position + 1);
-            if self.pending.len().saturating_add(take) > MAX_MESSAGE_BYTES {
+            if self.pending.len().saturating_add(take) > MAX_HOST_MESSAGE_BYTES {
                 self.pending.clear();
-                bail!("workspace transport message exceeds {MAX_MESSAGE_BYTES} bytes");
+                bail!("workspace transport message exceeds {MAX_HOST_MESSAGE_BYTES} bytes");
             }
             self.pending.extend_from_slice(&available[..take]);
             self.reader.consume(take);
@@ -3443,6 +3444,88 @@ mod tests {
             HostResponse::Refused { message }
                 if message.contains("incompatible") && message.contains("protocol")
         ));
+        endpoint.cleanup().unwrap();
+        drop(root);
+    }
+
+    #[tokio::test]
+    async fn large_previews_survive_attach_and_buffered_reattach() {
+        use super::super::transport_shared::preview_tests::{
+            assert_large_previews, large_preview_response,
+        };
+        let (root, endpoint) = endpoint("large-previews");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            return;
+        };
+        // Exercise the async reader, then the dedicated blocking reader used
+        // by an attached frontend, with the same retained capture generation.
+        for buffered in [false, true] {
+            let mut client = if buffered {
+                None
+            } else {
+                Some(
+                    LocalClient::connect_with_media(
+                        &endpoint,
+                        FrameGeometry::default(),
+                        true,
+                        false,
+                        true,
+                    )
+                    .await
+                    .unwrap(),
+                )
+            };
+            let mut buffered_client = if buffered {
+                Some(
+                    BufferedLocalClient::connect_with_media(
+                        &endpoint,
+                        FrameGeometry::default(),
+                        false,
+                        true,
+                    )
+                    .await
+                    .unwrap(),
+                )
+            } else {
+                None
+            };
+            let ServerEvent::Connected { responses, .. } = server.recv().await.unwrap() else {
+                panic!("expected attachment");
+            };
+            responses
+                .send(HostResponse::Welcome {
+                    protocol: PROTOCOL_VERSION,
+                    pid: std::process::id(),
+                    features: vec![],
+                    host_version: CLIENT_VERSION.into(),
+                })
+                .await
+                .unwrap();
+            let welcome = if let Some(client) = client.as_mut() {
+                client.recv().await.unwrap()
+            } else {
+                buffered_client
+                    .as_mut()
+                    .unwrap()
+                    .recv_handshake()
+                    .await
+                    .unwrap()
+            };
+            assert!(matches!(welcome, Some(HostResponse::Welcome { .. })));
+            responses.send(large_preview_response()).await.unwrap();
+            let frame = if let Some(client) = client.as_mut() {
+                client.recv().await.unwrap()
+            } else {
+                buffered_client.as_mut().unwrap().recv().await.unwrap()
+            };
+            assert_large_previews(frame.unwrap());
+            drop(client);
+            drop(buffered_client);
+            assert!(matches!(
+                server.recv().await,
+                Some(ServerEvent::Disconnected { .. })
+            ));
+        }
         endpoint.cleanup().unwrap();
         drop(root);
     }

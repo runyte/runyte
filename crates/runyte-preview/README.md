@@ -11,7 +11,7 @@ cargo build --locked --release -p runyte-desktop
 ./target/release/runyte-desktop --window --editor crates/runyte-preview/fixtures/markdown.md
 ```
 
-The live preview-theme setting uses private client/host protocol 79. Before
+The 1 MiB preview limit uses private client/host protocol 91. Before
 upgrading an existing persistent session, save work and stop it using its
 compatible client, then relaunch with the rebuilt binary. Restarting only the
 window is insufficient when its host still runs the old binary.
@@ -27,7 +27,7 @@ same document. Ordinary scrolling does not parse or relayout it.
 
 Type `:preview`. With a bare caret it captures the entire current buffer,
 including unsaved edits. With selected text it captures only nonempty ranges,
-in document order, joining disjoint ranges with one newline. The 128 KiB limit
+in document order, joining disjoint ranges with one newline. The 1 MiB (1024 KiB) limit
 applies to the capture, so a selected section of a larger file works. The source
 text, selection, undo history, and scroll position are retained. Capture is
 manual: invoke `:preview` again to refresh the same pane. Escape returns to
@@ -136,7 +136,7 @@ are denied. This includes resources requested by inline CSS. Local SVG diagrams
 can be opened as text and previewed directly. The file checks are not a sandbox
 against concurrent hostile filesystem replacement.
 
-Budgets: 128 KiB captured text, 256 selected ranges, eight host captures, at most
+Budgets: 1 MiB captured text, 256 selected ranges, eight host captures, at most
 16 local image requests of 2 MiB and 2048×2048 pixels each, 4096 pixels per visible viewport
 axis and four million visible viewport pixels (large/HiDPI panes reduce raster resolution
 while preserving logical layout and hit coordinates), five seconds wall time per request,
@@ -147,6 +147,19 @@ a newer target is pending; hidden, refreshed and closed views cancel their work.
 available. Images, parsing, highlighting, layout and rasterization run off both
 editor input loops. No helper or timer starts until a preview is requested.
 The process limit is failure containment, not a general OS security sandbox.
+
+Captured text and copied rendered selections each have a 1 MiB UTF-8 byte
+budget. A rendered selection above that budget produces a diagnostic; it is
+never silently truncated. Link feedback retains at most 200 characters.
+Private helper requests and reply headers each have a separate 6.25 MiB wire
+budget, including framing: sixfold JSON escaping plus 256 KiB for metadata.
+Persistent-session host responses allow 56 MiB: the existing 8 MiB frame
+allowance plus 48 MiB for eight worst-case escaped captures. Client requests
+remain limited to 8 MiB. All client and host binaries must use protocol 91.
+The size limit is admission, not a promise that every document finishes within
+the unchanged deadline; complex HTML, large tables or highlighted code can still
+exhaust rendering time or memory.
+
 
 Scroll offsets preserve fractional pixels. The active preview keeps an adjacent
 raster around the visible area: up to a viewport above/below and a quarter-width
