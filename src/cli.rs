@@ -2667,7 +2667,7 @@ fn launch_is_editor(arguments: &LaunchArguments, configured: RunMode) -> bool {
 
 /// `runyte --init DIRECTORY`: makes exactly `DIRECTORY` a workspace, or
 /// accepts one that already is, and says how to open it.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn initialize_workspace(
     requested: &Path,
     launch_directory: &Path,
