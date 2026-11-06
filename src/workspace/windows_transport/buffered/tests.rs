@@ -120,6 +120,7 @@ impl AsyncWrite for ProbeStream {
 
 fn hello() -> ClientRequest {
     ClientRequest::Hello {
+        workspace_open: false,
         protocol: PROTOCOL_VERSION,
         features: vec![
             FeatureGroup::Snapshots,
@@ -580,54 +581,61 @@ async fn drop_joins_idle_stalled_write_and_full_response_queue_workers() {
 
 #[tokio::test]
 async fn real_native_buffered_client_authenticates_and_fully_writes_hello_before_startup() {
-    let root = TestRuntimeRoot::new("buffered-native-client").unwrap();
-    let project = root.create_private_dir("project").unwrap();
-    let endpoint = EndpointLocation::new(
-        &project,
-        root.join("endpoint"),
-        RegistrySet::open_fixture(&[root.join("registry")]).unwrap(),
-    )
-    .unwrap();
-    let mut listener = Listener::bind(endpoint.prepare(None).unwrap()).unwrap();
-    let metadata = listener.metadata().clone();
-    let (server, client) = tokio::join!(
-        listener.accept(Instant::now() + Duration::from_secs(5)),
-        BufferedLocalClient::connect_with_handoff(&metadata, FrameGeometry::default(), true)
-    );
-    let mut server = server.unwrap();
-    let mut client = client.unwrap();
-    assert_eq!(client.peer().unwrap().identity().pid, std::process::id());
-    assert!(client.peer().unwrap().is_alive().unwrap());
-    let request = MessageReader::new(&mut server)
-        .read::<ClientRequest>()
-        .await
-        .unwrap()
+    for workspace_open in [false, true] {
+        let root = TestRuntimeRoot::new("buffered-native-client").unwrap();
+        let project = root.create_private_dir("project").unwrap();
+        let endpoint = EndpointLocation::new(
+            &project,
+            root.join("endpoint"),
+            RegistrySet::open_fixture(&[root.join("registry")]).unwrap(),
+        )
         .unwrap();
-    assert!(
-        matches!(request, ClientRequest::Hello { directory_handoff: true, client_kind: ClientKind::Tui, role: ClientRole::Interactive, project_root_bytes, .. } if project_root_bytes == metadata.project_root_bytes)
-    );
-    write_message(&mut server, &welcome()).await.unwrap();
-    assert!(matches!(
-        client.recv_handshake().await.unwrap(),
-        Some(HostResponse::Welcome { .. })
-    ));
-    client.send(&ClientRequest::Health).await.unwrap();
-    assert!(matches!(
-        MessageReader::new(&mut server)
+        let mut listener = Listener::bind(endpoint.prepare(None).unwrap()).unwrap();
+        let metadata = listener.metadata().clone();
+        let (server, client) = tokio::join!(
+            listener.accept(Instant::now() + Duration::from_secs(5)),
+            BufferedLocalClient::connect_for_workspace_open(
+                &metadata,
+                FrameGeometry::default(),
+                true,
+                workspace_open
+            )
+        );
+        let mut server = server.unwrap();
+        let mut client = client.unwrap();
+        assert_eq!(client.peer().unwrap().identity().pid, std::process::id());
+        assert!(client.peer().unwrap().is_alive().unwrap());
+        let request = MessageReader::new(&mut server)
             .read::<ClientRequest>()
             .await
-            .unwrap(),
-        Some(ClientRequest::Health)
-    ));
-    write_message(&mut server, &completion()).await.unwrap();
-    assert!(matches!(
-        client.recv().await.unwrap(),
-        Some(HostResponse::WaitState {
-            status: WaitStatus::Completed,
-            ..
-        })
-    ));
-    drop(client);
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(request, ClientRequest::Hello { directory_handoff: true, client_kind: ClientKind::Tui, role: ClientRole::Interactive, project_root_bytes, workspace_open: opened, .. } if project_root_bytes == metadata.project_root_bytes && opened == workspace_open)
+        );
+        write_message(&mut server, &welcome()).await.unwrap();
+        assert!(matches!(
+            client.recv_handshake().await.unwrap(),
+            Some(HostResponse::Welcome { .. })
+        ));
+        client.send(&ClientRequest::Health).await.unwrap();
+        assert!(matches!(
+            MessageReader::new(&mut server)
+                .read::<ClientRequest>()
+                .await
+                .unwrap(),
+            Some(ClientRequest::Health)
+        ));
+        write_message(&mut server, &completion()).await.unwrap();
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::WaitState {
+                status: WaitStatus::Completed,
+                ..
+            })
+        ));
+        drop(client);
+    }
 }
 
 #[tokio::test]

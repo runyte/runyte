@@ -30,6 +30,71 @@ pub enum WorkspaceOrigin {
     Created(CreatedBy),
 }
 
+pub(crate) const STARTUP_ORIGIN_ENV: &str = "RUNYTE_STARTUP_WORKSPACE_ORIGIN";
+
+impl WorkspaceOrigin {
+    pub(crate) fn startup_value(self) -> &'static str {
+        match self {
+            Self::VersionControl(VersionControl::Git) => "git",
+            Self::VersionControl(VersionControl::Jujutsu) => "jj",
+            Self::VersionControl(VersionControl::Subversion) => "svn",
+            Self::StateDirectory => "state",
+            Self::Created(CreatedBy::Adoption) => "adoption",
+            Self::Created(CreatedBy::Init) => "init",
+            Self::Created(CreatedBy::AttachDirectory) => "attach-directory",
+        }
+    }
+
+    pub(crate) fn startup_handoff(self, root: &Path) -> String {
+        format!(
+            "{}:{}",
+            crate::workspace::workspace_id(root),
+            self.startup_value()
+        )
+    }
+
+    pub(crate) fn from_startup_value(value: &str) -> Option<Self> {
+        Some(match value {
+            "git" => Self::VersionControl(VersionControl::Git),
+            "jj" => Self::VersionControl(VersionControl::Jujutsu),
+            "svn" => Self::VersionControl(VersionControl::Subversion),
+            "state" => Self::StateDirectory,
+            "adoption" => Self::Created(CreatedBy::Adoption),
+            "init" => Self::Created(CreatedBy::Init),
+            "attach-directory" => Self::Created(CreatedBy::AttachDirectory),
+            _ => return None,
+        })
+    }
+}
+
+pub(crate) fn startup_origin(
+    root: &Path,
+    state: &Path,
+    inherited: Option<&str>,
+) -> io::Result<WorkspaceOrigin> {
+    let captured = inherited
+        .filter(|value| value.len() <= 64)
+        .and_then(|value| {
+            let (identity, origin) = value.split_once(':')?;
+            (identity == crate::workspace::workspace_id(root))
+                .then(|| WorkspaceOrigin::from_startup_value(origin))
+                .flatten()
+        });
+    match captured {
+        Some(origin) => Ok(origin),
+        None => exact_origin(root, state),
+    }
+}
+
+/// Exact explicitly selected root, as opposed to discovery from a launch
+/// directory. Used before initialization to retain whether this launch made it.
+pub(crate) fn exact_origin(root: &Path, state: &Path) -> io::Result<WorkspaceOrigin> {
+    Ok(discover_candidates(&[root], state)?.map_or(
+        WorkspaceOrigin::Created(CreatedBy::AttachDirectory),
+        |workspace| workspace.origin,
+    ))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VersionControl {
     Git,
@@ -1306,3 +1371,7 @@ mod tests {
         path.canonicalize().unwrap()
     }
 }
+
+#[cfg(test)]
+#[path = "project_root/tests/startup.rs"]
+mod startup_tests;

@@ -321,6 +321,7 @@ mod syntax_workflows;
 mod terminal_workflows;
 mod tutorial_workflows;
 mod view_position;
+mod workspace_startup;
 mod workspace_workflows;
 
 use completion_support::*;
@@ -3090,6 +3091,7 @@ pub struct App {
     /// Presentation-only action echo for the last interactive command.
     /// Notifications never replace it; the next interaction does.
     action_feedback: Option<ActionFeedback>,
+    workspace_startup: workspace_startup::WorkspaceStartup,
     /// Interactive action currently dispatching. Asynchronous requests retain
     /// this identity so their completion cannot rewrite a newer action echo.
     active_action_id: Option<u64>,
@@ -3809,6 +3811,7 @@ impl App {
             notifications: NotificationCenter::new(notification_limit),
             notifications_refresh_pending: false,
             action_feedback: None,
+            workspace_startup: workspace_startup::WorkspaceStartup::constructing(),
             active_action_id: None,
             plugin_physical_input: false,
             next_action_id: 1,
@@ -3992,6 +3995,7 @@ impl App {
         if let Some(path) = binary_argument {
             app.ask_for_external_program(path);
         }
+        app.finish_workspace_startup();
         startup.mark(StartupPhase::AppReady);
         Ok(app)
     }

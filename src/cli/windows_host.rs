@@ -412,25 +412,36 @@ pub(super) async fn run(
         .into_iter()
         .collect::<Vec<_>>();
     startup.mark(StartupPhase::ProjectResolutionStarted);
-    let project = match arguments.project_root.as_deref() {
-        Some(requested) => {
-            let project = resolve_requested_project_root(&launch_directory, requested)?;
-            startup.mark(StartupPhase::ProjectResolvedAutomatically);
-            project
-        }
-        None if arguments.detached_host => {
-            anyhow::bail!("internal native host requires an explicit --project-root")
-        }
-        None => {
-            let project = project_root::discover(&launch_directory, &config.workspace.state)?
-                .map(|workspace| workspace.root)
+    let mut workspace_origin = None;
+    let project =
+        match arguments.project_root.as_deref() {
+            Some(requested) => {
+                let project = resolve_requested_project_root(&launch_directory, requested)?;
+                let inherited = arguments
+                    .detached_host
+                    .then(|| std::env::var(project_root::STARTUP_ORIGIN_ENV).ok())
+                    .flatten();
+                workspace_origin = Some(project_root::startup_origin(
+                    &project,
+                    &config.workspace.state,
+                    inherited.as_deref(),
+                )?);
+                startup.mark(StartupPhase::ProjectResolvedAutomatically);
+                project
+            }
+            None if arguments.detached_host => {
+                anyhow::bail!("internal native host requires an explicit --project-root")
+            }
+            None => {
+                let project = project_root::discover(&launch_directory, &config.workspace.state)?
+                .map(|workspace| { workspace_origin = Some(workspace.origin); workspace.root })
                 .context(
                     "no project workspace was found; pass --project-root for foreground --serve",
                 )?;
-            startup.mark(StartupPhase::ProjectResolvedAutomatically);
-            project
-        }
-    };
+                startup.mark(StartupPhase::ProjectResolvedAutomatically);
+                project
+            }
+        };
     if let Some(parent) = supervisor.as_ref() {
         parent.ensure_alive()?;
     }
@@ -463,6 +474,10 @@ pub(super) async fn run(
         startup,
         environment,
     )?;
+    if let Some(origin) = workspace_origin {
+        app.note_workspace_origin(origin);
+    }
+    app.note_persistent_launch(arguments.detached_host);
     let startup_config = app.config.clone();
     app.note_config_deprecations(&startup_config);
     app.set_quit_directory_handoff(false);
@@ -686,8 +701,8 @@ async fn run_loop(
             event = server.recv() => {
                 let event = event.context("native workspace host listener stopped unexpectedly")?;
                 match event {
-                    ServerEvent::Connected { id, peer_process, responses, interactive, native_media: _, directory_handoff, geometry } => {
-                        clients.connected(host, ConnectedPeer { id, proof: peer_process, responses, interactive, directory_handoff, geometry });
+                    ServerEvent::Connected { id, peer_process, responses, interactive, native_media: _, directory_handoff, workspace_open, geometry } => {
+                        clients.connected(host, ConnectedPeer { id, proof: peer_process, responses, interactive, directory_handoff, workspace_open, geometry });
                         if interactive && clients.active_id() == Some(id) {
                             host.app_mut().refresh_sessions_on_attachment();
                             if let Some(catalog) = services.native_catalog.as_ref()
