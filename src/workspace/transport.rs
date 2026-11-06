@@ -63,6 +63,33 @@ fn socket_path_capacity() -> usize {
     address.sun_path.len().saturating_sub(1)
 }
 
+fn effective_uid() -> u32 {
+    // SAFETY: geteuid has no preconditions.
+    unsafe { libc::geteuid() }
+}
+
+fn short_runtime_base() -> PathBuf {
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("RUNYTE_TEST_SOCKET_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+    {
+        return path;
+    }
+    PathBuf::from(format!("/tmp/runyte-{}", effective_uid()))
+}
+
+fn short_endpoint_directory(
+    base: &Path,
+    location: &crate::workspace_state::StateLocation,
+) -> PathBuf {
+    let state = location.as_path();
+    let namespace = state.parent().and_then(Path::parent).unwrap_or(state);
+    let namespace = crate::hash::sha256_hex(&crate::native_path::encode_path(namespace));
+    base.join(&namespace[..crate::workspace::WORKSPACE_ID_LENGTH])
+        .join(state.file_name().unwrap_or_default())
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EndpointMetadata {
     pub protocol: u32,
@@ -73,6 +100,8 @@ pub struct EndpointMetadata {
     pub name: Option<String>,
     pub project_root_bytes: Vec<u8>,
     pub socket_bytes: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub out_of_tree_state_bytes: Option<Vec<u8>>,
 }
 
 /// What an endpoint file publishes about the host holding it, read without a
@@ -142,6 +171,7 @@ pub struct LocalEndpoint {
     test_supervisor: Option<u32>,
     name_file: Option<PathBuf>,
     runtime_root: Option<PathBuf>,
+    state_location: crate::workspace_state::StateLocation,
 }
 
 struct EndpointPublication {
@@ -215,37 +245,136 @@ impl LocalEndpoint {
     /// Discovers the per-workspace endpoint, preferring a valid user runtime
     /// directory and falling back to the configured workspace runtime root.
     pub fn discover(state_root: &Path, project_root: &Path) -> Result<Self> {
-        let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
-        if let Some(runtime) = runtime
-            .as_deref()
-            .filter(|runtime| prepare_runtime_root(runtime))
-        {
+        // Legacy path consumers use the same placement decision as startup.
+        let selected =
+            crate::project_root::resolve_state_location(project_root, Path::new(".runyte"));
+        let location = if selected.as_path() == state_root {
+            selected
+        } else {
+            crate::workspace_state::StateLocation::InTree(state_root.to_owned())
+        };
+        Self::discover_location(&location, project_root)
+    }
+
+    pub fn discover_location(
+        location: &crate::workspace_state::StateLocation,
+        project_root: &Path,
+    ) -> Result<Self> {
+        Self::discover_location_impl(
+            location,
+            project_root,
+            std::env::var_os("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .as_deref(),
+            &short_runtime_base(),
+            true,
+        )
+    }
+
+    /// Explicit roots keep tests away from account-wide runtime directories.
+    pub fn discover_location_with(
+        location: &crate::workspace_state::StateLocation,
+        project_root: &Path,
+        runtime: Option<&Path>,
+        short_base: &Path,
+    ) -> Result<Self> {
+        Self::discover_location_impl(location, project_root, runtime, short_base, false)
+    }
+
+    fn discover_location_impl(
+        location: &crate::workspace_state::StateLocation,
+        project_root: &Path,
+        runtime: Option<&Path>,
+        short_base: &Path,
+        account_registries: bool,
+    ) -> Result<Self> {
+        let fallback_registry = || {
+            if account_registries {
+                usable_fallback_registry_root()
+            } else {
+                Some(short_base.join("hosts"))
+            }
+        };
+        let inventory = || {
+            if account_registries {
+                InventoryRegistry::resolve_for_publication()
+            } else {
+                InventoryRegistry::Exact(short_base.join("all-hosts"))
+            }
+        };
+        let state_root = location.as_path();
+        if let Some(runtime) = runtime.filter(|runtime| {
+            prepare_runtime_root(runtime)
+                && (!matches!(
+                    location,
+                    crate::workspace_state::StateLocation::OutOfTree(_)
+                ) || runtime
+                    .join("runyte")
+                    .join(workspace_id(project_root))
+                    .join("workspace.sock")
+                    .as_os_str()
+                    .as_encoded_bytes()
+                    .len()
+                    <= socket_path_capacity())
+        }) {
             let runyte = runtime.join("runyte");
             let id = workspace_id(project_root);
             let runtime_registry = runyte.join("hosts");
-            let registry = usable_fallback_registry_root();
-            return Self::at_directory(
+            let registry = fallback_registry();
+            let mut endpoint = Self::at_directory(
                 runyte.join(&id),
                 state_root,
                 project_root,
                 EndpointPublication {
                     registry: registry.clone().or_else(|| Some(runtime_registry.clone())),
                     secondary_registry: registry.map(|_| runtime_registry),
-                    inventory_registry: InventoryRegistry::resolve_for_publication(),
-                    test_supervisor: None,
+                    inventory_registry: inventory(),
+                    test_supervisor: (!account_registries).then(std::process::id),
                     runtime_root: Some(runtime.to_path_buf()),
                 },
-            );
+            )?;
+            endpoint.state_location = location.clone();
+            return Ok(endpoint);
+        }
+        if let crate::workspace_state::StateLocation::OutOfTree(_) = location {
+            let directory = short_endpoint_directory(short_base, location);
+            // Validate each private boundary before the transport creates its
+            // files. No foreign-writable directory is silently repaired.
+            for path in [
+                directory.parent().and_then(Path::parent),
+                directory.parent(),
+                Some(directory.as_path()),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                crate::private_storage::Directory::open_private_checked(path)?;
+            }
+            let mut endpoint = Self::at_directory_with_socket(
+                directory,
+                state_root,
+                project_root,
+                "s",
+                EndpointPublication {
+                    registry: fallback_registry(),
+                    secondary_registry: None,
+                    inventory_registry: inventory(),
+                    test_supervisor: (!account_registries).then(std::process::id),
+                    runtime_root: None,
+                },
+            )?;
+            endpoint.state_location = location.clone();
+            return Ok(endpoint);
         }
         Self::at_directory(
             state_root.join("host"),
             state_root,
             project_root,
             EndpointPublication {
-                registry: usable_fallback_registry_root(),
+                registry: fallback_registry(),
                 secondary_registry: None,
-                inventory_registry: InventoryRegistry::resolve_for_publication(),
-                test_supervisor: None,
+                inventory_registry: inventory(),
+                test_supervisor: (!account_registries).then(std::process::id),
                 runtime_root: None,
             },
         )
@@ -261,6 +390,20 @@ impl LocalEndpoint {
         project_root: &Path,
         runtime: Option<&Path>,
     ) -> Result<Self> {
+        let selected =
+            crate::project_root::resolve_state_location(project_root, Path::new(".runyte"));
+        if matches!(
+            selected,
+            crate::workspace_state::StateLocation::OutOfTree(_)
+        ) && selected.as_path() == state_root
+        {
+            return Self::discover_location_with(
+                &selected,
+                project_root,
+                runtime,
+                &short_runtime_base(),
+            );
+        }
         if let Some(runtime) = runtime.filter(|runtime| prepare_runtime_root(runtime)) {
             let runyte = runtime.join("runyte");
             let id = workspace_id(project_root);
@@ -301,7 +444,23 @@ impl LocalEndpoint {
         project_root: &Path,
         publication: EndpointPublication,
     ) -> Result<Self> {
-        let socket = directory.join("workspace.sock");
+        Self::at_directory_with_socket(
+            directory,
+            state_root,
+            project_root,
+            "workspace.sock",
+            publication,
+        )
+    }
+
+    fn at_directory_with_socket(
+        directory: PathBuf,
+        state_root: &Path,
+        project_root: &Path,
+        socket_name: &str,
+        publication: EndpointPublication,
+    ) -> Result<Self> {
+        let socket = directory.join(socket_name);
         let id = workspace_id(project_root);
         #[cfg(unix)]
         ensure!(
@@ -321,6 +480,7 @@ impl LocalEndpoint {
             inventory_registry: publication.inventory_registry,
             test_supervisor: publication.test_supervisor,
             runtime_root: publication.runtime_root,
+            state_location: crate::workspace_state::StateLocation::InTree(state_root.to_owned()),
         })
     }
 
@@ -370,7 +530,7 @@ impl LocalEndpoint {
             .is_some_and(|name| name == inventory_registration_file_name(metadata).as_str());
         Ok(Self {
             metadata: directory.join("endpoint.json"),
-            directory,
+            directory: directory.clone(),
             socket,
             project_root,
             id: metadata.id.clone(),
@@ -388,7 +548,18 @@ impl LocalEndpoint {
             test_supervisor: None,
             name_file: None,
             runtime_root,
+            state_location: match &metadata.out_of_tree_state_bytes {
+                Some(bytes) => {
+                    crate::workspace_state::StateLocation::OutOfTree(decode_path(bytes.clone())?)
+                }
+                None => crate::workspace_state::StateLocation::InTree(directory.clone()),
+            },
         })
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    pub(crate) fn state_location(&self) -> &crate::workspace_state::StateLocation {
+        &self.state_location
     }
 
     pub fn id(&self) -> &str {
@@ -535,6 +706,10 @@ impl LocalEndpoint {
             name,
             project_root_bytes: encode_path(&self.project_root),
             socket_bytes: encode_path(&self.socket),
+            out_of_tree_state_bytes: match &self.state_location {
+                crate::workspace_state::StateLocation::OutOfTree(path) => Some(encode_path(path)),
+                _ => None,
+            },
         };
         if let Err(error) = self.publish_metadata(&metadata) {
             drop(name_lock);
@@ -782,6 +957,10 @@ impl LocalEndpoint {
             name: None,
             project_root_bytes: encode_path(&self.project_root),
             socket_bytes: encode_path(&self.socket),
+            out_of_tree_state_bytes: match &self.state_location {
+                crate::workspace_state::StateLocation::OutOfTree(path) => Some(encode_path(path)),
+                _ => None,
+            },
         };
         for path in self.registration_paths(&metadata)? {
             let metadata = match read_endpoint_metadata(&path, "host registry entry") {
@@ -804,6 +983,10 @@ impl LocalEndpoint {
             name: None,
             project_root_bytes: encode_path(&self.project_root),
             socket_bytes: encode_path(&self.socket),
+            out_of_tree_state_bytes: match &self.state_location {
+                crate::workspace_state::StateLocation::OutOfTree(path) => Some(encode_path(path)),
+                _ => None,
+            },
         };
         for path in self.registration_paths(&metadata)? {
             let metadata = match read_endpoint_metadata(&path, "host registry entry") {
@@ -1214,6 +1397,21 @@ fn validate_metadata_fields(metadata: &EndpointMetadata) -> Result<()> {
     }
     validate_metadata_path(&metadata.project_root_bytes, "project directory")?;
     validate_metadata_path(&metadata.socket_bytes, "socket path")?;
+    if let Some(bytes) = &metadata.out_of_tree_state_bytes {
+        validate_metadata_path(bytes, "out-of-tree state path")?;
+        let state = decode_path(bytes.clone())?;
+        ensure!(
+            state.is_absolute()
+                && state
+                    .file_name()
+                    .is_some_and(|name| name == metadata.id.as_str())
+                && state
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|name| name == "workspaces"),
+            "invalid out-of-tree workspace state location"
+        );
+    }
     let project_root = decode_path(metadata.project_root_bytes.clone())?;
     let socket = decode_path(metadata.socket_bytes.clone())?;
     ensure!(
@@ -2349,6 +2547,9 @@ mod tests {
                 "--nocapture",
             ])
             .env("RUNYTE_ENDPOINT_SPECIAL_FILE_TEST_ROOT", root.as_ref())
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(root.join("xdg"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("xdg"))
             .stdin(Stdio::null())
             .spawn()
@@ -2539,6 +2740,7 @@ mod tests {
                     name: None,
                     project_root_bytes: encode_path(&root),
                     socket_bytes: encode_path(endpoint.socket()),
+                    out_of_tree_state_bytes: None,
                 };
                 endpoint
                     .publish_metadata(&metadata)
@@ -2904,6 +3106,7 @@ mod tests {
             name: None,
             project_root_bytes: encode_path(&root),
             socket_bytes: encode_path(endpoint.socket()),
+            out_of_tree_state_bytes: None,
         };
         write_json_atomic(&registration, &metadata).unwrap();
         assert!(!endpoint.metadata().exists());
@@ -4338,5 +4541,84 @@ mod tests {
         }
         assert_eq!(received, expected);
         feeder.abort();
+    }
+}
+
+#[cfg(test)]
+mod state_location_tests {
+    use super::*;
+    use crate::{test_support::TestRuntimeRoot, workspace_state::StateLocation};
+
+    #[test]
+    fn short_socket_budget_covers_long_macos_homes_and_largest_uid() {
+        let project = Path::new("/Users/example");
+        let location = StateLocation::out_of_tree(
+            project,
+            Path::new("/Users/example/Library/Application Support/runyte"),
+        );
+        let ordinary = location.as_path().join("host/workspace.sock");
+        assert_eq!(ordinary.as_os_str().as_encoded_bytes().len(), 113);
+        for base in ["/tmp", "/private/tmp"] {
+            let socket = short_endpoint_directory(
+                &Path::new(base).join(format!("runyte-{}", u32::MAX)),
+                &location,
+            )
+            .join("s");
+            assert_eq!(
+                socket.as_os_str().as_encoded_bytes().len(),
+                if base == "/tmp" { 90 } else { 98 }
+            );
+            assert!(socket.as_os_str().as_encoded_bytes().len() <= 103);
+            assert!(socket.as_os_str().as_encoded_bytes().len() <= socket_path_capacity());
+        }
+    }
+
+    #[test]
+    fn state_namespaces_keep_full_workspace_identity_and_respect_runtime_preference() {
+        let root = TestRuntimeRoot::new("state-sock").unwrap();
+        let project = root.create_private_dir("p").unwrap();
+        let first = StateLocation::out_of_tree(&project, &root.join("a"));
+        let second = StateLocation::out_of_tree(&project, &root.join("b"));
+        let a = LocalEndpoint::discover_location_with(&first, &project, None, root.path()).unwrap();
+        let b =
+            LocalEndpoint::discover_location_with(&second, &project, None, root.path()).unwrap();
+        assert_ne!(a.socket(), b.socket());
+        assert_eq!(a.id(), workspace_id(&project));
+        assert_eq!(a.socket().parent().unwrap().file_name().unwrap(), a.id());
+        let runtime = root.create_private_dir("runtime").unwrap();
+        let preferred =
+            LocalEndpoint::discover_location_with(&first, &project, Some(&runtime), root.path())
+                .unwrap();
+        assert!(preferred.socket().starts_with(runtime.join("runyte")));
+        assert_eq!(preferred.state_location(), &first);
+        let long_runtime = root.join("r".repeat(socket_path_capacity()));
+        fs::create_dir(&long_runtime).unwrap();
+        set_mode(&long_runtime, 0o700).unwrap();
+        let fallback = LocalEndpoint::discover_location_with(
+            &first,
+            &project,
+            Some(&long_runtime),
+            root.path(),
+        )
+        .unwrap();
+        assert_eq!(fallback.socket(), a.socket());
+        assert_eq!(fallback.state_location(), &first);
+        let metadata = EndpointMetadata {
+            protocol: PROTOCOL_VERSION,
+            pid: std::process::id(),
+            id: a.id().to_owned(),
+            name: None,
+            project_root_bytes: encode_path(&project),
+            socket_bytes: encode_path(a.socket()),
+            out_of_tree_state_bytes: Some(encode_path(first.as_path())),
+        };
+        validate_metadata_fields(&metadata).unwrap();
+        let recovered =
+            LocalEndpoint::from_registered(&metadata, &root.join("registry/row.json")).unwrap();
+        assert_eq!(recovered.state_location(), &first);
+        assert_eq!(recovered.socket(), a.socket());
+        let mut bad = metadata;
+        bad.out_of_tree_state_bytes = Some(encode_path(&root.join("other")));
+        assert!(validate_metadata_fields(&bad).is_err());
     }
 }

@@ -688,6 +688,9 @@ mod tests {
                 "--nocapture",
             ])
             .env(AUDIT_PATH_VARIABLE, &path)
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .stdin(Stdio::null())
             .spawn()

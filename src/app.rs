@@ -3421,6 +3421,8 @@ impl App {
 
     /// Builds editor state with every requested startup file already open.
     pub fn new_with_targets(config: Config, targets: Vec<LaunchTarget>) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         let launch_directory = std::env::current_dir()?;
         let project_root = Self::discover_startup_workspace(
             &config,
@@ -3502,6 +3504,8 @@ impl App {
         project_root: impl AsRef<Path>,
         startup: &mut StartupTrace,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         let project_root = project_root.as_ref().canonicalize()?;
         Self::new_with_boundaries(
             config,
@@ -3541,6 +3545,8 @@ impl App {
         startup: &mut StartupTrace,
         environment: crate::cli::Environment,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         Self::new_with_boundaries(
             config,
             targets,
@@ -3577,6 +3583,8 @@ impl App {
         startup: &mut StartupTrace,
         environment: crate::cli::Environment,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         Self::new_with_boundaries(
             config,
             targets,
@@ -3609,8 +3617,12 @@ impl App {
     ) -> Result<Self> {
         let project_root = project_root.as_ref().canonicalize()?;
         let mut startup = StartupTrace::new();
+        let config = Config {
+            startup_safety: Some(crate::test_support::fixture_startup_safety(&project_root)),
+            ..Config::default()
+        };
         Self::new_with_boundaries(
-            Config::default(),
+            config,
             Vec::new(),
             project_root.clone(),
             &mut startup,
@@ -3624,7 +3636,7 @@ impl App {
 
     #[allow(clippy::too_many_arguments)]
     fn new_with_boundaries(
-        config: Config,
+        mut config: Config,
         targets: Vec<LaunchTarget>,
         project_root: PathBuf,
         startup: &mut StartupTrace,
@@ -3634,17 +3646,29 @@ impl App {
         defer_syntax: bool,
         editor_mode: bool,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         let (theme_name, theme) = config.startup_theme()?;
         startup.mark(StartupPhase::ThemeResolved);
-        let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
-        let plugin_state_anchor =
-            crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?;
-        let reserved_user_roots = [config::default_config_root(), external_open::cache_root()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let state_location =
+            project_root::resolve_state_location(&project_root, &config.workspace.state);
+        let state_root = state_location.as_path().to_owned();
+        let plugin_state_anchor = state_location.plugin_anchor(
+            crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?,
+        );
+        let captured = config.startup_safety.take();
         if !editor_mode {
-            project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+            let safety = crate::workspace_state::StartupSafety::for_startup(captured, || {
+                [config::default_config_root(), external_open::cache_root()]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            });
+            let admission = safety.validate(&project_root, &state_location);
+            safety.close();
+            admission?;
+        } else if let Some(captured) = captured {
+            captured.close();
         }
         let registry = Arc::new(Registry::new());
         startup.mark(StartupPhase::LanguageRegistryReady);

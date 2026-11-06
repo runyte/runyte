@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 #![cfg(unix)]
 
+use runyte::test_support::isolated_startup_config;
+
 #[cfg(not(target_os = "macos"))]
 use std::os::unix::ffi::OsStringExt;
 use std::{
@@ -85,8 +87,15 @@ fn isolate_runyte_children(command: &mut Command) {
     // Only terminals created by the fixture may supply a parent context.
     command
         .env_remove(runyte::workspace::parent::ENVIRONMENT)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(test_cache_dir())),
+        ))
         .env("XDG_CONFIG_HOME", test_cache_dir())
         .env("XDG_STATE_HOME", test_runtime_dir().join("state"))
+        .env(
+            "RUNYTE_TEST_STATE_HOME",
+            test_runtime_dir().join("state/runyte"),
+        )
         .env(
             "RUNYTE_ALL_HOSTS_DIR",
             test_runtime_dir().join("runyte/all-hosts"),
@@ -1101,6 +1110,9 @@ fn wait_parent_process_helper() {
         .arg("note.txt")
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", runtime)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(&cache)),
+        ))
         .env("XDG_CONFIG_HOME", &cache)
         .env("XDG_CACHE_HOME", cache)
         .env("RUNYTE_ALL_HOSTS_DIR", inventory)
@@ -6122,7 +6134,8 @@ fn media_protocol_bounds_and_page_changes_require_complete_frames() {
     let storage = TestRuntimeRoot::new("media-protocol-bounds").unwrap();
     let path = storage.join("document.pdf");
     fs::write(&path, b"%PDF\0fixture").unwrap();
-    let mut app = App::new_in_project(Config::default(), None, &storage).unwrap();
+    let mut app =
+        App::new_in_project(isolated_startup_config(Config::default()), None, &storage).unwrap();
     app.native_media = true;
     app.open_native_target(LaunchTarget::new(&path)).unwrap();
     app.update_native_media_pages(&path, 4);

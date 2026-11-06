@@ -1571,12 +1571,12 @@ async fn run(
     }
 
     #[cfg(windows)]
-    let (config, config_path) = match native_preloaded_config {
+    let (mut config, config_path) = match native_preloaded_config {
         Some(loaded) => loaded,
         None => Config::load(arguments.config.as_deref())?,
     };
     #[cfg(not(windows))]
-    let (config, config_path) = Config::load(arguments.config.as_deref())?;
+    let (mut config, config_path) = Config::load(arguments.config.as_deref())?;
     let automatic_persistent = uses_automatic_persistent_mode(&arguments, config.mode());
     if automatic_persistent {
         #[cfg(unix)]
@@ -1620,14 +1620,22 @@ async fn run(
     if let Some(cache_root) = external_open::cache_root() {
         reserved_user_roots.push(cache_root);
     }
+    let startup_safety = (!editor || arguments.init.is_some()).then(|| {
+        std::sync::Arc::new(crate::workspace_state::StartupSafety::capture(
+            &reserved_user_roots,
+        ))
+    });
+    config.startup_safety = startup_safety.clone();
     // `--init` makes a workspace and stops there. Opening one is a separate
     // launch, so initializing never also decides how to edit in it.
     if let Some(requested) = arguments.init.take() {
-        return initialize_workspace(
+        return initialize_workspace_with_safety(
             &requested,
             &launch_directory,
             &config.workspace.state,
-            &reserved_user_roots,
+            startup_safety
+                .as_deref()
+                .expect("workspace initialization safety"),
             &mut io::stdout().lock(),
         );
     }
@@ -1640,8 +1648,13 @@ async fn run(
     #[cfg(unix)]
     let selected_workspace = match arguments.workspace_selector.take() {
         Some(selector) => Some(
-            resolve_attached_workspace(&selector, &launch_directory, &config, &reserved_user_roots)
-                .await?,
+            resolve_attached_workspace(
+                &selector,
+                &launch_directory,
+                &config,
+                startup_safety.as_deref().expect("attachment safety"),
+            )
+            .await?,
         ),
         None => None,
     };
@@ -1729,10 +1742,12 @@ async fn run(
                     .iter()
                     .map(|target| launch_directory.join(&target.path))
                     .collect::<Vec<_>>();
-                let project_root = project_root::adopt(
+                let project_root = project_root::adopt_with_safety(
                     &launch_directory,
                     &config.workspace.state,
-                    &reserved_user_roots,
+                    startup_safety
+                        .as_deref()
+                        .expect("workspace adoption safety"),
                     &user_home_directories(),
                     &targets,
                     workspace_requirement(&arguments, config.mode()),
@@ -1750,9 +1765,16 @@ async fn run(
             )),
         },
     };
-    let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
+    let state_location =
+        project_root::resolve_state_location(&project_root, &config.workspace.state);
+    let state_root = state_location.as_path().to_owned();
     if !editor {
-        project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+        let safety = startup_safety.as_deref().expect("workspace startup safety");
+        if matches!(state_location, project_root::StateLocation::OutOfTree(_)) {
+            state_location.prepare_with_safety(&project_root, safety)?;
+        } else {
+            safety.validate(&project_root, &state_location)?;
+        }
     }
     // A selected workspace does not contain the launch directory, so the host
     // it starts is given the workspace's own root. Handing it the directory the
@@ -2645,11 +2667,29 @@ fn launch_is_editor(arguments: &LaunchArguments, configured: RunMode) -> bool {
 
 /// `runyte --init DIRECTORY`: makes exactly `DIRECTORY` a workspace, or
 /// accepts one that already is, and says how to open it.
+#[cfg(all(test, unix))]
 fn initialize_workspace(
     requested: &Path,
     launch_directory: &Path,
     configured_state: &Path,
     reserved_user_roots: &[PathBuf],
+    output: &mut impl Write,
+) -> Result<()> {
+    let safety = crate::workspace_state::StartupSafety::capture(reserved_user_roots);
+    initialize_workspace_with_safety(
+        requested,
+        launch_directory,
+        configured_state,
+        &safety,
+        output,
+    )
+}
+
+fn initialize_workspace_with_safety(
+    requested: &Path,
+    launch_directory: &Path,
+    configured_state: &Path,
+    safety: &crate::workspace_state::StartupSafety,
     output: &mut impl Write,
 ) -> Result<()> {
     let requested = if requested.is_absolute() {
@@ -2660,7 +2700,7 @@ fn initialize_workspace(
     let existed = requested
         .canonicalize()
         .is_ok_and(|root| project_root::resolve_state_root(&root, configured_state).is_dir());
-    let project_root = project_root::initialize(&requested, configured_state, reserved_user_roots)?;
+    let project_root = project_root::initialize_with_safety(&requested, configured_state, safety)?;
     let root = project_root::display_workspace_path(
         &project_root,
         crate::app::user_home_directory().as_deref(),
@@ -2724,7 +2764,7 @@ async fn resolve_attached_workspace(
     selector: &Path,
     working_directory: &Path,
     config: &Config,
-    reserved_user_roots: &[PathBuf],
+    safety: &crate::workspace_state::StartupSafety,
 ) -> Result<project_root::DiscoveredWorkspace> {
     let requested = resolve_known_workspace_from_directory(
         selector,
@@ -2734,11 +2774,11 @@ async fn resolve_attached_workspace(
     .await?
     .unwrap_or_else(|| workspace_selector_path(selector, working_directory));
     let origin = project_root::exact_origin(&requested, &config.workspace.state)?;
-    let root = initialize_attached_directory(
+    let root = initialize_attached_directory_with_safety(
         &requested,
         selector,
         &config.workspace.state,
-        reserved_user_roots,
+        safety,
     )?;
     Ok(project_root::DiscoveredWorkspace { root, origin })
 }
@@ -2754,6 +2794,16 @@ fn initialize_attached_directory(
     state: &Path,
     reserved_user_roots: &[PathBuf],
 ) -> Result<PathBuf> {
+    let safety = crate::workspace_state::StartupSafety::capture(reserved_user_roots);
+    initialize_attached_directory_with_safety(requested, display_selector, state, &safety)
+}
+
+fn initialize_attached_directory_with_safety(
+    requested: &Path,
+    display_selector: &Path,
+    state: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+) -> Result<PathBuf> {
     let unknown = || {
         anyhow::anyhow!(
             "no session matches {}; use --session-list to see available sessions",
@@ -2762,7 +2812,7 @@ fn initialize_attached_directory(
     };
     let directory = requested.canonicalize().map_err(|_| unknown())?;
     anyhow::ensure!(directory.is_dir(), unknown());
-    project_root::initialize(&directory, state, reserved_user_roots)
+    project_root::initialize_with_safety(&directory, state, safety)
 }
 
 #[cfg_attr(not(unix), allow(dead_code))]

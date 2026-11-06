@@ -1467,6 +1467,9 @@ fn run_in_controlled_parent_attach_job(case: &str) -> Option<OwnedHandle> {
         .current_dir(root.path())
         .env(PARENT_ATTACH_CONTROLLED_CASE, case)
         .env(PARENT_ATTACH_CONTROLLED_ROOT, root.path())
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"));
     let input: OwnedHandle = fs::OpenOptions::new()
         .read(true)
@@ -1646,6 +1649,9 @@ fn silent_parent_attach_fixture() {
                 "--test-threads=1",
             ])
             .env("RUNYTE_TEST_PARENT_ATTACH_PROJECT", &project)
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(project.join(".test-config"))),
+            ))
             .env("XDG_CONFIG_HOME", project.join(".test-config"))
             .spawn()
             .unwrap()

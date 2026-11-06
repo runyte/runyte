@@ -72,6 +72,11 @@ def environment(root):
         path = root / name
         path.mkdir(mode=0o700)
         env[key] = str(path)
+    env['RUNYTE_TEST_STATE_HOME'] = str(root / 'state/runyte')
+    env['RUNYTE_TEST_ACCOUNT_HOME'] = env['HOME']
+    env['RUNYTE_TEST_LOCAL_APP_DATA'] = env['HOME']
+    env['RUNYTE_TEST_SOCKET_HOME'] = str(root)
+    env['RUNYTE_CONTEXT_HOME'] = str(root / 'context')
     env['TERM'] = 'xterm-256color'
     return env
 

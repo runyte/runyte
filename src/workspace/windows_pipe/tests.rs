@@ -428,6 +428,9 @@ fn accepted_pipe_pins_the_actual_compiled_client_process_through_exit() {
                     "--nocapture",
                 ])
                 .env("RUNYTE_NATIVE_PIPE_FIXTURE_METADATA", &record)
+                .envs(crate::test_support::state_environment(
+                    std::path::Path::new(&(root.join("config"))),
+                ))
                 .env("XDG_CONFIG_HOME", root.join("config"))
                 .env("XDG_CACHE_HOME", root.join("cache"))
                 .creation_flags(CREATE_NO_WINDOW)
@@ -749,6 +752,9 @@ fn dropping_backpressured_writer_releases_native_handle_without_peer_reads() {
                 "--ignored",
                 "--nocapture",
             ])
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("RUST_BACKTRACE", "0")

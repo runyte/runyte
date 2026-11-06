@@ -572,12 +572,35 @@ fn simultaneous_first_open_and_send_are_transactional() {
                 let mut s = Store::open_with_private_sidecars(&path, private).unwrap();
                 std::thread::spawn(move || {
                     barrier.wait();
-                    send(&mut s, &a, &c, 1)
+                    s.post(&a, &c, &key(1), "message 1", &location(), 1000)
                 })
             })
             .collect();
-        let ids: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
-        assert_eq!(ids[0], ids[1]);
+        let ids: Vec<_> = handles
+            .into_iter()
+            .filter_map(|handle| match handle.join().unwrap() {
+                Ok(id) => Some(id),
+                Err(error) => {
+                    // Both cleanup and post use bounded write transactions.
+                    // Contention may refuse a send, but no other error is valid.
+                    assert!(
+                        matches!(error.downcast_ref::<rusqlite::Error>(),
+                            Some(rusqlite::Error::SqliteFailure(code, _))
+                            if code.code == rusqlite::ErrorCode::DatabaseBusy),
+                        "{error:#}"
+                    );
+                    None
+                }
+            })
+            .collect();
+        let id = *ids.first().expect("at least one concurrent send succeeds");
+        assert!(ids.iter().all(|&other| other == id));
+        let count: i64 =
+            s.db.query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+                .unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(send(&mut s, &a, &c, 1), id);
+        assert_eq!(send(&mut s, &a, &c, 1), id);
         let count: i64 =
             s.db.query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
                 .unwrap();

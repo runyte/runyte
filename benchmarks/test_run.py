@@ -53,6 +53,13 @@ class EnvironmentTests(unittest.TestCase):
                 "XDG_STATE_HOME": str(root / "state"),
                 "XDG_DATA_HOME": str(root / "data"),
                 "HOME": str(root / "home"),
+                "XDG_RUNTIME_DIR": str(root / "state/runtime"),
+                "RUNYTE_ALL_HOSTS_DIR": str(root / "state/hosts"),
+                "RUNYTE_CONTEXT_HOME": str(root / "cache/context"),
+                "RUNYTE_TEST_STATE_HOME": str(root / "state/runyte"),
+                "RUNYTE_TEST_ACCOUNT_HOME": str(root / "home"),
+                "RUNYTE_TEST_LOCAL_APP_DATA": str(root / "home"),
+                "RUNYTE_TEST_SOCKET_HOME": str(root / "state"),
             },
         )
 

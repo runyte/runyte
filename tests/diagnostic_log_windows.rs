@@ -21,6 +21,9 @@ fn native_logging_startup_and_readonly_page() {
     let output = fs::File::create(root.join("fixture.log")).unwrap();
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "logging_fixture", "--ignored", "--nocapture"])
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("RUNYTE_LOG_FIXTURE", root.path())

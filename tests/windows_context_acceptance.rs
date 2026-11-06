@@ -61,6 +61,9 @@ fn public_windows_context_round_trip() {
             .env(ROOT, root.path())
             .env(PYTHON, python)
             .env("RUNYTE_CONTEXT_HOME", context)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(config)),
+            ))
             .env("XDG_CONFIG_HOME", config)
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("XDG_RUNTIME_DIR", root.join("runtime"))
@@ -214,6 +217,9 @@ fn fixture_command(root: &TestRuntimeRoot, name: &str, output: &Path) -> OwnedCh
             .args(["--exact", name, "--ignored", "--nocapture"])
             .env(ROOT, root.path())
             .env("RUNYTE_CONTEXT_HOME", root.join("context"))
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("XDG_RUNTIME_DIR", root.join("runtime"))
@@ -274,6 +280,9 @@ fn inventory(binary: &Path, context: &Path, config: &Path) -> Value {
     let output = Command::new(binary)
         .args(["--context-list", "--json"])
         .env("RUNYTE_CONTEXT_HOME", context)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(config)),
+        ))
         .env("XDG_CONFIG_HOME", config)
         .env("XDG_CACHE_HOME", config.parent().unwrap().join("cache"))
         .env("XDG_RUNTIME_DIR", config.parent().unwrap().join("runtime"))
@@ -430,6 +439,9 @@ fn spawn_python(
             .env("PYTHONDONTWRITEBYTECODE", "1")
             .env("PYTHONNOUSERSITE", "1")
             .env("RUNYTE_CONTEXT_HOME", context)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(config)),
+            ))
             .env("XDG_CONFIG_HOME", config)
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("XDG_RUNTIME_DIR", root.join("runtime"))
@@ -569,6 +581,9 @@ fn post_service_frontend_failure_joins_context_and_retires_publication() {
             .args(["--exact", FAILURE_FIXTURE, "--ignored", "--nocapture"])
             .env(ROOT, root.path())
             .env("RUNYTE_CONTEXT_HOME", &context)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(&config)),
+            ))
             .env("XDG_CONFIG_HOME", &config)
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("XDG_RUNTIME_DIR", root.join("runtime"))

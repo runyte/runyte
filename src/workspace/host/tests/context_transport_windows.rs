@@ -252,6 +252,9 @@ async fn compiled_native_client_authenticates_reads_and_exits_before_shutdown() 
             .env(CLIENT_PID, registration.pid.to_string())
             .env(CLIENT_CREATION, registration.creation_time.to_string())
             .env(CLIENT_CREDENTIAL, fixture.identity.credential())
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(fixture._root.path().join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", fixture._root.path().join("config"))
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::null())

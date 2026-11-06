@@ -32,6 +32,9 @@ class DurableFixture:
             path = self.root / name
             path.mkdir(mode=0o700)
             self.env[key] = str(path)
+        self.env['RUNYTE_TEST_ACCOUNT_HOME'] = self.env['HOME']
+        self.env['RUNYTE_TEST_STATE_HOME'] = str(self.root / 'state' / 'runyte')
+        self.env['RUNYTE_TEST_SOCKET_HOME'] = str(self.root)
         self.store = self.root / 'sqlite'
         self.env['RUNYTE_CHANNEL_HOME'] = str(self.store)
         self.project = self.root / 'project'

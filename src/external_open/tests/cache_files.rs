@@ -49,6 +49,9 @@ fn special_program_cache_files_cannot_block_loading_or_persistence() {
             "--nocapture",
         ])
         .env("RUNYTE_CACHE_FILE_TEST_ROOT", &fixture.0)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(fixture.0.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", fixture.0.join("config"))
         .stdin(std::process::Stdio::null())
         .spawn()

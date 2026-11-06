@@ -370,7 +370,7 @@ pub(super) fn resolve_workspace_endpoint_with_runtime(
     if let Some(cache_root) = external_open::cache_root() {
         reserved_user_roots.push(cache_root);
     }
-    project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+    project_root::resolve_state_location(&project_root, state).validate(&reserved_user_roots)?;
     match runtime {
         Some(runtime) => {
             LocalEndpoint::discover_with_runtime(&state_root, &project_root, Some(runtime))
@@ -468,6 +468,16 @@ impl HostStartup {
         self
     }
 
+    pub fn with_envs(
+        mut self,
+        values: impl IntoIterator<Item = (impl Into<OsString>, impl Into<OsString>)>,
+    ) -> Self {
+        for (key, value) in values {
+            self.env.push((key.into(), value.into()));
+        }
+        self
+    }
+
     pub fn with_working_directory(mut self, directory: impl Into<PathBuf>) -> Self {
         self.working_directory = Some(directory.into());
         self
@@ -562,6 +572,14 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
             crate::project_root::STARTUP_ORIGIN_ENV,
             origin.startup_handoff(&project_root),
         );
+    }
+    #[cfg(debug_assertions)]
+    if let crate::workspace_state::StateLocation::OutOfTree(path) = endpoint.state_location()
+        && let Some(root) = path.parent().and_then(Path::parent)
+    {
+        command
+            .env("RUNYTE_TEST_OUT_OF_TREE_ROOT", &project_root)
+            .env("RUNYTE_TEST_STATE_HOME", root);
     }
     for (key, value) in &startup.env {
         command.env(key, value);

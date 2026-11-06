@@ -1,6 +1,6 @@
 # Flexible startup
 
-Status: approved, not started. Tracking issue:
+Status: in progress; current implementation status is on the tracking issue:
 [#71](https://github.com/runyte/runyte/issues/71). Work items:
 [#72](https://github.com/runyte/runyte/issues/72),
 [#73](https://github.com/runyte/runyte/issues/73),
@@ -125,15 +125,24 @@ pub enum StateLocation {
 
   On Unix, take the home directory from the effective account, as the
   platform cache directory does (see `user_paths::system_home_directory`).
-  Resolve it lazily: launches that never use out-of-tree state must not pay
-  for it.
+  Placement selection stays lazy. The
+  [approved startup safety boundary](https://github.com/runyte/runyte/issues/72#issuecomment-6683697808)
+  permits bounded filesystem checks once at startup: capture the user roots
+  and canonical safety reservations, then reuse the selected workspace
+  admission through CLI, application and host startup. This supersedes the
+  original requirement that unused out-of-tree storage add no filesystem
+  work. Creation remains lazy; lexical-only reservation checks are insufficient
+  because symlink aliases can overlap protected storage.
 - **Per-workspace directory**: `<state root>/workspaces/<workspace id>/`, with
   the same layout as `.runyte/`. Create it owner-only through
   `private_storage`. Refuse a state root that another account owns or can
   write to.
-- **Reserved roots**: add the state root to `reserved_user_roots`, so no
-  in-tree state may overlap it, and check it does not overlap the
-  configuration or cache roots.
+- **Reserved roots**: capture the state root alongside configuration/cache
+  reservations, so no in-tree state may overlap it. Reject a state root that
+  overlaps configuration or cache on Unix/macOS; Windows protects its
+  `workspaces` subtree so the mandated application container can retain its
+  cache sibling. The new state safety checks reuse their canonical result
+  during one startup; existing discovery/layout checks retain their behavior.
 - **Host endpoint length**: without `XDG_RUNTIME_DIR`, the usual case on
   macOS, the endpoint falls back to `<state>/host/…`, and `sun_path` is 104
   bytes there. Compute the worst case for
@@ -147,6 +156,23 @@ pub enum StateLocation {
   `XDG_RUNTIME_DIR` and `XDG_CACHE_HOME`. Decide whether the state root
   belongs in that fingerprint, so test hosts with a temporary state root stay
   hidden from real ones.
+
+Implementation handoff for #73: `project_root::resolve_state_location` is the
+single placement decision; `resolve_state_root` is its path-only compatibility
+wrapper. `workspace_state::StateLocation` retains placement for endpoint and
+Windows durability decisions. Add home selection at that central decision,
+then route discovery/initialization through it. Do not infer placement from an
+absolute `workspace.state` path.
+
+Debug subprocess fixtures use `test_support::user_environment` (or
+`isolate_user_paths`) to inject configuration, cache, state, runtime, context,
+account home and Windows account LocalAppData. The fixture-only
+`RUNYTE_TEST_OUT_OF_TREE_ROOT` selects one exact canonical project; paired
+`RUNYTE_TEST_STATE_HOME` provides the final Runyte state root on every platform,
+including macOS. `RUNYTE_TEST_ACCOUNT_HOME` is read before account caching.
+Release builds ignore these selectors. Keep the ordinary production resolver
+and consumers in the test path; no process-global environment mutation is
+needed. An ignored macOS `XDG_STATE_HOME` alone is insufficient isolation.
 
 ### #73 Home workspace (needs #72)
 

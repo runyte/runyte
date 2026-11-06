@@ -193,6 +193,9 @@ fn pinned_child_handle_observes_exit_without_reopening_its_pid() {
                 "workspace::windows_process_identity::tests::process_fixture",
                 "--ignored",
             ])
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::piped())

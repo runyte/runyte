@@ -208,6 +208,9 @@ fn relative_isolated_root_is_fixed_before_later_cwd_changes() {
             "--test-threads=1",
         ])
         .current_dir(fixture.path())
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(fixture.path().join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", fixture.path().join("config"))
         .env("RUNYTE_HEADLESS_CWD_FIXTURE", "1")
         .output()

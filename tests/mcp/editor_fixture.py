@@ -331,6 +331,9 @@ class EditorFixture(unittest.TestCase):
             target = self.root / directory
             target.mkdir(mode=0o700)
             self.env[key] = str(target)
+        self.env['RUNYTE_TEST_ACCOUNT_HOME'] = self.env['HOME']
+        self.env['RUNYTE_TEST_STATE_HOME'] = str(self.root / 'state' / 'runyte')
+        self.env['RUNYTE_TEST_SOCKET_HOME'] = str(self.root)
         self.projects = [self.root / name for name in ('one', 'two')]
         for project in self.projects:
             project.mkdir()

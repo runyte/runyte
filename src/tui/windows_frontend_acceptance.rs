@@ -192,6 +192,9 @@ fn native_frontend_edits_resizes_reattaches_and_reports_host_loss() {
     let child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", PARENT, "--ignored", "--nocapture"])
         .env(ROOT_ENV, root.path())
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
@@ -243,6 +246,9 @@ fn native_frontend_switches_between_exact_running_hosts() {
     let child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", SWITCH_PARENT, "--ignored", "--nocapture"])
         .env(ROOT_ENV, root.path())
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
@@ -295,6 +301,9 @@ fn native_parent_wait_requires_live_terminal_authority_and_survives_parent_loss(
     let child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", PARENT_WAIT_PARENT, "--ignored", "--nocapture"])
         .env(ROOT_ENV, root.path())
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
@@ -362,6 +371,9 @@ fn parent_wait_parent_fixture() {
     let host_log = fs::File::create(root.join("parent-wait-host.log")).unwrap();
     let host = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", HOST, "--ignored", "--nocapture"])
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
@@ -421,6 +433,9 @@ fn parent_wait_parent_fixture() {
         .env("RUNYTE_PARENT_WAIT_CASE", "outside-job")
         .env("RUNYTE_PARENT_WAIT_PATH", project.join("wait.txt"))
         .env("RUNYTE_PARENT_CONTEXT", marker)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
@@ -586,6 +601,9 @@ fn spawn_parent_wait_client(case: &str, path: &Path) -> Child {
         .env(ROOT_ENV, &root)
         .env("RUNYTE_PARENT_WAIT_CASE", case)
         .env("RUNYTE_PARENT_WAIT_PATH", path)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
@@ -640,6 +658,9 @@ fn parent_loss_launcher_fixture() {
             "--nocapture",
         ])
         .env(ROOT_ENV, &root)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
@@ -730,6 +751,9 @@ fn parent_attach_launcher_fixture() {
         .args(["--exact", PARENT_ATTACH_CLIENT, "--ignored", "--nocapture"])
         .env(ROOT_ENV, &root)
         .env("RUNYTE_PARENT_ATTACH_CASE", "startup-failure")
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
@@ -740,6 +764,9 @@ fn parent_attach_launcher_fixture() {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", PARENT_ATTACH_CLIENT, "--ignored", "--nocapture"])
         .env(ROOT_ENV, &root)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("XDG_CACHE_HOME", root.join("cache"))
@@ -908,6 +935,9 @@ fn switch_parent_fixture() {
                 .env("RUNYTE_SWITCH_PROJECT", project)
                 .env("RUNYTE_TEST_NATIVE_SWITCH_INBOX", &inbox)
                 .env("RUNYTE_TEST_PARENT_ATTACH_HOST_FIXTURE", PARENT_ATTACH_HOST)
+                .envs(crate::test_support::state_environment(
+                    std::path::Path::new(&(root.join("config"))),
+                ))
                 .env("XDG_CONFIG_HOME", root.join("config"))
                 .env("RUNYTE_CONTEXT_HOME", root.join("context"))
                 .current_dir(project)

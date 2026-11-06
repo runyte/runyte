@@ -5,6 +5,8 @@
 //! centres its text at a fixed width; `:fullscreen` gives the pane the whole
 //! area and leaves its content laid out exactly as it is in a split.
 
+use runyte::test_support::isolated_startup_config;
+
 use ratatui::layout::Rect;
 use runyte::{
     app::{App, CommandOutcome, PreparedView},
@@ -37,7 +39,7 @@ fn prepare(app: &mut App, width: u16, height: u16) -> PreparedView {
 fn zen_maximizes_the_active_pane_and_the_second_toggle_restores_the_split_tree() {
     let mut config = Config::default();
     config.editor.line_numbers = false;
-    let mut app = App::new(config, None).unwrap();
+    let mut app = App::new(isolated_startup_config(config), None).unwrap();
     run(&mut app, EditorCommand::SplitVertical);
     let zen_pane = app.active_pane;
     let layout = format!("{:?}", app.layout);
@@ -65,7 +67,7 @@ fn zen_maximizes_the_active_pane_and_the_second_toggle_restores_the_split_tree()
 fn zen_keeps_the_buffer_editable_and_does_not_move_as_text_changes() {
     let mut config = Config::default();
     config.editor.line_numbers = false;
-    let mut app = App::new(config, None).unwrap();
+    let mut app = App::new(isolated_startup_config(config), None).unwrap();
     app.execute(parse_colon_command("zen").unwrap()).unwrap();
     let before = prepare(&mut app, 160, 30).panes[0].clone();
 
@@ -90,7 +92,7 @@ fn zen_width_is_configurable_and_narrow_panes_use_every_available_cell() {
     let mut config = Config::default();
     config.editor.line_numbers = false;
     config.editor.zen_width = 72;
-    let mut app = App::new(config, None).unwrap();
+    let mut app = App::new(isolated_startup_config(config), None).unwrap();
     app.execute(parse_colon_command("zen").unwrap()).unwrap();
 
     let wide = prepare(&mut app, 120, 30).panes[0].clone();
@@ -104,7 +106,7 @@ fn zen_width_is_configurable_and_narrow_panes_use_every_available_cell() {
 
 #[test]
 fn window_structure_stays_stable_until_zen_is_toggled_off() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     run(&mut app, EditorCommand::SplitVertical);
     let pane = app.active_pane;
     let panes = app.panes.len();
@@ -132,7 +134,7 @@ fn window_structure_stays_stable_until_zen_is_toggled_off() {
 fn fullscreen_maximizes_the_active_pane_without_narrowing_the_text() {
     let mut config = Config::default();
     config.editor.line_numbers = false;
-    let mut app = App::new(config, None).unwrap();
+    let mut app = App::new(isolated_startup_config(config), None).unwrap();
     run(&mut app, EditorCommand::SplitVertical);
     let full_pane = app.active_pane;
     let layout = format!("{:?}", app.layout);
@@ -165,7 +167,7 @@ fn fullscreen_with_one_pane_leaves_both_split_bindings_available() {
     for spelling in ["Ctrl-w f", "Space w f", ":fullscreen"] {
         for split in ['v', 's'] {
             for repeats in [1, 2] {
-                let mut app = App::new(Config::default(), None).unwrap();
+                let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
                 for _ in 0..repeats {
                     match spelling {
                         "Ctrl-w f" => {
@@ -197,7 +199,7 @@ fn fullscreen_with_one_pane_leaves_both_split_bindings_available() {
 
 #[test]
 fn fullscreen_with_one_pane_leaves_zen_unchanged() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     app.execute(parse_colon_command("zen").unwrap()).unwrap();
     let before = prepare(&mut app, 220, 40).panes[0].text_width;
     app.execute(parse_colon_command("fullscreen").unwrap())
@@ -212,7 +214,7 @@ fn fullscreen_with_one_pane_leaves_zen_unchanged() {
 fn asking_for_the_other_maximized_view_switches_to_it_rather_than_stacking() {
     let mut config = Config::default();
     config.editor.line_numbers = false;
-    let mut app = App::new(config, None).unwrap();
+    let mut app = App::new(isolated_startup_config(config), None).unwrap();
     run(&mut app, EditorCommand::SplitVertical);
 
     app.execute(parse_colon_command("zen").unwrap()).unwrap();
@@ -236,7 +238,7 @@ fn asking_for_the_other_maximized_view_switches_to_it_rather_than_stacking() {
 
 #[test]
 fn window_structure_stays_stable_until_fullscreen_is_toggled_off() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     run(&mut app, EditorCommand::SplitVertical);
     let pane = app.active_pane;
     let panes = app.panes.len();
@@ -265,7 +267,7 @@ fn window_structure_stays_stable_until_fullscreen_is_toggled_off() {
 fn ctrl_w_toggles_both_maximized_views() {
     let mut config = Config::default();
     config.editor.line_numbers = false;
-    let mut app = App::new(config, None).unwrap();
+    let mut app = App::new(isolated_startup_config(config), None).unwrap();
     run(&mut app, EditorCommand::SplitVertical);
 
     press(&mut app, KeyCode::Char('w'), Modifiers::CONTROL);
@@ -289,7 +291,7 @@ fn ctrl_w_toggles_both_maximized_views() {
 fn space_w_reaches_the_same_two_maximized_views() {
     let mut config = Config::default();
     config.editor.line_numbers = false;
-    let mut app = App::new(config, None).unwrap();
+    let mut app = App::new(isolated_startup_config(config), None).unwrap();
     run(&mut app, EditorCommand::SplitVertical);
 
     for key in [' ', 'w', 'z'] {
@@ -320,7 +322,7 @@ fn space_w_reaches_the_same_two_maximized_views() {
 /// than on the state would move focus to a pane nobody can see.
 #[test]
 fn a_maximized_pane_refuses_directional_focus_in_every_spelling() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     run(&mut app, EditorCommand::SplitVertical);
     let maximized = app.active_pane;
 
@@ -362,7 +364,7 @@ fn a_maximized_pane_refuses_directional_focus_in_every_spelling() {
 
 #[test]
 fn a_maximized_pane_refuses_content_swapping_in_both_views() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     run(&mut app, EditorCommand::SplitVertical);
     let active = app.active_pane;
     let buffers = app
@@ -398,7 +400,7 @@ fn a_maximized_pane_refuses_content_swapping_in_both_views() {
 
 #[test]
 fn a_macro_cannot_focus_a_hidden_pane_by_maximizing_before_the_next_frame() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     run(&mut app, EditorCommand::SplitVertical);
     let maximized = app.active_pane;
     // One rendered frame, so the rectangles the focus search consults are the

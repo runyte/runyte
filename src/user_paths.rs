@@ -14,6 +14,11 @@ use std::{path::PathBuf, sync::OnceLock};
 /// directly instead of trusting inherited environment.
 /// On Windows the profile comes from the current account's known-folder record.
 pub(crate) fn system_home_directory() -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Some(home) = std::env::var_os("RUNYTE_TEST_ACCOUNT_HOME") {
+        let home = PathBuf::from(home);
+        return home.is_absolute().then_some(home);
+    }
     static HOME: OnceLock<PathBuf> = OnceLock::new();
 
     if let Some(home) = HOME.get() {
@@ -81,6 +86,11 @@ fn resolve_system_home_directory() -> Option<PathBuf> {
 /// account-level redirection. Inherited `LOCALAPPDATA` is not account evidence.
 #[cfg(windows)]
 pub(crate) fn system_local_app_data_directory() -> Option<PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Some(path) = std::env::var_os("RUNYTE_TEST_LOCAL_APP_DATA") {
+        let path = PathBuf::from(path);
+        return path.is_absolute().then_some(path);
+    }
     static DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
     if let Some(directory) = DIRECTORY.get() {
         return Some(directory.clone());

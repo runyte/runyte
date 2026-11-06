@@ -95,6 +95,9 @@ mod tests {
                     "log::windows::tests::locked_log_fixture",
                     "--ignored",
                 ])
+                .envs(crate::test_support::state_environment(
+                    std::path::Path::new(&(root.join("contender-config"))),
+                ))
                 .env("XDG_CONFIG_HOME", root.join("contender-config"))
                 .env("RUNYTE_LOG_PROBE_PATH", &path)
                 .creation_flags(CREATE_NO_WINDOW)
@@ -171,6 +174,9 @@ mod tests {
                     "log::windows::tests::process_fixture",
                     "--ignored",
                 ])
+                .envs(crate::test_support::state_environment(
+                    std::path::Path::new(&(root.join("config"))),
+                ))
                 .env("XDG_CONFIG_HOME", root.join("config"))
                 .creation_flags(CREATE_NO_WINDOW)
                 .stdin(Stdio::piped())

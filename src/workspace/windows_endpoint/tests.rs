@@ -616,6 +616,9 @@ impl FixtureChild {
                 ])
                 .env("RUNYTE_ENDPOINT_FIXTURE_ROOT", root)
                 .env("RUNYTE_ENDPOINT_FIXTURE_MODE", mode)
+                .envs(crate::test_support::state_environment(
+                    std::path::Path::new(&(root.join("config"))),
+                ))
                 .env("XDG_CONFIG_HOME", root.join("config"))
                 .env("XDG_CACHE_HOME", root.join("cache"))
                 .creation_flags(CREATE_NO_WINDOW)

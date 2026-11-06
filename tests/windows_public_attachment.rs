@@ -60,6 +60,9 @@ fn direct_native_attachment_starts_retains_and_refuses_takeover() {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
         .env("RUNYTE_PUBLIC_ATTACH_ROOT", root.path())
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(config_dir)),
+        ))
         .env("XDG_CONFIG_HOME", config_dir)
         .env("XDG_CACHE_HOME", cache)
         .env("XDG_RUNTIME_DIR", runtime)
@@ -115,6 +118,9 @@ fn integrated_terminal_wait_uses_exact_parent_and_completes_each_file() {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", WAIT_FIXTURE, "--ignored", "--nocapture"])
         .env("RUNYTE_PUBLIC_ATTACH_ROOT", root.path())
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(config_dir)),
+        ))
         .env("XDG_CONFIG_HOME", config_dir)
         .env("XDG_CACHE_HOME", cache)
         .env("XDG_RUNTIME_DIR", runtime)
@@ -181,6 +187,9 @@ fn native_manager_visits_selected_live_publication_and_refuses_stale_row() {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", VISIT_FIXTURE, "--ignored", "--nocapture"])
         .env("RUNYTE_PUBLIC_ATTACH_ROOT", root.path())
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(config_dir)),
+        ))
         .env("XDG_CONFIG_HOME", config_dir)
         .env("XDG_CACHE_HOME", cache)
         .env("XDG_RUNTIME_DIR", runtime)
@@ -242,6 +251,9 @@ impl Drop for HostCleanup {
             .arg("--config")
             .arg(&self.config)
             .current_dir(&self.project)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(self.root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", self.root.join("config"))
             .env("XDG_CACHE_HOME", self.root.join("cache"))
             .env("XDG_RUNTIME_DIR", self.root.join("runtime"))
@@ -581,6 +593,9 @@ fn publish_file(path: &Path, contents: &str) {
 
 fn fixture_environment(command: &mut Command, root: &Path) {
     command
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_RUNTIME_DIR", root.join("runtime"))
@@ -719,6 +734,9 @@ fn public_parent_wait_launch_helper() {
     let mut client = Command::new(env!("CARGO_BIN_EXE_runyte"))
         .args(["--wait", "first.txt", "second.txt"])
         .current_dir(&project)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_RUNTIME_DIR", root.join("runtime"))

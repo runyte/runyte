@@ -512,6 +512,9 @@ impl NativeFixture {
                 .args(["--exact", HELPER_NAME, "--ignored", "--nocapture"])
                 .env(HELPER_ROOT, root.path())
                 .env(HELPER_MODE, mode)
+                .envs(crate::test_support::state_environment(
+                    std::path::Path::new(&(root.join("config"))),
+                ))
                 .env("XDG_CONFIG_HOME", root.join("config"))
                 .creation_flags(CREATE_NO_WINDOW)
                 .stdin(Stdio::null())

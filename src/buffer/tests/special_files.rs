@@ -32,6 +32,9 @@ fn special_file_io_refuses_promptly_and_preserves_documents() {
             "--nocapture",
         ])
         .env("RUNYTE_SPECIAL_FILE_TEST_ROOT", &fixture.0)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(fixture.0.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", fixture.0.join("config"))
         .stdin(Stdio::null())
         .spawn()
