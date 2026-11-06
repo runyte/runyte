@@ -264,7 +264,11 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "head -c 16384 /dev/zero >&2; printf done"]);
         let config = tempfile::tempdir().unwrap();
-        command.env("XDG_CONFIG_HOME", config.path());
+        command
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(config.path())),
+            ))
+            .env("XDG_CONFIG_HOME", config.path());
         let mut process = Process::spawn(&mut command, Role::Pdf).unwrap();
         // SAFETY: only query the fixture's live process group.
         assert_eq!(

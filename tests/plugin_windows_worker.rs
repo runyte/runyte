@@ -70,6 +70,9 @@ mod native {
                 Command::new(std::env::current_exe().unwrap())
                     .args(["--case", case])
                     .arg(root.path())
+                    .envs(runyte::test_support::state_environment(
+                        std::path::Path::new(&(root.join("config"))),
+                    ))
                     .env("XDG_CONFIG_HOME", root.join("config"))
                     .env("XDG_CACHE_HOME", root.join("cache"))
                     .env("XDG_RUNTIME_DIR", root.join("runtime"))
@@ -772,6 +775,9 @@ mod native {
                 let child = Command::new(std::env::current_exe().unwrap())
                     .args(["--fixture", "hold-descendant"])
                     .arg(root)
+                    .envs(runyte::test_support::state_environment(
+                        std::path::Path::new(&(root.join("config"))),
+                    ))
                     .env("XDG_CONFIG_HOME", root.join("config"))
                     .creation_flags(CREATE_NO_WINDOW)
                     .stdin(Stdio::null())

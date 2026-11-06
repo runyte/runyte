@@ -48,6 +48,9 @@ fn real_rust_analyzer_permission_diagnostics_edits_restart_and_cleanup() {
     let root = TestRuntimeRoot::new("real-native-lsp").unwrap();
     let analyzer = Command::new("rustup")
         .args(["which", "rust-analyzer"])
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .output()
@@ -64,6 +67,9 @@ fn real_rust_analyzer_permission_diagnostics_edits_restart_and_cleanup() {
             .args(["--exact", "native_lsp_fixture", "--ignored", "--nocapture"])
             .env("RUNYTE_NATIVE_LSP_ROOT", root.path())
             .env("RUNYTE_NATIVE_LSP_SERVER", analyzer)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("RUNYTE_CONTEXT_HOME", root.join("context"))

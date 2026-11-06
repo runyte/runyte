@@ -17,6 +17,19 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-06 — out-of-tree state foundation
+
+[#72](https://github.com/runyte/runyte/issues/72) adds explicit out-of-tree
+placement. Ordinary in-tree placement does not invoke the per-user resolver;
+a closure-based regression test asserts this boundary. Environment
+fingerprinting hashes captured selector bytes without filesystem operations.
+
+Reservation validation additionally compares in-tree state against the new
+per-user state root, including canonical existing ancestors to detect aliases.
+This can add metadata lookups during startup validation. It creates no state
+directory, and no complete startup timing was measured for this change.
+The home-workspace selection policy is separate work in #73.
+
 ## 2026-10-25 — commented defaults and larger configured keymaps
 
 Follow-up to [issue #31](https://github.com/runyte/runyte/issues/31): export

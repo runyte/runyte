@@ -57,6 +57,9 @@ impl Fixture {
         Command::new("git")
             .args(args)
             .current_dir(&self.0)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(self.0.join("config-home"))),
+            ))
             .env("XDG_CONFIG_HOME", self.0.join("config-home"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()

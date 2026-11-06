@@ -36,6 +36,9 @@ fn git_command(root: &std::path::Path, arguments: &[&str]) -> Command {
     command
         .args(arguments)
         .current_dir(root)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join(".fixture-config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join(".fixture-config"))
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_AUTHOR_DATE", "2026-01-01T00:05:00+02:00")

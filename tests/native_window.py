@@ -42,6 +42,8 @@ root = storage / "project"
 root.mkdir()
 (storage / "config").mkdir()
 (storage / "runtime").mkdir(mode=0o700)
+(storage / "home").mkdir(mode=0o700)
+(storage / "state").mkdir(mode=0o700)
 (storage / "config/config.yaml").write_text("mode: ide\nlsp:\n  enable: false\n")
 (root / "notes.txt").write_text("Runyte native window\nExisting keys, panes, and terminal sessions.\n")
 if args.animations:
@@ -150,6 +152,13 @@ env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None)
 # A harness started from a Runyte terminal must not hand its parent context to the fixture.
 for inherited in [key for key in env if key.startswith('RUNYTE_') and key != 'RUNYTE_NATIVE_PAINT_TIMING']:env.pop(inherited)
 env['RUNYTE_INPUT_TRACE']=str(storage/'input.log')
+env['HOME']=str(storage/'home')
+env['XDG_STATE_HOME']=str(storage/'state')
+env['RUNYTE_TEST_STATE_HOME']=str(storage/'state/runyte')
+env['RUNYTE_TEST_ACCOUNT_HOME']=env['HOME']
+env['RUNYTE_TEST_LOCAL_APP_DATA']=env['HOME']
+env['RUNYTE_TEST_SOCKET_HOME']=str(storage)
+env['RUNYTE_CONTEXT_HOME']=str(storage/'context')
 env['XDG_CONFIG_HOME']=str(storage/'config');env['XDG_RUNTIME_DIR']=str(storage/'runtime');env['SHELL']='/bin/sh';env['XDG_CACHE_HOME']=str(storage/'cache');env['RUNYTE_ALL_HOSTS_DIR']=str(storage/'all-hosts')
 if args.paint_styles:
     # Leave the cursor in a blank cell beside an italic icon, without a shell prompt.

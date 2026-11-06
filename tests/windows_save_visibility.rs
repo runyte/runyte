@@ -26,6 +26,9 @@ fn successful_saves_have_complete_contents_after_acknowledgement() {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
         .env("RUNYTE_SAVE_VISIBILITY_ROOT", root.path())
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .stdin(Stdio::null())
         .stdout(log.try_clone().unwrap())

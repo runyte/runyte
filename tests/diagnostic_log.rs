@@ -116,6 +116,9 @@ fn bundled_runyte(root: &Path) -> Command {
         .env_remove(runyte::workspace::parent::ENVIRONMENT)
         // Fixture defaults must not start plugins or apply settings from the
         // developer's configuration. Explicit --config arguments still win.
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(test_process_dir(root, "config"))),
+        ))
         .env("XDG_CONFIG_HOME", test_process_dir(root, "config"))
         .env(
             "RUNYTE_ALL_HOSTS_DIR",
@@ -141,6 +144,9 @@ fn diagnostic_fixture_ignores_parent_config_and_honors_explicit_config() {
             "rotation_bounds_the_host_log_across_a_restart",
             "--nocapture",
         ])
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(&parent_config)),
+        ))
         .env("XDG_CONFIG_HOME", &parent_config)
         .output()
         .unwrap();

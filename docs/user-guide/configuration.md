@@ -546,6 +546,24 @@ Because discovery walks upward, initializing your home directory makes it the
 workspace for every directory below it that has no Git repository and no state
 directory of its own.
 
+Workspaces can also keep state outside their directory tree. The per-user
+Runyte state root is `$XDG_STATE_HOME/runyte` on Linux and other Unix systems,
+falling back to `~/.local/state/runyte`; on macOS it is
+`~/Library/Application Support/runyte`, and on Windows it is
+`%LOCALAPPDATA%\runyte`. Account defaults come from the operating system,
+not an inherited home-directory variable.
+
+Each workspace has its own private `workspaces/<workspace-id>/` subtree,
+containing the same logs, pasted images, plugin downloads and saved host names
+as in-tree state. Configuration and cache storage cannot overlap workspace
+state; Windows keeps `workspaces` and `cache` as separate siblings in its
+Runyte application directory. Unix hosts prefer a private `XDG_RUNTIME_DIR`;
+out-of-tree workspaces otherwise use a short private directory beneath `/tmp`
+for sockets and endpoint metadata. The workspace ID stays unchanged.
+
+This storage foundation does not change which workspaces use out-of-tree
+state, or relocate existing state directories.
+
 #### Windows state anchor
 
 On Windows, `workspace.state_anchor` sets the boundary for durable plugin

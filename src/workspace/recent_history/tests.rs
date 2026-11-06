@@ -37,6 +37,9 @@ fn special_file_history_reads_refuse_without_blocking() {
             "--nocapture",
         ])
         .env("RUNYTE_HISTORY_SPECIAL_FILE_TEST_ROOT", root.as_ref())
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("xdg"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("xdg"))
         .stdin(Stdio::null())
         .spawn()

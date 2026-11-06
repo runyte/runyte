@@ -51,6 +51,9 @@ fn run_isolated_console_event(mode: &str) {
         .args(["--exact", NATIVE_EVENT_HELPER, "--ignored", "--nocapture"])
         .env(NATIVE_EVENT_MODE, mode)
         .env(NATIVE_EVENT_ROOT, root.path())
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .creation_flags(CREATE_NEW_CONSOLE)
@@ -195,6 +198,9 @@ fn console_guard_runs_in_conpty() {
             "--ignored",
             "--nocapture",
         ])
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("RUNYTE_CONSOLE_TEST_ROOT", root.path())
@@ -280,6 +286,9 @@ fn console_control_key_transport() {
             "--ignored",
             "--nocapture",
         ])
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("RUNYTE_CONSOLE_TEST_ROOT", root.path())

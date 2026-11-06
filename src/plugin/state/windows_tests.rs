@@ -289,6 +289,9 @@ fn fixture(anchor: &Path, mode: &str) -> std::process::ExitStatus {
         .args(["--exact", FIXTURE_NAME, "--ignored", "--nocapture"])
         .env(FIXTURE_ROOT, anchor)
         .env(FIXTURE_MODE, mode)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(anchor.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", anchor.join("config"))
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::null())

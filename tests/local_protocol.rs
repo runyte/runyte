@@ -85,6 +85,9 @@ fn isolate_runyte_children(command: &mut Command) {
     // Only terminals created by the fixture may supply a parent context.
     command
         .env_remove(runyte::workspace::parent::ENVIRONMENT)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(test_cache_dir())),
+        ))
         .env("XDG_CONFIG_HOME", test_cache_dir())
         .env("XDG_STATE_HOME", test_runtime_dir().join("state"))
         .env(
@@ -1101,6 +1104,9 @@ fn wait_parent_process_helper() {
         .arg("note.txt")
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", runtime)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(&cache)),
+        ))
         .env("XDG_CONFIG_HOME", &cache)
         .env("XDG_CACHE_HOME", cache)
         .env("RUNYTE_ALL_HOSTS_DIR", inventory)

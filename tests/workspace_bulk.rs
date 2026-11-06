@@ -44,6 +44,9 @@ fn bulk_fixtures_ignore_parent_configuration_for_hosts_and_cli() {
             "stop_all_then_clean_manages_the_complete_workspace_inventory",
             "--nocapture",
         ])
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(parent_config)),
+        ))
         .env("XDG_CONFIG_HOME", parent_config)
         .output()
         .unwrap();
@@ -87,6 +90,9 @@ fn cli_command(directory: &Path, runtime: &Path, cache: &Path, args: &[&str]) ->
         .current_dir(directory)
         .env("XDG_RUNTIME_DIR", runtime)
         .env("XDG_CACHE_HOME", cache)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(cache)),
+        ))
         .env("XDG_CONFIG_HOME", cache)
         .env(
             "RUNYTE_ALL_HOSTS_DIR",

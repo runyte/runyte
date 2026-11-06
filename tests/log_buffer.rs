@@ -122,6 +122,9 @@ fn log_open_refuses_a_replaced_fifo_without_waiting_for_a_writer() {
             "--nocapture",
         ])
         .env("RUNYTE_LOG_FILE_FIXTURE_ROOT", &root)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .stdin(Stdio::null())
         .spawn()

@@ -203,6 +203,9 @@ fn enter_restart_breakaway_job() -> OwnedHandle {
 
 fn private_environment(command: &mut Command, root: &TestRuntimeRoot) {
     command
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))

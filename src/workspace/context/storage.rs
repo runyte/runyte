@@ -757,13 +757,20 @@ pub fn environment_fingerprint() -> String {
     let paths = [
         std::env::var_os("XDG_RUNTIME_DIR"),
         std::env::var_os("XDG_CACHE_HOME"),
+        std::env::var_os("XDG_STATE_HOME"),
+        #[cfg(debug_assertions)]
+        std::env::var_os("RUNYTE_TEST_STATE_HOME"),
     ];
+    fingerprint_paths(&paths)
+}
+
+fn fingerprint_paths(paths: &[Option<OsString>]) -> String {
     let mut bytes = Vec::new();
     for path in paths {
         match path {
             Some(path) => {
                 bytes.push(1);
-                let path = path_bytes(Path::new(&path));
+                let path = path_bytes(Path::new(path));
                 bytes.extend_from_slice(&(path.len() as u64).to_le_bytes());
                 bytes.extend(path);
             }

@@ -18,6 +18,9 @@ fn run_fixture(case: &str) {
         ])
         .env(FIXTURE_ROOT, root.path())
         .env(FIXTURE_CASE, case)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .stdin(Stdio::null())
         .spawn()
@@ -93,6 +96,9 @@ async fn startup_stderr_fixture() {
         // handshake. The reaper must retain the drain, not just the Child.
         let child = Command::new(&executable)
             .env("RUNYTE_STDERR_ROOT", &root)
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -114,6 +120,9 @@ async fn startup_stderr_fixture() {
     let endpoint =
         LocalEndpoint::discover_with_runtime(&root.join(".runyte"), &root, Some(&runtime)).unwrap();
     let startup = HostStartup::new(executable, "fixture")
+        .with_envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .with_env("XDG_CONFIG_HOME", root.join("config"))
         .with_env("XDG_CACHE_HOME", root.join("cache"))
         .with_env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))

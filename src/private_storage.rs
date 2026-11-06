@@ -66,6 +66,21 @@ mod platform {
         pub fn open(path: &Path, private: bool) -> io::Result<Self> {
             Self::open_inner(path, private, false, true)
         }
+        /// Admits a state/runtime directory without repairing unsafe existing
+        /// permissions. Validate the pinned leaf before changing its mode.
+        pub(crate) fn open_private_checked(path: &Path) -> io::Result<Self> {
+            let directory = Self::open_inner(path, false, false, true)?;
+            let metadata = directory.0.metadata()?;
+            if metadata.uid() != unsafe { libc::geteuid() } || metadata.mode() & 0o022 != 0 {
+                return Err(io::Error::other(
+                    "runtime state directory is owned or writable by another account",
+                ));
+            }
+            directory
+                .0
+                .set_permissions(std::fs::Permissions::from_mode(0o700))?;
+            Ok(directory)
+        }
         pub(crate) fn open_durable(path: &Path, private: bool) -> io::Result<Self> {
             Self::open_inner(path, private, true, true)
         }
@@ -391,6 +406,9 @@ mod platform {
     #[allow(dead_code)] // Mirrors the Unix storage interface while storage is unavailable.
     impl Directory {
         pub fn open(_: &Path, _: bool) -> io::Result<Self> {
+            unsupported()
+        }
+        pub(crate) fn open_private_checked(_: &Path) -> io::Result<Self> {
             unsupported()
         }
         pub(crate) fn open_durable(_: &Path, _: bool) -> io::Result<Self> {

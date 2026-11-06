@@ -5,6 +5,43 @@
 
 use std::{ffi::OsStr, path::PathBuf};
 
+/// Pairs existing configuration-isolated builders with fixture-owned state.
+/// Keeping it below the fixture's configuration root avoids orphaned siblings.
+pub fn state_environment(config_home: &std::path::Path) -> [(&'static str, PathBuf); 2] {
+    let state = config_home.join(".fixture-state");
+    [
+        ("XDG_STATE_HOME", state.clone()),
+        ("RUNYTE_TEST_STATE_HOME", state.join("runyte")),
+    ]
+}
+
+/// Supplies every account/state selector used by debug subprocess fixtures.
+/// `root` must be fixture-owned and already exist. Release ignores the RUNYTE_TEST
+/// overrides, so process acceptance uses the ordinary debug test executable.
+pub fn isolate_user_paths(command: &mut std::process::Command, root: &std::path::Path) {
+    command.envs(user_environment(root));
+}
+
+pub fn user_environment(root: &std::path::Path) -> [(&'static str, PathBuf); 12] {
+    [
+        ("XDG_CONFIG_HOME", root.join("config")),
+        ("XDG_CACHE_HOME", root.join("cache")),
+        ("XDG_STATE_HOME", root.join("state")),
+        ("XDG_RUNTIME_DIR", root.join("runtime")),
+        ("RUNYTE_TEST_STATE_HOME", root.join("state/runyte")),
+        ("RUNYTE_TEST_ACCOUNT_HOME", root.join("home")),
+        ("RUNYTE_TEST_LOCAL_APP_DATA", root.join("local-app-data")),
+        ("RUNYTE_TEST_SOCKET_HOME", root.to_owned()),
+        ("HOME", root.join("home")),
+        ("RUNYTE_ALL_HOSTS_DIR", root.join("inventory")),
+        ("RUNYTE_CONTEXT_HOME", root.join("context")),
+        (
+            "RUNYTE_TEST_SUPERVISOR_PID",
+            PathBuf::from(std::process::id().to_string()),
+        ),
+    ]
+}
+
 #[cfg(windows)]
 #[path = "test_support/windows.rs"]
 mod windows;

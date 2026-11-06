@@ -162,6 +162,9 @@ fn context_inventory_is_public_and_missing_storage_stays_noncreating() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_runyte"))
         .args(["--context-list", "--json"])
         .env("RUNYTE_CONTEXT_HOME", &context)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(config)),
+        ))
         .env("XDG_CONFIG_HOME", config)
         .output()
         .unwrap();

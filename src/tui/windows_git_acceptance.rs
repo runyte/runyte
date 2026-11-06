@@ -19,6 +19,9 @@ fn missing_git_disables_integration_at_host_startup() {
         ])
         .env("PATH", root.path())
         .env("PATHEXT", ".EXE")
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
         .env("RUNYTE_GIT_TEST_ROOT", root.path())

@@ -445,8 +445,13 @@ pub(super) async fn run(
     if let Some(parent) = supervisor.as_ref() {
         parent.ensure_alive()?;
     }
-    let state = project_root::resolve_state_root(&project, &config.workspace.state);
-    project_root::validate_state_root(&state, &reserved)?;
+    let location = project_root::resolve_state_location(&project, &config.workspace.state);
+    if matches!(location, project_root::StateLocation::OutOfTree(_)) {
+        location.prepare(&reserved)?;
+    } else {
+        location.validate(&reserved)?;
+    }
+    let state = location.into_path_buf();
     let layout = ResolvedLayout::resolve(LocationInputs {
         project_root: project.clone(),
         state_root: state,

@@ -1750,9 +1750,14 @@ async fn run(
             )),
         },
     };
-    let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
+    let state_location =
+        project_root::resolve_state_location(&project_root, &config.workspace.state);
+    let state_root = state_location.as_path().to_owned();
+    if !editor && matches!(state_location, project_root::StateLocation::OutOfTree(_)) {
+        state_location.prepare(&reserved_user_roots)?;
+    }
     if !editor {
-        project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+        state_location.validate(&reserved_user_roots)?;
     }
     // A selected workspace does not contain the launch directory, so the host
     // it starts is given the workspace's own root. Handing it the directory the

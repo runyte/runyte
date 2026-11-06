@@ -156,6 +156,7 @@ def prepare() -> dict[str, Path]:
         EMPTY_STATE,
         EMPTY_DATA,
         EMPTY_HOME,
+        EMPTY_STATE / "runtime",
     ):
         directory.mkdir(parents=True, exist_ok=True)
     # Keep editor readiness independent of workspace permission prompts and
@@ -178,6 +179,13 @@ def environment() -> dict[str, str]:
         "XDG_STATE_HOME": str(EMPTY_STATE),
         "XDG_DATA_HOME": str(EMPTY_DATA),
         "HOME": str(EMPTY_HOME),
+        "XDG_RUNTIME_DIR": str(EMPTY_STATE / "runtime"),
+        "RUNYTE_ALL_HOSTS_DIR": str(EMPTY_STATE / "hosts"),
+        "RUNYTE_CONTEXT_HOME": str(EMPTY_CACHE / "context"),
+        "RUNYTE_TEST_STATE_HOME": str(EMPTY_STATE / "runyte"),
+        "RUNYTE_TEST_ACCOUNT_HOME": str(EMPTY_HOME),
+        "RUNYTE_TEST_LOCAL_APP_DATA": str(EMPTY_HOME),
+        "RUNYTE_TEST_SOCKET_HOME": str(EMPTY_STATE),
     }
 
 

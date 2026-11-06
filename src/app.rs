@@ -3636,15 +3636,18 @@ impl App {
     ) -> Result<Self> {
         let (theme_name, theme) = config.startup_theme()?;
         startup.mark(StartupPhase::ThemeResolved);
-        let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
-        let plugin_state_anchor =
-            crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?;
+        let state_location =
+            project_root::resolve_state_location(&project_root, &config.workspace.state);
+        let state_root = state_location.as_path().to_owned();
+        let plugin_state_anchor = state_location.plugin_anchor(
+            crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?,
+        );
         let reserved_user_roots = [config::default_config_root(), external_open::cache_root()]
             .into_iter()
             .flatten()
             .collect::<Vec<_>>();
         if !editor_mode {
-            project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+            state_location.validate(&reserved_user_roots)?;
         }
         let registry = Arc::new(Registry::new());
         startup.mark(StartupPhase::LanguageRegistryReady);

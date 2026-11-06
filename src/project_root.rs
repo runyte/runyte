@@ -267,8 +267,13 @@ pub fn initialize(
         "project directory {} is not a directory",
         project_root.display()
     );
-    let state_root = resolve_state_root(&project_root, configured_state_root);
-    validate_state_root(&state_root, reserved_user_roots)?;
+    let location = resolve_state_location(&project_root, configured_state_root);
+    location.validate(reserved_user_roots)?;
+    if matches!(location, StateLocation::OutOfTree(_)) {
+        location.prepare(reserved_user_roots)?;
+        return Ok(project_root);
+    }
+    let state_root = location.into_path_buf();
     fs::create_dir_all(&state_root).with_context(|| {
         format!(
             "cannot create the project workspace directory {}",
@@ -426,12 +431,23 @@ fn shared_directory(_directory: &Path) -> io::Result<Option<&'static str>> {
 
 /// Resolves the configured runtime path against its owning project directory.
 pub fn resolve_state_root(project_root: &Path, configured_state_root: &Path) -> PathBuf {
-    if configured_state_root.is_absolute() {
-        configured_state_root.to_path_buf()
-    } else {
-        project_root.join(configured_state_root)
-    }
+    resolve_state_location(project_root, configured_state_root).into_path_buf()
 }
+
+/// Resolves placement once. Ordinary workspaces stay in-tree; #73 will supply
+/// home-workspace selection here. Debug fixtures can select one exact project.
+pub fn resolve_state_location(project_root: &Path, configured: &Path) -> StateLocation {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("RUNYTE_TEST_OUT_OF_TREE_ROOT")
+        .is_some_and(|root| Path::new(&root) == project_root)
+        && let Some(root) = crate::workspace_state::fixture_state_root()
+    {
+        return StateLocation::out_of_tree(project_root, &root);
+    }
+    StateLocation::in_tree(project_root, configured)
+}
+
+pub use crate::workspace_state::StateLocation;
 
 /// Keeps project journals and artifacts separate from per-user configuration
 /// and caches. Both directions matter: neither side may contain the other.

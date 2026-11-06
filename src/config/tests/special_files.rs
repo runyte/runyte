@@ -38,6 +38,9 @@ fn special_file_config_reads_refuse_without_blocking() {
             "--nocapture",
         ])
         .env("RUNYTE_CONFIG_SPECIAL_FILE_TEST_ROOT", &fixture.0)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(fixture.0.join("xdg"))),
+        ))
         .env("XDG_CONFIG_HOME", fixture.0.join("xdg"))
         .stdin(Stdio::null())
         .spawn()

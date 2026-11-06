@@ -70,12 +70,17 @@ def wait_for_detach(pid):
 
 def environment(root):
     env = clean_environment()
-    for name, suffix in [("XDG_CONFIG_HOME", "config"), ("XDG_CACHE_HOME", "cache"),
+    for name, suffix in [("HOME", "home"), ("XDG_CONFIG_HOME", "config"), ("XDG_CACHE_HOME", "cache"),
                          ("XDG_STATE_HOME", "state"), ("XDG_DATA_HOME", "data"),
                          ("XDG_RUNTIME_DIR", "runtime"), ("RUNYTE_ALL_HOSTS_DIR", "inventory")]:
         path = root / suffix
         path.mkdir(mode=0o700)
         env[name] = str(path)
+    env['RUNYTE_TEST_STATE_HOME'] = str(root / 'state/runyte')
+    env['RUNYTE_TEST_ACCOUNT_HOME'] = env['HOME']
+    env['RUNYTE_TEST_LOCAL_APP_DATA'] = env['HOME']
+    env['RUNYTE_TEST_SOCKET_HOME'] = str(root)
+    env['RUNYTE_CONTEXT_HOME'] = str(root / 'context')
     return env
 
 

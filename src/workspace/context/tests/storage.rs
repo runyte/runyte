@@ -518,3 +518,25 @@ fn read_only_open_neither_creates_nor_repairs_storage() {
         0o755
     );
 }
+
+#[test]
+fn environment_fingerprint_is_lexical_length_delimited_and_state_scoped() {
+    let first = [
+        Some(OsString::from("/runtime")),
+        Some(OsString::from("/cache")),
+        Some(OsString::from("/state-a")),
+    ];
+    let mut other = first.clone();
+    other[2] = Some(OsString::from("/state-b"));
+    assert_ne!(fingerprint_paths(&first), fingerprint_paths(&other));
+    assert_eq!(fingerprint_paths(&first), fingerprint_paths(&first));
+    assert_ne!(
+        fingerprint_paths(&[None]),
+        fingerprint_paths(&[Some(OsString::new())])
+    );
+    assert_ne!(
+        fingerprint_paths(&[Some("ab".into()), Some("c".into())]),
+        fingerprint_paths(&[Some("a".into()), Some("bc".into())])
+    );
+    assert_eq!(fingerprint_paths(&first).len(), 64);
+}

@@ -148,6 +148,23 @@ pub enum StateLocation {
   belongs in that fingerprint, so test hosts with a temporary state root stay
   hidden from real ones.
 
+Implementation handoff for #73: `project_root::resolve_state_location` is the
+single placement decision; `resolve_state_root` is its path-only compatibility
+wrapper. `workspace_state::StateLocation` retains placement for endpoint and
+Windows durability decisions. Add home selection at that central decision,
+then route discovery/initialization through it. Do not infer placement from an
+absolute `workspace.state` path.
+
+Debug subprocess fixtures use `test_support::user_environment` (or
+`isolate_user_paths`) to inject configuration, cache, state, runtime, context,
+account home and Windows account LocalAppData. The fixture-only
+`RUNYTE_TEST_OUT_OF_TREE_ROOT` selects one exact canonical project; paired
+`RUNYTE_TEST_STATE_HOME` provides the final Runyte state root on every platform,
+including macOS. `RUNYTE_TEST_ACCOUNT_HOME` is read before account caching.
+Release builds ignore these selectors. Keep the ordinary production resolver
+and consumers in the test path; no process-global environment mutation is
+needed. An ignored macOS `XDG_STATE_HOME` alone is insufficient isolation.
+
 ### #73 Home workspace (needs #72)
 
 - **Resolution order** in the launch path (`src/cli.rs`):

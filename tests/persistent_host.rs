@@ -52,6 +52,9 @@ impl TestSandbox {
         // from which cargo was launched.
         command
             .env_remove(runyte::workspace::parent::ENVIRONMENT)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(self.cache_dir())),
+            ))
             .env("XDG_CONFIG_HOME", self.cache_dir())
             .env(
                 "RUNYTE_ALL_HOSTS_DIR",
@@ -71,6 +74,9 @@ impl TestSandbox {
         description: &'static str,
     ) -> HostStartup {
         HostStartup::new(executable, description)
+            .with_envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(self.cache_dir())),
+            ))
             .with_env("XDG_CONFIG_HOME", self.cache_dir())
             .with_env("XDG_RUNTIME_DIR", self.runtime_dir())
             .with_env(
@@ -2041,6 +2047,9 @@ async fn racing_starts_for_one_workspace_both_reach_the_winning_host() {
             .host_startup(executable, "raced")
             .with_env("RUNYTE_RACED_HOST", env!("CARGO_BIN_EXE_runyte"))
             .with_env("XDG_CACHE_HOME", sandbox.cache_dir())
+            .with_envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(sandbox.cache_dir())),
+            ))
             .with_env("XDG_CONFIG_HOME", sandbox.cache_dir())
     };
 
@@ -2206,6 +2215,9 @@ async fn detached_host_keeps_the_requested_editor_directory_below_the_project_ro
         .host_startup(env!("CARGO_BIN_EXE_runyte"), "nested")
         .with_working_directory(&nested)
         .with_env("XDG_CACHE_HOME", sandbox.cache_dir())
+        .with_envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(sandbox.cache_dir())),
+        ))
         .with_env("XDG_CONFIG_HOME", sandbox.cache_dir());
     if let Err(error) = start_detached_host(&endpoint, startup).await {
         if format!("{error:#}").contains("Operation not permitted") {
@@ -2343,6 +2355,9 @@ async fn detached_host_serves_a_project_it_could_not_have_discovered() {
     let startup = sandbox
         .host_startup(env!("CARGO_BIN_EXE_runyte"), "undiscoverable")
         .with_env("XDG_CACHE_HOME", sandbox.cache_dir())
+        .with_envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(sandbox.cache_dir())),
+        ))
         .with_env("XDG_CONFIG_HOME", sandbox.cache_dir());
     if let Err(error) = start_detached_host(&endpoint, startup).await {
         if format!("{error:#}").contains("Operation not permitted") {

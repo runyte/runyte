@@ -57,6 +57,17 @@ class EnvironmentTests(unittest.TestCase):
                     child = environment(root)
                     self.assertFalse(set(AMBIENT_SETTINGS) & child.keys())
                     self.assertEqual(Path(child['XDG_CONFIG_HOME']).parent, root)
+                    self.assertEqual(Path(child['RUNYTE_TEST_STATE_HOME']), root / 'state/runyte')
+                    self.assertEqual(child['RUNYTE_TEST_ACCOUNT_HOME'], child['HOME'])
+                    self.assertEqual(Path(child['RUNYTE_TEST_SOCKET_HOME']), root)
+
+    def test_ambient_fixture_selectors_are_removed_before_explicit_injection(self):
+        keys = ('RUNYTE_TEST_STATE_HOME', 'RUNYTE_TEST_ACCOUNT_HOME',
+                'RUNYTE_TEST_LOCAL_APP_DATA', 'RUNYTE_TEST_SOCKET_HOME',
+                'RUNYTE_TEST_OUT_OF_TREE_ROOT')
+        with mock.patch.dict(os.environ, {key: '/outside-fixture' for key in keys}):
+            cleaned = ptybench.clean_environment()
+        self.assertFalse(set(keys) & cleaned.keys())
 
     def test_version_probe_drops_ambient_settings(self):
         with mock.patch.dict(os.environ, {name: 'caller-setting' for name in AMBIENT_SETTINGS}), \

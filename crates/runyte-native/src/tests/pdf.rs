@@ -226,7 +226,11 @@ fn helper_transport_bounds_output_timeout_cancellation_and_descendant_pipes() {
     let root = tempfile::tempdir().unwrap();
     let command = |script: &str| {
         let mut c = Command::new("sh");
-        c.args(["-c", script]).env("XDG_CONFIG_HOME", root.path());
+        c.args(["-c", script])
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(root.path())),
+            ))
+            .env("XDG_CONFIG_HOME", root.path());
         c
     };
     let cancel = AtomicBool::new(false);

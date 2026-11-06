@@ -108,6 +108,9 @@ fn powershell_wrapper_keeps_literal_paths_and_returns_to_its_caller() {
     let mut fixture = FixtureChild::spawn(
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(root_path.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root_path.join("config"))
             .env("XDG_CACHE_HOME", root_path.join("cache"))
             .env("XDG_RUNTIME_DIR", root_path.join("runtime"))
@@ -172,6 +175,9 @@ fn start_foreground_host(
         .arg("--")
         .arg(target)
         .current_dir(project)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_RUNTIME_DIR", root.join("runtime"))
@@ -381,6 +387,9 @@ fn native_powershell_handoff_fixture() {
     let run_script = |mode: &str| {
         Command::new(powershell())
             .args(script_arguments(mode))
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("XDG_RUNTIME_DIR", root.join("runtime"))
@@ -438,6 +447,9 @@ fn native_powershell_handoff_fixture() {
                 "--ignored",
                 "--nocapture",
             ])
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("XDG_RUNTIME_DIR", root.join("runtime"))

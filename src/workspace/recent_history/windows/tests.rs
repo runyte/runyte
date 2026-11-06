@@ -168,6 +168,9 @@ fn independent_process_reads_the_latest_history_only_after_lock_release() {
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", HELPER_NAME, "--ignored", "--nocapture"])
             .env(HELPER_ROOT, root.path())
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::null())
