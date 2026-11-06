@@ -779,7 +779,7 @@ mod tests {
                 error.to_string(),
                 format!(
                     "runyte needs a workspace in ide mode (the --ide flag), and none was found in {} or any directory above it.\n{reason}\n  Open a project:      {}\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor",
-                    launch.canonicalize().unwrap().display(),
+                    super::display_workspace_path(&launch.canonicalize().unwrap(), None),
                     super::ide_open_command("DIRECTORY")
                 )
             );
@@ -796,8 +796,8 @@ mod tests {
             std::slice::from_ref(&elsewhere),
             &format!(
                 "{} is outside {}, so that directory is not made one automatically",
-                elsewhere.display(),
-                directory.display()
+                super::display_workspace_path(&elsewhere, None),
+                super::display_workspace_path(&directory, None)
             ),
         );
         check(

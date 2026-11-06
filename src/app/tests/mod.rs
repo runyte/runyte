@@ -460,7 +460,7 @@ fn startup_constructor_refusals_name_the_configured_mode_and_search_directory() 
             error.to_string(),
             format!(
                 "runyte needs a workspace in {name} mode (the mode setting), and none was found in {} or any directory above it.{recovery}",
-                directory.display()
+                crate::project_root::display_workspace_path(&directory, None)
             )
         );
     }
