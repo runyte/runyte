@@ -837,6 +837,8 @@ pub(crate) fn launch(
             result
         })?;
     Application::new().run(move |cx| {
+        #[cfg(target_os = "macos")]
+        icon::install_application_icon();
         cx.text_system()
             .add_fonts(
                 BUNDLED_FONTS
