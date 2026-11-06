@@ -208,15 +208,16 @@ needed. An ignored macOS `XDG_STATE_HOME` alone is insufficient isolation.
 - **macOS**: `RunyteLauncher` sets its working directory to the account's
   home directory before `exec`, drops `--editor`, and keeps stripping a leading
   `-psn_*` argument.
-- **Linux**: the desktop entry becomes `Exec=<runyte> --window %F`. Make the
-  start directory explicit: preferably a `Path=` line written by the
-  registration script, which already writes absolute paths.
+- **Linux**: the desktop entry becomes
+  `Exec=<runyte> --window --graphical-launch %F`. An escaped absolute account-home
+  `Path=` line written by the registration script makes its start directory explicit.
 - **File arguments**: a graphical launch with files discovers its workspace
   from the first file's directory, not the launch directory, so opening a
   project file from a file manager uses that project. This changes only
   graphical launches: the launcher passes a flag naming the launch as
-  graphical, and the terminal behavior is untouched. Confirm the rule on #74
-  before implementing it.
+  graphical, and the terminal behavior is untouched. The rule is settled on #74.
+  Relative paths retain the original launcher directory before the workspace
+  is selected.
 - **Visible failure**: with the home workspace a bare graphical launch should
   not refuse. List the remaining refusals (root, an unusable state directory,
   an unparsable configuration) and make the window open and show them. Do not
@@ -266,6 +267,8 @@ at any point.
 - #72: whether the state root joins the context-discovery environment
   fingerprint.
 - #72: where the endpoint goes if the macOS path can exceed `sun_path`.
-- #74: `Path=` in the desktop entry versus setting the directory at launch.
-- #74: the file-argument rule for graphical launches.
-- #74: how the remaining graphical-launch refusals are shown.
+- #74: settled on the issue: escaped absolute account-home `Path=` on Linux.
+- #74: settled: first-file directory, with original relative-argument meaning.
+- #74: settled: a retained native error view, default presentation for invalid
+  configuration, stderr only if no window can be created; manual macOS acceptance
+  remains required.

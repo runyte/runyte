@@ -36,7 +36,7 @@ class NativePackageTests(unittest.TestCase):
             check_package.check_layout(moved, package.HERE.parents[1])
             for chapter in (package.HERE.parents[1] / "docs/user-guide").glob("*.md"):
                 self.assertEqual((moved / "docs/user-guide" / chapter.name).read_bytes(), chapter.read_bytes())
-            desktop = package.install_linux(moved / "runyte", root / "data", refresh=False)
+            desktop = package.install_linux(moved / "runyte", root / "data", refresh=False, home=root / "home")
             self.assertIn(package.desktop_argument(str(moved / "runyte")), desktop.read_text())
             with self.assertRaises(ValueError):
                 package.bundle_linux(build / "runyte", moved)
@@ -46,18 +46,35 @@ class NativePackageTests(unittest.TestCase):
             root = Path(temporary)
             binary = root / 'Runyte % " $ ` \\ editor'
             shutil.copy2(package.HERE.parents[1] / "src/fixtures/stand-in", binary)
-            desktop = package.install_linux(binary, root / "data", refresh=False)
+            desktop = package.install_linux(binary, root / "data", refresh=False, home=root / "home")
             contents = desktop.read_text()
             self.assertEqual(desktop.name, package.APP_ID + ".desktop")
             self.assertIn("Icon=" + package.APP_ID + "\n", contents)
             self.assertIn("StartupWMClass=" + package.APP_ID + "\n", contents)
-            self.assertIn(" --window --editor %F\n", contents)
+            self.assertIn(" --window --graphical-launch %F\n", contents)
             self.assertIn("%%", contents)
             for size in (16, 32, 64, 128, 256, 512, 1024):
                 image = root / f"data/icons/hicolor/{size}x{size}/apps/{package.APP_ID}.png"
                 self.assertEqual(struct.unpack(">II", image.read_bytes()[16:24]), (size, size))
             if validator := shutil.which("desktop-file-validate"):
                 subprocess.run([validator, str(desktop)], check=True)
+
+    def test_linux_home_is_an_escaped_account_path_without_exec_interpolation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            home = root / ' home % $ ` " \\ tab\t'
+            with patch("package.account_home", return_value=home):
+                desktop = package.install_linux(root / "runyte", root / "data", refresh=False)
+            text = desktop.read_text()
+            self.assertIn("Path=" + package.desktop_string(str(home)) + "\n", text)
+            self.assertIn("%", package.desktop_string(str(home)))
+            self.assertNotIn('"', package.desktop_string("/home/user name"))
+            for path in [Path("relative"), Path("/home/name\nTerminal=true")]:
+                with self.assertRaises(ValueError):
+                    package.install_linux(root / "runyte", root / "bad", refresh=False, home=path)
+        for value in ["/home/name\r", "/home/name\0"]:
+            with self.assertRaises(ValueError):
+                package.desktop_string(value)
 
     @patch("package.subprocess.check_output", return_value="arm64 x86_64\n")
     def test_macos_bundle_contains_icon_launch_flags_and_notices(self, _output):

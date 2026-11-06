@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
 #[cfg(any(target_os = "macos", test))]
-fn arguments(args: impl IntoIterator<Item = std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+fn arguments(
+    args: impl IntoIterator<Item = std::ffi::OsString>,
+    directory: std::ffi::OsString,
+) -> Vec<std::ffi::OsString> {
     let mut args = args.into_iter().peekable();
     if args
         .peek()
@@ -9,10 +12,15 @@ fn arguments(args: impl IntoIterator<Item = std::ffi::OsString>) -> Vec<std::ffi
     {
         args.next();
     }
-    ["--window".into(), "--editor".into()]
-        .into_iter()
-        .chain(args)
-        .collect()
+    [
+        "--window".into(),
+        "--graphical-launch".into(),
+        "--graphical-cwd".into(),
+        directory,
+    ]
+    .into_iter()
+    .chain(args)
+    .collect()
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -33,7 +41,11 @@ fn main() -> std::io::Result<()> {
         .ok_or_else(|| std::io::Error::other("launcher has no parent directory"))?
         .join("runyte");
     Err(std::process::Command::new(editor)
-        .args(arguments(std::env::args_os().skip(1)))
+        .args(arguments(
+            std::env::args_os().skip(1),
+            std::env::current_dir()?.into_os_string(),
+        ))
+        .current_dir(runyte::launch::graphical_home_directory()?)
         .env("PATH", search_path(std::env::var_os("PATH")))
         .exec())
 }
@@ -53,13 +65,54 @@ mod tests {
     fn finder_argument_is_removed_only_at_the_start() {
         let input = ["-psn_0_123", "file with spaces", "-psn_keep"];
         assert_eq!(
-            arguments(input.map(OsString::from)),
-            ["--window", "--editor", "file with spaces", "-psn_keep"].map(OsString::from)
+            arguments(input.map(OsString::from), "/original cwd".into()),
+            [
+                "--window",
+                "--graphical-launch",
+                "--graphical-cwd",
+                "/original cwd",
+                "file with spaces",
+                "-psn_keep"
+            ]
+            .map(OsString::from)
         );
         assert_eq!(
-            arguments(["notes.txt".into()]),
-            ["--window", "--editor", "notes.txt"].map(OsString::from)
+            arguments(["notes.txt".into()], "/original cwd".into()),
+            [
+                "--window",
+                "--graphical-launch",
+                "--graphical-cwd",
+                "/original cwd",
+                "notes.txt"
+            ]
+            .map(OsString::from)
         );
+    }
+
+    #[test]
+    fn original_directory_and_literal_arguments_keep_native_bytes() {
+        let original = std::env::temp_dir().join("outside home");
+        let parsed = runyte::launch::LaunchArguments::parse_from(arguments(
+            ["-psn_0_1", "--", "relative.txt", "-literal", "+literal"].map(Into::into),
+            original.clone().into_os_string(),
+        ))
+        .unwrap();
+        assert_eq!(parsed.graphical_directory, Some(original));
+        assert_eq!(
+            parsed
+                .targets
+                .iter()
+                .map(|target| target.path.as_os_str())
+                .collect::<Vec<_>>(),
+            ["relative.txt", "-literal", "+literal"].map(std::ffi::OsStr::new)
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let file = OsString::from_vec(b"raw-\xff.txt".to_vec());
+            let args = arguments([file.clone()], "/original".into());
+            assert_eq!(args.last(), Some(&file));
+        }
     }
 
     #[test]

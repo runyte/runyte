@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 
 mod frame;
 mod input;
+mod launch;
+pub use launch::LaunchTarget;
 
 pub use frame::{
     EditorDamageFrame, EditorSnapshot, ExternalFileStatus, FrameId, HostFrame, SnapshotRow,
@@ -220,7 +222,8 @@ use crate::workspace::{
 // Version 90 adds the preview-zoom pointer action mask.
 // Version 91 is used by the parallel preview change (#78).
 // Version 92 distinguishes deliberate workspace opens from transport reconnects.
-pub const VERSION: u32 = 92;
+// Version 93 adds bounded, one-shot graphical launch targets on native attachments.
+pub const VERSION: u32 = 93;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -558,6 +561,10 @@ pub enum ClientRequest {
     ListBuffers,
     ReadBuffer {
         buffer: BufferId,
+    },
+    /// Initial file arguments from the active bundled graphical frontend.
+    OpenLaunchTargets {
+        targets: Vec<LaunchTarget>,
     },
     OpenBuffers {
         paths: Vec<Vec<u8>>,
@@ -907,6 +914,7 @@ impl ClientRequest {
                 !message.is_empty() && message.len() <= MAX_NOTIFICATION_BYTES,
                 "client notification exceeds the protocol limit",
             ),
+            Self::OpenLaunchTargets { targets } => launch::validate_targets(targets),
             Self::OpenBuffers { paths, .. } | Self::CreateWait { paths } => {
                 require(
                     !paths.is_empty() && paths.len() <= MAX_PATHS,
@@ -1617,7 +1625,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 92);
+        assert_eq!(VERSION, 93);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

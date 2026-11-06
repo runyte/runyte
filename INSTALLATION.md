@@ -210,7 +210,10 @@ python3 contrib/packaging/package.py linux --binary ./runyte
 The last command registers the launcher and icons for your desktop account; it
 requires Python 3. Registration supplies the window icon on Wayland. It records
 the executable's absolute path, so register again if you move the installation.
-The launcher opens editor mode. For a project with persistent terminals, launch
+The launcher opens your account home in the configured mode. IDE and mux use
+the home workspace with integrated terminals. In these modes, file arguments
+choose the first file’s directory for workspace discovery. Editor mode keeps
+ordinary file opening. To select persistent mode explicitly, launch
 `runyte --window --mux` from the project directory instead.
 
 Add the extracted directory to `PATH`, or link its `runyte` and `runed` into
@@ -224,7 +227,9 @@ Download `Runyte-X.Y.Z.dmg` from
 [GitHub Releases](https://github.com/runyte/runyte/releases); it runs on Apple
 silicon and Intel Macs with macOS 11 or later. Open it, drag `Runyte` onto
 `Applications`, then eject the image. Launch Runyte from Finder, Launchpad or
-Spotlight; it opens in editor mode. The app is signed with a Developer ID and
+Spotlight; it opens your account home in the configured mode. IDE and mux use
+the home workspace with integrated terminals; `mode: editor` keeps editor mode.
+The app is signed with a Developer ID and
 notarized, so macOS asks only its usual first-launch confirmation. To update,
 replace `/Applications/Runyte.app` with the newer one the same way.
 

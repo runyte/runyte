@@ -6451,3 +6451,149 @@ async fn created_mux_cli_echo_becomes_existing_state_on_reattach() {
     shutdown(&mut control).await;
     fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn graphical_launch_targets_require_first_native_request_and_are_not_replayed() {
+    use runyte::launch::{LaunchPosition, LaunchTarget};
+    let root = project();
+    let path = root.join("graphical.txt");
+    fs::write(&path, "first\n文 abc\nthird\n").unwrap();
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(test_runtime_dir()),
+    )
+    .unwrap();
+    let Some(mut host) = start_host(&root, &endpoint).await else {
+        return;
+    };
+    let request = || ClientRequest::OpenLaunchTargets {
+        targets: vec![
+            LaunchTarget::at(
+                &path,
+                LaunchPosition {
+                    line: std::num::NonZeroUsize::new(2).unwrap(),
+                    column: std::num::NonZeroUsize::new(3),
+                },
+            )
+            .into(),
+        ],
+    };
+    let mut control = connect_control(&endpoint).await;
+    control.send(&request()).await.unwrap();
+    assert!(
+        matches!(semantic_response(&mut control).await, HostResponse::Error { message } if message.contains("connection role"))
+    );
+    let mut terminal = LocalClient::connect(&endpoint, tui_geometry(), true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut terminal).await,
+        HostResponse::Welcome { .. }
+    ));
+    let _ = next_idle_frame(&mut terminal).await;
+    terminal.send(&request()).await.unwrap();
+    assert!(
+        matches!(semantic_response(&mut terminal).await, HostResponse::Error { message } if message.contains("initial native"))
+    );
+    terminal.send(&ClientRequest::Detach).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut terminal).await,
+        HostResponse::Detached { .. }
+    ));
+    drop(terminal);
+    let mut window = LocalClient::connect_with_media(&endpoint, tui_geometry(), true, false, true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut window).await,
+        HostResponse::Welcome { .. }
+    ));
+    let _ = next_idle_frame(&mut window).await;
+    window.send(&request()).await.unwrap();
+    let HostResponse::InputBarrier { serial: 0, frame } = semantic_response(&mut window).await
+    else {
+        panic!("expected correlated launch frame")
+    };
+    let pane = frame.editor.panes.iter().find(|pane| pane.active).unwrap();
+    assert!(pane.title.name.contains("graphical.txt"), "{pane:?}");
+    let unauthorized = root.join("inactive.txt");
+    fs::write(&unauthorized, "must stay unopened").unwrap();
+    let mut inactive =
+        LocalClient::connect_with_media(&endpoint, tui_geometry(), true, false, true)
+            .await
+            .unwrap();
+    assert!(matches!(
+        response(&mut inactive).await,
+        HostResponse::Refused { .. }
+    ));
+    let _ = inactive
+        .send(&ClientRequest::OpenLaunchTargets {
+            targets: vec![LaunchTarget::new(&unauthorized).into()],
+        })
+        .await;
+    control.send(&ClientRequest::ListBuffers).await.unwrap();
+    let HostResponse::Buffers { buffers } = semantic_response(&mut control).await else {
+        panic!("expected buffers")
+    };
+    assert!(
+        buffers
+            .iter()
+            .all(|buffer| buffer.path_bytes.as_deref()
+                != Some(encode_path(&unauthorized).as_slice()))
+    );
+    let first_caret = frame.editor.status.cursor;
+    window.send(&request()).await.unwrap();
+    assert!(
+        matches!(semantic_response(&mut window).await, HostResponse::Error { message } if message.contains("initial native"))
+    );
+    window
+        .send(&ClientRequest::FrameDrawn { frame: frame.id })
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        window
+            .send(&ClientRequest::Input {
+                event: InputEvent::Key(KeyStroke::plain(KeyCode::Char('g'))).into(),
+                repeated: false,
+                presented_frame: Some(frame.id),
+            })
+            .await
+            .unwrap();
+    }
+    let moved = wait_for_frame(&mut window, "move graphical caret", |frame| {
+        frame.editor.status.cursor != first_caret
+    })
+    .await;
+    let moved_caret = moved.editor.status.cursor;
+    assert_ne!(moved_caret, first_caret);
+    window.send(&ClientRequest::Detach).await.unwrap();
+    assert!(matches!(
+        semantic_response(&mut window).await,
+        HostResponse::Detached { .. }
+    ));
+    drop(window);
+    let mut window = LocalClient::connect_with_media(&endpoint, tui_geometry(), true, false, true)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut window).await,
+        HostResponse::Welcome { .. }
+    ));
+    let frame = next_idle_frame(&mut window).await;
+    assert_eq!(frame.editor.status.cursor, moved_caret);
+    window.send(&ClientRequest::Resynchronize).await.unwrap();
+    let _ = next_idle_frame(&mut window).await;
+    window.send(&request()).await.unwrap();
+    assert!(
+        matches!(semantic_response(&mut window).await, HostResponse::Error { message } if message.contains("initial native"))
+    );
+    let mut control = connect_control(&endpoint).await;
+    control.send(&ClientRequest::ForceShutdown).await.unwrap();
+    assert!(matches!(
+        response(&mut control).await,
+        HostResponse::ShuttingDown
+    ));
+    wait_child(host.0.as_mut().unwrap()).await;
+    fs::remove_dir_all(root).unwrap();
+}

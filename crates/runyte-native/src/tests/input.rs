@@ -859,3 +859,67 @@ fn fractional_scroll_remainder_cannot_change_semantic_action_after_remap() {
     scroll.set_policy(changed);
     assert!(scroll.push((gpui::point(0., 0.25), true), time).is_none());
 }
+
+#[test]
+fn startup_failure_retains_bounded_readable_diagnostic_chain() {
+    let error =
+        anyhow::anyhow!("\u{1b}[31m{}", "文".repeat(10_000)).context("invalid configuration");
+    let text = super::startup_failure_text(&error);
+    assert!(text.starts_with("invalid configuration:"));
+    assert!(text.len() <= 16 * 1024);
+    assert!(!text.contains('\u{1b}'));
+    assert!(!text.is_empty());
+}
+
+#[test]
+fn first_close_survives_both_failure_orders_and_the_observation_gap() {
+    use super::{publish_worker_failure, request_window_close};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+    let state = || {
+        (
+            AtomicBool::new(false),
+            Mutex::new(None),
+            AtomicBool::new(false),
+        )
+    };
+
+    // Failure is already published: close schedules asynchronous completion.
+    // The platform callback must return before the done gate calls quit.
+    let (requested, failure, done) = state();
+    publish_worker_failure(&requested, &failure, &done, "failed".into());
+    assert!(!done.load(Ordering::Acquire), "failure must wait for close");
+    assert!(request_window_close(&requested, &done, || failure
+        .lock()
+        .unwrap()
+        .is_some()));
+    assert!(requested.load(Ordering::Acquire));
+    assert!(done.load(Ordering::Acquire));
+
+    // Close arrives first: completion wakes the window with done set.
+    let (requested, failure, done) = state();
+    assert!(!request_window_close(&requested, &done, || failure
+        .lock()
+        .unwrap()
+        .is_some()));
+    assert!(!done.load(Ordering::Acquire));
+    publish_worker_failure(&requested, &failure, &done, "failed".into());
+    assert!(done.load(Ordering::Acquire));
+
+    // Deterministically publish failure after the callback observed None but
+    // before that observation returns. The old check-then-store order loses
+    // this first close; no timing or concurrent scheduling is needed here.
+    let (requested, failure, done) = state();
+    let wake_completion = request_window_close(&requested, &done, || {
+        let failed = failure.lock().unwrap().is_some();
+        publish_worker_failure(&requested, &failure, &done, "failed".into());
+        failed
+    });
+    assert!(!wake_completion);
+    assert!(
+        done.load(Ordering::Acquire),
+        "completion lost the first close"
+    );
+}

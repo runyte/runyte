@@ -271,6 +271,13 @@ archives require glibc 2.39 or newer and a working Vulkan driver. On macOS 11 or
 later, download the signed and notarized `Runyte-X.Y.Z.dmg` from releases after
 v0.4.1 and drag Runyte into Applications.
 
+The macOS app and registered Linux desktop launcher open in your account home
+in the configured `mode`. IDE and mux use the home workspace with integrated
+terminals. In IDE and mux, opening files through the launcher chooses the first
+file's directory for workspace discovery. Editor mode keeps ordinary file
+opening; relative paths keep their launcher-directory meaning in every mode.
+Startup refusals remain visible in the window until it is closed.
+
 The desktop executable supports both frontends:
 
 ```sh

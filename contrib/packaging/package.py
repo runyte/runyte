@@ -4,6 +4,7 @@ import argparse
 import os
 from pathlib import Path
 import plistlib
+import pwd
 import re
 import shutil
 import subprocess
@@ -24,7 +25,25 @@ def desktop_argument(value):
     return '"' + value.replace("\\", "\\\\") + '"'
 
 
-def install_linux(binary, data_dir, refresh=True):
+def desktop_string(value):
+    """Escape a desktop-entry string value (Path is not an Exec argument)."""
+    if any(character in value for character in "\r\n\0"):
+        raise ValueError("desktop working directory must not contain control characters")
+    return value.replace("\\", "\\\\").replace("\t", "\\t").replace(" ", "\\s")
+
+
+def account_home():
+    home = Path(pwd.getpwuid(os.geteuid()).pw_dir)
+    if not home.is_absolute():
+        raise ValueError("account home directory must be absolute")
+    return home
+
+
+def install_linux(binary, data_dir, refresh=True, home=None):
+    home = account_home() if home is None else home
+    if not home.is_absolute():
+        raise ValueError("account home directory must be absolute")
+    working_directory = desktop_string(str(home))
     data_dir = data_dir.expanduser().resolve()
     applications = data_dir / "applications"
     applications.mkdir(parents=True, exist_ok=True)
@@ -41,7 +60,8 @@ Type=Application
 Version=1.0
 Name=Runyte
 Comment=Modal text editor
-Exec={desktop_argument(str(binary))} --window --editor %F
+Exec={desktop_argument(str(binary))} --window --graphical-launch %F
+Path={working_directory}
 Icon={APP_ID}
 Terminal=false
 Categories=Development;TextEditor;
