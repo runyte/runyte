@@ -102,10 +102,13 @@ is discarded; other arguments remain intact.
 
 This is an unsigned local-development bundle, not a notarized distribution.
 Bundle structure and resources are tested on Linux; Finder/Dock icon behavior
-and the native macOS window remain to be verified on macOS. Running the bare
-CLI executable does not provide the bundle's Finder icon. Finder file-open
-events are not integrated; open documents inside the editor or pass paths
-when invoking the bundled binary from a terminal.
+and the native macOS window remain to be verified on macOS. Every window launch
+sets the running application's Dock and Cmd-Tab icon from the embedded ICNS,
+including terminal, `runed` and source-build launches. An unbundled launch keeps
+the executable name in the menu bar and switcher; the executable file's Finder
+icon is unchanged. Manual acceptance must check the Dock and Cmd-Tab icons for
+these launch forms and for `Runyte.app`. Finder file-open events are not
+integrated; open documents inside the editor or pass paths when invoking the bundled binary from a terminal.
 
 ## macOS distribution tools
 

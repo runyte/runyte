@@ -25,9 +25,13 @@ process's PID and exact window class. GPUI 0.2.2's X11 raw-handle accessors are
 unimplemented, so the adapter does not call them. GPUI is vendored under
 `vendor/gpui` with Linux frame scheduling and paint fixes described in its
 [patch record](../../vendor/gpui/RUNYTE-PATCH.md).
-The macOS helper builds a local `.app` with an ICNS resource, launcher and
-project/dependency/font notices. Installation, regeneration and platform
-limits are documented in [the native packaging guide](../../contrib/packaging/README.md).
+The macOS adapter embeds the same ICNS resource and sets AppKit's application
+icon on the main thread at window startup, including terminal, `runed` and
+source-build launches. This sets the running application's Dock and Cmd-Tab icon;
+it does not change the executable file's Finder icon or its unbundled application
+name. Manual macOS icon acceptance remains pending. The macOS helper builds a
+local `.app` with an ICNS resource, launcher and project/dependency/font notices.
+Installation, regeneration and platform limits are documented in [the native packaging guide](../../contrib/packaging/README.md).
 
 Native builds embed four unmodified JetBrainsMono Nerd Font faces from Nerd
 Fonts v3.4.0 (JetBrains Mono 2.304): Medium, Medium Italic, Bold, and Bold Italic.
