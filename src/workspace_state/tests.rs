@@ -322,7 +322,7 @@ fn app_consumes_shared_startup_admission_and_cloned_config_rechecks_changed_alia
     let initial = fixture.create_private_dir("reserved").unwrap();
     let alias = fixture.join("alias");
     symlink(&initial, &alias).unwrap();
-    let safety = Arc::new(StartupSafety::capture_with(&[alias.clone()], || None));
+    let safety = Arc::new(StartupSafety::capture_with(std::slice::from_ref(&alias), || None));
     let location = StateLocation::in_tree(&project, Path::new(".runyte"));
     safety.validate(&project, &location).unwrap();
     let checks = safety.normalizations.load(Ordering::Relaxed);

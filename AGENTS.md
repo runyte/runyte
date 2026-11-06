@@ -333,7 +333,7 @@ registry.
   regression. Update the CI threshold, README badge, and coverage register
   together whenever the floor is raised.
 - Use temporary directories for storage tests; tests must not write into the
-  repository's `context/` or `.runyte/`, nor into the person's configuration
+  repository's `context/` or `.runyte/`, nor into the person's configuration,
   platform cache directories, per-user state directories, or account home.
   `external_open::cache_root` returns `None` under `cfg!(test)`, which protects
   unit tests inside `src/` but **not** integration tests under `tests/`: those

@@ -127,6 +127,17 @@ same private wire serves terminal and window attachments, lifecycle operations
 and `--wait`. It is not an extension surface and has no third-party compatibility
 promise.
 
+Workspace storage and endpoint placement are distinct. Out-of-tree workspace
+state retains its placement discriminator through bounded host metadata,
+subprocess launch and reconstruction. Unix sockets prefer a fitting private
+runtime directory and otherwise use a short owner-private endpoint namespace
+keyed by the selected state root and unchanged workspace ID. State selectors
+also join context discovery's captured environment fingerprint, so hosts from
+different fixture/state environments do not become visible to one another.
+Storage safety reservations are captured once per startup and reused during
+application construction; endpoint discovery does not authorize arbitrary
+state paths or bypass private-directory admission.
+
 Admission matches the Runyte library version and the private protocol's
 handshake requirements. Terminal and desktop builds of the same version must
 interoperate. Host-side behavior must not depend on the host's edition for
