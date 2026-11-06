@@ -204,6 +204,7 @@ pub(super) fn environment(parent_context: Option<&str>) -> Vec<u16> {
                 "TERM_PROGRAM",
                 "TERM_PROGRAM_VERSION",
                 "RUNYTE_PARENT_CONTEXT",
+                crate::project_root::STARTUP_ORIGIN_ENV,
             ]
             .iter()
             .any(|blocked| name.to_string_lossy().eq_ignore_ascii_case(blocked))

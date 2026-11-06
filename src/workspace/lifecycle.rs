@@ -430,6 +430,7 @@ pub struct HostStartup {
     /// absolute path before the child is spawned, because the child may run in
     /// another directory.
     pub log: Option<PathBuf>,
+    workspace_origin: Option<crate::project_root::WorkspaceOrigin>,
 }
 
 impl HostStartup {
@@ -443,7 +444,16 @@ impl HostStartup {
             description,
             verbosity: 0,
             log: None,
+            workspace_origin: None,
         }
+    }
+
+    pub(crate) fn with_workspace_origin(
+        mut self,
+        origin: Option<crate::project_root::WorkspaceOrigin>,
+    ) -> Self {
+        self.workspace_origin = origin;
+        self
     }
 
     /// Hands this process's selected logging to the host it starts.
@@ -545,6 +555,13 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
     }
     if let Some(supervisor) = endpoint.test_supervisor() {
         command.env("RUNYTE_TEST_SUPERVISOR_PID", supervisor.to_string());
+    }
+    command.env_remove(crate::project_root::STARTUP_ORIGIN_ENV);
+    if let Some(origin) = startup.workspace_origin {
+        command.env(
+            crate::project_root::STARTUP_ORIGIN_ENV,
+            origin.startup_handoff(&project_root),
+        );
     }
     for (key, value) in &startup.env {
         command.env(key, value);

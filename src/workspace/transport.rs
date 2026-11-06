@@ -1728,6 +1728,7 @@ fn client_hello(
     directory_handoff: bool,
 ) -> ClientRequest {
     ClientRequest::Hello {
+        workspace_open: false,
         protocol: PROTOCOL_VERSION,
         directory_handoff,
         native_media: false,
@@ -1788,6 +1789,28 @@ impl LocalClient {
         directory_handoff: bool,
         native_media: bool,
     ) -> Result<Self> {
+        Self::connect_for_workspace_open(
+            endpoint,
+            geometry,
+            interactive,
+            directory_handoff,
+            native_media,
+            false,
+        )
+        .await
+    }
+
+    /// Connects a deliberate frontend opening when `workspace_open` is true.
+    /// Automatic transport reconnections must pass false.
+    #[doc(hidden)]
+    pub async fn connect_for_workspace_open(
+        endpoint: &LocalEndpoint,
+        geometry: FrameGeometry,
+        interactive: bool,
+        directory_handoff: bool,
+        native_media: bool,
+        workspace_open: bool,
+    ) -> Result<Self> {
         let metadata = endpoint.verify_compatible_for_connect()?;
         let socket = decode_path(metadata.socket_bytes)?;
         let stream = UnixStream::connect(&socket)
@@ -1801,10 +1824,12 @@ impl LocalClient {
         let mut hello = client_hello(endpoint, geometry, interactive, directory_handoff);
         if let ClientRequest::Hello {
             native_media: capability,
+            workspace_open: open,
             ..
         } = &mut hello
         {
             *capability = native_media;
+            *open = workspace_open;
         }
         client.send(&hello).await?;
         Ok(client)
@@ -1839,6 +1864,17 @@ impl BufferedLocalClient {
         directory_handoff: bool,
         native_media: bool,
     ) -> Result<Self> {
+        Self::connect_for_workspace_open(endpoint, geometry, directory_handoff, native_media, false)
+            .await
+    }
+
+    pub(crate) async fn connect_for_workspace_open(
+        endpoint: &LocalEndpoint,
+        geometry: FrameGeometry,
+        directory_handoff: bool,
+        native_media: bool,
+        workspace_open: bool,
+    ) -> Result<Self> {
         let metadata = endpoint.verify_compatible_for_connect()?;
         let socket = decode_path(metadata.socket_bytes)?;
         let mut stream = UnixStream::connect(&socket)
@@ -1847,10 +1883,12 @@ impl BufferedLocalClient {
         let mut hello = client_hello(endpoint, geometry, true, directory_handoff);
         if let ClientRequest::Hello {
             native_media: capability,
+            workspace_open: open,
             ..
         } = &mut hello
         {
             *capability = native_media;
+            *open = workspace_open;
         }
         write_message(&mut stream, &hello).await?;
         Self::from_connected_stream(stream)
@@ -3423,6 +3461,7 @@ mod tests {
         write_message(
             &mut writer,
             &ClientRequest::Hello {
+                workspace_open: false,
                 protocol: PROTOCOL_VERSION + 1,
                 native_media: false,
                 directory_handoff: false,
@@ -3459,6 +3498,7 @@ mod tests {
         write_message(
             &mut writer,
             &ClientRequest::Hello {
+                workspace_open: false,
                 protocol: PROTOCOL_VERSION,
                 native_media: false,
                 directory_handoff: false,
@@ -3511,6 +3551,7 @@ mod tests {
             write_message(
                 &mut writer,
                 &ClientRequest::Hello {
+                    workspace_open: false,
                     protocol: PROTOCOL_VERSION,
                     native_media: false,
                     directory_handoff: false,
@@ -3990,6 +4031,7 @@ mod tests {
         write_message(
             &mut writer,
             &ClientRequest::Hello {
+                workspace_open: false,
                 protocol: PROTOCOL_VERSION,
                 native_media: false,
                 directory_handoff: false,
@@ -4132,6 +4174,7 @@ mod tests {
         write_message(
             &mut writer,
             &ClientRequest::Hello {
+                workspace_open: false,
                 protocol: PROTOCOL_VERSION,
                 native_media: false,
                 directory_handoff: false,
@@ -4170,6 +4213,7 @@ mod tests {
         write_message(
             &mut writer,
             &ClientRequest::Hello {
+                workspace_open: false,
                 protocol: PROTOCOL_VERSION,
                 native_media: false,
                 directory_handoff: false,

@@ -88,6 +88,15 @@ impl BufferedLocalClient {
         geometry: FrameGeometry,
         directory_handoff: bool,
     ) -> Result<Self> {
+        Self::connect_for_workspace_open(metadata, geometry, directory_handoff, false).await
+    }
+
+    pub(crate) async fn connect_for_workspace_open(
+        metadata: &EndpointMetadata,
+        geometry: FrameGeometry,
+        directory_handoff: bool,
+        workspace_open: bool,
+    ) -> Result<Self> {
         metadata.validate()?;
         ensure!(
             metadata.protocol == PROTOCOL_VERSION,
@@ -95,7 +104,14 @@ impl BufferedLocalClient {
             metadata.protocol,
             PROTOCOL_VERSION
         );
-        let hello = client_hello(metadata, geometry, true, directory_handoff);
+        let mut hello = client_hello(metadata, geometry, true, directory_handoff);
+        if let ClientRequest::Hello {
+            workspace_open: open,
+            ..
+        } = &mut hello
+        {
+            *open = workspace_open;
+        }
         let metadata = metadata.clone();
         Self::start_with_peer(
             move || async move {

@@ -98,6 +98,7 @@ pub(super) fn client_hello(
     directory_handoff: bool,
 ) -> ClientRequest {
     ClientRequest::Hello {
+        workspace_open: false,
         protocol: PROTOCOL_VERSION,
         directory_handoff,
         native_media: false,

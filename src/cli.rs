@@ -1646,7 +1646,7 @@ async fn run(
         None => None,
     };
     #[cfg(not(unix))]
-    let selected_workspace: Option<PathBuf> = {
+    let selected_workspace: Option<project_root::DiscoveredWorkspace> = {
         anyhow::ensure!(
             arguments.workspace_selector.is_none(),
             "persistent mode is not yet supported on this platform"
@@ -1658,7 +1658,7 @@ async fn run(
         && arguments.mode_explicit
         && arguments.project_root.is_none()
         && !attaching_elsewhere;
-    let mut adopted_workspace = false;
+    let mut workspace_origin = None;
     let project_root = match arguments.project_root.take() {
         // Editor mode has no workspace. The launch directory stands in as
         // the root that relative paths are displayed against; nothing
@@ -1669,6 +1669,8 @@ async fn run(
         }
         _ if attaching_elsewhere => {
             let project_root = selected_workspace.expect("selector resolved a workspace");
+            workspace_origin = Some(project_root.origin);
+            let project_root = project_root.root;
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
@@ -1676,7 +1678,10 @@ async fn run(
         // belongs to. Naming a directory creates one; this does not.
         _ if attaching_current => {
             let project_root = project_root::discover(&launch_directory, &config.workspace.state)?
-                .map(|workspace| workspace.root)
+                .map(|workspace| {
+                    workspace_origin = Some(workspace.origin);
+                    workspace.root
+                })
                 .with_context(|| {
                     workspace_requirement(&arguments, config.mode()).refusal(
                         &launch_directory,
@@ -1693,12 +1698,24 @@ async fn run(
         // has no terminal on which to be asked it again.
         Some(requested) => {
             let project_root = resolve_requested_project_root(&launch_directory, &requested)?;
+            let inherited = arguments
+                .detached_host
+                .then(|| std::env::var(project_root::STARTUP_ORIGIN_ENV).ok())
+                .flatten();
+            workspace_origin = Some(project_root::startup_origin(
+                &project_root,
+                &config.workspace.state,
+                inherited.as_deref(),
+            )?);
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
-        None => match project_root::discover(&launch_directory, &config.workspace.state)?
-            .map(|workspace| workspace.root)
-        {
+        None => match project_root::discover(&launch_directory, &config.workspace.state)?.map(
+            |workspace| {
+                workspace_origin = Some(workspace.origin);
+                workspace.root
+            },
+        ) {
             Some(project_root) => {
                 startup.mark(StartupPhase::ProjectResolvedAutomatically);
                 project_root
@@ -1721,7 +1738,9 @@ async fn run(
                     workspace_requirement(&arguments, config.mode()),
                 )?;
                 startup.mark(StartupPhase::ProjectResolvedAutomatically);
-                adopted_workspace = true;
+                workspace_origin = Some(project_root::WorkspaceOrigin::Created(
+                    project_root::CreatedBy::Adoption,
+                ));
                 project_root
             }
             None => anyhow::bail!(workspace_requirement(&arguments, config.mode()).refusal(
@@ -1780,6 +1799,7 @@ async fn run(
                     // done.
                     if connect_control(&endpoint).await.is_err() {
                         let startup = HostStartup::new(std::env::current_exe()?, "attached")
+                            .with_workspace_origin(workspace_origin)
                             .with_working_directory(&working_directory)
                             .with_config(config_path.as_deref())
                             .with_logging(arguments.verbosity, arguments.log.as_deref());
@@ -1956,23 +1976,17 @@ async fn run(
             environment,
         )?
     };
+    if let Some(origin) = workspace_origin {
+        app.note_workspace_origin(origin);
+    }
+    if arguments.mode == LaunchMode::Serve {
+        app.note_persistent_launch(arguments.detached_host);
+    }
     app.native_media = arguments.window;
     app.open_native_targets(native_targets)?;
     app.note_running_as_root(running_as_root);
     let startup_config = app.config.clone();
     app.note_config_deprecations(&startup_config);
-    if adopted_workspace {
-        app.push_notification(NotificationDraft::new(
-            NotificationSeverity::Info,
-            "Workspace",
-            "Created a workspace",
-            format!(
-                "no repository or workspace was found above {}, so it became one; its state is in {}",
-                project_root.display(),
-                state_root.display()
-            ),
-        ));
-    }
     if let Some(failure) = logging_failure {
         app.push_notification(NotificationDraft::new(
             NotificationSeverity::Warning,
@@ -2711,7 +2725,7 @@ async fn resolve_attached_workspace(
     working_directory: &Path,
     config: &Config,
     reserved_user_roots: &[PathBuf],
-) -> Result<PathBuf> {
+) -> Result<project_root::DiscoveredWorkspace> {
     let requested = resolve_known_workspace_from_directory(
         selector,
         working_directory,
@@ -2719,12 +2733,14 @@ async fn resolve_attached_workspace(
     )
     .await?
     .unwrap_or_else(|| workspace_selector_path(selector, working_directory));
-    initialize_attached_directory(
+    let origin = project_root::exact_origin(&requested, &config.workspace.state)?;
+    let root = initialize_attached_directory(
         &requested,
         selector,
         &config.workspace.state,
         reserved_user_roots,
-    )
+    )?;
+    Ok(project_root::DiscoveredWorkspace { root, origin })
 }
 
 /// Resolves and initializes a directory selected for attachment.
@@ -2902,7 +2918,7 @@ async fn run_host_server(
                     anyhow::bail!("workspace host listener stopped unexpectedly");
                 };
                 match event {
-                    ServerEvent::Connected { id, peer_process, geometry, interactive, native_media, directory_handoff, responses } => {
+                    ServerEvent::Connected { id, peer_process, geometry, interactive, native_media, directory_handoff, workspace_open, responses } => {
                         peer_processes.insert(id, peer_process);
                         if interactive && active.is_some() {
                             log_warn!(
@@ -2944,6 +2960,7 @@ async fn run_host_server(
                                 active = Some(client);
                                 last_detached = Instant::now();
                                 host.app_mut().note_frontend_attached();
+                                if workspace_open { host.app_mut().note_workspace_opened(); }
                                 log_info!(
                                     "client",
                                     "interactive client attached";
@@ -4613,14 +4630,16 @@ async fn prepare_switch_target(
     if let Some(cache_root) = external_open::cache_root() {
         reserved_user_roots.push(cache_root);
     }
+    let origin = project_root::exact_origin(&requested, &config.workspace.state)?;
     let requested = initialize_attached_directory(
         &requested,
         selector,
         &config.workspace.state,
         &reserved_user_roots,
     )?;
-    let startup =
-        HostStartup::new(std::env::current_exe()?, "destination").with_config(config_path);
+    let startup = HostStartup::new(std::env::current_exe()?, "destination")
+        .with_config(config_path)
+        .with_workspace_origin(Some(origin));
     let state_root = project_root::resolve_state_root(&requested, &config.workspace.state);
     let endpoint = LocalEndpoint::discover(&state_root, &requested)?;
     if endpoint.project_root() == current.project_root() {
@@ -4988,11 +5007,12 @@ async fn run_attached(
     if let Some(window) = window {
         window.begin_attachment();
     }
-    let mut client = BufferedLocalClient::connect_with_media(
+    let mut client = BufferedLocalClient::connect_for_workspace_open(
         endpoint,
         *geometry,
         cwd_file.is_some(),
         terminal.native(),
+        true,
     )
     .await?;
     match client.recv_handshake().await? {
@@ -7132,6 +7152,7 @@ fn start_host_services(
         .expect("terminal output is claimed once, when services start");
     let plugin_events = if editor { None } else { app.start_plugins() };
     let pipe_events = app.start_pipe_service();
+    app.app_mut().finish_workspace_startup();
     #[cfg(windows)]
     let _ = config_path;
     #[cfg(all(not(unix), not(windows)))]

@@ -98,7 +98,11 @@ them, regardless of which extensibility direction is chosen.
   prompt, pending key sequence, or the last action echo. Character-taking
   bindings retain the typed keys and identify the next operand, including both
   stages of surround replacement. Jump labels report their next key and final
-  outcome. Notifications never replace it.
+  outcome. Ordinary notifications never replace it. During workspace opening,
+  a startup warning or error also owns action feedback until a user action
+  replaces it; the workspace echo cannot cover it. The host supplies the same
+  startup/attachment echo to both frontends. Transport reconnects preserve the
+  current echo.
 - **Overlay** — a temporary surface drawn over the editor area, such as a
   picker, key hints, completion, or a confirmation. An overlay is not a pane
   and does not retarget a buffer. Overlay snapshots carry semantic rows rather

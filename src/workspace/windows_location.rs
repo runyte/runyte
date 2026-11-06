@@ -106,6 +106,7 @@ pub struct DiscoveryScope {
 
 #[derive(Clone, Debug)]
 pub struct ResolvedLayout {
+    startup_origin: Option<crate::project_root::WorkspaceOrigin>,
     project: PathBuf,
     project_identity: [u8; 24],
     state: PathBuf,
@@ -200,9 +201,11 @@ impl DiscoveryScope {
         let state = crate::project_root::resolve_state_root(&project, configured_state);
         validate_state_separation(&state, std::slice::from_ref(&inventory))?;
         let lease = ProjectLease::acquire(&project, &inventory)?;
+        let origin = crate::project_root::exact_origin(&project, configured_state)?;
         let project = crate::project_root::initialize(&project, configured_state, &self.reserved)?;
         let state = crate::project_root::resolve_state_root(&project, configured_state);
-        let layout = ResolvedLayout::from_scope(self.clone(), &project, state)?;
+        let mut layout = ResolvedLayout::from_scope(self.clone(), &project, state)?;
+        layout.startup_origin = Some(origin);
         lease.verify_live_identity()?;
         Ok(layout)
     }
@@ -300,6 +303,7 @@ impl ResolvedLayout {
         validate_path(&endpoint.join("endpoint.json"))?;
         validate_path(&names)?;
         Ok(Self {
+            startup_origin: None,
             project,
             project_identity,
             state,
@@ -431,6 +435,11 @@ impl ResolvedLayout {
     /// The caller also supplies its explicit config and config environment.
     pub fn detached_environment(&self) -> io::Result<Vec<(OsString, Option<OsString>)>> {
         Ok(vec![
+            (
+                crate::project_root::STARTUP_ORIGIN_ENV.into(),
+                self.startup_origin
+                    .map(|origin| origin.startup_handoff(&self.project).into()),
+            ),
             (
                 "XDG_RUNTIME_DIR".into(),
                 self.scope
