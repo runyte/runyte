@@ -50,6 +50,17 @@ state directories. No controlled startup benchmark ran; the latency effect
 has not been quantified. Creation remains deferred until the workspace needs
 state. The home-workspace selection policy is separate work in #73.
 
+## 2026-11-06 — graphical launch preparation
+
+Marked graphical launches resolve their relative file arguments once before
+first-target workspace discovery and reuse the captured startup safety values.
+Graphical mux sends one bounded initial target request over the existing native
+attachment; its existing complete-frame barrier acknowledges readiness. No
+polling timer or terminal discovery work is added. Native failure presentation
+retains a bounded diagnostic until close instead of exiting the window.
+Readiness and idle benchmarks have not been rerun for this change; no measured
+performance improvement is claimed.
+
 ## 2026-10-25 — commented defaults and larger configured keymaps
 
 Follow-up to [issue #31](https://github.com/runyte/runyte/issues/31): export

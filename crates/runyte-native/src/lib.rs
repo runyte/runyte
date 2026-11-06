@@ -255,6 +255,7 @@ struct Bridge {
     pages: Mutex<Vec<media::PageCount>>,
     close_requested: AtomicBool,
     done: AtomicBool,
+    failure: Mutex<Option<String>>,
     wake: async_channel::Sender<()>,
     wakes: async_channel::Receiver<()>,
 }
@@ -775,6 +776,23 @@ impl Events {
     }
 }
 
+/// A failed worker is presentation only: no replacement App or services are started.
+fn startup_failure_text(error: &anyhow::Error) -> String {
+    let mut message = String::new();
+    for character in format!("{error:#}").chars() {
+        let character = if character.is_control() && character != '\n' {
+            ' '
+        } else {
+            character
+        };
+        if message.len() + character.len_utf8() > 16 * 1024 {
+            break;
+        }
+        message.push(character);
+    }
+    message
+}
+
 pub(crate) fn launch(
     worker: Box<dyn FnOnce() -> anyhow::Result<()> + Send>,
     font_size: usize,
@@ -818,6 +836,7 @@ pub(crate) fn launch(
         pages: Mutex::new(Vec::new()),
         close_requested: AtomicBool::new(false),
         done: AtomicBool::new(false),
+        failure: Mutex::new(None),
         wake,
         wakes,
     });
@@ -828,11 +847,21 @@ pub(crate) fn launch(
     let editor = std::thread::Builder::new()
         .name("runyte-editor".into())
         .spawn(move || {
-            // The worker is consumed once. A panic reports failure and ends
-            // the window; no captured editor state is reused after unwinding.
+            // The worker is consumed once. Failure remains in the window
+            // until close; no captured editor state is reused after unwinding.
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(worker))
                 .unwrap_or_else(|_| Err(anyhow::anyhow!("editor worker panicked")));
-            completion.done.store(true, Ordering::Release);
+            if let Err(error) = &result {
+                *completion.failure.lock().unwrap() = Some(startup_failure_text(error));
+                // A close acquired while startup was still running also ends
+                // a worker that subsequently fails. Store the failure first so
+                // either this check or the close callback observes the race.
+                if completion.close_requested.load(Ordering::Acquire) {
+                    completion.done.store(true, Ordering::Release);
+                }
+            } else {
+                completion.done.store(true, Ordering::Release);
+            }
             let _ = completion.wake.try_send(());
             result
         })?;
@@ -861,7 +890,11 @@ pub(crate) fn launch(
             },
             move |window, cx| {
                 let close = bridge.clone();
-                window.on_window_should_close(cx, move |_, _| {
+                window.on_window_should_close(cx, move |_, cx| {
+                    if close.failure.lock().unwrap().is_some() {
+                        cx.quit();
+                        return true;
+                    }
                     close.close_requested.store(true, Ordering::Release);
                     let (w, h) = *close.dimensions.lock().unwrap();
                     close.send(Event::Resize(w, h));
@@ -935,7 +968,8 @@ impl NativeView {
                             return;
                         }
                         let frame = view.bridge.frame.lock().unwrap().take();
-                        let changed = frame.is_some();
+                        let changed =
+                            frame.is_some() || view.bridge.failure.lock().unwrap().is_some();
                         if let Some(frame) = frame
                             && let Some(metrics) = view
                                 .geometry_requests
@@ -1068,6 +1102,22 @@ impl NativeView {
 
 impl Render for NativeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(message) = self.bridge.failure.lock().unwrap().clone() {
+            return div()
+                .size_full()
+                .bg(rgb(FALLBACK_BACKGROUND))
+                .text_color(rgb(FALLBACK_FOREGROUND))
+                .font_family("JetBrainsMono Nerd Font")
+                .text_size(px(self.requested.font_size))
+                .p_4()
+                .child(div().child("Runyte could not start"))
+                .child(div().mt_4().child(message))
+                .child(
+                    div()
+                        .mt_4()
+                        .child("Close this window after reviewing the error."),
+                );
+        }
         let dimensions = self.requested.grid(window.viewport_size());
         self.geometry_requests.record(dimensions, self.requested);
         let painted = painted_metrics(

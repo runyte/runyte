@@ -859,3 +859,14 @@ fn fractional_scroll_remainder_cannot_change_semantic_action_after_remap() {
     scroll.set_policy(changed);
     assert!(scroll.push((gpui::point(0., 0.25), true), time).is_none());
 }
+
+#[test]
+fn startup_failure_retains_bounded_readable_diagnostic_chain() {
+    let error =
+        anyhow::anyhow!("\u{1b}[31m{}", "文".repeat(10_000)).context("invalid configuration");
+    let text = super::startup_failure_text(&error);
+    assert!(text.starts_with("invalid configuration:"));
+    assert!(text.len() <= 16 * 1024);
+    assert!(!text.contains('\u{1b}'));
+    assert!(!text.is_empty());
+}

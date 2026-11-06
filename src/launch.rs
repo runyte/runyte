@@ -74,6 +74,10 @@ pub struct LaunchArguments {
     pub editor: bool,
     /// Experimental native window frontend.
     pub window: bool,
+    /// Bundled graphical launcher: configured mode and first-target workspace.
+    pub graphical_launch: bool,
+    /// Original launcher cwd, before the macOS bundle changes to account home.
+    pub graphical_directory: Option<PathBuf>,
     pub help: bool,
     pub version: bool,
     pub json: bool,
@@ -196,6 +200,14 @@ impl LaunchArguments {
                 // Editor and ide mode are both one standalone process; only
                 // the editor flag says that process has no workspace.
                 "--window" => parsed.window = true,
+                "--graphical-launch" => parsed.graphical_launch = true,
+                "--graphical-cwd" => {
+                    parsed.graphical_directory = Some(PathBuf::from(
+                        arguments
+                            .next()
+                            .context("--graphical-cwd requires a directory")?,
+                    ))
+                }
                 "--editor" => {
                     set_mode(&mut parsed.mode, &mut mode_explicit, LaunchMode::Standalone)?;
                     parsed.editor = true;
@@ -413,10 +425,26 @@ impl LaunchArguments {
                     .all(|target| target.position.is_none()),
             "--wait does not accept +LINE[:COLUMN] positions"
         );
+        ensure!(
+            !parsed.graphical_launch || parsed.window,
+            "--graphical-launch requires --window"
+        );
+        ensure!(
+            parsed
+                .graphical_directory
+                .as_ref()
+                .is_none_or(|directory| parsed.graphical_launch
+                    && directory.is_absolute()
+                    && crate::native_path::encode_path(directory).len()
+                        <= crate::protocol::MAX_PATH_BYTES
+                    && !directory.as_os_str().as_encoded_bytes().contains(&0)),
+            "--graphical-cwd requires an absolute directory and --graphical-launch"
+        );
         if matches!(
             parsed.mode,
             LaunchMode::Persistent | LaunchMode::RestartSession | LaunchMode::StopSession
-        ) {
+        ) && !(parsed.graphical_launch && parsed.mode == LaunchMode::Persistent)
+        {
             ensure!(
                 parsed.targets.len() <= 1,
                 "this workspace mode accepts at most one workspace ID, name, or directory"
@@ -511,6 +539,13 @@ fn parse_nonzero(value: &str, name: &str, target: &str) -> Result<NonZeroUsize> 
         .with_context(|| format!("malformed target {target:?}; {name} must be greater than zero"))
 }
 
+/// Account home used by the bundled macOS launcher; inherited HOME is not account evidence.
+#[cfg(unix)]
+pub fn graphical_home_directory() -> std::io::Result<PathBuf> {
+    crate::user_paths::system_home_directory()
+        .ok_or_else(|| std::io::Error::other("cannot resolve the account home directory"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{LaunchArguments, LaunchMode, LaunchPosition, LaunchTarget, is_runed};
@@ -518,6 +553,49 @@ mod tests {
         num::NonZeroUsize,
         path::{Path, PathBuf},
     };
+
+    #[test]
+    fn graphical_marker_requires_window_and_preserves_mux_file_positions() {
+        assert!(LaunchArguments::parse_from(["--graphical-launch".into()]).is_err());
+        let parsed = LaunchArguments::parse_from(
+            [
+                "--window",
+                "--graphical-launch",
+                "--mux",
+                "+2:3",
+                "a.txt",
+                "b.txt",
+            ]
+            .map(Into::into),
+        )
+        .unwrap();
+        for args in [
+            vec!["--window", "--graphical-cwd", "/original"],
+            vec![
+                "--window",
+                "--graphical-launch",
+                "--graphical-cwd",
+                "relative",
+            ],
+        ] {
+            assert!(LaunchArguments::parse_from(args.into_iter().map(Into::into)).is_err());
+        }
+        let oversized = std::env::temp_dir().join("x".repeat(crate::protocol::MAX_PATH_BYTES + 1));
+        assert!(
+            LaunchArguments::parse_from([
+                "--window".into(),
+                "--graphical-launch".into(),
+                "--graphical-cwd".into(),
+                oversized.into_os_string()
+            ])
+            .is_err()
+        );
+        assert!(parsed.graphical_launch);
+        assert_eq!(parsed.mode, LaunchMode::Persistent);
+        assert!(parsed.workspace_selector.is_none());
+        assert_eq!(parsed.targets.len(), 2);
+        assert_eq!(parsed.targets[0].position, Some(position(2, Some(3))));
+    }
 
     fn position(line: usize, column: Option<usize>) -> LaunchPosition {
         LaunchPosition {

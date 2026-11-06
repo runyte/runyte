@@ -189,6 +189,7 @@ use crate::workspace::{
     windows_startup::{self, HostStartup as NativeHostStartup},
 };
 
+mod graphical;
 pub mod window;
 #[cfg(not(windows))]
 use window::Events;
@@ -226,22 +227,42 @@ pub fn main(edition: Edition, window: Option<&'static dyn WindowFrontend>) -> Re
             .take_while(|arg| arg != "--")
             .any(|arg| arg == "--window")
     {
-        let arguments = LaunchArguments::parse()?;
-        if arguments.window && !arguments.help && !arguments.version {
-            if let Some(message) = edition.window_refusal(cfg!(windows)) {
-                anyhow::bail!(message);
+        let arguments = match LaunchArguments::parse() {
+            Ok(arguments) => arguments,
+            Err(error) => {
+                return window.launch(
+                    Box::new(move || Err(error)),
+                    Config::default().editor.font_size,
+                );
             }
-            anyhow::ensure!(
-                matches!(
-                    arguments.mode,
-                    LaunchMode::Standalone | LaunchMode::Persistent
-                ),
-                "--window supports ide, editor, and mux modes"
-            );
-            let (config, _) = Config::load(arguments.config.as_deref())?;
+        };
+        if arguments.window && !arguments.help && !arguments.version {
+            let presentation = (|| {
+                if let Some(message) = edition.window_refusal(cfg!(windows)) {
+                    anyhow::bail!(message);
+                }
+                anyhow::ensure!(
+                    matches!(
+                        arguments.mode,
+                        LaunchMode::Standalone | LaunchMode::Persistent
+                    ),
+                    "--window supports ide, editor, and mux modes"
+                );
+                Ok(Config::load(arguments.config.as_deref())?
+                    .0
+                    .editor
+                    .font_size)
+            })();
+            let font_size = presentation
+                .as_ref()
+                .copied()
+                .unwrap_or(Config::default().editor.font_size);
             return window.launch(
-                Box::new(move || cli_main(environment)),
-                config.editor.font_size,
+                Box::new(move || {
+                    presentation?;
+                    cli_main(environment)
+                }),
+                font_size,
             );
         }
     }
@@ -1595,6 +1616,8 @@ async fn run(
     let editor = launch_is_editor(&arguments, config.mode());
     refuse_workspace_modes_as_root(&arguments, editor, running_as_root)?;
     let launch_directory = std::env::current_dir()?;
+    let workspace_directory =
+        graphical::prepare_targets(&mut arguments, &launch_directory, !editor)?;
     arguments.cwd_file = arguments
         .cwd_file
         .take()
@@ -1691,7 +1714,7 @@ async fn run(
         // belongs to. Naming a directory creates one; this does not.
         _ if attaching_current => {
             let project_root = project_root::discover_with_home_safety(
-                &launch_directory,
+                &workspace_directory,
                 &config.workspace.state,
                 startup_safety.as_deref().expect("workspace startup safety"),
             )?
@@ -1701,7 +1724,7 @@ async fn run(
             })
             .with_context(|| {
                 workspace_requirement(&arguments, config.mode()).refusal(
-                    &launch_directory,
+                    &workspace_directory,
                     None,
                     crate::app::user_home_directory().as_deref(),
                 )
@@ -1714,7 +1737,7 @@ async fn run(
         // question that has one right answer per launch, and a detached host
         // has no terminal on which to be asked it again.
         Some(requested) => {
-            let project_root = resolve_requested_project_root(&launch_directory, &requested)?;
+            let project_root = resolve_requested_project_root(&workspace_directory, &requested)?;
             let inherited = arguments
                 .detached_host
                 .then(|| std::env::var(project_root::STARTUP_ORIGIN_ENV).ok())
@@ -1729,7 +1752,7 @@ async fn run(
             project_root
         }
         None => match project_root::discover_with_home_safety(
-            &launch_directory,
+            &workspace_directory,
             &config.workspace.state,
             startup_safety.as_deref().expect("workspace startup safety"),
         )?
@@ -1751,7 +1774,7 @@ async fn run(
                     .map(|target| launch_directory.join(&target.path))
                     .collect::<Vec<_>>();
                 let project_root = project_root::adopt_with_safety(
-                    &launch_directory,
+                    &workspace_directory,
                     &config.workspace.state,
                     startup_safety
                         .as_deref()
@@ -1759,7 +1782,11 @@ async fn run(
                     &crate::app::user_home_directory()
                         .into_iter()
                         .collect::<Vec<_>>(),
-                    &targets,
+                    if arguments.graphical_launch && !targets.is_empty() {
+                        &targets[..1]
+                    } else {
+                        &targets
+                    },
                     workspace_requirement(&arguments, config.mode()),
                 )?;
                 startup.mark(StartupPhase::ProjectResolvedAutomatically);
@@ -1769,7 +1796,7 @@ async fn run(
                 project_root
             }
             None => anyhow::bail!(workspace_requirement(&arguments, config.mode()).refusal(
-                &launch_directory,
+                &workspace_directory,
                 None,
                 crate::app::user_home_directory().as_deref()
             )),
@@ -1801,7 +1828,7 @@ async fn run(
     let working_directory = if attaching_elsewhere {
         project_root.clone()
     } else {
-        launch_directory.clone()
+        workspace_directory.clone()
     };
     #[cfg(unix)]
     let recorded_workspace = if editor {
@@ -1819,7 +1846,7 @@ async fn run(
             | LaunchMode::RestartSession
             | LaunchMode::StopSession
     ) {
-        if arguments.mode != LaunchMode::Wait {
+        if arguments.mode != LaunchMode::Wait && !arguments.graphical_launch {
             anyhow::ensure!(
                 arguments.targets.is_empty(),
                 "this workspace mode does not accept file targets"
@@ -1853,6 +1880,10 @@ async fn run(
                         cwd_file.as_deref(),
                         &config,
                         config_path.as_deref(),
+                        std::mem::take(&mut arguments.targets)
+                            .into_iter()
+                            .map(Into::into)
+                            .collect(),
                     )
                     .await
                 }
@@ -2022,6 +2053,9 @@ async fn run(
         app.note_persistent_launch(arguments.detached_host);
     }
     app.native_media = arguments.window;
+    if arguments.graphical_launch && !editor {
+        app.working_directory = workspace_directory;
+    }
     app.open_native_targets(native_targets)?;
     app.note_running_as_root(running_as_root);
     let startup_config = app.config.clone();
@@ -2608,14 +2642,12 @@ fn about_invocation() -> Result<CommandInvocation, CommandInvocationError> {
 }
 
 fn uses_automatic_persistent_mode(arguments: &LaunchArguments, configured: RunMode) -> bool {
-    // The persistent default is deliberately a bare-launch convenience. A
-    // target may carry a caller-relative path or an initial caret position,
-    // and the attach protocol does not represent all of those launch
-    // semantics. Keep target-bearing invocations on the ordinary standalone
-    // path unless a future protocol can preserve the complete target.
-    !arguments.window
+    // Terminal target-bearing launches keep their standalone semantics.
+    // Marked graphical launches forward complete bounded targets only after
+    // native attachment, so their configured persistent mode is preserved.
+    (!arguments.window || arguments.graphical_launch)
         && !arguments.mode_explicit
-        && arguments.targets.is_empty()
+        && (arguments.targets.is_empty() || arguments.graphical_launch)
         && arguments.init.is_none()
         && !arguments.editor
         && configured == RunMode::Mux
@@ -2884,6 +2916,7 @@ struct AttachedClient {
     wait_tokens: Vec<WaitToken>,
     last_frame: Option<crate::protocol::HostFrame>,
     input_barrier: Option<u64>,
+    launch_pending: bool,
 }
 
 #[cfg(unix)]
@@ -3003,6 +3036,7 @@ async fn run_host_server(
                                 wait_tokens: Vec::new(),
                                 last_frame: None,
                                 input_barrier: None,
+                                launch_pending: native_media,
                             };
                             if client.responses.try_send(HostResponse::Welcome {
                                 protocol: crate::workspace::transport::PROTOCOL_VERSION,
@@ -3057,6 +3091,10 @@ async fn run_host_server(
                         }
                     }
                     ServerEvent::Request { id, request } => {
+                        if !matches!(request, ClientRequest::OpenLaunchTargets { .. })
+                            && let Some(client) = active.as_mut().filter(|client| client.id == id) {
+                            client.launch_pending = false;
+                        }
                         let interactive = active.as_ref().is_some_and(|client| client.id == id);
                         let control = controls.contains_key(&id);
                         if !interactive && !control {
@@ -3163,6 +3201,16 @@ async fn run_host_server(
                                 changed |= reply.publish_frame;
                             }
 
+                        } else if let ClientRequest::OpenLaunchTargets { targets } = request {
+                            let allowed = active.as_mut().is_some_and(|client| std::mem::take(&mut client.launch_pending));
+                            let result = graphical::open_targets(&mut host, targets, allowed);
+                            match result {
+                                Ok(()) => {
+                                    if let Some(client) = active.as_mut() { client.input_barrier = Some(0); }
+                                    changed = true;
+                                }
+                                Err(error) => send_active_response(&mut active, HostResponse::Error { message: error.to_string() }),
+                            }
                         } else if let ClientRequest::AttachWait { token } = request {
                             let response = match host.wait_status(token.into()) {
                                 Some(status) => {
@@ -3359,7 +3407,7 @@ async fn run_host_server(
                                         .expect("provisional switch request was matched"),
                                 );
                             }
-                            ClientRequest::Hello { .. } => {}
+                            ClientRequest::Hello { .. } | ClientRequest::OpenLaunchTargets { .. } => {}
                             ClientRequest::Invoke { .. }
                             | ClientRequest::Health
                             | ClientRequest::SessionPreview
@@ -3384,6 +3432,7 @@ async fn run_host_server(
                         }
                     }
                     ServerEvent::ProtocolError { id, message } => {
+                        if let Some(client) = active.as_mut().filter(|client| client.id == id) { client.launch_pending = false; }
                         // The one place that still knows which connection sent
                         // a malformed or truncated frame, and what preceded it.
                         log_warn!(
@@ -4360,6 +4409,7 @@ async fn run_workspace_switcher(
     cwd_file: Option<&Path>,
     config: &Config,
     config_path: Option<&Path>,
+    mut launch_targets: Vec<crate::protocol::LaunchTarget>,
 ) -> Result<()> {
     let color_depth = if window.is_some() {
         ui::TerminalColorDepth::TrueColor
@@ -4391,7 +4441,7 @@ async fn run_workspace_switcher(
         let attachment = tokio::select! {
             attachment = run_attached(&current, &mut terminal, &mut terminal_events, &mut geometry,
                 AttachOptions { window, wait_token: None, cwd_file, notice: notice.take(), color_depth,
-                    history: Some(&mut history), parent_handoff: Some(&mut parent_handoff), visit: pending_visit.take() }) => attachment,
+                    history: Some(&mut history), parent_handoff: Some(&mut parent_handoff), visit: pending_visit.take(), launch_targets: std::mem::take(&mut launch_targets) }) => attachment,
             signal = termination.recv() => return Err(terminated(signal)),
         };
         if let Some(handoff) = parent_handoff.take() {
@@ -4783,6 +4833,7 @@ async fn attach_for_wait(
                 history: None,
                 parent_handoff: None,
                 visit: None,
+                launch_targets: Vec::new(),
             },
         ) => (attachment, true),
     };
@@ -5042,6 +5093,7 @@ struct AttachOptions<'a> {
     history: Option<&'a mut AttachmentHistory>,
     parent_handoff: Option<&'a mut Option<ParentHandoff>>,
     visit: Option<crate::protocol::DestinationVisit>,
+    launch_targets: Vec<crate::protocol::LaunchTarget>,
 }
 
 /// Runs one attachment to completion, drawing into a terminal it does not own.
@@ -5067,6 +5119,7 @@ async fn run_attached(
         history,
         parent_handoff,
         visit,
+        launch_targets,
     } = options;
     if let Some(window) = window {
         window.begin_attachment();
@@ -5088,9 +5141,7 @@ async fn run_attached(
         None => anyhow::bail!("workspace host disconnected during handshake"),
     }
     let _activity = AttachedWorkspaceActivity::begin(endpoint.project_root());
-    if let Some(message) = notice {
-        client.send(&ClientRequest::Notify { message }).await?;
-    }
+
     // Ratatui diffs against its previous buffer, which starts empty for a new
     // terminal and holds the previous workspace's frame for a reused one. Either
     // way the cells this frame leaves blank would not be emitted, so the screen
@@ -5114,6 +5165,40 @@ async fn run_attached(
         Some(response) => anyhow::bail!("workspace host sent no initial frame: {response:?}"),
         None => anyhow::bail!("workspace host disconnected before its initial frame"),
     };
+    if !launch_targets.is_empty() {
+        anyhow::ensure!(
+            window.is_some(),
+            "graphical targets require a native window"
+        );
+        client
+            .send(&ClientRequest::OpenLaunchTargets {
+                targets: launch_targets,
+            })
+            .await?;
+        // Serial zero belongs to this initial request, before physical input.
+        // A normal frame can be older than the semantic response; wait for the
+        // existing correlated complete-frame publication instead.
+        loop {
+            match client.recv().await? {
+                Some(HostResponse::InputBarrier { serial: 0, frame }) => {
+                    current_frame = (*frame).try_into().map_err(anyhow::Error::msg)?;
+                    break;
+                }
+                Some(
+                    HostResponse::Frame { .. }
+                    | HostResponse::TerminalDamage { .. }
+                    | HostResponse::EditorDamage { .. },
+                ) => {}
+                Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+                    anyhow::bail!(message)
+                }
+                _ => anyhow::bail!("workspace host disconnected before opening graphical targets"),
+            }
+        }
+    }
+    if let Some(message) = notice {
+        client.send(&ClientRequest::Notify { message }).await?;
+    }
     if let Some(visit) = visit {
         client
             .send(&ClientRequest::VisitDestination {
@@ -8765,6 +8850,7 @@ mod tests {
             wait_tokens: Vec::new(),
             last_frame: None,
             input_barrier: None,
+            launch_pending: false,
         };
 
         // Visual responses have one replaceable slot, so a repaint burst

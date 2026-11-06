@@ -23,6 +23,8 @@ parser.add_argument("--output", type=pathlib.Path)
 parser.add_argument("--document-preview", action="store_true", help="exercise the bounded Blitz document preview")
 parser.add_argument("--window-controls", action="store_true", help="exercise font settings, system clipboard, and parent editor wait")
 parser.add_argument("--animations", action="store_true", help="exercise media playback, selection pause, and hidden-window idle")
+parser.add_argument("--startup-failure", choices=("config", "state"), help="verify a retained graphical startup refusal")
+parser.add_argument("--graphical-launch", action="store_true", help="use configured mode and first-file workspace from another directory")
 parser.add_argument("--mux", action="store_true", help="exercise persistent window attachment and frontend handoff")
 parser.add_argument("--no-system-fonts", action="store_true", help="verify the embedded fonts with an empty Fontconfig font directory list")
 parser.add_argument("--paint-benchmark", action="store_true", help="measure warmed cell painting; requires RUNYTE_NATIVE_PAINT_TIMING=1")
@@ -179,8 +181,20 @@ if args.document_preview:
     (root/'selection.html').write_text('<html><body style="margin:0;background:white;font:20px monospace"><p style="margin:0">Selectable text</p><a href="https://example.com">Link target</a><div style="height:2000px;width:2000px;background:#09a"></div></body></html>')
 log=open(root/'window.log','w')
 launch=[str(binary),'--window','--mux' if args.mux else '--ide','--config',str(storage/'config/config.yaml')]
-if not args.mux:launch.append(str(root/'notes.txt'))
-p=subprocess.Popen(launch,cwd=root,env=env,stdout=log,stderr=log)
+launch_directory = root
+if args.graphical_launch:
+    (storage/'config/config.yaml').write_text('mode: ' + ('mux' if args.mux else 'ide') + '\nlsp:\n  enable: false\n')
+    launch=[str(binary),'--window','--graphical-launch','--config',str(storage/'config/config.yaml'),'../project/notes.txt']
+    launch_directory = storage/'home'
+elif args.startup_failure:
+    launch=[str(binary),'--window','--graphical-launch','--config',str(storage/'config/config.yaml')]
+    if args.startup_failure == 'config':
+        (storage/'config/config.yaml').write_text('mode: [invalid\n')
+    else:
+        (root/'.runyte').write_text('not a directory')
+elif not args.mux:
+    launch.append(str(root/'notes.txt'))
+p=subprocess.Popen(launch,cwd=launch_directory,env=env,stdout=log,stderr=log)
 try:
     win=None
     # Software Vulkan initialization on a cold CI runner can outlast ten
@@ -308,6 +322,21 @@ try:
             break
         time.sleep(.25)
     assert len(set(initial)) > 8, "first editor frame remained blank"
+    if args.startup_failure:
+        before, _ = screenshot('startup-failure')
+        key('i'); text('must not edit'); key('Escape'); time.sleep(.5)
+        after, _ = screenshot('startup-failure-after-input')
+        assert before == after, 'refusal accepted editor input'
+        assert p.poll() is None, 'refusal disappeared before close'
+        assert (root/'notes.txt').read_text().startswith('Runyte native window')
+        assert not list(storage.rglob('context.lock')), 'refusal started context services'
+        if args.startup_failure == 'config':
+            assert not (root/'.runyte').exists(), 'invalid configuration started workspace storage'
+        close_window(); p.wait(timeout=15)
+        assert p.returncode != 0, 'refused startup succeeded'
+        assert (root/'window.log').read_text().strip(), 'refusal lost stderr diagnostic'
+        print('PASS: visible graphical ' + args.startup_failure + ' refusal persists until close without editor input')
+        raise SystemExit(0)
     def pixel(xpos, ypos):
         im=x.XGetImage(d,win,xpos,ypos,1,1,0xffffffffffffffff,2)
         if not im:

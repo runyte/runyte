@@ -174,6 +174,28 @@ argument to ide opens an explorer; to choose a different workspace, use
 `runyte --mux DIRECTORY`. Replace `DIRECTORY` with the desired directory and
 quote paths containing spaces or shell characters.
 
+### Graphical launchers
+
+The macOS app and registered Linux application-menu entry start in the account
+home in the configured `mode`. IDE and mux use the home workspace with
+integrated terminals; `mode: editor` keeps editor mode. Close a mux window and
+launch again to return to the same retained persistent session. A host admits
+one interactive frontend at a time.
+
+In IDE and mux, when the graphical launcher receives file arguments, the first
+file’s directory chooses the workspace; a directory argument chooses that
+directory. Editor mode retains ordinary file opening without a workspace,
+including new files whose parent directory does not yet exist. All relative
+file arguments retain their meaning from the original launcher directory.
+Files open with the same caret, duplicate-path and native-media rules as other
+window launches. Terminal commands retain their current-directory workspace
+selection. Finder file-open Apple Events are not integrated yet.
+
+A startup refusal stays visible until you close the window. Invalid configuration
+uses default presentation settings to display its error; the requested mode is
+not changed and workspace services are not started after refusal. If the system
+cannot create a window at all, the error can only be reported on stderr.
+
 Inside the editor, press `Space` then `?` for contextual help. See
 [Help, hints, and the tutorial](the-screen.md#help-hints-and-the-tutorial).
 

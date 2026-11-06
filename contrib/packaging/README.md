@@ -52,7 +52,9 @@ matching `icons/hicolor` directories. It refreshes desktop/icon caches when
 the standard cache tools are installed. `--data-dir <directory>` selects a
 different installation root, useful for packaging and isolated checks. The
 launcher stores the binary's absolute path; register it again after moving
-the binary. It opens `--window --editor`, accepting file arguments. Running
+the binary. It opens `--window --graphical-launch`, accepting file arguments. An escaped
+absolute `Path=` records the effective account’s home directory rather than
+trusting inherited `HOME`. Register again after changing that account path. Running
 `runyte --window` directly in a workspace still uses the ordinary IDE mode.
 
 On Wayland, the desktop finds the icon through this installed entry and the
@@ -92,8 +94,9 @@ executables' deployment floor with `vtool` and rejects non-system dynamic
 libraries with `otool`, including accidental Homebrew links.
 
 The helper refuses to replace an existing bundle. It copies the editor into `Contents/MacOS`, alongside the
-native `RunyteLauncher` launcher, relative `runed` link, ICNS icon and project/dependency/font notices. The launcher selects
-`--window --editor` and preserves `PATH`, adding `/opt/homebrew/bin` and
+native `RunyteLauncher` launcher, relative `runed` link, ICNS icon and project/dependency/font notices. The launcher changes to the account home, selects
+`--window --graphical-launch`, forwards its original directory for relative file
+arguments, and preserves `PATH`, adding `/opt/homebrew/bin` and
 `/usr/local/bin` so the usual Poppler installations remain discoverable from
 Finder. Fonts are embedded in the binary. The bundle has identifier
 `com.runyte.Runyte`, `CFBundleExecutable = RunyteLauncher`, a macOS 11 minimum, and
@@ -109,6 +112,33 @@ the executable name in the menu bar and switcher; the executable file's Finder
 icon is unchanged. Manual acceptance must check the Dock and Cmd-Tab icons for
 these launch forms and for `Runyte.app`. Finder file-open events are not
 integrated; open documents inside the editor or pass paths when invoking the bundled binary from a terminal.
+
+## Graphical startup
+
+Both launchers honor the configured `mode`: IDE and mux open the home workspace,
+while `mode: editor` keeps ordinary file opening without workspace services,
+including new files beneath nonexistent directories. With file arguments in
+IDE or mux, workspace discovery starts from the first file’s directory (or a directory
+argument itself). Every relative file argument is resolved against the original
+launcher directory before this choice. Terminal launch behavior is unchanged.
+
+A graphical mux launch starts or attaches its workspace host, then opens the
+files through its authenticated native attachment. Initial caret positions,
+duplicate paths, and native media follow the same rules as standalone windows.
+Targets are sent once; switching or reconnecting does not reopen them or reset
+carets. An already attached interactive client still prevents a second attachment.
+
+Startup refusals, including root workspace modes, unusable state storage and
+invalid configuration, stay in the native window until close. Invalid
+configuration uses default presentation settings; no replacement editor or
+workspace services are started after refusal. If the platform cannot create a
+window, the diagnostic remains on stderr. Finder file-open Apple Events remain
+outside this integration.
+
+Manual macOS acceptance remains required: launch from Finder into the account
+home in each configured mode, check an integrated terminal’s directory, close
+and relaunch mux to verify the same retained host, and verify editor mode and a
+retained startup refusal. Headless bundle checks do not establish these results.
 
 ## macOS distribution tools
 

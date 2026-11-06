@@ -196,3 +196,26 @@ environments. Matching protocol versions are required.
 Private protocol version 82 removes the `ContextReview` overlay layout that
 version 81 added for terminal proposal reviews, which no longer exist. Matching
 client and host protocol versions are required.
+
+Private protocol version 93 adds `OpenLaunchTargets` for a graphical mux
+frontend's initial file arguments. The exact-root handshake, active interactive
+connection, native-media capability and first-request allowance all apply.
+Control and inactive connections cannot open this payload. Any other request
+or malformed frame consumes the initial allowance. The whole payload is
+validated before opening: 1–32 absolute platform paths of at most 32 KiB each,
+with optional nonzero, representable one-based line and column values. The
+existing 8 MiB frame bound and queue limits remain unchanged. A successful
+request publishes an `InputBarrier` complete frame with reserved startup serial
+zero, before physical input begins. The client consumes launch targets on its
+first attachment attempt and never replays an uncertain send, reconnect or
+workspace switch. Native opening preserves caret and media semantics; a later
+filesystem failure can leave already opened buffers in the host and is shown
+as a retained frontend error. This remains a private bundled-client operation,
+not a plugin or external-context capability.
+
+The macOS exec boundary additionally carries `--graphical-cwd` as a native
+argument alongside the graphical marker, before any user `--` separator.
+It accepts only an absolute, NUL-free path of at most 32 KiB and requires the
+marked window invocation. This records caller-relative file meaning while the
+launcher itself starts the editor in the account home. User argument bytes and
+path encoding are preserved.
