@@ -31,13 +31,15 @@ permits bounded safety checks once at startup: user roots and canonical
 reservations are captured once, and the selected project/location admission
 is reused through CLI, application and host startup. App scopes and consumes
 that admission even if construction fails before storage validation; a later
-startup using a cloned configuration captures fresh safety information. This applies to the new state-root checks, not preexisting
-workspace discovery/layout checks. Regression tests count root resolution and
+startup using a cloned configuration captures fresh safety information. This
+applies to the new state-root checks, not preexisting workspace
+discovery/layout checks. Regression tests count root resolution and
 canonical normalization and verify admission reuse and fresh alias checks.
 
-These checks create no state directory; creation remains deferred until the
-workspace needs state. No complete startup timing was measured for this
-change. The home-workspace selection policy is separate work in #73.
+These checks add bounded metadata/canonicalization work without creating
+state directories. No controlled startup benchmark ran; the latency effect
+has not been quantified. Creation remains deferred until the workspace needs
+state. The home-workspace selection policy is separate work in #73.
 
 ## 2026-10-25 — commented defaults and larger configured keymaps
 
