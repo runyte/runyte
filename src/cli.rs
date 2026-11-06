@@ -2606,10 +2606,13 @@ fn workspace_requirement(
     }
     if !arguments.mode_explicit
         && arguments.mode == LaunchMode::Standalone
-        && !arguments.targets.is_empty()
         && configured == RunMode::Mux
     {
-        requirement.source = project_root::ModeSource::PositionalTargets;
+        if !arguments.targets.is_empty() {
+            requirement.source = project_root::ModeSource::PositionalTargets;
+        } else if arguments.window {
+            requirement.source = project_root::ModeSource::WindowLaunch;
+        }
     }
     requirement
 }
@@ -9512,6 +9515,40 @@ mod tests {
             )
             .unwrap(),
             plain
+        );
+    }
+
+    #[test]
+    fn window_mux_fallback_names_its_source_and_positional_target_precedence() {
+        for (args, source) in [
+            (
+                vec!["--window"],
+                "window launch uses ide instead of mode: mux",
+            ),
+            (
+                vec!["--window", "notes.md"],
+                "file or directory targets override mode: mux",
+            ),
+        ] {
+            let arguments = LaunchArguments::parse_from(args.into_iter().map(Into::into)).unwrap();
+            assert!(!super::uses_automatic_persistent_mode(
+                &arguments,
+                RunMode::Mux
+            ));
+            let requirement = super::workspace_requirement(&arguments, RunMode::Mux);
+            assert_eq!(requirement.mode, crate::project_root::WorkspaceMode::Ide);
+            assert_eq!(
+                requirement.refusal(Path::new("/fixture"), None, None),
+                format!(
+                    "runyte needs a workspace in ide mode ({source}), and none was found in /fixture or any directory above it.\n  Open a project:      {}\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor",
+                    crate::project_root::ide_open_command("DIRECTORY")
+                )
+            );
+        }
+        let explicit = LaunchArguments::parse_from(["--window", "--ide"].map(Into::into)).unwrap();
+        assert_eq!(
+            super::workspace_requirement(&explicit, RunMode::Mux).source,
+            crate::project_root::ModeSource::Flag("--ide")
         );
     }
 
