@@ -592,3 +592,49 @@ fn handoff_argument_fixture() {
     )
     .unwrap();
 }
+
+#[test]
+fn startup_advice_uses_literal_paths_in_windows_powershell_51() {
+    use runyte::project_root::{ide_open_command, workspace_shell_argument};
+    let root = TestRuntimeRoot::new("startup-advice").unwrap();
+    let directory = root
+        .create_private_dir("project [literal] ' $value `")
+        .unwrap();
+    let config = root.create_private_dir("config").unwrap();
+    let quoted = workspace_shell_argument(&directory);
+    let advice = ide_open_command(&quoted);
+    let ordinary_root = root
+        .to_string_lossy()
+        .trim_start_matches(r"\\?\")
+        .to_owned();
+    // A shell function records the command's actual destination. This avoids
+    // starting a console editor while testing the literal advice in 5.1.
+    let script = format!(
+        "function runyte {{ Write-Output ('OPENED:' + (Get-Location).ProviderPath) }}; {advice}"
+    );
+    let output = Command::new(powershell())
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .current_dir(&ordinary_root)
+        .env("XDG_CONFIG_HOME", &config)
+        .env("XDG_CACHE_HOME", root.join("cache"))
+        .env("XDG_STATE_HOME", root.join("state"))
+        .env("XDG_RUNTIME_DIR", root.join("runtime"))
+        .env("RUNYTE_CONTEXT_HOME", root.join("context"))
+        .env("RUNYTE_ALL_HOSTS_DIR", root.join("inventory"))
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected = directory
+        .to_string_lossy()
+        .trim_start_matches("\\\\?\\")
+        .to_owned();
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        format!("OPENED:{expected}")
+    );
+}

@@ -431,3 +431,37 @@ mod document_preview;
 mod ui_list_menus;
 
 mod ui_confirmations;
+
+#[test]
+fn startup_constructor_refusals_name_the_configured_mode_and_search_directory() {
+    let root = crate::test_support::TestRuntimeRoot::new("app-startup-refusal").unwrap();
+    let directory = root.join("plain");
+    std::fs::create_dir(&directory).unwrap();
+    for mode in [crate::config::RunMode::Ide, crate::config::RunMode::Mux] {
+        let config = crate::config::Config {
+            mode: Some(mode),
+            ..Default::default()
+        };
+        let error = super::App::discover_startup_workspace(&config, &directory, None).unwrap_err();
+        let name = if mode == crate::config::RunMode::Ide {
+            "ide"
+        } else {
+            "mux"
+        };
+        let recovery = if mode == crate::config::RunMode::Ide {
+            format!(
+                "\n  Open a project:      {}\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor",
+                crate::project_root::ide_open_command("DIRECTORY")
+            )
+        } else {
+            "\n  Open or create one:  runyte --mux DIRECTORY\n  Create one only:     runyte --init DIRECTORY".into()
+        };
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "runyte needs a workspace in {name} mode (the mode setting), and none was found in {} or any directory above it.{recovery}",
+                directory.display()
+            )
+        );
+    }
+}

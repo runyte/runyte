@@ -86,7 +86,7 @@ pub(super) fn run(args: impl IntoIterator<Item = OsString>) -> Result<()> {
         crate::user_paths::system_home_directory()
             .context("cannot resolve account home directory")?
     } else {
-        crate::project_root::discover(&std::env::current_dir()?, Path::new(".runyte"))?.context(
+        crate::project_root::discover(&std::env::current_dir()?, Path::new(".runyte"))?.map(|workspace| workspace.root).context(
             "no project root found; run inside a Git repository or Runyte-initialized directory",
         )?
     };

@@ -533,14 +533,17 @@ fn public_persistent_attachment_fixture() {
         .arg("--config")
         .arg(&config)
         .current_dir(&root)
+        .env("HOME", root.join("home"))
+        .env("XDG_STATE_HOME", root.join("state"))
         .output()
         .unwrap();
     assert!(!undiscovered.status.success());
-    assert!(
-        String::from_utf8_lossy(&undiscovered.stderr)
-            .contains("no workspace here; run runyte --init DIRECTORY to create one"),
-        "{}",
-        String::from_utf8_lossy(&undiscovered.stderr)
+    assert_eq!(
+        String::from_utf8_lossy(&undiscovered.stderr),
+        format!(
+            "Error: runyte needs a workspace in mux mode (the mode setting), and none was found in {} or any directory above it.\n  Open or create one:  runyte --mux DIRECTORY\n  Create one only:     runyte --init DIRECTORY\n",
+            runyte::project_root::display_workspace_path(&root, None)
+        )
     );
     assert!(!root.join(".runyte").exists());
 
