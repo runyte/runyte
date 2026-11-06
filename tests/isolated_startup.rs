@@ -64,3 +64,49 @@ fn normally_compiled_isolated_constructors_do_not_resolve_environment_user_roots
     );
     assert!(!project.join(".runyte").exists());
 }
+
+#[test]
+fn reserved_config_state_refuses_before_editor_construction() {
+    let fixture = TestRuntimeRoot::new("refused-state").unwrap();
+    let project = fixture.create_private_dir("project").unwrap();
+    let config_root = fixture.create_private_dir("config").unwrap();
+    std::fs::create_dir(project.join(".git")).unwrap();
+    std::fs::write(project.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let note = project.join("notes.txt");
+    std::fs::write(&note, "unchanged\n").unwrap();
+    let rejected = config_root.join("state");
+    let config = config_root.join("config.yaml");
+    let source = format!(
+        "mode: ide\nlsp:\n  enable: false\nworkspace:\n  state: {}\n",
+        serde_json::to_string(&rejected).unwrap()
+    );
+    std::fs::write(&config, &source).unwrap();
+    // This is the native state-refusal fixture's configuration. Without a
+    // display, the terminal edition reaches the same pre-App storage admission.
+    let output = Command::new(env!("CARGO_BIN_EXE_runyte"))
+        .args(["--ide", "--config"])
+        .arg(&config)
+        .arg(&note)
+        .envs(user_environment(fixture.path()))
+        .env_remove(runyte::workspace::parent::ENVIRONMENT)
+        .env("RUNYTE_INPUT_TRACE", fixture.join("input.log"))
+        .current_dir(&project)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic.contains("overlaps per-user Runyte storage")
+            && diagnostic.contains("cannot store project data"),
+        "{diagnostic}"
+    );
+    assert!(!fixture.join("input.log").exists());
+    assert!(!fixture.join("context").exists());
+    assert!(!project.join(".runyte").exists());
+    assert!(!rejected.exists());
+    assert_eq!(std::fs::read_to_string(config).unwrap(), source);
+    assert_eq!(std::fs::read_to_string(note).unwrap(), "unchanged\n");
+}

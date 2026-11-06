@@ -191,7 +191,11 @@ elif args.startup_failure:
     if args.startup_failure == 'config':
         (storage/'config/config.yaml').write_text('mode: [invalid\n')
     else:
-        (root/'.runyte').write_text('not a directory')
+        # IDE state is lazy, and an unavailable diagnostic log is non-fatal.
+        # Select storage that startup admission must reject before any App.
+        (storage/'config/config.yaml').write_text(
+            'mode: ide\nlsp:\n  enable: false\nworkspace:\n  state: '
+            + json.dumps(str(storage/'config/state')) + '\n')
 elif not args.mux:
     launch.append(str(root/'notes.txt'))
 p=subprocess.Popen(launch,cwd=launch_directory,env=env,stdout=log,stderr=log)
@@ -330,11 +334,14 @@ try:
         assert p.poll() is None, 'refusal disappeared before close'
         assert (root/'notes.txt').read_text().startswith('Runyte native window')
         assert not list(storage.rglob('context.lock')), 'refusal started context services'
-        if args.startup_failure == 'config':
-            assert not (root/'.runyte').exists(), 'invalid configuration started workspace storage'
+        assert not (storage/'input.log').exists(), 'refusal constructed editor input handling'
+        assert not (root/'.runyte').exists(), 'refusal started workspace storage'
+        assert not (storage/'config/state').exists(), 'refusal created rejected state storage'
         close_window(); p.wait(timeout=15)
         assert p.returncode != 0, 'refused startup succeeded'
-        assert (root/'window.log').read_text().strip(), 'refusal lost stderr diagnostic'
+        diagnostic = (root/'window.log').read_text()
+        expected = 'invalid YAML' if args.startup_failure == 'config' else 'overlaps per-user Runyte storage'
+        assert expected in diagnostic, ('refusal lost its diagnostic', diagnostic)
         print('PASS: visible graphical ' + args.startup_failure + ' refusal persists until close without editor input')
         raise SystemExit(0)
     def pixel(xpos, ypos):
