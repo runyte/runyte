@@ -397,9 +397,9 @@ pub(super) async fn run(
     let launch_directory = std::env::current_dir()?;
     let configured_roots = CapturedRoots::capture();
     let expected_layout = std::env::var_os(EXPECTED_LAYOUT_ENV);
-    let (config, config_path) = Config::load(arguments.config.as_deref())?;
+    let (mut config, config_path) = Config::load(arguments.config.as_deref())?;
     startup.mark(StartupPhase::ConfigLoaded);
-    let reserved = config_path
+    let mut reserved = config_path
         .as_deref()
         .map(|path| {
             let path = config::config_root_for(path, &launch_directory);
@@ -411,6 +411,11 @@ pub(super) async fn run(
         })
         .into_iter()
         .collect::<Vec<_>>();
+    if let Some(cache) = crate::external_open::cache_root() {
+        reserved.push(cache);
+    }
+    let safety = std::sync::Arc::new(crate::workspace_state::StartupSafety::capture(&reserved));
+    config.startup_safety = Some(safety.clone());
     startup.mark(StartupPhase::ProjectResolutionStarted);
     let mut workspace_origin = None;
     let project =
@@ -447,9 +452,9 @@ pub(super) async fn run(
     }
     let location = project_root::resolve_state_location(&project, &config.workspace.state);
     if matches!(location, project_root::StateLocation::OutOfTree(_)) {
-        location.prepare(&reserved)?;
+        location.prepare_with_safety(&project, &safety)?;
     } else {
-        location.validate(&reserved)?;
+        safety.validate(&project, &location)?;
     }
     let state = location.into_path_buf();
     let layout = ResolvedLayout::resolve(LocationInputs {

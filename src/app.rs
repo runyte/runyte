@@ -3624,7 +3624,7 @@ impl App {
 
     #[allow(clippy::too_many_arguments)]
     fn new_with_boundaries(
-        config: Config,
+        mut config: Config,
         targets: Vec<LaunchTarget>,
         project_root: PathBuf,
         startup: &mut StartupTrace,
@@ -3642,12 +3642,19 @@ impl App {
         let plugin_state_anchor = state_location.plugin_anchor(
             crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?,
         );
-        let reserved_user_roots = [config::default_config_root(), external_open::cache_root()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
+        let captured = config.startup_safety.take();
         if !editor_mode {
-            state_location.validate(&reserved_user_roots)?;
+            let safety = crate::workspace_state::StartupSafety::for_startup(captured, || {
+                [config::default_config_root(), external_open::cache_root()]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            });
+            let admission = safety.validate(&project_root, &state_location);
+            safety.close();
+            admission?;
+        } else if let Some(captured) = captured {
+            captured.close();
         }
         let registry = Arc::new(Registry::new());
         startup.mark(StartupPhase::LanguageRegistryReady);

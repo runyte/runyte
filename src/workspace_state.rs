@@ -62,12 +62,7 @@ impl StateLocation {
     }
 
     pub fn validate(&self, reserved: &[PathBuf]) -> Result<()> {
-        let user_root = if matches!(self, Self::InTree(_)) {
-            user_state_root()
-        } else {
-            None
-        };
-        self.validate_with_user_root(reserved, user_root.as_deref())
+        StartupSafety::capture_for_location(reserved, self).validate(self.as_path(), self)
     }
 
     /// Injected reservation roots keep storage tests independent of the account.
@@ -111,7 +106,12 @@ impl StateLocation {
     /// Windows intentionally shares its application container with cache;
     /// workspace data occupies the separate `workspaces` sibling.
     pub fn prepare(&self, reserved: &[PathBuf]) -> Result<()> {
-        self.validate(reserved)?;
+        let safety = StartupSafety::capture_for_location(reserved, self);
+        self.prepare_with_safety(self.as_path(), &safety)
+    }
+
+    pub fn prepare_with_safety(&self, project: &Path, safety: &StartupSafety) -> Result<()> {
+        safety.validate(project, self)?;
         match self {
             Self::InTree(path) => {
                 crate::private_storage::Directory::open(path, true)?;
@@ -136,6 +136,134 @@ impl StateLocation {
             Self::OutOfTree(path) => path.parent()?.parent()?.parent().map(Path::to_owned),
             Self::InTree(_) => None,
         })
+    }
+}
+
+/// A single startup's frozen, alias-safe user-storage reservations. The CLI
+/// passes this admission to App through Config, which consumes and closes it.
+/// A cloned carrier cannot authorize a later startup without fresh capture.
+#[derive(Debug)]
+pub struct StartupSafety {
+    reserved: Vec<(PathBuf, PathBuf)>,
+    user_root: Option<(PathBuf, PathBuf)>,
+    admission: std::sync::Mutex<Admission>,
+    #[cfg(test)]
+    normalizations: std::sync::atomic::AtomicUsize,
+}
+
+#[derive(Debug, Default)]
+struct Admission {
+    closed: bool,
+    selected: Option<(PathBuf, StateLocation)>,
+}
+
+impl StartupSafety {
+    pub fn capture(reserved: &[PathBuf]) -> Self {
+        Self::capture_with(reserved, user_state_root)
+    }
+
+    fn capture_for_location(reserved: &[PathBuf], location: &StateLocation) -> Self {
+        Self::capture_with(reserved, || {
+            if matches!(location, StateLocation::InTree(_)) {
+                user_state_root()
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn capture_with(
+        reserved: &[PathBuf],
+        resolve_user_root: impl FnOnce() -> Option<PathBuf>,
+    ) -> Self {
+        let user_root = resolve_user_root();
+        #[cfg(test)]
+        let count = reserved.len() + usize::from(user_root.is_some());
+        Self {
+            reserved: reserved
+                .iter()
+                .map(|path| (path.clone(), crate::project_root::comparable_path(path)))
+                .collect(),
+            user_root: user_root.map(|path| {
+                let normalized = crate::project_root::comparable_path(&path);
+                (path, normalized)
+            }),
+            admission: std::sync::Mutex::new(Admission::default()),
+            #[cfg(test)]
+            normalizations: std::sync::atomic::AtomicUsize::new(count),
+        }
+    }
+
+    pub fn for_startup(
+        captured: Option<std::sync::Arc<Self>>,
+        reserved: impl FnOnce() -> Vec<PathBuf>,
+    ) -> std::sync::Arc<Self> {
+        if let Some(captured) = captured {
+            if !captured.admission.lock().unwrap().closed {
+                return captured;
+            }
+            let roots = captured
+                .reserved
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect::<Vec<_>>();
+            return std::sync::Arc::new(Self::capture(&roots));
+        }
+        std::sync::Arc::new(Self::capture(&reserved()))
+    }
+
+    pub fn validate(&self, project: &Path, location: &StateLocation) -> Result<()> {
+        let mut admission = self.admission.lock().unwrap();
+        anyhow::ensure!(
+            !admission.closed,
+            "startup storage safety has been consumed; capture fresh reservations"
+        );
+        if admission
+            .selected
+            .as_ref()
+            .is_some_and(|(root, selected)| root == project && selected == location)
+        {
+            return Ok(());
+        }
+        let boundary = match location {
+            StateLocation::InTree(path) => path.as_path(),
+            StateLocation::OutOfTree(path) => {
+                let subtree = path.parent().context("workspace state has no parent")?;
+                if cfg!(windows) {
+                    subtree
+                } else {
+                    subtree
+                        .parent()
+                        .context("workspace state has no user root")?
+                }
+            }
+        };
+        #[cfg(test)]
+        self.normalizations
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let normalized = crate::project_root::comparable_path(boundary);
+        let roots = self.reserved.iter().chain(
+            self.user_root
+                .iter()
+                .filter(|_| matches!(location, StateLocation::InTree(_))),
+        );
+        if let Some((path, _)) = roots.into_iter().find(|(_, reserved)| {
+            crate::project_root::comparable_paths_overlap(&normalized, reserved)
+        }) {
+            anyhow::bail!(
+                "{} overlaps per-user Runyte storage at {} and cannot store project data",
+                boundary.display(),
+                path.display()
+            );
+        }
+        admission.selected = Some((project.to_owned(), location.clone()));
+        Ok(())
+    }
+
+    pub fn close(&self) {
+        let mut admission = self.admission.lock().unwrap();
+        admission.closed = true;
+        admission.selected = None;
     }
 }
 

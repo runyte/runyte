@@ -60,7 +60,10 @@ fn command(program: &Path, owner: &Path, directory: &Path, arguments: &[&str]) -
             std::path::Path::new(&(process_dir(owner, "config"))),
         ))
         .env("XDG_STATE_HOME", process_dir(owner, "state"))
-        .env("RUNYTE_TEST_STATE_HOME", process_dir(owner, "state").join("runyte"))
+        .env(
+            "RUNYTE_TEST_STATE_HOME",
+            process_dir(owner, "state").join("runyte"),
+        )
         .env("XDG_CONFIG_HOME", process_dir(owner, "config"))
         .env("XDG_RUNTIME_DIR", process_dir(owner, "run"))
         .env("XDG_CACHE_HOME", process_dir(owner, "cache"))

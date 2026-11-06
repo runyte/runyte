@@ -125,15 +125,24 @@ pub enum StateLocation {
 
   On Unix, take the home directory from the effective account, as the
   platform cache directory does (see `user_paths::system_home_directory`).
-  Resolve it lazily: launches that never use out-of-tree state must not pay
-  for it.
+  Placement selection stays lazy. The
+  [approved startup safety boundary](https://github.com/runyte/runyte/issues/72#issuecomment-6683697808)
+  permits bounded filesystem checks once at startup: capture the user roots
+  and canonical safety reservations, then reuse the selected workspace
+  admission through CLI, application and host startup. This supersedes the
+  original requirement that unused out-of-tree storage add no filesystem
+  work. Creation remains lazy; lexical-only reservation checks are insufficient
+  because symlink aliases can overlap protected storage.
 - **Per-workspace directory**: `<state root>/workspaces/<workspace id>/`, with
   the same layout as `.runyte/`. Create it owner-only through
   `private_storage`. Refuse a state root that another account owns or can
   write to.
-- **Reserved roots**: add the state root to `reserved_user_roots`, so no
-  in-tree state may overlap it, and check it does not overlap the
-  configuration or cache roots.
+- **Reserved roots**: capture the state root alongside configuration/cache
+  reservations, so no in-tree state may overlap it. Reject a state root that
+  overlaps configuration or cache on Unix/macOS; Windows protects its
+  `workspaces` subtree so the mandated application container can retain its
+  cache sibling. The new state safety checks reuse their canonical result
+  during one startup; existing discovery/layout checks retain their behavior.
 - **Host endpoint length**: without `XDG_RUNTIME_DIR`, the usual case on
   macOS, the endpoint falls back to `<state>/host/…`, and `sun_path` is 104
   bytes there. Compute the worst case for

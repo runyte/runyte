@@ -259,6 +259,15 @@ pub fn initialize(
     configured_state_root: &Path,
     reserved_user_roots: &[PathBuf],
 ) -> Result<PathBuf> {
+    let safety = crate::workspace_state::StartupSafety::capture(reserved_user_roots);
+    initialize_with_safety(requested, configured_state_root, &safety)
+}
+
+pub fn initialize_with_safety(
+    requested: &Path,
+    configured_state_root: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+) -> Result<PathBuf> {
     let project_root = requested
         .canonicalize()
         .with_context(|| format!("cannot resolve project directory {}", requested.display()))?;
@@ -268,9 +277,9 @@ pub fn initialize(
         project_root.display()
     );
     let location = resolve_state_location(&project_root, configured_state_root);
-    location.validate(reserved_user_roots)?;
+    safety.validate(&project_root, &location)?;
     if matches!(location, StateLocation::OutOfTree(_)) {
-        location.prepare(reserved_user_roots)?;
+        location.prepare_with_safety(&project_root, safety)?;
         return Ok(project_root);
     }
     let state_root = location.into_path_buf();
@@ -336,6 +345,25 @@ pub fn adopt(
     targets: &[PathBuf],
     requirement: WorkspaceRequirement,
 ) -> Result<PathBuf> {
+    let safety = crate::workspace_state::StartupSafety::capture(reserved_user_roots);
+    adopt_with_safety(
+        directory,
+        configured_state_root,
+        &safety,
+        homes,
+        targets,
+        requirement,
+    )
+}
+
+pub fn adopt_with_safety(
+    directory: &Path,
+    configured_state_root: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+    homes: &[PathBuf],
+    targets: &[PathBuf],
+    requirement: WorkspaceRequirement,
+) -> Result<PathBuf> {
     let typed = lexical(directory);
     let directory = directory
         .canonicalize()
@@ -374,7 +402,7 @@ pub fn adopt(
             homes.first().map(PathBuf::as_path)
         ));
     }
-    initialize(&directory, configured_state_root, reserved_user_roots).map_err(|error| {
+    initialize_with_safety(&directory, configured_state_root, safety).map_err(|error| {
         let reason = format!("The launch directory could not be made a workspace: {error:#}.");
         error.context(requirement.refusal(
             &directory,
@@ -470,37 +498,40 @@ fn is_usable_relative_marker(path: &Path) -> bool {
 }
 
 fn paths_overlap(left: &Path, right: &Path) -> bool {
+    comparable_paths_overlap(&comparable_path(left), &comparable_path(right))
+}
+
+#[cfg(windows)]
+pub(crate) fn comparable_path(path: &Path) -> PathBuf {
+    let mut ancestor = path;
+    let mut suffix = Vec::new();
+    loop {
+        match ancestor.canonicalize() {
+            Ok(mut resolved) => {
+                for component in suffix.iter().rev() {
+                    resolved.push(component);
+                }
+                break resolved;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let Some(name) = ancestor.file_name() else {
+                    break path.to_path_buf();
+                };
+                suffix.push(name.to_owned());
+                let Some(parent) = ancestor.parent() else {
+                    break path.to_path_buf();
+                };
+                ancestor = parent;
+            }
+            Err(_) => break path.to_path_buf(),
+        }
+    }
+}
+
+pub(crate) fn comparable_paths_overlap(left: &Path, right: &Path) -> bool {
     #[cfg(windows)]
     {
         use std::{os::windows::ffi::OsStrExt, path::Prefix};
-
-        let comparable = |path: &Path| {
-            let mut ancestor = path;
-            let mut suffix = Vec::new();
-            loop {
-                match ancestor.canonicalize() {
-                    Ok(mut resolved) => {
-                        for component in suffix.iter().rev() {
-                            resolved.push(component);
-                        }
-                        break resolved;
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                        let Some(name) = ancestor.file_name() else {
-                            break path.to_path_buf();
-                        };
-                        suffix.push(name.to_owned());
-                        let Some(parent) = ancestor.parent() else {
-                            break path.to_path_buf();
-                        };
-                        ancestor = parent;
-                    }
-                    Err(_) => break path.to_path_buf(),
-                }
-            }
-        };
-        let left = comparable(left);
-        let right = comparable(right);
         let left: Vec<_> = left.components().collect();
         let right: Vec<_> = right.components().collect();
         let component_eq = |left: &Component<'_>, right: &Component<'_>| match (left, right) {
@@ -562,14 +593,12 @@ fn paths_overlap(left: &Path, right: &Path) -> bool {
 
     #[cfg(not(windows))]
     {
-        let left = comparable_path(left);
-        let right = comparable_path(right);
-        left.starts_with(&right) || right.starts_with(&left)
+        left.starts_with(right) || right.starts_with(left)
     }
 }
 
 #[cfg(not(windows))]
-fn comparable_path(path: &Path) -> PathBuf {
+pub(crate) fn comparable_path(path: &Path) -> PathBuf {
     // A future state directory may have several absent parents. Resolve the
     // existing ancestor before comparing it with per-user storage, otherwise
     // a symlink above those parents hides their eventual containment.

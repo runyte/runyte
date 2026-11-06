@@ -561,6 +561,10 @@ Runyte application directory. Unix hosts prefer a private `XDG_RUNTIME_DIR`;
 out-of-tree workspaces otherwise use a short private directory beneath `/tmp`
 for sockets and endpoint metadata. The workspace ID stays unchanged.
 
+Startup captures canonical storage reservations once to reject aliases into
+configuration, cache or per-user state. It reuses that safety result through
+application startup; checking a reservation does not create state directories.
+
 This storage foundation does not change which workspaces use out-of-tree
 state, or relocate existing state directories.
 

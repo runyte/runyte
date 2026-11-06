@@ -26,9 +26,18 @@ fingerprinting hashes captured selector bytes without filesystem operations.
 
 Reservation validation additionally compares in-tree state against the new
 per-user state root, including canonical existing ancestors to detect aliases.
-This can add metadata lookups during startup validation. It creates no state
-directory, and no complete startup timing was measured for this change.
-The home-workspace selection policy is separate work in #73.
+The [approved cost boundary](https://github.com/runyte/runyte/issues/72#issuecomment-6683697808)
+permits bounded safety checks once at startup: user roots and canonical
+reservations are captured once, and the selected project/location admission
+is reused through CLI, application and host startup. App consumes that
+admission; a later startup using a cloned configuration captures fresh safety
+information. This applies to the new state-root checks, not preexisting
+workspace discovery/layout checks. Regression tests count root resolution and
+canonical normalization and verify admission reuse and fresh alias checks.
+
+These checks create no state directory; creation remains deferred until the
+workspace needs state. No complete startup timing was measured for this
+change. The home-workspace selection policy is separate work in #73.
 
 ## 2026-10-25 — commented defaults and larger configured keymaps
 
