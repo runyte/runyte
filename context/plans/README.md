@@ -26,12 +26,6 @@ current sources take precedence.
 
 Active work:
 
-- [Flexible startup](active/PLAN_FLEXIBLE_STARTUP.md): the configured mode for
-  graphical launches, a home workspace whose state lives outside `~`, a
-  per-user out-of-tree state directory, clearer no-workspace refusals and a
-  startup echo of the chosen workspace
-  ([#71](https://github.com/runyte/runyte/issues/71)).
-
 - [MCP read and write permissions](active/PLAN_MCP_READ_WRITE_PERMISSIONS.md):
   two per-workspace permissions, direct terminal writes with a revision-guarded
   delayed Enter, and removal of nudges, terminal bindings and reviewed
@@ -61,6 +55,12 @@ Proposed work:
   portability and browser lifecycle ownership before implementation.
 
 The retained completed records cover:
+
+- [Flexible startup](completed/PLAN_FLEXIBLE_STARTUP.md): the configured mode for
+  graphical launches, a home workspace whose state lives outside `~`, a
+  per-user out-of-tree state directory, clearer no-workspace refusals and a
+  startup echo of the chosen workspace
+  ([#71](https://github.com/runyte/runyte/issues/71));
 
 - [Per-terminal scrollback and stable review](completed/PLAN_TERMINAL_SCROLLBACK.md):
   configurable history depth per terminal, frozen native review independent of

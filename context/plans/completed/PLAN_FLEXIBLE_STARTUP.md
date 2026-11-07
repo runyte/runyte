@@ -1,17 +1,21 @@
 # Flexible startup
 
-Status: in progress; current implementation status is on the tracking issue:
-[#71](https://github.com/runyte/runyte/issues/71). Work items:
-[#72](https://github.com/runyte/runyte/issues/72),
-[#73](https://github.com/runyte/runyte/issues/73),
-[#74](https://github.com/runyte/runyte/issues/74),
-[#75](https://github.com/runyte/runyte/issues/75),
-[#76](https://github.com/runyte/runyte/issues/76).
+Status: implemented. Tracking issue:
+[#71](https://github.com/runyte/runyte/issues/71). Work items and their pull
+requests:
+[#75](https://github.com/runyte/runyte/issues/75) (PR #79),
+[#76](https://github.com/runyte/runyte/issues/76) (PR #80),
+[#72](https://github.com/runyte/runyte/issues/72) (PR #82),
+[#73](https://github.com/runyte/runyte/issues/73) (PR #83) and
+[#74](https://github.com/runyte/runyte/issues/74) (PR #84). Manual macOS
+acceptance of the graphical launcher is recorded on
+[#74](https://github.com/runyte/runyte/issues/74#issuecomment-6706757398).
 
-Status and discussion live on GitHub. This plan holds the design, the order of
-work and the checks an implementation must pass. The decisions and their
-rejected alternatives are recorded in #71; this plan does not repeat the
-arguments, only the outcome.
+This plan records the design, the order of work and the checks the
+implementation had to pass. The decisions and their rejected alternatives are
+recorded in #71; this plan does not repeat the arguments, only the outcome.
+Current behavior lives in the user guide, `context/reference/` and the source,
+which take precedence over this record.
 
 ## Goal
 
@@ -230,7 +234,7 @@ needed. An ignored macOS `XDG_STATE_HOME` alone is insufficient isolation.
 2. #72, a PR with no user-visible change apart from the documentation of the
    state root.
 3. #73, which adds `WorkspaceOrigin::Home` and its echo row in #76's table.
-4. #74, which needs manual acceptance on macOS before the issue closes.
+4. #74, which needed manual acceptance on macOS before the issue closed.
 
 #69 (the macOS Dock icon for terminal launches) is independent and can land
 at any point.
@@ -262,13 +266,26 @@ at any point.
 - `context/issues/resolved/editor_ide_and_mux_modes.md`: a dated later-change
   note for the home workspace, keeping the original record.
 
-## Open questions, settled on the issue before implementing
+## Open questions, settled on the issues before implementing
 
-- #72: whether the state root joins the context-discovery environment
-  fingerprint.
-- #72: where the endpoint goes if the macOS path can exceed `sun_path`.
-- #74: settled on the issue: escaped absolute account-home `Path=` on Linux.
-- #74: settled: first-file directory, with original relative-argument meaning.
-- #74: settled: a retained native error view, default presentation for invalid
-  configuration, stderr only if no window can be created; manual macOS acceptance
-  remains required.
+- #72: the captured `XDG_STATE_HOME` selector joins the context-discovery
+  environment fingerprint
+  ([decision](https://github.com/runyte/runyte/issues/72#issuecomment-6681530846)).
+- #72: without a valid `XDG_RUNTIME_DIR`, out-of-tree workspaces use a short
+  private endpoint under `/tmp/runyte-<uid>/`, within the macOS `sun_path`
+  limit (same decision).
+- #74: an escaped absolute account-home `Path=` on Linux.
+- #74: the first file's directory chooses the workspace, and relative arguments
+  keep their meaning from the original directory.
+- #74: a retained native error view, default presentation for invalid
+  configuration, and stderr only if no window can be created
+  ([decision](https://github.com/runyte/runyte/issues/74#issuecomment-6681500006)).
+  Manual macOS acceptance passed.
+
+## Known limitations
+
+- Finder file-open Apple Events are not integrated; they were out of scope.
+- If the platform cannot create a native window, a startup refusal is reported
+  only on stderr.
+- A later filesystem failure while opening a graphical mux launch's batch of
+  files can leave earlier files open in the retained host; the error is shown.
