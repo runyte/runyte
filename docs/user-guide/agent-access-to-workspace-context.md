@@ -57,7 +57,7 @@ connected reader identifies a local connection, not a verified agent process.
 
 | Key | Permission or action |
 | --- | --- |
-| `1` | Read: every buffer (unsaved text included), selection and pane, every terminal's screen, history, number and title, and the agent channel |
+| `1` | Read: buffers outside the private context store (unsaved text included), their selection and pane, every terminal's screen, history, number and title, and the agent channel |
 | `2` | Write: edit and append to buffers, type into terminals and press Enter there; also turns on Read |
 | `r` | Remember this exact workspace's grant |
 | `n` | Next known identity; discards unapplied choices |
@@ -142,8 +142,11 @@ Grants cover unsaved content and possibly sensitive terminal output. They
 belong to the canonical project root and the MCP identity, so a clone, a
 nested workspace, or another identity needs its own grant.
 
-**Where grants are stored:** outside the project, in the account's Runyte
-cache.
+**Where grants are stored:** in the account's Runyte cache. The standard
+location is allowed inside an exact account-home workspace, including when
+that home is also a version-control root. Its records stay out of file finding,
+content search, and agent buffer, pane and snapshot reads. Other workspaces
+still require the store to be outside the workspace.
 
 | Platform | Location |
 | --- | --- |
@@ -152,7 +155,8 @@ cache.
 | Windows | `runyte\context` below the account's LocalAppData known folder, resolved by the operating system rather than the inherited `%LOCALAPPDATA%` |
 
 - `RUNYTE_CONTEXT_HOME` can select an absolute, owner-private directory
-  outside the workspace. On Windows its parent must exist and the storage must
+  outside the workspace. Setting it explicitly, even to the standard location,
+  does not grant the home-workspace exception. On Windows its parent must exist and the storage must
   be local NTFS; Runyte applies an owner-only ACL and refuses reparse or
   hardlink traversal. On Unix it can also shorten a path to fit the local
   socket limit.

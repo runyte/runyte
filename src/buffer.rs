@@ -322,6 +322,9 @@ pub const SOFT_WRAP_LINE_LIMIT: usize = 64_000_000;
 pub struct Buffer {
     text: Text,
     pub path: Option<PathBuf>,
+    opened_path_identity: Option<PathBuf>,
+    opened_file_identity: Option<FileIdentity>,
+    opened_link_count: u64,
     pub dirty: bool,
     pub kind: BufferKind,
     /// Source for a native read-only media projection, never a text save target.
@@ -422,6 +425,7 @@ pub(crate) struct DiskState {
     modified: Option<std::time::SystemTime>,
     digest: String,
     identity: Option<FileIdentity>,
+    link_count: u64,
     access: Option<FileAccessState>,
 }
 
@@ -527,6 +531,15 @@ impl DiskState {
             modified: metadata.modified().ok(),
             digest: crate::hash::sha256_hex(contents),
             identity: file_identity(file, metadata)?,
+            #[cfg(unix)]
+            link_count: {
+                use std::os::unix::fs::MetadataExt;
+                metadata.nlink()
+            },
+            #[cfg(windows)]
+            link_count: crate::windows_fs::link_count(file)?,
+            #[cfg(not(any(unix, windows)))]
+            link_count: 1,
             access: file_access_state(file, metadata)?,
         })
     }
@@ -568,13 +581,23 @@ impl DiskState {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg(not(windows))]
-struct FileIdentity {
-    device: u64,
-    inode: u64,
+pub(crate) struct FileIdentity {
+    pub(crate) device: u64,
+    pub(crate) inode: u64,
+}
+
+#[cfg(not(windows))]
+impl FileIdentity {
+    pub(crate) fn stable_bytes(&self) -> [u8; 24] {
+        let mut bytes = [0; 24];
+        bytes[..8].copy_from_slice(&self.device.to_le_bytes());
+        bytes[8..16].copy_from_slice(&self.inode.to_le_bytes());
+        bytes
+    }
 }
 
 #[cfg(windows)]
-type FileIdentity = crate::windows_fs::Identity;
+pub(crate) type FileIdentity = crate::windows_fs::Identity;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct FileAccessState {
@@ -587,7 +610,10 @@ struct FileAccessState {
 }
 
 #[cfg(unix)]
-fn file_identity(_file: &File, metadata: &fs::Metadata) -> io::Result<Option<FileIdentity>> {
+pub(crate) fn file_identity(
+    _file: &File,
+    metadata: &fs::Metadata,
+) -> io::Result<Option<FileIdentity>> {
     use std::os::unix::fs::MetadataExt;
 
     Ok(Some(FileIdentity {
@@ -597,12 +623,18 @@ fn file_identity(_file: &File, metadata: &fs::Metadata) -> io::Result<Option<Fil
 }
 
 #[cfg(windows)]
-fn file_identity(file: &File, _metadata: &fs::Metadata) -> io::Result<Option<FileIdentity>> {
+pub(crate) fn file_identity(
+    file: &File,
+    _metadata: &fs::Metadata,
+) -> io::Result<Option<FileIdentity>> {
     crate::windows_fs::Identity::of(file).map(Some)
 }
 
 #[cfg(not(any(unix, windows)))]
-fn file_identity(_file: &File, _metadata: &fs::Metadata) -> io::Result<Option<FileIdentity>> {
+pub(crate) fn file_identity(
+    _file: &File,
+    _metadata: &fs::Metadata,
+) -> io::Result<Option<FileIdentity>> {
     Ok(None)
 }
 
@@ -1827,6 +1859,32 @@ impl DocumentSave {
 }
 
 impl Buffer {
+    pub(crate) fn opened_path_identity(&self) -> Option<&Path> {
+        self.opened_path_identity.as_deref()
+    }
+
+    pub(crate) fn accepted_file_identity(&self) -> Option<&FileIdentity> {
+        self.opened_file_identity.as_ref()
+    }
+
+    /// Identity captured with the most recently accepted disk text. A reload
+    /// can replace the original inode without replacing this buffer slot.
+    pub(crate) fn accepted_disk_file_identity(&self) -> Option<&FileIdentity> {
+        self.disk_state
+            .as_ref()
+            .and_then(|state| state.identity.as_ref())
+    }
+
+    pub(crate) fn accepted_disk_was_multiply_linked(&self) -> bool {
+        self.disk_state
+            .as_ref()
+            .is_some_and(|state| state.link_count > 1)
+    }
+
+    pub(crate) fn was_multiply_linked(&self) -> bool {
+        self.opened_link_count > 1
+    }
+
     pub(crate) fn observe_revision(&mut self, guard: Weak<AtomicBool>) {
         self.revision_guards
             .retain(|guard| guard.strong_count() > 0);
@@ -1857,6 +1915,9 @@ impl Buffer {
         Self {
             text: Text::new(),
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::Scratch,
             directory: None,
@@ -1891,6 +1952,8 @@ impl Buffer {
 
     fn from_opened_text(path: &Path, contents: String, disk_state: DiskState) -> Self {
         let text = Text::from_str(&contents);
+        let opened_file_identity = disk_state.identity.clone();
+        let opened_link_count = disk_state.link_count;
         Self {
             media_path: None,
             wrap_cache: crate::wrap::Cache::default(),
@@ -1898,6 +1961,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: Some(path.to_path_buf()),
+            opened_path_identity: crate::path_safety::path_identity(path).ok(),
+            opened_file_identity,
+            opened_link_count,
             dirty: false,
             kind: BufferKind::File,
             directory: None,
@@ -2113,6 +2179,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: Some(path.to_path_buf()),
+            opened_path_identity: crate::path_safety::path_identity(path).ok(),
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::Directory,
             directory: Some(directory),
@@ -2160,6 +2229,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::WorkspaceSearch {
                 query: query.into(),
@@ -2198,6 +2270,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::GitCommit {
                 oid: oid.into(),
@@ -2286,6 +2361,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::CommitMessage,
             directory: None,
@@ -2314,6 +2392,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::GitStatus,
             directory: None,
@@ -2342,6 +2423,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::GitBranches,
             directory: None,
@@ -2370,6 +2454,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::GitWorktrees,
             directory: None,
@@ -2403,6 +2490,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::GitLog,
             directory: None,
@@ -2430,6 +2520,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::GitBlame,
             directory: None,
@@ -2457,6 +2550,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::GitStash,
             directory: None,
@@ -2489,6 +2585,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::Virtual {
                 identity,
@@ -2521,6 +2620,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::Help,
             directory: None,
@@ -2548,6 +2650,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::Settings {
                 rows,
@@ -2578,6 +2683,9 @@ impl Buffer {
             saved_text: Some(text.clone()),
             text,
             path: None,
+            opened_path_identity: None,
+            opened_file_identity: None,
+            opened_link_count: 0,
             dirty: false,
             kind: BufferKind::Notifications {
                 rows: document.rows,
@@ -3682,6 +3790,9 @@ impl Buffer {
         let (directory, contents) = DirectoryBuffer::open(path.to_path_buf(), view)?;
         self.directory = Some(directory);
         self.path = Some(path.to_path_buf());
+        self.opened_path_identity = crate::path_safety::path_identity(path).ok();
+        self.opened_file_identity = None;
+        self.opened_link_count = 0;
         self.invalidate_revision_guards();
         self.text = Text::from_str(&contents);
         self.undo.clear();

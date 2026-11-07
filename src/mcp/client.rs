@@ -207,6 +207,7 @@ struct Resource {
 pub(super) struct Bridge {
     pub(super) durable_profile: Option<super::durable::Profile>,
     root: Option<PathBuf>,
+    store_policy: Option<storage::ContextStorePolicy>,
     pub(super) identity: String,
     timeout: Duration,
     prefix: String,
@@ -248,9 +249,11 @@ impl Bridge {
         identity: String,
         timeout: Duration,
     ) -> std::io::Result<Self> {
+        let store_policy = root.clone().map(storage::ContextStorePolicy::for_discovery);
         Ok(Self {
             durable_profile: None,
             root,
+            store_policy,
             identity,
             timeout,
             prefix: storage::random_token()?[..12].into(),
@@ -300,8 +303,8 @@ impl Bridge {
         hidden: bool,
         offset: usize,
     ) -> Result<Value> {
-        let inventory = discovery::discover(
-            self.root.clone(),
+        let inventory = discovery::discover_with_policy(
+            self.store_policy.clone(),
             &storage::environment_fingerprint(),
             hidden,
         )
@@ -360,7 +363,8 @@ impl Bridge {
         let loaded = self
             .root
             .as_ref()
-            .and_then(|root| Storage::open_existing(root.clone()).ok())
+            .and_then(|_| self.store_policy.clone())
+            .and_then(|policy| Storage::open_existing_with_policy(policy).ok())
             .and_then(|store| store.load_identity(&self.identity).ok().flatten());
         let duration = self.timeout;
         let root = self.root.clone();

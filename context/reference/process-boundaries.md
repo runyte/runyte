@@ -83,6 +83,17 @@ identity's readers; the endpoint stays while any identity is granted. Frames are
 at most 2 MiB; readers, outstanding requests, snapshots, retained bytes and
 waiting Enters have independent quotas.
 
+The standard private context store may be inside the exact captured account
+home when that home is the workspace root, including a VCS root. Startup,
+remembered grants, publication and MCP discovery use the same captured store
+policy; an explicit `RUNYTE_CONTEXT_HOME` keeps the outside-workspace rule.
+The store is excluded from file finding and workspace search, and its buffers,
+panes and retained snapshots are unavailable through context reads and edits.
+Accepted private file identity remains private after a path is renamed or
+unlinked. A bounded, descriptor-relative identity inventory also filters
+hardlink aliases while they are observable. This is a Runyte API boundary,
+not a same-account process sandbox or terminal-output redaction.
+
 [`runyte mcp`](../../docs/mcp.md) adapts MCP over stdio to this same context
 transport. An external client starts the adapter; the adapter connects to
 granted hosts and gains no additional authority. Its thirteen-tool catalog is

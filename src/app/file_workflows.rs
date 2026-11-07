@@ -1109,6 +1109,7 @@ impl App {
             self.track_in_git(&path);
             self.buffers.len() - 1
         };
+        self.note_context_buffer_acceptance(buffer_id);
         self.activate_opened_path(buffer_id, &path, was_showing);
         Ok(())
     }
@@ -1181,6 +1182,7 @@ impl App {
         } else {
             let index = self.buffers.len();
             self.buffers.push(buffer);
+            self.note_context_buffer_acceptance(index);
             self.syntax.push(None);
             self.reparse_whole(index);
             self.track_in_git(&path);
@@ -1368,6 +1370,7 @@ impl App {
             !activate || paths.is_empty() || !self.plugins.filesystem_applying,
             "Wait for filesystem changes before opening a path"
         );
+        let _privacy_batch = self.context_privacy_batch();
         let covered_terminal = activate.then(|| self.active_terminal()).flatten();
         enum Prepared {
             /// Already open before this request, so nothing is staged for it.
@@ -1437,6 +1440,16 @@ impl App {
             Prepared::Live(index) => self.buffers[*index].is_directory(),
             Prepared::Staged(slot) => staged[*slot].2.is_directory(),
         });
+        // The publication hook may unlink or rename a prepared file. Record
+        // private provenance while each accepted identity is still present.
+        let staged_private = staged
+            .iter()
+            .map(|(_, _, buffer)| self.context_buffer_value_is_private(buffer))
+            .collect::<Vec<_>>();
+        let refreshed_private = refreshed
+            .iter()
+            .map(|(_, buffer)| self.context_buffer_value_is_private(buffer))
+            .collect::<Vec<_>>();
         before_publish();
         let activated_directory = if activate && first_is_directory {
             let path = &paths[0];
@@ -1510,9 +1523,14 @@ impl App {
             Some(Prepared::Staged(slot)) => Some(*slot),
             Some(Prepared::Live(_)) | None => None,
         });
-        for (index, replacement) in refreshed {
+        for ((index, replacement), was_private) in refreshed.into_iter().zip(refreshed_private) {
+            self.note_context_buffer_acceptance(index);
             let language = buffer_language(&self.buffers[index], &self.registry);
             self.buffers[index] = replacement;
+            if was_private {
+                self.mark_context_buffer_private(index);
+            }
+            self.note_context_buffer_acceptance(index);
             self.resync_replaced_buffer(index, language);
             self.normalize_buffer(index);
         }
@@ -1526,6 +1544,10 @@ impl App {
             self.syntax.push(None);
             self.buffers.push(buffer);
             let buffer_id = self.buffers.len() - 1;
+            if staged_private[slot] {
+                self.mark_context_buffer_private(buffer_id);
+            }
+            self.note_context_buffer_acceptance(buffer_id);
             self.reparse_whole(buffer_id);
             if !is_directory {
                 // A newly opened file is the one moment its staged text has to
@@ -2276,6 +2298,7 @@ impl App {
         );
         let language_before = buffer_language(&self.buffers[buffer_id], &self.registry);
         self.buffers[buffer_id].reload_from_observation(observation)?;
+        self.note_context_buffer_acceptance(buffer_id);
         self.resync_replaced_buffer(buffer_id, language_before);
         self.normalize_buffer(buffer_id);
         let path = self.buffers[buffer_id]
@@ -2571,11 +2594,15 @@ impl App {
         };
         let snapshot =
             Buffer::virtual_text_identified(identity, format!("[disk] {}", path.display()), text);
+        let private_source = self.context_buffer_is_private(source);
         if let Some(index) = existing_disk_diff {
             let left = self.diffs[index].side(Side::Left);
             let right = self.diffs[index].side(Side::Right);
             debug_assert_eq!(right.buffer, source);
             self.buffers[left.buffer] = snapshot;
+            if private_source {
+                self.mark_context_buffer_private(left.buffer);
+            }
             self.retire_syntax(left.buffer);
             let source_text = self.buffers[source].to_string();
             let session = DiffSession::new(left, right, text, &source_text).with_revisions((
@@ -2594,6 +2621,9 @@ impl App {
         self.buffers.push(snapshot);
         self.syntax.push(None);
         let disk = self.buffers.len() - 1;
+        if private_source {
+            self.mark_context_buffer_private(disk);
+        }
         let Some((left, right)) = self.diff_sides(disk, source) else {
             self.closed_buffers.insert(disk);
             self.action_failed("comparing needs room for two panes");

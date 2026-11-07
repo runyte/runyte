@@ -148,6 +148,12 @@ pub struct StartupSafety {
     user_root: Option<(PathBuf, PathBuf)>,
     user_root_source: UserRootSource,
     homes: Vec<(PathBuf, PathBuf)>,
+    #[cfg(any(unix, windows))]
+    context_root: Option<PathBuf>,
+    #[cfg(any(unix, windows))]
+    context_standard: bool,
+    #[cfg(windows)]
+    context_location: Option<crate::workspace::context::storage::StorageLocation>,
     admission: std::sync::Mutex<Admission>,
     #[cfg(test)]
     normalizations: std::sync::atomic::AtomicUsize,
@@ -183,14 +189,32 @@ impl StartupSafety {
     }
 
     pub fn capture(reserved: &[PathBuf]) -> Self {
-        Self {
+        let mut safety = Self {
             user_root_source: UserRootSource::Account,
             ..Self::capture_with_homes(
                 reserved,
                 user_state_root,
                 &crate::project_root::user_home_directories(),
             )
+        };
+        #[cfg(unix)]
+        {
+            safety.context_root = crate::workspace::context::storage::Storage::default_root();
         }
+        #[cfg(windows)]
+        {
+            safety.context_location =
+                crate::workspace::context::storage::Storage::default_location();
+            safety.context_root = safety
+                .context_location
+                .as_ref()
+                .map(|location| location.root().to_owned());
+        }
+        #[cfg(any(unix, windows))]
+        {
+            safety.context_standard = std::env::var_os("RUNYTE_CONTEXT_HOME").is_none();
+        }
+        safety
     }
 
     fn capture_for_location(reserved: &[PathBuf], location: &StateLocation) -> Self {
@@ -240,10 +264,23 @@ impl StartupSafety {
             }),
             user_root_source: UserRootSource::Explicit,
             homes,
+            #[cfg(any(unix, windows))]
+            context_root: None,
+            #[cfg(any(unix, windows))]
+            context_standard: false,
+            #[cfg(windows)]
+            context_location: None,
             admission: std::sync::Mutex::new(Admission::default()),
             #[cfg(test)]
             normalizations: std::sync::atomic::AtomicUsize::new(count),
         }
+    }
+
+    #[cfg(all(test, unix))]
+    pub(crate) fn with_context_store(mut self, root: PathBuf, standard: bool) -> Self {
+        self.context_root = Some(root);
+        self.context_standard = standard;
+        self
     }
 
     pub fn for_startup(
@@ -259,7 +296,7 @@ impl StartupSafety {
                 .iter()
                 .map(|(path, _)| path.clone())
                 .collect::<Vec<_>>();
-            let refreshed = match captured.user_root_source {
+            let mut refreshed = match captured.user_root_source {
                 UserRootSource::Account => Self::capture(&roots),
                 UserRootSource::Explicit => Self::capture_with_homes(
                     &roots,
@@ -271,6 +308,17 @@ impl StartupSafety {
                         .collect::<Vec<_>>(),
                 ),
             };
+            if matches!(captured.user_root_source, UserRootSource::Explicit) {
+                #[cfg(any(unix, windows))]
+                {
+                    refreshed.context_root = captured.context_root.clone();
+                    refreshed.context_standard = captured.context_standard;
+                }
+                #[cfg(windows)]
+                {
+                    refreshed.context_location = captured.context_location.clone();
+                }
+            }
             return std::sync::Arc::new(refreshed);
         }
         std::sync::Arc::new(Self::capture(&reserved()))
@@ -278,6 +326,36 @@ impl StartupSafety {
 
     pub(crate) fn is_home(&self, project: &Path) -> bool {
         self.homes.iter().any(|(_, home)| home == project)
+    }
+
+    #[cfg(any(unix, windows))]
+    pub(crate) fn context_policy(
+        &self,
+        project: &Path,
+    ) -> Option<crate::workspace::context::storage::ContextStorePolicy> {
+        let root = self.context_root.clone()?;
+        let resolved = crate::project_root::comparable_path(&root);
+        let homes = self
+            .homes
+            .iter()
+            .filter(|(_, home)| home == project)
+            .map(|(_, home)| home.clone())
+            .collect::<Vec<_>>();
+        Some(
+            crate::workspace::context::storage::ContextStorePolicy::captured_canonical(
+                root,
+                resolved,
+                &homes,
+                self.context_standard,
+            ),
+        )
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn context_location(
+        &self,
+    ) -> Option<crate::workspace::context::storage::StorageLocation> {
+        self.context_location.clone()
     }
 
     pub(crate) fn state_root(&self) -> Option<&Path> {
