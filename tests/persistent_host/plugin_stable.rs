@@ -2,14 +2,85 @@
 
 use super::*;
 
-async fn marker(path: &Path, label: &str) {
-    let deadline = Instant::now() + HOST_RESPONSE_TIMEOUT;
-    while !path.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "stable plugin worker did not reach {label}"
+struct WorkerProgress<'a> {
+    sandbox: &'a TestSandbox,
+    root: &'a Path,
+}
+
+impl WorkerProgress<'_> {
+    fn diagnostics(&self, child: &mut ChildGuard) -> String {
+        use std::io::Read;
+
+        let host = child.0.as_mut().map(|child| child.try_wait());
+        let worker = fs::read_to_string(self.sandbox.runtime.join("application-worker.starts"))
+            .ok()
+            .and_then(|text| text.trim().parse::<u32>().ok())
+            .map(process_is_running);
+        let mut report = format!("host exit={host:?}; worker running={worker:?}");
+        for name in [
+            "application-worker.trace",
+            "application-worker.stderr",
+            "host.stderr",
+            "host.input",
+        ] {
+            let mut bytes = Vec::new();
+            if let Ok(file) = fs::File::open(self.sandbox.runtime.join(name)) {
+                let _ = file.take(8192).read_to_end(&mut bytes);
+            }
+            report.push_str(&format!("\n{name}: {}", String::from_utf8_lossy(&bytes)));
+        }
+        // Diagnostics contain only this fixture's input and protocol exchange.
+        // Bound each capture and remove paths and their derived workspace IDs.
+        let id = runyte::workspace::workspace_id(self.root);
+        report
+            .replace(&id, "<workspace-id>")
+            .replace(&id[..ABBREVIATED_WORKSPACE_ID], "<workspace-id>")
+            .replace(&*self.root.to_string_lossy(), "<project>")
+            .replace(&*self.sandbox.runtime_dir().to_string_lossy(), "<runtime>")
+            .replace(env!("CARGO_MANIFEST_DIR"), "<checkout>")
+    }
+
+    async fn marker(
+        &self,
+        suffix: &str,
+        label: &str,
+        child: &mut ChildGuard,
+        mut client: Option<&mut LocalClient>,
+    ) -> usize {
+        let path = self
+            .sandbox
+            .runtime
+            .join(format!("application-worker.{suffix}"));
+        let started = Instant::now();
+        let mut frames = 0;
+        while !path.exists() {
+            assert!(
+                started.elapsed() < HOST_RESPONSE_TIMEOUT,
+                "stable plugin worker did not reach {label} after {:?}; drained {frames} frames; {}",
+                started.elapsed(),
+                self.diagnostics(child)
+            );
+            // A frame is not an input acknowledgement. Keep reading while the
+            // worker advances: otherwise an earlier asynchronous redraw can
+            // block the connection writer before it reads our F12 request.
+            tokio::select! {
+                result = async {
+                    match client.as_deref_mut() {
+                        Some(client) => client.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => match result {
+                    Ok(Some(HostResponse::Frame { .. } | HostResponse::EditorDamage { .. } | HostResponse::TerminalDamage { .. })) => frames += 1,
+                    other => panic!("host stopped advancing {label}: {other:?}; {}", self.diagnostics(child)),
+                },
+                _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+        }
+        eprintln!(
+            "stable plugin {label}: {:?}, drained {frames} frames",
+            started.elapsed()
         );
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        frames
     }
 }
 
@@ -34,6 +105,15 @@ async fn jobs(client: &mut LocalClient, expected: usize, attached: bool) {
 
 #[tokio::test]
 async fn stable_view_and_finite_job_survive_repeated_real_attachments() {
+    stable_lifecycle(false).await;
+}
+
+#[tokio::test]
+async fn stable_lifecycle_drains_queued_frames_before_command_delivery() {
+    stable_lifecycle(true).await;
+}
+
+async fn stable_lifecycle(queued_frames: bool) {
     let sandbox = TestSandbox::new();
     let root = project();
     let program = sandbox.runtime.join("application-worker");
@@ -45,38 +125,58 @@ async fn stable_view_and_finite_job_survive_repeated_real_attachments() {
     // Only the checked-in stand-in executes. The adjacent behavior is data,
     // uses POSIX tools, and needs no Python/Node installation on Rust CI.
     fs::write(sandbox.runtime.join("application-worker.behavior"), r#"
+exec 2> "$0.stderr"
+trace_count=0
+trace() {
+    if [ "$trace_count" -lt 32 ]; then
+        printf '%.256s\n' "$1" >> "$0.trace"
+        trace_count=$((trace_count + 1))
+    fi
+}
+trap 'trace "worker exit=$?"' 0
+accepted() {
+    trace "$1 response"
+    case "$message" in *'"error"'*) trace "$message"; exit 2;; esac
+}
 printf '%s\n' "$$" >> "$0.starts"
 read -r hello
+trace "hello received; register sent"
 printf '%s\n' '{"type":"register","version":"runyte-1","runyte":">=0.0.0, <18446744073709551615.0.0","required_features":[],"optional_features":[],"name":"Attachment application","commands":[{"name":"open","description":"Open retained progress","context":"workspace"}],"required_capabilities":["views","jobs"],"optional_capabilities":[]}'
 read -r registered
+trace "registered"
 printf 'ready\n' > "$0.ready"
 while read -r message; do
     case "$message" in
         *'"method":"command.invoke"'*)
+            trace "command.invoke received; view.create sent"
             invocation=$(printf '%s' "$message" | sed -n 's/.*"id":"\(h:[0-9]*\)".*/\1/p')
             printf '%s\n' '{"type":"request","id":"p:1","method":"view.create","params":{"model":{"title":"Retained application","purpose":"list","rows":[{"id":"stable","text":"Waiting for detached completion","role":"ordinary"}]}}}'
             ;;
         *'"type":"response","id":"p:1"'*)
+            accepted "view.create"
             view=$(printf '%s' "$message" | sed -n 's/.*"view":"\([^"]*\)".*/\1/p')
             revision=$(printf '%s' "$message" | sed -n 's/.*"revision":"\([^"]*\)".*/\1/p')
             printf '{"type":"request","id":"p:2","method":"pane.show","params":{"invocation":"%s","view":"%s"}}\n' "$invocation" "$view"
             ;;
         *'"type":"response","id":"p:2"'*)
+            accepted "pane.show"
             printf '%s\n' '{"type":"request","id":"p:3","method":"job.create","params":{"title":"Detached application work","deadline_seconds":60}}'
             ;;
         *'"type":"response","id":"p:3"'*)
+            accepted "job.create"
             job=$(printf '%s' "$message" | sed -n 's/.*"job":"\([^"]*\)".*/\1/p')
             printf '{"type":"response","id":"%s","result":{"job":"%s"}}\n' "$invocation" "$job"
+            trace "invocation completed; finite job accepted"
             printf 'working\n' > "$0.working"
             while [ ! -e "$0.release" ]; do sleep 0.01; done
             printf '{"type":"request","id":"p:4","method":"view.publish","params":{"view":"%s","expected_revision":"%s","model":{"title":"Retained application","purpose":"list","rows":[{"id":"stable","text":"Completed while detached","role":"heading"}]}}}\n' "$view" "$revision"
             ;;
         *'"type":"response","id":"p:4"'*)
-            case "$message" in *'"error"'*) exit 2;; esac
+            accepted "view.publish"
             printf '{"type":"request","id":"p:5","method":"job.finish","params":{"job":"%s","state":"succeeded"}}\n' "$job"
             ;;
         *'"type":"response","id":"p:5"'*)
-            case "$message" in *'"error"'*) exit 3;; esac
+            accepted "job.finish"
             printf 'finished\n' > "$0.finished"
             ;;
     esac
@@ -91,9 +191,10 @@ done
         .current_dir(&root)
         .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
         .env("XDG_CACHE_HOME", sandbox.cache_dir())
+        .env("RUNYTE_INPUT_TRACE", sandbox.runtime.join("host.input"))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stderr(fs::File::create(sandbox.runtime.join("host.stderr")).unwrap())
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
@@ -103,22 +204,55 @@ done
         Some(sandbox.runtime_dir()),
     )
     .unwrap();
-    assert!(wait_for_endpoint(&mut child, &endpoint).await);
-    marker(
-        &sandbox.runtime.join("application-worker.ready"),
-        "registration",
-    )
-    .await;
+    let progress = WorkerProgress {
+        sandbox: &sandbox,
+        root: &root,
+    };
+    assert!(
+        wait_for_endpoint(&mut child, &endpoint).await,
+        "{}",
+        progress.diagnostics(&mut child)
+    );
+    progress
+        .marker("ready", "registration", &mut child, None)
+        .await;
     let starts = fs::read_to_string(sandbox.runtime.join("application-worker.starts")).unwrap();
     let worker_pid: i32 = starts.trim().parse().unwrap();
     let (mut first, _) = connect_interactive_when_available(&endpoint, geometry()).await;
     let _ = response(&mut first).await;
+    if queued_frames {
+        // Reproduce an asynchronous redraw ahead of F12. Space a bounded burst
+        // across render turns so visual-slot coalescing cannot erase the entire
+        // backlog. This delays reads to provoke backpressure, not to await work.
+        let mut large = geometry();
+        large.screen.width = 240;
+        large.screen.height = 80;
+        large.editor.width = 240;
+        large.editor.height = 78;
+        large.status.width = 240;
+        large.status.y = 78;
+        large.message.width = 240;
+        large.message.y = 79;
+        first
+            .send(&ClientRequest::Resize {
+                geometry: large.into(),
+            })
+            .await
+            .unwrap();
+        for _ in 0..32 {
+            first.send(&ClientRequest::Resynchronize).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    }
     let _ = send_input(&mut first, KeyStroke::parse("F12").unwrap()).await;
-    marker(
-        &sandbox.runtime.join("application-worker.working"),
-        "accepted finite work",
-    )
-    .await;
+    progress
+        .marker(
+            "working",
+            "accepted finite work",
+            &mut child,
+            Some(&mut first),
+        )
+        .await;
     let publish_after = Instant::now() + Duration::from_millis(110);
     jobs(&mut first, 1, true).await;
     detach(&mut first, "detaching active stable plugin work").await;
@@ -142,11 +276,14 @@ done
         "continue",
     )
     .unwrap();
-    marker(
-        &sandbox.runtime.join("application-worker.finished"),
-        "detached publication and completion",
-    )
-    .await;
+    progress
+        .marker(
+            "finished",
+            "detached publication and completion",
+            &mut child,
+            None,
+        )
+        .await;
     jobs(&mut control, 0, false).await;
     wait_for_session_preview(
         &mut control,
