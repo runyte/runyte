@@ -10,6 +10,10 @@ them, regardless of which extensibility direction is chosen.
   `Opening workspace…` and is replaced once by the first complete editor frame;
   it never previews unhighlighted document text or changes layout while work is
   pending.
+- **Startup refusal** — a diagnostic retained in the native window until close
+  when startup cannot continue. It is presentation only, with no replacement
+  editor or workspace services. Invalid configuration uses default presentation
+  settings; it never changes the requested mode.
 - **Editor area** — the part of the screen above the two global lines. It
   contains every pane and overlay.
 - **Pane** — one view of one buffer. Splits create panes; buffers may be shared
@@ -98,7 +102,11 @@ them, regardless of which extensibility direction is chosen.
   prompt, pending key sequence, or the last action echo. Character-taking
   bindings retain the typed keys and identify the next operand, including both
   stages of surround replacement. Jump labels report their next key and final
-  outcome. Notifications never replace it.
+  outcome. Ordinary notifications never replace it. During workspace opening,
+  a startup warning or error also owns action feedback until a user action
+  replaces it; the workspace echo cannot cover it. The host supplies the same
+  startup/attachment echo to both frontends. Transport reconnects preserve the
+  current echo.
 - **Overlay** — a temporary surface drawn over the editor area, such as a
   picker, key hints, completion, or a confirmation. An overlay is not a pane
   and does not retarget a buffer. Overlay snapshots carry semantic rows rather

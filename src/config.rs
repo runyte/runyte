@@ -49,6 +49,11 @@ impl Reloaded {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
+    /// Startup-only safety admission. CLI owns capture; App takes and closes it
+    /// before retaining configuration. Never serialized or reused on reload.
+    #[doc(hidden)]
+    #[serde(skip)]
+    pub startup_safety: Option<std::sync::Arc<crate::workspace_state::StartupSafety>>,
     /// The mode a launch without a mode option runs in. `None` falls back
     /// to the deprecated `workspace.mode`, then to `ide`; read it through
     /// [`Config::mode`].
@@ -1154,6 +1159,7 @@ impl Default for TerminalConfig {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            startup_safety: None,
             mode: None,
             editor: EditorConfig::default(),
             terminal: TerminalConfig::default(),

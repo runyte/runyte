@@ -127,6 +127,17 @@ same private wire serves terminal and window attachments, lifecycle operations
 and `--wait`. It is not an extension surface and has no third-party compatibility
 promise.
 
+Workspace storage and endpoint placement are distinct. Out-of-tree workspace
+state retains its placement discriminator through bounded host metadata,
+subprocess launch and reconstruction. Unix sockets prefer a fitting private
+runtime directory and otherwise use a short owner-private endpoint namespace
+keyed by the selected state root and unchanged workspace ID. State selectors
+also join context discovery's captured environment fingerprint, so hosts from
+different fixture/state environments do not become visible to one another.
+Storage safety reservations are captured once per startup and reused during
+application construction; endpoint discovery does not authorize arbitrary
+state paths or bypass private-directory admission.
+
 Admission matches the Runyte library version and the private protocol's
 handshake requirements. Terminal and desktop builds of the same version must
 interoperate. Host-side behavior must not depend on the host's edition for
@@ -159,6 +170,19 @@ and layout mutation; bundled frontends render the rectangle and report lost
 pointer capture. Cancellation clears the gesture and outline without applying
 a drop. Matching client and host protocol versions are required.
 
+Private protocol version 92 adds a `workspace_open` boolean to `Hello`.
+Version 91 is used by the parallel preview change ([#78](https://github.com/runyte/runyte/pull/78));
+matching builds of this opening-intent contract require version 92.
+Only an interactive client may set it. Deliberate launch, attachment and
+workspace switching request a host-owned workspace echo; transport-only
+reconnections leave it false. The host retains discovery origin and decides
+whether to describe starting or attaching a persistent session. The internal
+`RUNYTE_STARTUP_WORKSPACE_ORIGIN` handoff contains the exact workspace identity
+and one fixed origin spelling (at most 64 bytes); mismatches are ignored;
+host launchers clear inherited values and pass their captured origin. It is
+read only by a dedicated detached host and is stripped from terminal child
+environments. Matching protocol versions are required.
+
 ## Choosing a tier
 
 - Third-party code belongs in a plugin or a context client, according to who
@@ -172,3 +196,26 @@ a drop. Matching client and host protocol versions are required.
 Private protocol version 82 removes the `ContextReview` overlay layout that
 version 81 added for terminal proposal reviews, which no longer exist. Matching
 client and host protocol versions are required.
+
+Private protocol version 93 adds `OpenLaunchTargets` for a graphical mux
+frontend's initial file arguments. The exact-root handshake, active interactive
+connection, native-media capability and first-request allowance all apply.
+Control and inactive connections cannot open this payload. Any other request
+or malformed frame consumes the initial allowance. The whole payload is
+validated before opening: 1–32 absolute platform paths of at most 32 KiB each,
+with optional nonzero, representable one-based line and column values. The
+existing 8 MiB frame bound and queue limits remain unchanged. A successful
+request publishes an `InputBarrier` complete frame with reserved startup serial
+zero, before physical input begins. The client consumes launch targets on its
+first attachment attempt and never replays an uncertain send, reconnect or
+workspace switch. Native opening preserves caret and media semantics; a later
+filesystem failure can leave already opened buffers in the host and is shown
+as a retained frontend error. This remains a private bundled-client operation,
+not a plugin or external-context capability.
+
+The macOS exec boundary additionally carries `--graphical-cwd` as a native
+argument alongside the graphical marker, before any user `--` separator.
+It accepts only an absolute, NUL-free path of at most 32 KiB and requires the
+marked window invocation. This records caller-relative file meaning while the
+launcher itself starts the editor in the account home. User argument bytes and
+path encoding are preserved.

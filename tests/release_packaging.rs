@@ -360,6 +360,9 @@ fn editor_help_hides_internal_options_and_uses_workspace_modes() {
     // naming the flag.
     let output = Command::new(env!("CARGO_BIN_EXE_runyte"))
         .arg("--help")
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .output()
         .unwrap();
@@ -442,6 +445,9 @@ fn cwd_file_option_still_works_though_undocumented() {
         .args(["--cwd-file", cwd_file.to_str().unwrap(), "--session-list"])
         .env("XDG_RUNTIME_DIR", &runtime_dir)
         .env("XDG_CACHE_HOME", &cache_dir)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(&config_dir)),
+        ))
         .env("XDG_CONFIG_HOME", &config_dir)
         .output()
         .unwrap();
@@ -468,6 +474,9 @@ fn terminal_version_and_window_refusal_identify_the_edition() {
     let run = |arg| {
         Command::new(env!("CARGO_BIN_EXE_runyte"))
             .arg(arg)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .output()
             .unwrap()

@@ -28,6 +28,9 @@ impl Fixture {
         Command::new(env!("CARGO_BIN_EXE_runyte"))
             .args(args)
             .current_dir(self.0.join("project"))
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(self.0.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", self.0.join("config"))
             .output()
             .unwrap()

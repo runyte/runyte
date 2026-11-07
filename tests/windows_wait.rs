@@ -61,10 +61,18 @@ fn ensure_foreground_host(
         .join(runyte::workspace::workspace_id(&project))
         .join("endpoint.json");
     let configured_state = Config::default().workspace.state;
-    let state = runyte::project_root::resolve_state_root(&project, &configured_state);
+    let state = runyte::workspace_state::StateLocation::in_tree(&project, &configured_state)
+        .into_path_buf();
     let scope = DiscoveryScope::resolve(DiscoveryInputs {
         reserved_user_roots: vec![root.join("config"), root.join("cache")],
-        roots: CapturedRoots::capture(),
+        roots: CapturedRoots {
+            runtime_root: Some(root.join("runtime")),
+            cache_home: Some(root.join("cache")),
+            inventory_override: Some(root.join("inventory")),
+            home_paths: vec![root.join("home")],
+            user_state_root: Some(root.join("config/.fixture-state/runyte")),
+            ..CapturedRoots::default()
+        },
     })
     .unwrap();
     let current = scope.known_read_location(&project, &state).unwrap();
@@ -118,6 +126,9 @@ fn ensure_foreground_host(
         .arg("--config")
         .arg(config)
         .current_dir(&project)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_RUNTIME_DIR", root.join("runtime"))
@@ -228,6 +239,9 @@ fn windows_wait_uses_a_persistent_session_until_requested_buffers_complete() {
     let mut fixture = FixtureChild::spawn(
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("RUNYTE_CONTEXT_HOME", root.join("context"))
@@ -484,6 +498,9 @@ fn native_persistent_wait_fixture() {
         let output = Command::new(env!("CARGO_BIN_EXE_runyte"))
             .args(args)
             .current_dir(&project)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("XDG_CACHE_HOME", root.join("cache"))
             .env("RUNYTE_CONTEXT_HOME", root.join("context"))
@@ -501,6 +518,9 @@ fn native_persistent_wait_fixture() {
         .arg("--config")
         .arg(&config)
         .current_dir(&project)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_RUNTIME_DIR", root.join("runtime"))
@@ -540,6 +560,9 @@ fn launch_wait_editor(targets: &[&str]) -> ! {
         .arg("--")
         .args(targets)
         .current_dir(project)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("XDG_RUNTIME_DIR", root.join("runtime"))

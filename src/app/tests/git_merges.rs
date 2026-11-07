@@ -43,6 +43,9 @@ impl MergeFixture {
         let output = std::process::Command::new("git")
             .args(arguments)
             .current_dir(&self.0)
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(self.0.join("test-config"))),
+            ))
             .env("XDG_CONFIG_HOME", self.0.join("test-config"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .output()

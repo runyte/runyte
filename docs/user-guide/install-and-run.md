@@ -107,8 +107,8 @@ When one of these fails, recoverable edits are preserved.
 - **`:session-clean`** is available inside the editor. On Linux and macOS use
   `runyte --session-clean`.
 - **A bare `runyte`** with `mode: mux` attaches only to a project it can
-  discover, and otherwise refuses without creating a workspace, as a bare `-a`
-  does. `-a DIRECTORY` makes that directory a workspace; `--init` only creates
+  discover, including the exact home-directory fallback, and otherwise refuses
+  without creating a workspace, as a bare `-a` does. `-a DIRECTORY` makes that directory a workspace; `--init` only creates
   one.
 - **`--serve`** stops the host when the process that launched it exits.
 - **Plugins** can request the `processes` capability for managed native helper
@@ -135,8 +135,9 @@ Details:
 
 - **Workspaces.** `runyte FILE` opens the file in the workspace the current
   directory belongs to. Outside any workspace the current directory becomes
-  one when the file is inside it. In your home directory, a temporary or
-  shared directory, or the filesystem root, or for a file elsewhere, it
+  one when the file is inside it. Exactly in home, ide and mux use a home
+  workspace with state in the per-user state area. In a temporary or shared directory,
+  or the filesystem root, or for a file elsewhere, ide
   refuses and suggests `runyte --init DIRECTORY`; use `runed FILE` to edit
   without one. See [Finding the workspace](workspaces-and-persistent-sessions.md#starting-a-workspace).
 
@@ -163,6 +164,37 @@ Details:
   deferred: Crossterm owns stdin for terminal events. Before `--`, a lone `-`
   exits with an explanation instead of starting a terminal that cannot tell
   file contents from input events.
+
+When a workspace launch refuses, its message names the mode and whether a
+flag or the `mode` setting selected it, the directory searched and, for ide,
+why that directory was not made a workspace. It lists commands to open a
+project, create a workspace, or (in ide mode) edit without one. A directory
+argument to ide opens an explorer; to choose a different workspace, use
+`cd DIRECTORY && runyte`. Mux can choose one directly with
+`runyte --mux DIRECTORY`. Replace `DIRECTORY` with the desired directory and
+quote paths containing spaces or shell characters.
+
+### Graphical launchers
+
+The macOS app and registered Linux application-menu entry start in the account
+home in the configured `mode`. IDE and mux use the home workspace with
+integrated terminals; `mode: editor` keeps editor mode. Close a mux window and
+launch again to return to the same retained persistent session. A host admits
+one interactive frontend at a time.
+
+In IDE and mux, when the graphical launcher receives file arguments, the first
+file’s directory chooses the workspace; a directory argument chooses that
+directory. Editor mode retains ordinary file opening without a workspace,
+including new files whose parent directory does not yet exist. All relative
+file arguments retain their meaning from the original launcher directory.
+Files open with the same caret, duplicate-path and native-media rules as other
+window launches. Terminal commands retain their current-directory workspace
+selection. Finder file-open Apple Events are not integrated yet.
+
+A startup refusal stays visible until you close the window. Invalid configuration
+uses default presentation settings to display its error; the requested mode is
+not changed and workspace services are not started after refusal. If the system
+cannot create a window at all, the error can only be reported on stderr.
 
 Inside the editor, press `Space` then `?` for contextual help. See
 [Help, hints, and the tutorial](the-screen.md#help-hints-and-the-tutorial).

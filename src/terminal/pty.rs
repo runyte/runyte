@@ -284,6 +284,7 @@ impl Pty {
         // started inside the terminal would open the same path and truncate
         // the record of the input that reached it.
         command.env_remove("RUNYTE_INPUT_TRACE");
+        command.env_remove(crate::project_root::STARTUP_ORIGIN_ENV);
         if let Some(context) = parent_context {
             command.env(crate::workspace::parent::ENVIRONMENT, context);
             for name in ["EDITOR", "VISUAL"] {

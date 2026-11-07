@@ -58,6 +58,9 @@ fn finder_special_files_return_without_waiting_for_a_writer() {
             ])
             .env("RUNYTE_FINDER_SPECIAL_ROOT", root.path())
             .env("RUNYTE_FINDER_SPECIAL_CASE", case)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(root.path().join("configuration"))),
+            ))
             .env("XDG_CONFIG_HOME", root.path().join("configuration"))
             .stdin(Stdio::null())
             .spawn()

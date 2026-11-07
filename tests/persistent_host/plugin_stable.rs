@@ -97,7 +97,7 @@ done
         .spawn()
         .unwrap();
     let mut child = ChildGuard(Some(child));
-    let endpoint = LocalEndpoint::discover_with_runtime(
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
         &root.join(".runyte"),
         &root,
         Some(sandbox.runtime_dir()),

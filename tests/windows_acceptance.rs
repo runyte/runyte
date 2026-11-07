@@ -20,6 +20,9 @@ fn real_editor_paste_and_save() {
     let output = std::fs::File::create(root.join("output.log")).unwrap();
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))

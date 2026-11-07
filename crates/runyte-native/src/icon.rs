@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Desktop identity is shared with the launcher and macOS bundle. GPUI 0.2.2
-//! has no icon setter, and its X11 raw-window-handle methods panic. Match only
-//! this process's named window through bounded standard X11 properties.
+//! has no icon setter. AppKit supplies the macOS application icon directly;
+//! X11 uses bounded standard properties to match only this process's window
+//! because GPUI's X11 raw-window-handle methods panic.
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::install_application_icon;
 
 pub const APP_ID: &str = "com.runyte.Runyte";
 

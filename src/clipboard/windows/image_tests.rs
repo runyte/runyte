@@ -79,6 +79,7 @@ fn native_images_use_the_bounded_worker_on_an_isolated_desktop() {
                 "--nocapture",
             ])
             .env(CHILD, "1")
+            .envs(crate::test_support::state_environment(std::path::Path::new(&(root.path().join("config")))))
             .env("XDG_CONFIG_HOME", root.path().join("config"))
             .env("XDG_CACHE_HOME", root.path().join("cache"))
             .output().unwrap();

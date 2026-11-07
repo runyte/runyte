@@ -61,7 +61,10 @@ Keep repository development context and runtime workspace state separate:
   issue records, and durable project decisions belong here. New issue tracking
   belongs on GitHub.
 - `.runyte/` is Git-ignored editor runtime state used by the optional
-  persistent session host and its local transport/lock files.
+  persistent session host and its local transport/lock files. Explicit
+  out-of-tree workspace storage uses the same runtime layout beneath a
+  per-user state root; placement policy belongs to `project_root`, and
+  `workspace_state::StateLocation` preserves the chosen storage identity.
 - `.runyte/cache/images/` holds images pasted with `Ctrl-v`. They exist to
   compose a prompt for an AI agent in the current session, or one resumed a
   day or two later, and they are scratch rather than project content. A
@@ -330,8 +333,8 @@ registry.
   regression. Update the CI threshold, README badge, and coverage register
   together whenever the floor is raised.
 - Use temporary directories for storage tests; tests must not write into the
-  repository's `context/` or `.runyte/`, nor into the person's configuration
-  or platform cache directories.
+  repository's `context/` or `.runyte/`, nor into the person's configuration,
+  platform cache directories, per-user state directories, or account home.
   `external_open::cache_root` returns `None` under `cfg!(test)`, which protects
   unit tests inside `src/` but **not** integration tests under `tests/`: those
   link a normally-compiled library and can reach the real cache directory. A
@@ -339,11 +342,25 @@ registry.
   through `note_loaded_config`; one that answers an "open with" prompt must
   point `app.programs` at a temporary directory, as `tests/key_hints.rs`
   already does. Keep environment-derived paths injectable for that reason.
+- Direct `App` constructors in integration tests link a normally compiled
+  library. Wrap their configuration with `test_support::isolated_startup_config`
+  (or provide explicit fixture-owned `StartupSafety`) so storage reservation
+  capture cannot resolve real user roots. The headless isolated constructor
+  supplies reservations from its caller-owned project root. This does not
+  replace the separate configuration and program-cache injections above.
 - Every subprocess fixture that launches an editor or persistent-session host
-  must set `XDG_CONFIG_HOME` to fixture-owned temporary storage in its command
-  builder, including launches through shells or helper test processes. Pass an
-  explicit temporary `--config` when a test needs particular settings. Do not
-  rely on the test runner's environment or change process-global environment
+  must isolate configuration, cache, state, runtime and account-home paths in
+  its command builder, including launches through shells or helper processes.
+  Rust fixtures use `test_support::user_environment` or `isolate_user_paths`;
+  existing configuration builders can pair `state_environment` with their
+  other fixture-owned selectors. Non-Rust builders supply the same selectors.
+  In debug fixtures, `RUNYTE_TEST_STATE_HOME` selects the application state
+  root across platforms, including macOS where production ignores
+  `XDG_STATE_HOME`; pair it consistently with fixture `XDG_STATE_HOME`.
+  Account paths use `RUNYTE_TEST_ACCOUNT_HOME` and
+  `RUNYTE_TEST_LOCAL_APP_DATA`. Release builds ignore these fixture overrides.
+  Pass an explicit temporary `--config` when particular settings are needed.
+  Do not rely on the runner's environment or mutate process-global environment
   variables in a concurrent test binary.
 - Never run a file a test wrote. Writing an executable leaves a descriptor
   open, a concurrent fork elsewhere in the binary inherits it, and the exec is

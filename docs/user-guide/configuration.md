@@ -530,7 +530,9 @@ Runyte finds the workspace directory by walking up from the launch directory:
 1. It looks for the nearest Git, Jujutsu, or Subversion working-copy root.
 2. If there is none, it looks for the configured relative state directory
    (`.runyte/` by default).
-3. If neither exists, an ide launch creates the state directory in the launch
+3. If neither exists and the launch directory is exactly home, ide and mux use
+   the home workspace with out-of-tree state. Subdirectories never discover it.
+4. Elsewhere, an ide launch creates the state directory in the launch
    directory and uses that as the workspace. It refuses instead in the
    directories listed under [Finding the
    workspace](workspaces-and-persistent-sessions.md#starting-a-workspace), for a
@@ -542,9 +544,37 @@ Runyte finds the workspace directory by walking up from the launch directory:
 `runyte --init DIRECTORY` creates the state directory, so later launches find
 the same workspace.
 
-Because discovery walks upward, initializing your home directory makes it the
-workspace for every directory below it that has no Git repository and no state
-directory of its own.
+Initializing home uses the same home workspace as a bare ide or mux launch.
+Runyte creates no new relative workspace state directory in home. An existing relative state
+directory there remains supported and is still found by ordinary upward
+discovery.
+
+Workspaces can also keep state outside their directory tree. The per-user
+Runyte state root is `$XDG_STATE_HOME/runyte` on Linux and other Unix systems,
+falling back to `~/.local/state/runyte`; on macOS it is
+`~/Library/Application Support/runyte`, and on Windows it is
+`%LOCALAPPDATA%\runyte`. Account defaults come from the operating system,
+not an inherited home-directory variable.
+
+Each workspace has its own private `workspaces/<workspace-id>/` subtree,
+containing the same logs, pasted images, plugin downloads and saved host names
+as in-tree state. Configuration and cache storage cannot overlap workspace
+state; Windows keeps `workspaces` and `cache` as separate siblings in its
+Runyte application directory. Unix hosts prefer a private `XDG_RUNTIME_DIR`;
+out-of-tree workspaces otherwise use a short private directory beneath `/tmp`
+for sockets and endpoint metadata. The workspace ID stays unchanged.
+
+Startup captures canonical storage reservations once to reject aliases into
+configuration, cache or per-user state. It reuses that safety result through
+application startup; checking a reservation does not create state directories.
+
+A version-control checkout rooted at home keeps its normal discovery and
+scanning behavior, but new state also lives in the per-user state area. An existing configured
+relative state directory there is retained.
+
+The home workspace uses out-of-tree state, even when `workspace.state` is
+absolute. Other workspaces retain their configured placement. Existing state
+directories are never relocated.
 
 #### Windows state anchor
 

@@ -213,7 +213,8 @@ async fn attach_exact_with_options(
     cwd_handoff: Option<&PreparedCwdHandoff>,
 ) -> Result<()> {
     let depth = terminal_color_depth();
-    let guard = TerminalGuard::enter(mouse_enabled)?;
+    let guard = TerminalGuard::enter(mouse_enabled)
+        .context("cannot prepare Windows console for persistent session attachment")?;
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let geometry = ui::frame_geometry(terminal.size()?.into());
     let result = tokio::select! {
@@ -721,9 +722,13 @@ async fn connect_attachment(
     // The same deadline bounds connection, Welcome and the first complete
     // decoded frame. A silent or half-speaking host never strands raw mode.
     let (mut client, current) = tokio::time::timeout(INITIAL_FRAME_BUDGET, async {
-        let mut client =
-            BufferedLocalClient::connect_with_handoff(metadata, geometry, directory_handoff)
-                .await?;
+        let mut client = BufferedLocalClient::connect_for_workspace_open(
+            metadata,
+            geometry,
+            directory_handoff,
+            true,
+        )
+        .await?;
         match client.recv_handshake().await? {
             Some(response @ HostResponse::Welcome { .. }) => {
                 validate_welcome(&response, true).map_err(anyhow::Error::msg)?;

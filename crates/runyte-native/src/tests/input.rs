@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
+use runyte::test_support::isolated_startup_config;
+
 use super::{mouse_event, translate_key};
 use crossterm::event::{KeyCode, KeyModifiers};
 use gpui::{Keystroke, point, px};
@@ -64,7 +66,12 @@ async fn queued_native_input_keeps_its_painted_frame_and_cannot_confirm_unseen_p
         workspace::WorkspaceHost,
     };
     let root = tempfile::tempdir().unwrap();
-    let app = App::new_in_project(Config::default(), None, root.path()).unwrap();
+    let app = App::new_in_project(
+        isolated_startup_config(Config::default()),
+        None,
+        root.path(),
+    )
+    .unwrap();
     let mut host = WorkspaceHost::new(app);
     host.defer_frontend_presentation(true);
     let first = host.prepare_frame(FrameGeometry::default()).id;
@@ -190,8 +197,14 @@ fn ordinary_native_editing_remains_queued_across_unpainted_frames() {
         workspace::WorkspaceHost,
     };
     let root = tempfile::tempdir().unwrap();
-    let mut host =
-        WorkspaceHost::new(App::new_in_project(Config::default(), None, root.path()).unwrap());
+    let mut host = WorkspaceHost::new(
+        App::new_in_project(
+            isolated_startup_config(Config::default()),
+            None,
+            root.path(),
+        )
+        .unwrap(),
+    );
     host.defer_frontend_presentation(true);
     let first = host.prepare_frame(FrameGeometry::default()).id;
     let (_send, events) = super::input_queue::channel(1);
@@ -564,9 +577,12 @@ fn rapid_font_changes_preserve_intermediate_frame_metrics_and_bound_history() {
 fn attached_snapshot_renders_at_host_geometry_during_resize() {
     use ratatui::{Terminal, layout::Rect};
     let root = tempfile::tempdir().unwrap();
-    let app =
-        runyte::app::App::new_in_project(runyte::config::Config::default(), None, root.path())
-            .unwrap();
+    let app = runyte::app::App::new_in_project(
+        isolated_startup_config(runyte::config::Config::default()),
+        None,
+        root.path(),
+    )
+    .unwrap();
     let mut host = runyte::workspace::WorkspaceHost::new(app);
     let snapshot = host.prepare_frame(runyte::ui::frame_geometry(Rect::new(0, 0, 120, 40)));
     let mut terminal = Terminal::new(super::grid::GridBackend::new(80, 24)).unwrap();
@@ -599,8 +615,14 @@ async fn queued_native_keys_publish_bounded_batches_without_reordering_text() {
         workspace::WorkspaceHost,
     };
     let root = tempfile::tempdir().unwrap();
-    let mut host =
-        WorkspaceHost::new(App::new_in_project(Config::default(), None, root.path()).unwrap());
+    let mut host = WorkspaceHost::new(
+        App::new_in_project(
+            isolated_startup_config(Config::default()),
+            None,
+            root.path(),
+        )
+        .unwrap(),
+    );
     host.defer_frontend_presentation(true);
     let painted = host.prepare_frame(FrameGeometry::default()).id;
     let (send, receive) = super::input_queue::channel(256);
@@ -751,8 +773,14 @@ async fn native_batch_pending_blocks_approval_even_before_frame_identity_changes
         workspace::WorkspaceHost,
     };
     let root = tempfile::tempdir().unwrap();
-    let mut host =
-        WorkspaceHost::new(App::new_in_project(Config::default(), None, root.path()).unwrap());
+    let mut host = WorkspaceHost::new(
+        App::new_in_project(
+            isolated_startup_config(Config::default()),
+            None,
+            root.path(),
+        )
+        .unwrap(),
+    );
     host.defer_frontend_presentation(true);
     let painted = host.prepare_frame(FrameGeometry::default()).id;
     let (send, receive) = super::input_queue::channel(8);
@@ -830,4 +858,68 @@ fn fractional_scroll_remainder_cannot_change_semantic_action_after_remap() {
     changed.swap(0, 1);
     scroll.set_policy(changed);
     assert!(scroll.push((gpui::point(0., 0.25), true), time).is_none());
+}
+
+#[test]
+fn startup_failure_retains_bounded_readable_diagnostic_chain() {
+    let error =
+        anyhow::anyhow!("\u{1b}[31m{}", "文".repeat(10_000)).context("invalid configuration");
+    let text = super::startup_failure_text(&error);
+    assert!(text.starts_with("invalid configuration:"));
+    assert!(text.len() <= 16 * 1024);
+    assert!(!text.contains('\u{1b}'));
+    assert!(!text.is_empty());
+}
+
+#[test]
+fn first_close_survives_both_failure_orders_and_the_observation_gap() {
+    use super::{publish_worker_failure, request_window_close};
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+    let state = || {
+        (
+            AtomicBool::new(false),
+            Mutex::new(None),
+            AtomicBool::new(false),
+        )
+    };
+
+    // Failure is already published: close schedules asynchronous completion.
+    // The platform callback must return before the done gate calls quit.
+    let (requested, failure, done) = state();
+    publish_worker_failure(&requested, &failure, &done, "failed".into());
+    assert!(!done.load(Ordering::Acquire), "failure must wait for close");
+    assert!(request_window_close(&requested, &done, || failure
+        .lock()
+        .unwrap()
+        .is_some()));
+    assert!(requested.load(Ordering::Acquire));
+    assert!(done.load(Ordering::Acquire));
+
+    // Close arrives first: completion wakes the window with done set.
+    let (requested, failure, done) = state();
+    assert!(!request_window_close(&requested, &done, || failure
+        .lock()
+        .unwrap()
+        .is_some()));
+    assert!(!done.load(Ordering::Acquire));
+    publish_worker_failure(&requested, &failure, &done, "failed".into());
+    assert!(done.load(Ordering::Acquire));
+
+    // Deterministically publish failure after the callback observed None but
+    // before that observation returns. The old check-then-store order loses
+    // this first close; no timing or concurrent scheduling is needed here.
+    let (requested, failure, done) = state();
+    let wake_completion = request_window_close(&requested, &done, || {
+        let failed = failure.lock().unwrap().is_some();
+        publish_worker_failure(&requested, &failure, &done, "failed".into());
+        failed
+    });
+    assert!(!wake_completion);
+    assert!(
+        done.load(Ordering::Acquire),
+        "completion lost the first close"
+    );
 }

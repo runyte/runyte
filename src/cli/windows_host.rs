@@ -397,9 +397,9 @@ pub(super) async fn run(
     let launch_directory = std::env::current_dir()?;
     let configured_roots = CapturedRoots::capture();
     let expected_layout = std::env::var_os(EXPECTED_LAYOUT_ENV);
-    let (config, config_path) = Config::load(arguments.config.as_deref())?;
+    let (mut config, config_path) = Config::load(arguments.config.as_deref())?;
     startup.mark(StartupPhase::ConfigLoaded);
-    let reserved = config_path
+    let mut reserved = config_path
         .as_deref()
         .map(|path| {
             let path = config::config_root_for(path, &launch_directory);
@@ -411,10 +411,26 @@ pub(super) async fn run(
         })
         .into_iter()
         .collect::<Vec<_>>();
+    if let Some(cache) = crate::external_open::cache_root() {
+        reserved.push(cache);
+    }
+    let safety = std::sync::Arc::new(crate::workspace_state::StartupSafety::capture(&reserved));
+    config.startup_safety = Some(safety.clone());
     startup.mark(StartupPhase::ProjectResolutionStarted);
+    let mut workspace_origin = None;
     let project = match arguments.project_root.as_deref() {
         Some(requested) => {
             let project = resolve_requested_project_root(&launch_directory, requested)?;
+            let inherited = arguments
+                .detached_host
+                .then(|| std::env::var(project_root::STARTUP_ORIGIN_ENV).ok())
+                .flatten();
+            workspace_origin = Some(project_root::startup_origin_with_safety(
+                &project,
+                &config.workspace.state,
+                inherited.as_deref(),
+                &safety,
+            )?);
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project
         }
@@ -422,10 +438,18 @@ pub(super) async fn run(
             anyhow::bail!("internal native host requires an explicit --project-root")
         }
         None => {
-            let project = project_root::discover(&launch_directory, &config.workspace.state)?
-                .context(
-                    "no project workspace was found; pass --project-root for foreground --serve",
-                )?;
+            let project = project_root::discover_with_home_safety(
+                &launch_directory,
+                &config.workspace.state,
+                &safety,
+            )?
+            .map(|workspace| {
+                workspace_origin = Some(workspace.origin);
+                workspace.root
+            })
+            .context(
+                "no project workspace was found; pass --project-root for foreground --serve",
+            )?;
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project
         }
@@ -433,8 +457,17 @@ pub(super) async fn run(
     if let Some(parent) = supervisor.as_ref() {
         parent.ensure_alive()?;
     }
-    let state = project_root::resolve_state_root(&project, &config.workspace.state);
-    project_root::validate_state_root(&state, &reserved)?;
+    let location = project_root::resolve_state_location_with_safety(
+        &project,
+        &config.workspace.state,
+        &safety,
+    )?;
+    if matches!(location, project_root::StateLocation::OutOfTree(_)) {
+        location.prepare_with_safety(&project, &safety)?;
+    } else {
+        safety.validate(&project, &location)?;
+    }
+    let state = location.into_path_buf();
     let layout = ResolvedLayout::resolve(LocationInputs {
         project_root: project.clone(),
         state_root: state,
@@ -462,6 +495,10 @@ pub(super) async fn run(
         startup,
         environment,
     )?;
+    if let Some(origin) = workspace_origin {
+        app.note_workspace_origin(origin);
+    }
+    app.note_persistent_launch(arguments.detached_host);
     let startup_config = app.config.clone();
     app.note_config_deprecations(&startup_config);
     app.set_quit_directory_handoff(false);
@@ -685,8 +722,8 @@ async fn run_loop(
             event = server.recv() => {
                 let event = event.context("native workspace host listener stopped unexpectedly")?;
                 match event {
-                    ServerEvent::Connected { id, peer_process, responses, interactive, native_media: _, directory_handoff, geometry } => {
-                        clients.connected(host, ConnectedPeer { id, proof: peer_process, responses, interactive, directory_handoff, geometry });
+                    ServerEvent::Connected { id, peer_process, responses, interactive, native_media: _, directory_handoff, workspace_open, geometry } => {
+                        clients.connected(host, ConnectedPeer { id, proof: peer_process, responses, interactive, directory_handoff, workspace_open, geometry });
                         if interactive && clients.active_id() == Some(id) {
                             host.app_mut().refresh_sessions_on_attachment();
                             if let Some(catalog) = services.native_catalog.as_ref()

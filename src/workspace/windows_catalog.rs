@@ -16,6 +16,7 @@ use super::{
 };
 use crate::protocol::{ClientRequest, HostResponse};
 use anyhow::{Context, Result, ensure};
+pub(crate) use history::snapshot_with_history_in_scope_with_safety;
 pub use history::{
     HistoryEntry, HistorySnapshot, HistoryTarget, ensure_recorded, record_activity, remember,
     snapshot_with_history, snapshot_with_history_in_scope,

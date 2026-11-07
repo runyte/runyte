@@ -1,9 +1,90 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Narrow shared contracts used by process-level tests and their production
+//! Narrow shared contracts for isolated test fixtures and their production
 //! test hooks.
 
 use std::{ffi::OsStr, path::PathBuf};
+
+/// Captures only paths derived from a caller-owned fixture; no account or
+/// environment-derived user roots enter this admission. Direct App tests use
+/// this separately from their existing clipboard/program-cache injection.
+pub(crate) fn fixture_startup_safety(
+    root: &std::path::Path,
+) -> std::sync::Arc<crate::workspace_state::StartupSafety> {
+    std::sync::Arc::new(crate::workspace_state::StartupSafety::capture_with(
+        &[root.join("fixture-config"), root.join("fixture-cache")],
+        || Some(root.join("fixture-state/runyte")),
+    ))
+}
+
+/// Gives legacy direct App tests fresh, fixture-owned storage reservations.
+/// The process-owned directory remains alive for every constructor and is
+/// removed on ordinary process exit. This changes no environment variables.
+#[cfg(any(unix, windows))]
+pub fn isolated_startup_config(mut config: crate::config::Config) -> crate::config::Config {
+    static ROOT: std::sync::OnceLock<TestRuntimeRoot> = std::sync::OnceLock::new();
+    extern "C" fn cleanup() {
+        if let Some(root) = ROOT.get() {
+            root.cleanup_if_owned();
+        }
+    }
+    let root = ROOT.get_or_init(|| {
+        let root = TestRuntimeRoot::new("app-safety").expect("allocate App safety fixture");
+        // SAFETY: the C callback takes no arguments and accesses only a
+        // process-lifetime OnceLock. Cleanup verifies the fixture owner marker.
+        assert_eq!(unsafe { libc::atexit(cleanup) }, 0);
+        root
+    });
+    config.startup_safety = Some(fixture_startup_safety(root.path()));
+    config
+}
+
+/// Pairs configuration-isolated builders with fixture-owned state and home
+/// selectors. No child needs account lookup merely to classify its workspace.
+/// Keeping these paths below the fixture root avoids orphaned siblings.
+pub fn state_environment(config_home: &std::path::Path) -> [(&'static str, PathBuf); 5] {
+    let state = config_home.join(".fixture-state");
+    [
+        ("XDG_STATE_HOME", state.clone()),
+        ("RUNYTE_TEST_STATE_HOME", state.join("runyte")),
+        ("HOME", config_home.join(".fixture-home")),
+        (
+            "RUNYTE_TEST_ACCOUNT_HOME",
+            config_home.join(".fixture-home"),
+        ),
+        (
+            "RUNYTE_TEST_LOCAL_APP_DATA",
+            config_home.join(".fixture-local-app-data"),
+        ),
+    ]
+}
+
+/// Supplies every account/state selector used by debug subprocess fixtures.
+/// `root` must be fixture-owned and already exist. Release ignores the RUNYTE_TEST
+/// overrides, so process acceptance uses the ordinary debug test executable.
+pub fn isolate_user_paths(command: &mut std::process::Command, root: &std::path::Path) {
+    command.envs(user_environment(root));
+}
+
+pub fn user_environment(root: &std::path::Path) -> [(&'static str, PathBuf); 12] {
+    [
+        ("XDG_CONFIG_HOME", root.join("config")),
+        ("XDG_CACHE_HOME", root.join("cache")),
+        ("XDG_STATE_HOME", root.join("state")),
+        ("XDG_RUNTIME_DIR", root.join("runtime")),
+        ("RUNYTE_TEST_STATE_HOME", root.join("state/runyte")),
+        ("RUNYTE_TEST_ACCOUNT_HOME", root.join("home")),
+        ("RUNYTE_TEST_LOCAL_APP_DATA", root.join("local-app-data")),
+        ("RUNYTE_TEST_SOCKET_HOME", root.to_owned()),
+        ("HOME", root.join("home")),
+        ("RUNYTE_ALL_HOSTS_DIR", root.join("inventory")),
+        ("RUNYTE_CONTEXT_HOME", root.join("context")),
+        (
+            "RUNYTE_TEST_SUPERVISOR_PID",
+            PathBuf::from(std::process::id().to_string()),
+        ),
+    ]
+}
 
 #[cfg(windows)]
 #[path = "test_support/windows.rs"]

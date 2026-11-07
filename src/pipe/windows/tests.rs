@@ -229,6 +229,9 @@ try {{ [IO.File]::WriteAllText($runyteTrace, 'entered') }} catch {{}}
     }
     let mut command = command_with_bootstrap(text, root, &bootstrap).unwrap();
     command
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env(TRACE_ENV, marker);
@@ -290,6 +293,9 @@ fn fixture_command(root: &Path, mode: &str) -> Command {
             "--nocapture",
         ])
         .current_dir(root)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("RUNYTE_PIPE_FIXTURE", mode)
@@ -367,6 +373,9 @@ fn bootstrap_initializes_utf8_without_cmdlet_module_autoloading() {
     )
     .unwrap();
     command
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"));
     assert_eq!(

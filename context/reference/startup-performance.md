@@ -17,6 +17,50 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-06 — exact home workspace
+
+[#73](https://github.com/runyte/runyte/issues/73) captures canonical home
+identities alongside startup safety roots. CLI initialization and App startup
+reuse that capture; scanner policies retain the home-workspace decision, with
+no home lookup during traversal or drawing. The startup echo reads the selected
+state path. Home project scans reuse the existing 20,000-entry contained scan
+budget. No controlled startup benchmark ran; no latency change is claimed.
+
+## 2026-11-06 — out-of-tree state foundation
+
+[#72](https://github.com/runyte/runyte/issues/72) adds explicit out-of-tree
+placement. Ordinary in-tree placement does not invoke the per-user resolver;
+a closure-based regression test asserts this boundary. Environment
+fingerprinting hashes captured selector bytes without filesystem operations.
+
+Reservation validation additionally compares in-tree state against the new
+per-user state root, including canonical existing ancestors to detect aliases.
+The [approved cost boundary](https://github.com/runyte/runyte/issues/72#issuecomment-6683697808)
+permits bounded safety checks once at startup: user roots and canonical
+reservations are captured once, and the selected project/location admission
+is reused through CLI, application and host startup. App scopes and consumes
+that admission even if construction fails before storage validation; a later
+startup using a cloned configuration captures fresh safety information. This
+applies to the new state-root checks, not preexisting workspace
+discovery/layout checks. Regression tests count root resolution and
+canonical normalization and verify admission reuse and fresh alias checks.
+
+These checks add bounded metadata/canonicalization work without creating
+state directories. No controlled startup benchmark ran; the latency effect
+has not been quantified. Creation remains deferred until the workspace needs
+state. The home-workspace selection policy is separate work in #73.
+
+## 2026-11-06 — graphical launch preparation
+
+Marked graphical launches resolve their relative file arguments once before
+first-target workspace discovery and reuse the captured startup safety values.
+Graphical mux sends one bounded initial target request over the existing native
+attachment; its existing complete-frame barrier acknowledges readiness. No
+polling timer or terminal discovery work is added. Native failure presentation
+retains a bounded diagnostic until close instead of exiting the window.
+Readiness and idle benchmarks have not been rerun for this change; no measured
+performance improvement is claimed.
+
 ## 2026-10-25 — commented defaults and larger configured keymaps
 
 Follow-up to [issue #31](https://github.com/runyte/runyte/issues/31): export

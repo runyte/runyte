@@ -77,6 +77,7 @@ impl Fixture {
         clients.connected(
             &mut self.host,
             ConnectedPeer {
+                workspace_open: false,
                 id,
                 proof: self.proof.clone(),
                 responses: tx,
@@ -504,6 +505,7 @@ fn interactive_peer_is_unique_and_pending_control_wait_protects_shutdown() {
     clients.connected(
         &mut fixture.host,
         ConnectedPeer {
+            workspace_open: false,
             id: 1,
             proof: fixture.proof.clone(),
             responses: tx,
@@ -517,6 +519,7 @@ fn interactive_peer_is_unique_and_pending_control_wait_protects_shutdown() {
     clients.connected(
         &mut fixture.host,
         ConnectedPeer {
+            workspace_open: false,
             id: 3,
             proof: fixture.proof.clone(),
             responses: refused,
@@ -551,6 +554,7 @@ fn stale_interactive_connection_id_cannot_redirect_input_or_clear_replacement() 
     clients.connected(
         &mut fixture.host,
         ConnectedPeer {
+            workspace_open: false,
             id: 1,
             proof: fixture.proof.clone(),
             responses: first,
@@ -569,6 +573,7 @@ fn stale_interactive_connection_id_cannot_redirect_input_or_clear_replacement() 
     clients.connected(
         &mut fixture.host,
         ConnectedPeer {
+            workspace_open: false,
             id: 2,
             proof: fixture.proof.clone(),
             responses: replacement,
@@ -796,6 +801,7 @@ fn deferred_parent_wait_is_revalidated_after_attachment_replacement() {
     clients.connected(
         &mut fixture.host,
         ConnectedPeer {
+            workspace_open: false,
             id: 2,
             proof,
             responses,

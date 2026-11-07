@@ -34,6 +34,9 @@ fn native_ctrl_backslash_switches_live_terminal_modes() {
     let mut child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
         .env("RUNYTE_TERMINAL_MODE_ROOT", root.path())
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(config_dir)),
+        ))
         .env("XDG_CONFIG_HOME", config_dir)
         .env("XDG_CACHE_HOME", cache)
         .env("XDG_RUNTIME_DIR", runtime)

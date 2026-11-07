@@ -91,6 +91,7 @@ impl Fixture {
                 cache_home: Some(cache),
                 local_app_data: None,
                 inventory_override: Some(root.join("inventory")),
+                ..CapturedRoots::default()
             },
         })
         .unwrap();
@@ -110,6 +111,9 @@ impl Fixture {
             .arg("--config")
             .arg(&self.config)
             .current_dir(&self.project)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(self.root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", self.root.join("config"))
             .env("RUNYTE_CONTEXT_HOME", self.root.join("context"))
             .env("PATH", "")
@@ -135,6 +139,9 @@ impl Fixture {
             .arg("--config")
             .arg(&self.config)
             .current_dir(&self.project)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(self.root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", self.root.join("config"))
             .env("XDG_CACHE_HOME", self.root.join("cache"))
             .env("RUNYTE_CONTEXT_HOME", self.root.join("context"))
@@ -972,7 +979,8 @@ fn foreground_serve_discovers_an_existing_project_without_prompting() {
                 cache_home: Some(fixture.root.join("cache")),
                 local_app_data: None,
                 inventory_override: Some(fixture.root.join("inventory")),
-            },
+            ..CapturedRoots::default()
+},
         })
         .unwrap();
         let mut process = Process(fixture.foreground_command().spawn().unwrap());
@@ -1148,6 +1156,9 @@ fn spawn_foreground_parent(tree: &ForegroundTree, mode: &str) -> Process {
             .args(["--exact", FOREGROUND_HELPER, "--ignored", "--nocapture"])
             .env(FOREGROUND_MODE, mode)
             .env(FOREGROUND_ROOT, fixture.root.path())
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(fixture.root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", fixture.root.join("config"))
             .env("RUNYTE_CONTEXT_HOME", fixture.root.join("context"))
             .creation_flags(CREATE_NO_WINDOW)
@@ -1179,6 +1190,9 @@ fn foreground_parent_helper() {
         .arg("--config")
         .arg(root.join("config/config.yaml"))
         .current_dir(root.join("project"))
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .env("RUNYTE_CONTEXT_HOME", root.join("context"))
@@ -1205,6 +1219,7 @@ fn foreground_parent_helper() {
                 cache_home: Some(root.join("cache")),
                 local_app_data: None,
                 inventory_override: Some(root.join("inventory")),
+                ..CapturedRoots::default()
             },
         })
         .unwrap();
@@ -1372,5 +1387,110 @@ fn detached_host_survives_its_short_lived_launching_parent() {
         wait_pinned_exit(&host).await;
         assert_eq!(pinned_exit_code(&host), 0);
         tree.shutdown().unwrap();
+    });
+}
+
+/// Foreground --serve must admit the per-user root before logs, layout
+/// publication or a name store can create descendants and repair permissions.
+#[cfg(debug_assertions)]
+#[test]
+fn foreground_out_of_tree_host_refuses_foreign_writable_state_root_before_writes() {
+    use std::{fs::OpenOptions, os::windows::fs::OpenOptionsExt, ptr};
+    use windows_sys::Win32::{
+        Foundation::LocalFree,
+        Security::{
+            Authorization::{
+                ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+                SE_FILE_OBJECT, SetSecurityInfo,
+            },
+            DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl,
+            PROTECTED_DACL_SECURITY_INFORMATION,
+        },
+        Storage::FileSystem::{FILE_FLAG_BACKUP_SEMANTICS, FILE_GENERIC_READ, WRITE_DAC},
+    };
+    struct Descriptor(*mut std::ffi::c_void);
+    impl Drop for Descriptor {
+        fn drop(&mut self) {
+            unsafe {
+                LocalFree(self.0);
+            }
+        }
+    }
+    runtime().block_on(async {
+        let fixture = Fixture::new();
+        // Explicitly set the current-user owner before broadening the DACL.
+        // Plain directory creation can choose a group owner with an elevated token.
+        let state = fixture.root.create_private_dir("runyte").unwrap();
+        let directory = OpenOptions::new()
+            .access_mode(FILE_GENERIC_READ | WRITE_DAC)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(&state)
+            .unwrap();
+        let text: Vec<_> = "D:P(A;;FA;;;WD)".encode_utf16().chain(Some(0)).collect();
+        let mut descriptor = Descriptor(ptr::null_mut());
+        assert_ne!(
+            unsafe {
+                ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    text.as_ptr(),
+                    SDDL_REVISION_1,
+                    &mut descriptor.0,
+                    ptr::null_mut(),
+                )
+            },
+            0
+        );
+        let mut present = 0;
+        let mut defaulted = 0;
+        let mut acl = ptr::null_mut();
+        assert_ne!(
+            unsafe {
+                GetSecurityDescriptorDacl(descriptor.0, &mut present, &mut acl, &mut defaulted)
+            },
+            0
+        );
+        assert_eq!(
+            unsafe {
+                SetSecurityInfo(
+                    directory.as_raw_handle(),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    acl,
+                    ptr::null_mut(),
+                )
+            },
+            0
+        );
+        drop(directory);
+        let mut command = fixture.foreground_command();
+        runyte::test_support::isolate_user_paths(&mut command, fixture.root.path());
+        let mut process = Process(
+            command
+                .arg("--project-root")
+                .arg(&fixture.project)
+                .env("RUNYTE_TEST_OUT_OF_TREE_ROOT", &fixture.project)
+                .env("XDG_STATE_HOME", fixture.root.path())
+                .env("RUNYTE_TEST_STATE_HOME", &state)
+                .spawn()
+                .unwrap(),
+        );
+        let deadline = Instant::now() + BUDGET;
+        loop {
+            if let Some(status) = process.0.try_wait().unwrap() {
+                assert!(!status.success());
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "unsafe foreground host did not refuse"
+            );
+            sleep(Duration::from_millis(10)).await;
+        }
+        let error = fs::read_to_string(fixture.root.join("foreground-stderr")).unwrap();
+        assert!(error.contains("protected owner-only"), "{error}");
+        assert!(!state.join("workspaces").exists());
+        assert!(!state.join("host.log").exists());
+        assert!(!fixture.project.join(".runyte").exists());
     });
 }

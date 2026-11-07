@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use runyte::test_support::isolated_startup_config;
+
 use std::sync::{Arc, Mutex};
 
 use crossterm::event::Event;
@@ -29,7 +31,7 @@ fn explorer_clipboard_round_trip_through_terminal_paste_preserves_rows() {
     }
     let clipboard = Arc::new(Mutex::new(String::new()));
     let mut explorer = App::new_in_project(
-        Config::default(),
+        isolated_startup_config(Config::default()),
         Some(root.path().to_path_buf()),
         root.path(),
     )
@@ -41,7 +43,12 @@ fn explorer_clipboard_round_trip_through_terminal_paste_preserves_rows() {
     let copied = clipboard.lock().unwrap().clone();
     assert_eq!(copied, "alpha.txt\nβeta.txt");
 
-    let mut document = App::new_in_project(Config::default(), None, root.path()).unwrap();
+    let mut document = App::new_in_project(
+        isolated_startup_config(Config::default()),
+        None,
+        root.path(),
+    )
+    .unwrap();
     document.handle_key(KeyStroke::char('i')).unwrap();
     // macOS terminal paste actions can encode clipboard LF as Enter/CR.
     let event = convert_event(Event::Paste(copied.replace('\n', "\r")))

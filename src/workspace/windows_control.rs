@@ -66,11 +66,26 @@ impl ControlSnapshot {
         configured_state: &Path,
         include_hidden: bool,
     ) -> Result<Self> {
-        let history = windows_catalog::snapshot_with_history_in_scope(
+        let safety = scope.capture_safety();
+        Self::observe_at_with_safety(scope, current, configured_state, include_hidden, &safety)
+            .await
+    }
+
+    /// Reuses the caller's operation-scoped home and storage identities through
+    /// remembered-project and stopped-name observation.
+    pub(crate) async fn observe_at_with_safety(
+        scope: &DiscoveryScope,
+        current: Option<&KnownReadLocation>,
+        configured_state: &Path,
+        include_hidden: bool,
+        safety: &crate::workspace_state::StartupSafety,
+    ) -> Result<Self> {
+        let history = windows_catalog::snapshot_with_history_in_scope_with_safety(
             scope,
             current,
             configured_state,
             include_hidden,
+            safety,
         )
         .await?;
         Ok(Self {

@@ -320,6 +320,11 @@ impl Directory {
     pub fn open(path: &Path, private: bool) -> io::Result<Self> {
         Self::open_inner(path, private, false, true)
     }
+    pub(crate) fn open_private_checked(path: &Path) -> io::Result<Self> {
+        let directory = Self::open(path, false)?;
+        windows_security::admit(&directory.0, false)?;
+        Ok(directory)
+    }
     pub(crate) fn open_durable(path: &Path, private: bool) -> io::Result<Self> {
         Self::open_inner(path, private, true, true)
     }

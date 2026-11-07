@@ -68,6 +68,9 @@ fn command(root: &Path, mode: &str) -> Command {
         .current_dir(root)
         .env("RUNYTE_STARTUP_FIXTURE_ROOT", root)
         .env("RUNYTE_STARTUP_FIXTURE_MODE", mode)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"));
     command
@@ -142,6 +145,9 @@ fn run_in_controlled_job(case: &str) -> bool {
         .current_dir(root.path())
         .env(CONTROLLED_CASE, case)
         .env("RUNYTE_STARTUP_FIXTURE_ROOT", root.path())
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"));
     let input: OwnedHandle = fs::OpenOptions::new()

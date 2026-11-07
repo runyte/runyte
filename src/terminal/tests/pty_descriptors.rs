@@ -131,6 +131,9 @@ fn inherited_at_checkpoint(master: RawFd, slave: Option<RawFd>) -> Vec<u8> {
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", FIXTURE, "--ignored", "--nocapture"])
             .env("RUNYTE_PTY_DESCRIPTOR_PROBE", "1")
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(config.path())),
+            ))
             .env("XDG_CONFIG_HOME", config.path())
             .stdin(Stdio::from(OwnedFd::from(child_control)))
             .stdout(Stdio::null())

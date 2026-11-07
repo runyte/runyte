@@ -29,6 +29,8 @@ pub struct CapturedRoots {
     pub cache_home: Option<PathBuf>,
     pub local_app_data: Option<PathBuf>,
     pub inventory_override: Option<PathBuf>,
+    pub home_paths: Vec<PathBuf>,
+    pub user_state_root: Option<PathBuf>,
 }
 
 impl CapturedRoots {
@@ -40,6 +42,8 @@ impl CapturedRoots {
                 .filter(|path| path.is_absolute()),
             local_app_data: crate::user_paths::system_local_app_data_directory(),
             inventory_override: std::env::var_os("RUNYTE_ALL_HOSTS_DIR").map(PathBuf::from),
+            home_paths: crate::project_root::user_home_directories(),
+            user_state_root: crate::workspace_state::user_state_root(),
         }
     }
 
@@ -106,6 +110,7 @@ pub struct DiscoveryScope {
 
 #[derive(Clone, Debug)]
 pub struct ResolvedLayout {
+    startup_origin: Option<crate::project_root::WorkspaceOrigin>,
     project: PathBuf,
     project_identity: [u8; 24],
     state: PathBuf,
@@ -182,6 +187,14 @@ impl DiscoveryScope {
         })
     }
 
+    pub(crate) fn capture_safety(&self) -> crate::workspace_state::StartupSafety {
+        crate::workspace_state::StartupSafety::capture_with_homes(
+            &self.reserved,
+            || self.roots.user_state_root.clone(),
+            &self.roots.home_paths,
+        )
+    }
+
     pub fn namespace_roots(&self) -> &[PathBuf] {
         &self.namespaces
     }
@@ -195,14 +208,32 @@ impl DiscoveryScope {
         requested: &Path,
         configured_state: &Path,
     ) -> anyhow::Result<ResolvedLayout> {
+        let safety = self.capture_safety();
+        self.initialize_layout_with_safety(requested, configured_state, &safety)
+    }
+
+    pub(crate) fn initialize_layout_with_safety(
+        &self,
+        requested: &Path,
+        configured_state: &Path,
+        safety: &crate::workspace_state::StartupSafety,
+    ) -> anyhow::Result<ResolvedLayout> {
         let project = WorkspaceIdentity::resolve(requested)?.root().to_owned();
         let inventory = self.roots.inventory_root()?;
-        let state = crate::project_root::resolve_state_root(&project, configured_state);
+        let location = crate::project_root::resolve_state_location_with_safety(
+            &project,
+            configured_state,
+            safety,
+        )?;
+        let state = location.as_path().to_owned();
         validate_state_separation(&state, std::slice::from_ref(&inventory))?;
         let lease = ProjectLease::acquire(&project, &inventory)?;
-        let project = crate::project_root::initialize(&project, configured_state, &self.reserved)?;
-        let state = crate::project_root::resolve_state_root(&project, configured_state);
-        let layout = ResolvedLayout::from_scope(self.clone(), &project, state)?;
+        let origin =
+            crate::project_root::exact_origin_with_safety(&project, configured_state, safety)?;
+        let project =
+            crate::project_root::initialize_with_safety(&project, configured_state, safety)?;
+        let mut layout = ResolvedLayout::from_scope(self.clone(), &project, state)?;
+        layout.startup_origin = Some(origin);
         lease.verify_live_identity()?;
         Ok(layout)
     }
@@ -300,6 +331,7 @@ impl ResolvedLayout {
         validate_path(&endpoint.join("endpoint.json"))?;
         validate_path(&names)?;
         Ok(Self {
+            startup_origin: None,
             project,
             project_identity,
             state,
@@ -431,6 +463,11 @@ impl ResolvedLayout {
     /// The caller also supplies its explicit config and config environment.
     pub fn detached_environment(&self) -> io::Result<Vec<(OsString, Option<OsString>)>> {
         Ok(vec![
+            (
+                crate::project_root::STARTUP_ORIGIN_ENV.into(),
+                self.startup_origin
+                    .map(|origin| origin.startup_handoff(&self.project).into()),
+            ),
             (
                 "XDG_RUNTIME_DIR".into(),
                 self.scope

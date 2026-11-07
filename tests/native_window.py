@@ -23,6 +23,8 @@ parser.add_argument("--output", type=pathlib.Path)
 parser.add_argument("--document-preview", action="store_true", help="exercise the bounded Blitz document preview")
 parser.add_argument("--window-controls", action="store_true", help="exercise font settings, system clipboard, and parent editor wait")
 parser.add_argument("--animations", action="store_true", help="exercise media playback, selection pause, and hidden-window idle")
+parser.add_argument("--startup-failure", choices=("config", "state"), help="verify a retained graphical startup refusal")
+parser.add_argument("--graphical-launch", action="store_true", help="use configured mode and first-file workspace from another directory")
 parser.add_argument("--mux", action="store_true", help="exercise persistent window attachment and frontend handoff")
 parser.add_argument("--no-system-fonts", action="store_true", help="verify the embedded fonts with an empty Fontconfig font directory list")
 parser.add_argument("--paint-benchmark", action="store_true", help="measure warmed cell painting; requires RUNYTE_NATIVE_PAINT_TIMING=1")
@@ -42,6 +44,8 @@ root = storage / "project"
 root.mkdir()
 (storage / "config").mkdir()
 (storage / "runtime").mkdir(mode=0o700)
+(storage / "home").mkdir(mode=0o700)
+(storage / "state").mkdir(mode=0o700)
 (storage / "config/config.yaml").write_text("mode: ide\nlsp:\n  enable: false\n")
 (root / "notes.txt").write_text("Runyte native window\nExisting keys, panes, and terminal sessions.\n")
 if args.animations:
@@ -150,6 +154,13 @@ env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None)
 # A harness started from a Runyte terminal must not hand its parent context to the fixture.
 for inherited in [key for key in env if key.startswith('RUNYTE_') and key != 'RUNYTE_NATIVE_PAINT_TIMING']:env.pop(inherited)
 env['RUNYTE_INPUT_TRACE']=str(storage/'input.log')
+env['HOME']=str(storage/'home')
+env['XDG_STATE_HOME']=str(storage/'state')
+env['RUNYTE_TEST_STATE_HOME']=str(storage/'state/runyte')
+env['RUNYTE_TEST_ACCOUNT_HOME']=env['HOME']
+env['RUNYTE_TEST_LOCAL_APP_DATA']=env['HOME']
+env['RUNYTE_TEST_SOCKET_HOME']=str(storage)
+env['RUNYTE_CONTEXT_HOME']=str(storage/'context')
 env['XDG_CONFIG_HOME']=str(storage/'config');env['XDG_RUNTIME_DIR']=str(storage/'runtime');env['SHELL']='/bin/sh';env['XDG_CACHE_HOME']=str(storage/'cache');env['RUNYTE_ALL_HOSTS_DIR']=str(storage/'all-hosts')
 if args.paint_styles:
     # Leave the cursor in a blank cell beside an italic icon, without a shell prompt.
@@ -170,8 +181,24 @@ if args.document_preview:
     (root/'selection.html').write_text('<html><body style="margin:0;background:white;font:20px monospace"><p style="margin:0">Selectable text</p><a href="https://example.com">Link target</a><div style="height:2000px;width:2000px;background:#09a"></div></body></html>')
 log=open(root/'window.log','w')
 launch=[str(binary),'--window','--mux' if args.mux else '--ide','--config',str(storage/'config/config.yaml')]
-if not args.mux:launch.append(str(root/'notes.txt'))
-p=subprocess.Popen(launch,cwd=root,env=env,stdout=log,stderr=log)
+launch_directory = root
+if args.graphical_launch:
+    (storage/'config/config.yaml').write_text('mode: ' + ('mux' if args.mux else 'ide') + '\nlsp:\n  enable: false\n')
+    launch=[str(binary),'--window','--graphical-launch','--config',str(storage/'config/config.yaml'),'../project/notes.txt']
+    launch_directory = storage/'home'
+elif args.startup_failure:
+    launch=[str(binary),'--window','--graphical-launch','--config',str(storage/'config/config.yaml')]
+    if args.startup_failure == 'config':
+        (storage/'config/config.yaml').write_text('mode: [invalid\n')
+    else:
+        # IDE state is lazy, and an unavailable diagnostic log is non-fatal.
+        # Select storage that startup admission must reject before any App.
+        (storage/'config/config.yaml').write_text(
+            'mode: ide\nlsp:\n  enable: false\nworkspace:\n  state: '
+            + json.dumps(str(storage/'config/state')) + '\n')
+elif not args.mux:
+    launch.append(str(root/'notes.txt'))
+p=subprocess.Popen(launch,cwd=launch_directory,env=env,stdout=log,stderr=log)
 try:
     win=None
     # Software Vulkan initialization on a cold CI runner can outlast ten
@@ -299,6 +326,25 @@ try:
             break
         time.sleep(.25)
     assert len(set(initial)) > 8, "first editor frame remained blank"
+    if args.startup_failure:
+        before, _ = screenshot('startup-failure')
+        key('i'); text('must not edit'); key('Escape'); time.sleep(.5)
+        after, _ = screenshot('startup-failure-after-input')
+        assert before == after, 'refusal accepted editor input'
+        assert p.poll() is None, 'refusal disappeared before close'
+        assert (root/'notes.txt').read_text().startswith('Runyte native window')
+        assert not list(storage.rglob('context.lock')), 'refusal started context services'
+        assert not (storage/'input.log').exists(), 'refusal constructed editor input handling'
+        assert not (root/'.runyte').exists(), 'refusal started workspace storage'
+        assert not (storage/'config/state').exists(), 'refusal created rejected state storage'
+        close_window(); p.wait(timeout=15)
+        assert p.returncode != 0, 'refused startup succeeded'
+        diagnostic = (root/'window.log').read_text()
+        assert 'panicked at' not in diagnostic, ('refusal close panicked', diagnostic)
+        expected = 'invalid YAML' if args.startup_failure == 'config' else 'overlaps per-user Runyte storage'
+        assert expected in diagnostic, ('refusal lost its diagnostic', diagnostic)
+        print('PASS: visible graphical ' + args.startup_failure + ' refusal persists until close without editor input')
+        raise SystemExit(0)
     def pixel(xpos, ypos):
         im=x.XGetImage(d,win,xpos,ypos,1,1,0xffffffffffffffff,2)
         if not im:

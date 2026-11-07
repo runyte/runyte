@@ -10,6 +10,8 @@
 
 #![cfg(unix)]
 
+use runyte::test_support::isolated_startup_config;
+
 use std::{
     path::PathBuf,
     process::Command,
@@ -63,14 +65,17 @@ impl Session {
     }
 
     fn start_with_file(config: Config, command: &str, file: Option<PathBuf>) -> Self {
-        Self::start_from_app(App::new(config, file).unwrap(), command)
+        Self::start_from_app(
+            App::new(isolated_startup_config(config), file).unwrap(),
+            command,
+        )
     }
 
     /// Starts `command` after another terminal has come and gone, so the
     /// new terminal's number (1) and its identity (2) differ and a title or
     /// message that shows the wrong one cannot pass by coincidence.
     fn start_after_a_closed_terminal(command: &str) -> Self {
-        let mut app = App::new(Config::default(), None).unwrap();
+        let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
         render(&mut app, 60, 12);
         type_colon(&mut app, "terminal /bin/cat");
         let closed = app.active_terminal().unwrap();
@@ -627,7 +632,7 @@ fn pane_keys_dispatch_over_a_read_only_buffer_hidden_by_the_terminal() {
     for fast in [false, true] {
         let mut config = Config::default();
         config.editor.fast_pane_keys = fast;
-        let mut app = App::new(config, None).unwrap();
+        let mut app = App::new(isolated_startup_config(config), None).unwrap();
         type_colon(&mut app, "about");
         assert!(app.active_buffer().is_read_only());
 
@@ -1792,7 +1797,11 @@ fn buffer_picker_retargets_a_terminal_pane_to_a_different_open_buffer() {
     std::fs::write(&first, "first\n").unwrap();
     std::fs::write(&second, "second\n").unwrap();
 
-    let mut app = App::new(Config::default(), Some(first.clone())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(first.clone()),
+    )
+    .unwrap();
     type_colon(&mut app, &format!("open {}", second.display()));
     let mut session = Session::start_from_app(app, "/bin/cat");
     let id = session.app.active_terminal().unwrap();

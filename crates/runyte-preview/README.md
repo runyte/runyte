@@ -11,7 +11,7 @@ cargo build --locked --release -p runyte-desktop
 ./target/release/runyte-desktop --window --editor crates/runyte-preview/fixtures/markdown.md
 ```
 
-The 1 MiB preview limit uses private client/host protocol 91. Before
+The 1 MiB preview limit uses private client/host protocol 94. Before
 upgrading an existing persistent session, save work and stop it using its
 compatible client, then relaunch with the rebuilt binary. Restarting only the
 window is insufficient when its host still runs the old binary.
@@ -155,7 +155,7 @@ Private helper requests and reply headers each have a separate 6.25 MiB wire
 budget, including framing: sixfold JSON escaping plus 256 KiB for metadata.
 Persistent-session host responses allow 56 MiB: the existing 8 MiB frame
 allowance plus 48 MiB for eight worst-case escaped captures. Client requests
-remain limited to 8 MiB. All client and host binaries must use protocol 91.
+remain limited to 8 MiB. All client and host binaries must use protocol 94.
 The size limit is admission, not a promise that every document finishes within
 the unchanged deadline; complex HTML, large tables or highlighted code can still
 exhaust rendering time or memory.

@@ -53,6 +53,9 @@ impl ChildFixture {
             .args(["--exact", CHILD_NAME, "--ignored", "--nocapture"])
             .env(CHILD_ENV, "1")
             .env(CHILD_READY, &ready_path)
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::piped())
@@ -333,6 +336,9 @@ fn run_bounded_helper(name: &str, marker: &str) {
             .args(["--exact", name, "--ignored", "--nocapture"])
             .env(marker, "1")
             .env(COMPLETED_ENV, &completed)
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::null())

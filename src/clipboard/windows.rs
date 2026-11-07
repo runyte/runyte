@@ -448,6 +448,7 @@ mod tests {
                 ])
                 .env(ROLE, role)
                 .env(ROOT, root.path())
+                .envs(crate::test_support::state_environment(std::path::Path::new(&(root.path().join(role).join("config")))))
                 .env("XDG_CONFIG_HOME", root.path().join(role).join("config"))
                 .env("XDG_CACHE_HOME", root.path().join(role).join("cache"))
                 .stdout(fs::File::create(root.path().join(format!("{role}.stdout"))).unwrap())
@@ -516,6 +517,9 @@ mod tests {
                     "--nocapture",
                 ])
                 .env(CHILD, "1")
+                .envs(crate::test_support::state_environment(
+                    std::path::Path::new(&(root.path().join("config"))),
+                ))
                 .env("XDG_CONFIG_HOME", root.path().join("config"))
                 .output()
                 .unwrap();

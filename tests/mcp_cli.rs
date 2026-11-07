@@ -14,6 +14,9 @@ fn mcp_stdio_starts_without_editor_or_permissions_and_rejects_duplicate_fields()
     let root = TestRuntimeRoot::new("mcp-cli").unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_runyte"))
         .args(["mcp", "--identity", "fixture"])
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.path().join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.path().join("config"))
         .env("RUNYTE_CONTEXT_HOME", root.path().join("context"))
         .stdin(Stdio::piped())
@@ -78,6 +81,9 @@ fn mcp_cli_validates_options_without_starting_the_editor() {
         let output = Command::new(env!("CARGO_BIN_EXE_runyte"))
             .arg("mcp")
             .args(args)
+            .envs(runyte::test_support::state_environment(
+                std::path::Path::new(&(root.path().join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.path().join("config"))
             .stdin(Stdio::null())
             .output()
@@ -87,6 +93,9 @@ fn mcp_cli_validates_options_without_starting_the_editor() {
     }
     let output = Command::new(env!("CARGO_BIN_EXE_runyte"))
         .args(["mcp", "--help"])
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(root.path().join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.path().join("config"))
         .output()
         .unwrap();

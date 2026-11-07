@@ -3,6 +3,8 @@
 //! Content alignment: where a generated page's text is drawn, and what that
 //! placement is not allowed to change about the buffer under it.
 
+use runyte::test_support::isolated_startup_config;
+
 use ratatui::{Terminal, backend::TestBackend, layout::Rect};
 use runyte::{
     app::{App, PreparedView},
@@ -28,7 +30,7 @@ fn prepare(app: &mut App, width: u16, height: u16) -> PreparedView {
 /// The about page, opened in a pane that already has geometry, exactly as a
 /// running editor opens it.
 fn about(width: u16, height: u16) -> App {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     prepare(&mut app, width, height);
     run(&mut app, EditorCommand::ShowAbout);
     app
@@ -384,7 +386,7 @@ fn clicking_the_margin_names_the_start_of_the_row() {
 /// from the left edge of their pane.
 #[test]
 fn only_a_page_that_asked_for_it_is_aligned() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     assert_eq!(
         prepare(&mut app, 120, 40).pane(0).unwrap().content_indent,
         0

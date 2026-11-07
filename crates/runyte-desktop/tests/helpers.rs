@@ -9,6 +9,9 @@ fn invoke(args: &[&str], input: &[u8]) -> Output {
     let config = tempfile::tempdir().unwrap();
     let mut child = Command::new(env!("CARGO_BIN_EXE_runyte-desktop"))
         .args(args)
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(config.path())),
+        ))
         .env("XDG_CONFIG_HOME", config.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -109,7 +109,10 @@ def clean_environment() -> dict[str, str]:
     """Keep caller development output and routing out of isolated measurements."""
     environment = dict(os.environ)
     for name in ("RUNYTE_INPUT_TRACE", "RUNYTE_STARTUP_TIMING_FILE",
-                 "RUNYTE_BENCH_EVENTS", "RUNYTE_PARENT_CONTEXT"):
+                 "RUNYTE_BENCH_EVENTS", "RUNYTE_PARENT_CONTEXT",
+                 "RUNYTE_TEST_STATE_HOME", "RUNYTE_TEST_ACCOUNT_HOME",
+                 "RUNYTE_TEST_LOCAL_APP_DATA", "RUNYTE_TEST_SOCKET_HOME",
+                 "RUNYTE_TEST_OUT_OF_TREE_ROOT"):
         environment.pop(name, None)
     return environment
 

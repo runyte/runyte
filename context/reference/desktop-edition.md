@@ -25,9 +25,13 @@ process's PID and exact window class. GPUI 0.2.2's X11 raw-handle accessors are
 unimplemented, so the adapter does not call them. GPUI is vendored under
 `vendor/gpui` with Linux frame scheduling and paint fixes described in its
 [patch record](../../vendor/gpui/RUNYTE-PATCH.md).
-The macOS helper builds a local `.app` with an ICNS resource, launcher and
-project/dependency/font notices. Installation, regeneration and platform
-limits are documented in [the native packaging guide](../../contrib/packaging/README.md).
+The macOS adapter embeds the same ICNS resource and sets AppKit's application
+icon on the main thread at window startup, including terminal, `runed` and
+source-build launches. This sets the running application's Dock and Cmd-Tab icon;
+it does not change the executable file's Finder icon or its unbundled application
+name. Manual macOS icon acceptance remains pending. The macOS helper builds a
+local `.app` with an ICNS resource, launcher and project/dependency/font notices.
+Installation, regeneration and platform limits are documented in [the native packaging guide](../../contrib/packaging/README.md).
 
 Native builds embed four unmodified JetBrainsMono Nerd Font faces from Nerd
 Fonts v3.4.0 (JetBrains Mono 2.304): Medium, Medium Italic, Bold, and Bold Italic.
@@ -656,3 +660,30 @@ construction, read-only mounting, contents and detachment also pass. The bundle
 uses `RunyteLauncher` beside `runyte` to keep filenames distinct on default
 case-insensitive filesystems. Signing, notarization, quarantine/Finder launch
 and real macOS window acceptance remain the joint manual Phase 8 work.
+
+## Graphical startup and refusals — 2026-11-06
+
+The app launcher and registered Linux desktop entry select the configured mode
+in the effective account home. Linux writes an escaped absolute `Path=`.
+macOS changes cwd before exec and supplies its original absolute directory via
+`--graphical-cwd`, so relative file arguments retain their original meaning.
+Only marked graphical IDE/mux launches discover a workspace from the first
+file's directory. They reuse the captured startup storage/home admission.
+Graphical editor mode normalizes original-cwd paths but needs no existing
+workspace directory when opening a new file.
+
+Graphical mux targets travel once over the active native interactive attachment
+using private protocol version 93; terminal target-bearing launches retain their
+standalone behavior. The initial target acknowledgment includes the complete
+post-open frame, so the About frame is not drawn first. Native media and caret
+position behavior reuse `App::open_native_targets`.
+
+A failed native worker retains at most 16 KiB of readable diagnostic text until
+the window closes. Invalid configuration uses default presentation settings.
+The error view creates no App, changes no requested mode, and starts no workspace
+services after refusal. Closing it quits the native loop and joins the completed
+worker. Failure to create a platform window remains stderr-only. Finder file-open
+Apple Events and manual macOS Finder/Dock acceptance remain outside automated
+acceptance. `tests/native_window.py` adds marked graphical IDE/mux launches from
+another directory and retained configuration/storage refusal checks on isolated
+X11 displays.

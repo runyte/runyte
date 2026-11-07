@@ -15,8 +15,8 @@ is `ide` unless set otherwise. The launch directory never changes the mode.
 A **workspace** is one project directory and its editor scope: a Git,
 Jujutsu, or Subversion working copy, or a directory holding the workspace state
 directory (`.runyte/`), found by walking up from the launch directory. ide and
-mux need one. Outside a workspace, an ide launch makes the launch directory one;
-mux refuses, and so does ide in the directories listed under
+mux need one. The home directory also provides a workspace with state in
+the per-user state area. Elsewhere, an ide launch makes the launch directory one; mux refuses, and so does ide in the directories listed under
 [Finding the workspace](#starting-a-workspace), with a message naming
 `runyte --init DIRECTORY`.
 
@@ -38,17 +38,41 @@ Persistent sessions work on Unix and Windows; see
 **Finding the workspace.** Runyte walks up from the launch directory to the
 nearest Git (`.git`), Jujutsu (`.jj`), or Subversion (`.svn`) root, or else to a
 workspace state directory (`.runyte/`). A working copy wins over a nearer state
-directory. When neither exists, an ide launch makes the launch directory the
+directory. When neither exists and the launch directory is exactly your home
+directory, ide and mux use the home workspace. The environment and effective
+account home paths both qualify, compared after resolving links. Displayed `~`
+keeps the environment home's meaning when they differ. Its state lives in the
+[per-user state directory](configuration.md#where-workspace-state-lives),
+and Runyte creates no new relative state directory such as `~/.runyte/`. Subdirectories never discover
+this fallback: `~/scratch` is still adopted by ide or refused by mux unless
+ordinary discovery finds a workspace.
+
+When neither exists elsewhere, an ide launch makes the launch directory the
 workspace, as Helix uses its working directory: it creates `.runyte/` there,
 says so in a notification, and later launches from it or from a directory below
-it find the same workspace. See
+it find the same workspace. The interaction line echoes the chosen workspace
+and how it was found: a Git, Jujutsu or Subversion root, an existing state
+directory, the home workspace, or a workspace created by this launch. A persistent session also
+says whether it started or was already running. The echo appears on launch,
+deliberate attachment and session switching, and stays until another action
+replaces it. Startup warnings and errors take priority; editor mode has no
+workspace echo. See
 [Where workspace state lives](configuration.md#where-workspace-state-lives).
+
+A checkout rooted at home keeps its version-control identity and normal
+project scans. Its new state lives in the per-user state area; an existing configured
+relative state directory is retained.
+
+Home fallback project scans (Finder, file pickers and workspace grep) stay on one
+filesystem and visit at most 20,000 entries. The results say when that limit
+was reached. On macOS these scans skip `~/Library`, including when hidden files
+or unfiltered search are enabled. To search it explicitly, open that directory
+as the scan root, or use `runyte --editor ~/Library`.
 
 Some directories are never made a workspace this way, because a `.runyte/` in
 them would become the workspace of every later launch from a directory below
 with no repository:
 
-- your home directory;
 - the filesystem root;
 - the temporary directory;
 - on Unix, a directory other accounts can write to, or one another account
@@ -56,21 +80,33 @@ with no repository:
 
 A launch naming a file outside the launch directory, such as
 `runyte /etc/hosts` from `~/Downloads`, is not made one either: it is about
-that file, not about where the shell happened to be. These launches refuse;
-run `runyte --init DIRECTORY` to make a directory a workspace deliberately, or
-use `runyte --editor`.
+that file, not about where the shell happened to be. These launches refuse. The message names the mode, whether a flag or the
+`mode` setting selected it, where discovery started, and why the directory
+was not adopted. Open a project with `cd DIRECTORY && runyte`, make a
+workspace deliberately with `runyte --init DIRECTORY`, or edit without one
+with `runyte --editor`. A mux refusal instead offers
+`runyte --mux DIRECTORY` to open or create a workspace from the current
+directory, or `runyte --init DIRECTORY` to create one only. Replace
+`DIRECTORY` with the desired directory; quote paths containing spaces or shell
+characters. Displayed paths abbreviate your home directory as `~`.
 
 A launch that fails after making its workspace, for example because it has no
-terminal, leaves the `.runyte/` it created. mux launches, `--wait`, and session commands never create a
-workspace: run an ide launch or `--init` there first.
+terminal, leaves the `.runyte/` it created. A mux launch without a selector
+can create the home workspace. Elsewhere, it,
+`--wait`, and lifecycle management commands never create a workspace: run an
+ide launch or `--init` there first. An explicit directory attachment can
+create one, as described below.
 
 **`--init DIRECTORY`** creates the configured state directory (`.runyte/` by
-default) in exactly that directory, prints how to open it, and exits without
-starting the editor:
+default) in exactly that directory, or uses the per-user state area for home.
+It prints how to open it and exits without
+starting the editor. Windows PowerShell uses
+`Set-Location -LiteralPath PATH; if ($?) { runyte }` for the ide opening
+command:
 
 ```
 initialized a workspace in /path/to/project
-open it with: runyte /path/to/project   or   runyte --mux /path/to/project
+open it with: cd '/path/to/project' && runyte   or   runyte --mux '/path/to/project'
 ```
 
 - An existing state directory is used as is, never reset or removed, and the
@@ -94,8 +130,8 @@ open it with: runyte /path/to/project   or   runyte --mux /path/to/project
 - An existing directory unknown to the catalog names that exact directory:
   Runyte creates its state directory if needed and starts its session.
   `:session-attach DIRECTORY` and the explorer's `Tab s` do the same.
-- A bare `runyte -a` uses the workspace of the current directory, and refuses
-  when there is none.
+- A bare `runyte -a` uses the workspace of the current directory, including
+  the home workspace, and refuses when there is none.
 
 **Only one interactive TUI** may be attached at a time. Separate control
 connections can still manage the host.

@@ -25,6 +25,9 @@ fn input_trace_refuses_special_files_without_blocking() {
             "--nocapture",
         ])
         .env("RUNYTE_INPUT_TRACE", &pipe)
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.path().join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.path().join("config"))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

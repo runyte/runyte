@@ -21,13 +21,257 @@ use std::path::Component;
 
 use anyhow::{Context, Result, bail};
 
+/// How startup selected a workspace. Discovery records the matching marker
+/// during its existing scan, without looking at the filesystem again.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceOrigin {
+    VersionControl(VersionControl),
+    StateDirectory,
+    Home,
+    Created(CreatedBy),
+}
+
+pub(crate) const STARTUP_ORIGIN_ENV: &str = "RUNYTE_STARTUP_WORKSPACE_ORIGIN";
+
+impl WorkspaceOrigin {
+    pub(crate) fn startup_value(self) -> &'static str {
+        match self {
+            Self::VersionControl(VersionControl::Git) => "git",
+            Self::VersionControl(VersionControl::Jujutsu) => "jj",
+            Self::VersionControl(VersionControl::Subversion) => "svn",
+            Self::StateDirectory => "state",
+            Self::Home => "home",
+            Self::Created(CreatedBy::Adoption) => "adoption",
+            Self::Created(CreatedBy::Init) => "init",
+            Self::Created(CreatedBy::AttachDirectory) => "attach-directory",
+        }
+    }
+
+    pub(crate) fn startup_handoff(self, root: &Path) -> String {
+        format!(
+            "{}:{}",
+            crate::workspace::workspace_id(root),
+            self.startup_value()
+        )
+    }
+
+    pub(crate) fn from_startup_value(value: &str) -> Option<Self> {
+        Some(match value {
+            "git" => Self::VersionControl(VersionControl::Git),
+            "jj" => Self::VersionControl(VersionControl::Jujutsu),
+            "svn" => Self::VersionControl(VersionControl::Subversion),
+            "state" => Self::StateDirectory,
+            "home" => Self::Home,
+            "adoption" => Self::Created(CreatedBy::Adoption),
+            "init" => Self::Created(CreatedBy::Init),
+            "attach-directory" => Self::Created(CreatedBy::AttachDirectory),
+            _ => return None,
+        })
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn startup_origin(
+    root: &Path,
+    state: &Path,
+    inherited: Option<&str>,
+) -> io::Result<WorkspaceOrigin> {
+    let safety = crate::workspace_state::StartupSafety::capture(&[]);
+    startup_origin_with_safety(root, state, inherited, &safety)
+}
+
+pub(crate) fn startup_origin_with_safety(
+    root: &Path,
+    state: &Path,
+    inherited: Option<&str>,
+    safety: &crate::workspace_state::StartupSafety,
+) -> io::Result<WorkspaceOrigin> {
+    let captured = inherited
+        .filter(|value| value.len() <= 64)
+        .and_then(|value| {
+            let (identity, origin) = value.split_once(':')?;
+            (identity == crate::workspace::workspace_id(root))
+                .then(|| WorkspaceOrigin::from_startup_value(origin))
+                .flatten()
+        });
+    match captured {
+        Some(origin) => Ok(origin),
+        None => exact_origin_with_safety(root, state, safety),
+    }
+}
+
+/// Exact explicitly selected root, as opposed to discovery from a launch
+/// directory. Used before initialization to retain whether this launch made it.
+#[cfg(test)]
+pub(crate) fn exact_origin(root: &Path, state: &Path) -> io::Result<WorkspaceOrigin> {
+    let safety = crate::workspace_state::StartupSafety::capture(&[]);
+    exact_origin_with_safety(root, state, &safety)
+}
+
+pub(crate) fn exact_origin_with_safety(
+    root: &Path,
+    state: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+) -> io::Result<WorkspaceOrigin> {
+    let root = root.canonicalize()?;
+    Ok(discover_candidates(&[&root], state)?.map_or(
+        if safety.is_home(&root) {
+            WorkspaceOrigin::Home
+        } else {
+            WorkspaceOrigin::Created(CreatedBy::AttachDirectory)
+        },
+        |workspace| workspace.origin,
+    ))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VersionControl {
+    Git,
+    Jujutsu,
+    Subversion,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CreatedBy {
+    Adoption,
+    Init,
+    AttachDirectory,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DiscoveredWorkspace {
+    pub root: PathBuf,
+    pub origin: WorkspaceOrigin,
+}
+
+/// The workspace mode and the source that selected it for this launch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkspaceRequirement {
+    pub mode: WorkspaceMode,
+    pub source: ModeSource,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkspaceMode {
+    Ide,
+    Mux,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ModeSource {
+    Flag(&'static str),
+    Setting,
+    PositionalTargets,
+    WindowLaunch,
+}
+
+impl WorkspaceRequirement {
+    pub const fn new(mode: WorkspaceMode, explicit: bool) -> Self {
+        Self {
+            mode,
+            source: if explicit {
+                ModeSource::Flag(match mode {
+                    WorkspaceMode::Ide => "--ide",
+                    WorkspaceMode::Mux => "--mux",
+                })
+            } else {
+                ModeSource::Setting
+            },
+        }
+    }
+
+    /// One refusal structure for all launch and attachment paths. `home` is
+    /// supplied by the caller, so formatting never resolves per-user storage.
+    pub fn refusal(self, directory: &Path, reason: Option<&str>, home: Option<&Path>) -> String {
+        let mode = match self.mode {
+            WorkspaceMode::Ide => "ide",
+            WorkspaceMode::Mux => "mux",
+        };
+        let source = match self.source {
+            ModeSource::Flag(flag) => format!("the {flag} flag"),
+            ModeSource::Setting => "the mode setting".to_owned(),
+            ModeSource::PositionalTargets => {
+                "file or directory targets override mode: mux".to_owned()
+            }
+            ModeSource::WindowLaunch => "window launch uses ide instead of mode: mux".to_owned(),
+        };
+        let mut message = format!(
+            "runyte needs a workspace in {mode} mode ({source}), and none was found in {} or any directory above it.",
+            display_workspace_path(directory, home)
+        );
+        if let Some(reason) = reason {
+            message.push('\n');
+            message.push_str(reason);
+        }
+        match self.mode {
+            WorkspaceMode::Mux => message.push_str("\n  Open or create one:  runyte --mux DIRECTORY\n  Create one only:     runyte --init DIRECTORY"),
+            WorkspaceMode::Ide => {
+                message.push_str(&format!("\n  Open a project:      {}\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor", ide_open_command("DIRECTORY")));
+            },
+        }
+        message
+    }
+}
+
+pub fn display_workspace_path(path: &Path, home: Option<&Path>) -> String {
+    #[cfg(windows)]
+    fn ordinary(path: &Path) -> PathBuf {
+        let spelling = path.to_string_lossy();
+        if let Some(unc) = spelling.strip_prefix(r"\\?\UNC\") {
+            PathBuf::from(format!(r"\\{unc}"))
+        } else {
+            PathBuf::from(spelling.strip_prefix(r"\\?\").unwrap_or(&spelling))
+        }
+    }
+    #[cfg(windows)]
+    let (path, home) = (ordinary(path), home.map(ordinary));
+    #[cfg(windows)]
+    let (path, home) = (path.as_path(), home.as_deref());
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(relative) if relative.as_os_str().is_empty() => "~".to_owned(),
+        Some(relative) => format!("~/{}", relative.display()),
+        None => path.display().to_string(),
+    }
+}
+
+/// Opens the workspace after changing directory successfully. Windows uses
+/// PowerShell 5.1 syntax and a literal path, including names containing `[]`.
+pub fn ide_open_command(argument: &str) -> String {
+    if cfg!(windows) {
+        format!("Set-Location -LiteralPath {argument}; if ($?) {{ runyte }}")
+    } else {
+        format!("cd {argument} && runyte")
+    }
+}
+
+/// A literal shell argument for the platform's documented shell (POSIX on
+/// Unix, PowerShell on Windows). Human-readable path shortening is separate:
+/// quoting a tilde would prevent shell expansion.
+pub fn workspace_shell_argument(path: &Path) -> String {
+    #[cfg(windows)]
+    {
+        // PowerShell 5.1's filesystem provider needs the ordinary spelling,
+        // while workspace identities retain canonical extended paths.
+        let ordinary = crate::windows_fs::ordinary_working_directory(path)
+            .unwrap_or_else(|_| path.to_path_buf());
+        format!("'{}'", ordinary.to_string_lossy().replace('\'', "''"))
+    }
+    #[cfg(not(windows))]
+    {
+        format!("'{}'", path.to_string_lossy().replace('\'', "'\"'\"'"))
+    }
+}
+
 /// Finds the workspace directory that owns runtime state.
 ///
 /// A version-control root has priority over an existing state directory even
 /// when the latter is nearer to `start`. This makes an accidentally-created
 /// nested state directory stop attracting later launches once it is inside a
 /// checkout.
-pub fn discover(start: &Path, configured_state_root: &Path) -> io::Result<Option<PathBuf>> {
+pub fn discover(
+    start: &Path,
+    configured_state_root: &Path,
+) -> io::Result<Option<DiscoveredWorkspace>> {
     let start = start.canonicalize()?;
     let candidates = start.ancestors().collect::<Vec<_>>();
     discover_candidates(&candidates, configured_state_root)
@@ -44,6 +288,15 @@ pub fn initialize(
     configured_state_root: &Path,
     reserved_user_roots: &[PathBuf],
 ) -> Result<PathBuf> {
+    let safety = crate::workspace_state::StartupSafety::capture(reserved_user_roots);
+    initialize_with_safety(requested, configured_state_root, &safety)
+}
+
+pub fn initialize_with_safety(
+    requested: &Path,
+    configured_state_root: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+) -> Result<PathBuf> {
     let project_root = requested
         .canonicalize()
         .with_context(|| format!("cannot resolve project directory {}", requested.display()))?;
@@ -52,8 +305,14 @@ pub fn initialize(
         "project directory {} is not a directory",
         project_root.display()
     );
-    let state_root = resolve_state_root(&project_root, configured_state_root);
-    validate_state_root(&state_root, reserved_user_roots)?;
+    let location =
+        resolve_state_location_with_safety(&project_root, configured_state_root, safety)?;
+    safety.validate(&project_root, &location)?;
+    if matches!(location, StateLocation::OutOfTree(_)) {
+        location.prepare_with_safety(&project_root, safety)?;
+        return Ok(project_root);
+    }
+    let state_root = location.into_path_buf();
     fs::create_dir_all(&state_root).with_context(|| {
         format!(
             "cannot create the project workspace directory {}",
@@ -66,10 +325,13 @@ pub fn initialize(
 fn discover_candidates(
     candidates: &[&Path],
     configured_state_root: &Path,
-) -> io::Result<Option<PathBuf>> {
+) -> io::Result<Option<DiscoveredWorkspace>> {
     for candidate in candidates {
-        if is_version_control_root(candidate)? {
-            return Ok(Some((*candidate).to_path_buf()));
+        if let Some(version_control) = version_control_root(candidate)? {
+            return Ok(Some(DiscoveredWorkspace {
+                root: (*candidate).to_path_buf(),
+                origin: WorkspaceOrigin::VersionControl(version_control),
+            }));
         }
     }
 
@@ -77,19 +339,16 @@ fn discover_candidates(
         for candidate in candidates {
             let runtime_root = candidate.join(configured_state_root);
             if runtime_root.is_dir() {
-                return Ok(Some((*candidate).to_path_buf()));
+                return Ok(Some(DiscoveredWorkspace {
+                    root: (*candidate).to_path_buf(),
+                    origin: WorkspaceOrigin::StateDirectory,
+                }));
             }
         }
     }
 
     Ok(None)
 }
-
-/// What a launch that needs a workspace says when discovery finds none.
-/// Workspaces are created by `runyte --init` or by an ide launch from the
-/// directory itself, never by answering a question at startup, so the
-/// refusal names that command.
-pub const NO_WORKSPACE_HERE: &str = "no workspace here; run runyte --init DIRECTORY to create one";
 
 /// Makes `directory`, the launch directory of an ide launch that discovery
 /// found no workspace for, a workspace of its own, and returns its canonical
@@ -99,8 +358,7 @@ pub const NO_WORKSPACE_HERE: &str = "no workspace here; run runyte --init DIRECT
 /// Some directories are refused rather than adopted, because a state
 /// directory in them would be discovered by every later launch from a
 /// directory below with no repository, quietly making all of it one
-/// workspace: the home directory, as the environment and the account database
-/// each name it in `homes`; the filesystem root; the temporary directory; and
+/// workspace: the filesystem root; the temporary directory; and
 /// on Unix a directory other accounts can write to or that another account
 /// owns, where one person's state would capture another's launches. A launch
 /// naming a target outside the directory is refused too: it is about that
@@ -114,6 +372,30 @@ pub fn adopt(
     reserved_user_roots: &[PathBuf],
     homes: &[PathBuf],
     targets: &[PathBuf],
+    requirement: WorkspaceRequirement,
+) -> Result<PathBuf> {
+    let safety = crate::workspace_state::StartupSafety::capture_with_homes(
+        reserved_user_roots,
+        crate::workspace_state::user_state_root,
+        homes,
+    );
+    adopt_with_safety(
+        directory,
+        configured_state_root,
+        &safety,
+        homes,
+        targets,
+        requirement,
+    )
+}
+
+pub fn adopt_with_safety(
+    directory: &Path,
+    configured_state_root: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+    homes: &[PathBuf],
+    targets: &[PathBuf],
+    requirement: WorkspaceRequirement,
 ) -> Result<PathBuf> {
     let typed = lexical(directory);
     let directory = directory
@@ -129,8 +411,6 @@ pub fn adopt(
         .find(|target| !lexical(target).starts_with(&typed));
     let refusal = if directory.parent().is_none() {
         Some("the filesystem root is not made one automatically".to_owned())
-    } else if homes.iter().any(|home| is(home)) {
-        Some("the home directory is not made one automatically".to_owned())
     } else if is(&std::env::temp_dir()) {
         Some("the temporary directory is not made one automatically".to_owned())
     } else if let Some(sharing) = shared_directory(&directory)? {
@@ -138,23 +418,27 @@ pub fn adopt(
     } else if let Some(target) = outside {
         Some(format!(
             "{} is outside {}, so that directory is not made one automatically",
-            target.display(),
-            directory.display()
+            display_workspace_path(target, homes.first().map(PathBuf::as_path)),
+            display_workspace_path(&directory, homes.first().map(PathBuf::as_path))
         ))
-    } else if !is_usable_relative_marker(configured_state_root) {
+    } else if !safety.is_home(&directory) && !is_usable_relative_marker(configured_state_root) {
         Some("none is made automatically while workspace.state is an absolute path".to_owned())
     } else {
         None
     };
     if let Some(refusal) = refusal {
-        bail!(
-            "no workspace here, and {refusal}; run runyte --init DIRECTORY to create one, or runyte --editor to edit without one"
-        );
+        bail!(requirement.refusal(
+            &directory,
+            Some(&refusal),
+            homes.first().map(PathBuf::as_path)
+        ));
     }
-    initialize(&directory, configured_state_root, reserved_user_roots).map_err(|error| {
-        error.context(format!(
-            "cannot make {} a workspace; run runyte --editor to edit without one",
-            directory.display()
+    initialize_with_safety(&directory, configured_state_root, safety).map_err(|error| {
+        let reason = format!("The launch directory could not be made a workspace: {error:#}.");
+        error.context(requirement.refusal(
+            &directory,
+            Some(&reason),
+            homes.first().map(PathBuf::as_path),
         ))
     })
 }
@@ -204,14 +488,105 @@ fn shared_directory(_directory: &Path) -> io::Result<Option<&'static str>> {
     Ok(None)
 }
 
+/// Home is an exact-directory fallback, never an upward discovery marker.
+/// Unit fixtures supply homes through StartupSafety instead of account lookup.
+pub(crate) fn user_home_directories() -> Vec<PathBuf> {
+    if cfg!(test) {
+        return Vec::new();
+    }
+    crate::app::user_home_directory()
+        .into_iter()
+        .chain(crate::user_paths::system_home_directory())
+        .collect()
+}
+
+pub fn discover_with_home(start: &Path, state: &Path) -> io::Result<Option<DiscoveredWorkspace>> {
+    let safety = crate::workspace_state::StartupSafety::capture(&[]);
+    discover_with_home_safety(start, state, &safety)
+}
+
+pub(crate) fn discover_with_home_safety(
+    start: &Path,
+    state: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+) -> io::Result<Option<DiscoveredWorkspace>> {
+    if let Some(found) = discover(start, state)? {
+        return Ok(Some(found));
+    }
+    let root = start.canonicalize()?;
+    if !safety.is_home(&root) {
+        return Ok(None);
+    }
+    let refused = if root.parent().is_none() {
+        Some("the filesystem root")
+    } else if std::env::temp_dir()
+        .canonicalize()
+        .is_ok_and(|temp| temp == root)
+    {
+        Some("the temporary directory")
+    } else {
+        shared_directory(&root)?
+    };
+    if let Some(reason) = refused {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{reason} is not made a home workspace automatically"),
+        ));
+    }
+    Ok(Some(DiscoveredWorkspace {
+        root,
+        origin: WorkspaceOrigin::Home,
+    }))
+}
+
+pub(crate) fn resolve_state_location_with_safety(
+    project: &Path,
+    configured: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+) -> Result<StateLocation> {
+    if safety.is_home(project)
+        && !(is_usable_relative_marker(configured) && project.join(configured).is_dir())
+    {
+        let root = safety
+            .state_root()
+            .context("cannot resolve per-user state for the home workspace")?;
+        return Ok(StateLocation::out_of_tree(project, root));
+    }
+    Ok(resolve_fixture_state_location(project, configured))
+}
+
 /// Resolves the configured runtime path against its owning project directory.
 pub fn resolve_state_root(project_root: &Path, configured_state_root: &Path) -> PathBuf {
-    if configured_state_root.is_absolute() {
-        configured_state_root.to_path_buf()
-    } else {
-        project_root.join(configured_state_root)
-    }
+    resolve_state_location(project_root, configured_state_root).into_path_buf()
 }
+
+/// Home roots without an existing relative state directory use per-user state,
+/// including home checkouts. Other roots retain their configured placement.
+pub fn resolve_state_location(project_root: &Path, configured: &Path) -> StateLocation {
+    let homes = user_home_directories();
+    if homes
+        .iter()
+        .any(|home| home.canonicalize().is_ok_and(|home| home == project_root))
+        && !(is_usable_relative_marker(configured) && project_root.join(configured).is_dir())
+        && let Some(root) = crate::workspace_state::user_state_root()
+    {
+        return StateLocation::out_of_tree(project_root, &root);
+    }
+    resolve_fixture_state_location(project_root, configured)
+}
+
+fn resolve_fixture_state_location(project_root: &Path, configured: &Path) -> StateLocation {
+    #[cfg(debug_assertions)]
+    if std::env::var_os("RUNYTE_TEST_OUT_OF_TREE_ROOT")
+        .is_some_and(|root| Path::new(&root) == project_root)
+        && let Some(root) = crate::workspace_state::fixture_state_root()
+    {
+        return StateLocation::out_of_tree(project_root, &root);
+    }
+    StateLocation::in_tree(project_root, configured)
+}
+
+pub use crate::workspace_state::StateLocation;
 
 /// Keeps project journals and artifacts separate from per-user configuration
 /// and caches. Both directions matter: neither side may contain the other.
@@ -234,37 +609,40 @@ fn is_usable_relative_marker(path: &Path) -> bool {
 }
 
 fn paths_overlap(left: &Path, right: &Path) -> bool {
+    comparable_paths_overlap(&comparable_path(left), &comparable_path(right))
+}
+
+#[cfg(windows)]
+pub(crate) fn comparable_path(path: &Path) -> PathBuf {
+    let mut ancestor = path;
+    let mut suffix = Vec::new();
+    loop {
+        match ancestor.canonicalize() {
+            Ok(mut resolved) => {
+                for component in suffix.iter().rev() {
+                    resolved.push(component);
+                }
+                break resolved;
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let Some(name) = ancestor.file_name() else {
+                    break path.to_path_buf();
+                };
+                suffix.push(name.to_owned());
+                let Some(parent) = ancestor.parent() else {
+                    break path.to_path_buf();
+                };
+                ancestor = parent;
+            }
+            Err(_) => break path.to_path_buf(),
+        }
+    }
+}
+
+pub(crate) fn comparable_paths_overlap(left: &Path, right: &Path) -> bool {
     #[cfg(windows)]
     {
         use std::{os::windows::ffi::OsStrExt, path::Prefix};
-
-        let comparable = |path: &Path| {
-            let mut ancestor = path;
-            let mut suffix = Vec::new();
-            loop {
-                match ancestor.canonicalize() {
-                    Ok(mut resolved) => {
-                        for component in suffix.iter().rev() {
-                            resolved.push(component);
-                        }
-                        break resolved;
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                        let Some(name) = ancestor.file_name() else {
-                            break path.to_path_buf();
-                        };
-                        suffix.push(name.to_owned());
-                        let Some(parent) = ancestor.parent() else {
-                            break path.to_path_buf();
-                        };
-                        ancestor = parent;
-                    }
-                    Err(_) => break path.to_path_buf(),
-                }
-            }
-        };
-        let left = comparable(left);
-        let right = comparable(right);
         let left: Vec<_> = left.components().collect();
         let right: Vec<_> = right.components().collect();
         let component_eq = |left: &Component<'_>, right: &Component<'_>| match (left, right) {
@@ -326,14 +704,12 @@ fn paths_overlap(left: &Path, right: &Path) -> bool {
 
     #[cfg(not(windows))]
     {
-        let left = comparable_path(left);
-        let right = comparable_path(right);
-        left.starts_with(&right) || right.starts_with(&left)
+        left.starts_with(right) || right.starts_with(left)
     }
 }
 
 #[cfg(not(windows))]
-fn comparable_path(path: &Path) -> PathBuf {
+pub(crate) fn comparable_path(path: &Path) -> PathBuf {
     // A future state directory may have several absent parents. Resolve the
     // existing ancestor before comparing it with per-user storage, otherwise
     // a symlink above those parents hides their eventual containment.
@@ -370,10 +746,16 @@ fn comparable_path(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
-fn is_version_control_root(candidate: &Path) -> io::Result<bool> {
-    Ok(is_git_root(candidate)?
-        || is_marked_directory(candidate, ".jj", "repo")?
-        || is_marked_directory(candidate, ".svn", "wc.db")?)
+fn version_control_root(candidate: &Path) -> io::Result<Option<VersionControl>> {
+    if is_git_root(candidate)? {
+        Ok(Some(VersionControl::Git))
+    } else if is_marked_directory(candidate, ".jj", "repo")? {
+        Ok(Some(VersionControl::Jujutsu))
+    } else if is_marked_directory(candidate, ".svn", "wc.db")? {
+        Ok(Some(VersionControl::Subversion))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Whether `candidate` holds a `name` directory with an `entry` inside it.
@@ -410,11 +792,126 @@ fn is_git_root(candidate: &Path) -> io::Result<bool> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{fs, path::Path};
     #[cfg(windows)]
     use std::{io, path::PathBuf};
 
     use super::{adopt, discover, discover_candidates, initialize, validate_state_root};
+
+    #[test]
+    fn refusals_have_one_complete_structure_for_every_mode_source_and_reason() {
+        for mode in [super::WorkspaceMode::Ide, super::WorkspaceMode::Mux] {
+            for explicit in [false, true] {
+                for reason in [
+                    None,
+                    Some("the filesystem root is not made one automatically"),
+                    Some("the temporary directory is not made one automatically"),
+                    Some("a directory other accounts can write to is not made one automatically"),
+                    Some("a directory another account owns is not made one automatically"),
+                    Some(
+                        "/elsewhere/file is outside ~/notes, so that directory is not made one automatically",
+                    ),
+                    Some("none is made automatically while workspace.state is an absolute path"),
+                ] {
+                    let (name, recovery) = match mode {
+                        super::WorkspaceMode::Ide if cfg!(windows) => (
+                            "ide",
+                            "\n  Open a project:      Set-Location -LiteralPath DIRECTORY; if ($?) { runyte }\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor",
+                        ),
+                        super::WorkspaceMode::Ide => (
+                            "ide",
+                            "\n  Open a project:      cd DIRECTORY && runyte\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor",
+                        ),
+                        super::WorkspaceMode::Mux => (
+                            "mux",
+                            "\n  Open or create one:  runyte --mux DIRECTORY\n  Create one only:     runyte --init DIRECTORY",
+                        ),
+                    };
+                    let source = if explicit {
+                        format!("the --{name} flag")
+                    } else {
+                        "the mode setting".into()
+                    };
+                    let detail = reason
+                        .map(|reason| format!("\n{reason}"))
+                        .unwrap_or_default();
+                    assert_eq!(
+                        super::WorkspaceRequirement::new(mode, explicit).refusal(
+                            Path::new("/fixture/home/notes"),
+                            reason,
+                            Some(Path::new("/fixture/home"))
+                        ),
+                        format!(
+                            "runyte needs a workspace in {name} mode ({source}), and none was found in ~/notes or any directory above it.{detail}{recovery}"
+                        )
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            super::display_workspace_path(
+                Path::new("/fixture/home"),
+                Some(Path::new("/fixture/home"))
+            ),
+            "~"
+        );
+        assert_eq!(
+            super::display_workspace_path(
+                Path::new("/fixture/home-other"),
+                Some(Path::new("/fixture/home"))
+            ),
+            "/fixture/home-other"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn canonical_windows_paths_abbreviate_the_same_home_as_ordinary_paths() {
+        assert_eq!(
+            super::display_workspace_path(
+                Path::new(r"\\?\C:\Users\person\notes"),
+                Some(Path::new(r"C:\Users\person"))
+            ),
+            "~/notes"
+        );
+        assert_eq!(
+            super::display_workspace_path(
+                Path::new(r"\\?\UNC\server\share\person\notes"),
+                Some(Path::new(r"\\server\share\person"))
+            ),
+            "~/notes"
+        );
+    }
+
+    #[test]
+    fn discovery_retains_the_matching_marker_and_existing_precedence() {
+        for (marker, entry, vcs) in [
+            (".git", "HEAD", super::VersionControl::Git),
+            (".jj", "repo", super::VersionControl::Jujutsu),
+            (".svn", "wc.db", super::VersionControl::Subversion),
+        ] {
+            let root = tempfile();
+            fs::create_dir_all(root.join("nested/.runyte")).unwrap();
+            fs::create_dir(root.join(marker)).unwrap();
+            fs::write(root.join(marker).join(entry), "").unwrap();
+            let found = discover(&root.join("nested"), Path::new(".runyte"))
+                .unwrap()
+                .unwrap();
+            assert_eq!(found.root, root);
+            assert_eq!(found.origin, super::WorkspaceOrigin::VersionControl(vcs));
+            fs::remove_dir_all(&root).unwrap();
+        }
+        let root = tempfile();
+        fs::create_dir(root.join(".runyte")).unwrap();
+        assert_eq!(
+            discover(&root, Path::new(".runyte"))
+                .unwrap()
+                .unwrap()
+                .origin,
+            super::WorkspaceOrigin::StateDirectory
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn git_root_wins_over_a_nearer_runtime_directory() {
@@ -425,7 +922,9 @@ mod tests {
         fs::create_dir_all(nested.join(".runyte")).unwrap();
 
         assert_eq!(
-            discover(&nested, std::path::Path::new(".runyte")).unwrap(),
+            discover(&nested, std::path::Path::new(".runyte"))
+                .unwrap()
+                .map(|workspace| workspace.root),
             Some(temporary.clone())
         );
 
@@ -440,7 +939,9 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
 
         assert_eq!(
-            discover(&nested, std::path::Path::new(".runyte")).unwrap(),
+            discover(&nested, std::path::Path::new(".runyte"))
+                .unwrap()
+                .map(|workspace| workspace.root),
             Some(temporary.clone())
         );
 
@@ -457,7 +958,9 @@ mod tests {
             fs::create_dir_all(nested.join(".runyte")).unwrap();
 
             assert_eq!(
-                discover(&nested, std::path::Path::new(".runyte")).unwrap(),
+                discover(&nested, std::path::Path::new(".runyte"))
+                    .unwrap()
+                    .map(|workspace| workspace.root),
                 Some(temporary.clone()),
                 "{marker}"
             );
@@ -484,6 +987,69 @@ mod tests {
     }
 
     #[test]
+    fn adoption_refusals_report_the_complete_cause_and_recovery() {
+        let root = tempfile();
+        let directory = root.join("plain");
+        let elsewhere = root.join("elsewhere");
+        fs::create_dir(&directory).unwrap();
+        fs::create_dir(&elsewhere).unwrap();
+        let requirement = super::WorkspaceRequirement::new(super::WorkspaceMode::Ide, true);
+        let check = |launch: &Path, state: &Path, targets: &[std::path::PathBuf], reason: &str| {
+            let error = adopt(launch, state, &[], &[], targets, requirement).unwrap_err();
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "runyte needs a workspace in ide mode (the --ide flag), and none was found in {} or any directory above it.\n{reason}\n  Open a project:      {}\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor",
+                    super::display_workspace_path(&launch.canonicalize().unwrap(), None),
+                    super::ide_open_command("DIRECTORY")
+                )
+            );
+        };
+        check(
+            &directory,
+            &elsewhere.join("state"),
+            &[],
+            "none is made automatically while workspace.state is an absolute path",
+        );
+        check(
+            &directory,
+            Path::new(".runyte"),
+            std::slice::from_ref(&elsewhere),
+            &format!(
+                "{} is outside {}, so that directory is not made one automatically",
+                super::display_workspace_path(&elsewhere, None),
+                super::display_workspace_path(&directory, None)
+            ),
+        );
+        check(
+            &std::env::temp_dir(),
+            Path::new(".runyte"),
+            &[],
+            "the temporary directory is not made one automatically",
+        );
+        let filesystem_root = directory.ancestors().last().unwrap();
+        check(
+            filesystem_root,
+            Path::new(".runyte"),
+            &[],
+            "the filesystem root is not made one automatically",
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&directory, fs::Permissions::from_mode(0o777)).unwrap();
+            check(
+                &directory,
+                Path::new(".runyte"),
+                &[],
+                "a directory other accounts can write to is not made one automatically",
+            );
+        }
+        assert!(!directory.join(".runyte").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn adoption_makes_the_directory_a_workspace_later_launches_find() {
         let directory = tempfile();
         let nested = directory.join("lib");
@@ -501,13 +1067,16 @@ mod tests {
                 directory.join("notes/not-yet/today.md"),
                 directory.join("./lib/../lib/mod.rs"),
             ],
+            super::WorkspaceRequirement::new(super::WorkspaceMode::Ide, false),
         )
         .unwrap();
 
         assert_eq!(adopted, directory.canonicalize().unwrap());
         assert!(directory.join(".runyte").is_dir());
         assert_eq!(
-            discover(&nested, std::path::Path::new(".runyte")).unwrap(),
+            discover(&nested, std::path::Path::new(".runyte"))
+                .unwrap()
+                .map(|workspace| workspace.root),
             Some(adopted)
         );
 
@@ -516,31 +1085,19 @@ mod tests {
     }
 
     #[test]
-    fn adoption_refuses_the_home_directory_and_the_filesystem_root() {
-        let home = tempfile();
-        let other = tempfile();
-
+    fn adoption_refuses_the_filesystem_root() {
+        let root = std::path::Path::new(if cfg!(windows) { "C:\\" } else { "/" });
         let refused = adopt(
-            &home,
+            root,
             std::path::Path::new(".runyte"),
             &[],
-            &[other.clone(), home.clone()],
             &[],
+            &[],
+            super::WorkspaceRequirement::new(super::WorkspaceMode::Ide, false),
         )
         .unwrap_err()
         .to_string();
-        assert!(refused.contains("the home directory"), "{refused}");
-        assert!(refused.contains("runyte --init DIRECTORY"), "{refused}");
-        assert!(!home.join(".runyte").exists());
-
-        let root = std::path::Path::new(if cfg!(windows) { "C:\\" } else { "/" });
-        let refused = adopt(root, std::path::Path::new(".runyte"), &[], &[], &[])
-            .unwrap_err()
-            .to_string();
         assert!(refused.contains("the filesystem root"), "{refused}");
-
-        fs::remove_dir_all(home).unwrap();
-        fs::remove_dir_all(other).unwrap();
     }
 
     #[test]
@@ -551,6 +1108,7 @@ mod tests {
             &[],
             &[],
             &[],
+            super::WorkspaceRequirement::new(super::WorkspaceMode::Ide, false),
         )
         .unwrap_err()
         .to_string();
@@ -568,9 +1126,16 @@ mod tests {
             let directory = tempfile();
             fs::set_permissions(&directory, fs::Permissions::from_mode(mode)).unwrap();
 
-            let refused = adopt(&directory, std::path::Path::new(".runyte"), &[], &[], &[])
-                .unwrap_err()
-                .to_string();
+            let refused = adopt(
+                &directory,
+                std::path::Path::new(".runyte"),
+                &[],
+                &[],
+                &[],
+                super::WorkspaceRequirement::new(super::WorkspaceMode::Ide, false),
+            )
+            .unwrap_err()
+            .to_string();
 
             assert!(
                 refused.contains("other accounts can write to"),
@@ -594,6 +1159,7 @@ mod tests {
                 &[],
                 &[],
                 std::slice::from_ref(&target),
+                super::WorkspaceRequirement::new(super::WorkspaceMode::Ide, false),
             )
             .unwrap_err()
             .to_string();
@@ -611,9 +1177,16 @@ mod tests {
         let directory = tempfile();
         let state = tempfile().join("shared-state");
 
-        let refused = adopt(&directory, &state, &[], &[], &[])
-            .unwrap_err()
-            .to_string();
+        let refused = adopt(
+            &directory,
+            &state,
+            &[],
+            &[],
+            &[],
+            super::WorkspaceRequirement::new(super::WorkspaceMode::Ide, false),
+        )
+        .unwrap_err()
+        .to_string();
 
         assert!(
             refused.contains("workspace.state is an absolute path"),
@@ -635,6 +1208,7 @@ mod tests {
             std::slice::from_ref(&reserved),
             &[],
             &[],
+            super::WorkspaceRequirement::new(super::WorkspaceMode::Ide, false),
         )
         .unwrap_err();
 
@@ -660,7 +1234,9 @@ mod tests {
         assert_eq!(selected, project);
         assert!(project.join(".runyte").is_dir());
         assert_eq!(
-            discover(&project, std::path::Path::new(".runyte")).unwrap(),
+            discover(&project, std::path::Path::new(".runyte"))
+                .unwrap()
+                .map(|workspace| workspace.root),
             Some(project.clone())
         );
 
@@ -703,7 +1279,8 @@ mod tests {
                 &[nested.as_path(), home.as_path()],
                 std::path::Path::new(".runyte")
             )
-            .unwrap(),
+            .unwrap()
+            .map(|workspace| workspace.root),
             Some(home.clone())
         );
 
@@ -720,7 +1297,9 @@ mod tests {
         fs::create_dir_all(&nested).unwrap();
 
         assert_eq!(
-            discover(&nested, std::path::Path::new(".local-workspace")).unwrap(),
+            discover(&nested, std::path::Path::new(".local-workspace"))
+                .unwrap()
+                .map(|workspace| workspace.root),
             Some(project)
         );
 
@@ -928,3 +1507,11 @@ mod tests {
         path.canonicalize().unwrap()
     }
 }
+
+#[cfg(test)]
+#[path = "project_root/tests/startup.rs"]
+mod startup_tests;
+
+#[cfg(test)]
+#[path = "project_root/tests/home.rs"]
+mod home_tests;

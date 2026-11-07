@@ -120,16 +120,19 @@ impl StoppedNameEdit {
             .map(|(project, metadata)| (project, metadata.name.clone()))
             .collect::<BTreeMap<_, _>>();
         let mut stored = BTreeMap::new();
+        let safety = self.selection.scope.capture_safety();
         for entry in &initial {
             if entry.project_root == location.project
                 || published.contains_key(&encode_path(&entry.project_root))
             {
                 continue;
             }
-            let state = crate::project_root::resolve_state_root(
+            let state = crate::project_root::resolve_state_location_with_safety(
                 &entry.project_root,
                 &self.selection.configured_state,
-            );
+                &safety,
+            )?
+            .into_path_buf();
             self.selection
                 .scope
                 .known_read_location(&entry.project_root, &state)?;

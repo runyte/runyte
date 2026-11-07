@@ -698,6 +698,9 @@ mod tests {
                 "--test-threads=1",
             ])
             .current_dir(root)
+            .envs(crate::test_support::state_environment(
+                std::path::Path::new(&(root.join("config"))),
+            ))
             .env("XDG_CONFIG_HOME", root.join("config"))
             .env("RUNYTE_PROCESS_FIXTURE", mode);
         command

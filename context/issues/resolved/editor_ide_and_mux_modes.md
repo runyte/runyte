@@ -102,6 +102,17 @@ Known limitation: `cargo install` installs only `runyte`; the user guide and
 README show the link to add. The Windows zip's `runed.exe` is a full copy of
 the executable, roughly doubling that archive.
 
+## Later change — 2026-11-06
+
+[Issue #73](https://github.com/runyte/runyte/issues/73) adds an exact-home
+workspace fallback for ide and mux, with runtime state in the per-user state
+root. Initialization and explicit directory attachments use the same identity
+without creating a relative workspace marker such as `~/.runyte/`. Ordinary version-control and
+existing state-directory discovery still take precedence; subdirectories do
+not discover the fallback. Root, temporary and shared-directory adoption
+protections remain. The original report and resolution below describe the
+behavior before this change.
+
 ## Report
 
 Runyte currently has three ways a session can run, described by two unrelated

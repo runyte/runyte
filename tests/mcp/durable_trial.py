@@ -26,7 +26,8 @@ def main():
         client = fixture.client('coordinator')
         manifest = fixture.root / 'trial.json'
         keys = ['HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_RUNTIME_DIR', 'XDG_STATE_HOME',
-                'XDG_DATA_HOME', 'RUNYTE_ALL_HOSTS_DIR', 'RUNYTE_CONTEXT_HOME', 'RUNYTE_CHANNEL_HOME']
+                'XDG_DATA_HOME', 'RUNYTE_ALL_HOSTS_DIR', 'RUNYTE_CONTEXT_HOME', 'RUNYTE_CHANNEL_HOME',
+                'RUNYTE_TEST_ACCOUNT_HOME', 'RUNYTE_TEST_STATE_HOME', 'RUNYTE_TEST_SOCKET_HOME']
         private_json(manifest, {'binary': str(fixture.binary), 'project': str(fixture.project),
                                 'profiles': str(fixture.profiles), 'environment': {k: fixture.env[k] for k in keys}})
         print(json.dumps({'manifest': str(manifest)}), flush=True)

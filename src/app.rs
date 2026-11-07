@@ -321,6 +321,7 @@ mod syntax_workflows;
 mod terminal_workflows;
 mod tutorial_workflows;
 mod view_position;
+mod workspace_startup;
 mod workspace_workflows;
 
 use completion_support::*;
@@ -3090,6 +3091,7 @@ pub struct App {
     /// Presentation-only action echo for the last interactive command.
     /// Notifications never replace it; the next interaction does.
     action_feedback: Option<ActionFeedback>,
+    workspace_startup: workspace_startup::WorkspaceStartup,
     /// Interactive action currently dispatching. Asynchronous requests retain
     /// this identity so their completion cannot rewrite a newer action echo.
     active_action_id: Option<u64>,
@@ -3136,6 +3138,7 @@ pub struct App {
     path_listings: RefCell<DirectoryListings>,
     pub project_root: PathBuf,
     pub state_root: PathBuf,
+    home_workspace: bool,
     /// Editor mode: a standalone session with no workspace. `project_root`
     /// then only names the launch directory, which relative paths are
     /// displayed against; nothing scoped to a project reads it, and
@@ -3418,11 +3421,56 @@ impl App {
     }
 
     /// Builds editor state with every requested startup file already open.
-    pub fn new_with_targets(config: Config, targets: Vec<LaunchTarget>) -> Result<Self> {
+    pub fn new_with_targets(mut config: Config, targets: Vec<LaunchTarget>) -> Result<Self> {
+        config.startup_safety = Some(crate::workspace_state::StartupSafety::for_startup(
+            config.startup_safety.take(),
+            || {
+                [config::default_config_root(), external_open::cache_root()]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            },
+        ));
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         let launch_directory = std::env::current_dir()?;
-        let project_root = project_root::discover(&launch_directory, &config.workspace.state)?
-            .ok_or_else(|| anyhow::anyhow!(project_root::NO_WORKSPACE_HERE))?;
+        let project_root = Self::discover_startup_workspace(
+            &config,
+            &launch_directory,
+            user_home_directory().as_deref(),
+        )?;
         Self::new_in_project_with_targets(config, targets, project_root)
+    }
+
+    fn discover_startup_workspace(
+        config: &Config,
+        launch_directory: &Path,
+        home: Option<&Path>,
+    ) -> Result<PathBuf> {
+        let safety = crate::workspace_state::StartupSafety::for_startup(
+            config.startup_safety.clone(),
+            Vec::new,
+        );
+        let project_root = project_root::discover_with_home_safety(
+            launch_directory,
+            &config.workspace.state,
+            &safety,
+        )?
+        .map(|workspace| workspace.root)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                project_root::WorkspaceRequirement::new(
+                    if config.mode() == crate::config::RunMode::Mux {
+                        project_root::WorkspaceMode::Mux
+                    } else {
+                        project_root::WorkspaceMode::Ide
+                    },
+                    false
+                )
+                .refusal(launch_directory, None, home)
+            )
+        })?;
+        Ok(project_root)
     }
 
     /// Builds editor state after startup has discovered or explicitly
@@ -3474,6 +3522,8 @@ impl App {
         project_root: impl AsRef<Path>,
         startup: &mut StartupTrace,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         let project_root = project_root.as_ref().canonicalize()?;
         Self::new_with_boundaries(
             config,
@@ -3513,6 +3563,8 @@ impl App {
         startup: &mut StartupTrace,
         environment: crate::cli::Environment,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         Self::new_with_boundaries(
             config,
             targets,
@@ -3549,6 +3601,8 @@ impl App {
         startup: &mut StartupTrace,
         environment: crate::cli::Environment,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         Self::new_with_boundaries(
             config,
             targets,
@@ -3581,8 +3635,12 @@ impl App {
     ) -> Result<Self> {
         let project_root = project_root.as_ref().canonicalize()?;
         let mut startup = StartupTrace::new();
+        let config = Config {
+            startup_safety: Some(crate::test_support::fixture_startup_safety(&project_root)),
+            ..Config::default()
+        };
         Self::new_with_boundaries(
-            Config::default(),
+            config,
             Vec::new(),
             project_root.clone(),
             &mut startup,
@@ -3596,7 +3654,7 @@ impl App {
 
     #[allow(clippy::too_many_arguments)]
     fn new_with_boundaries(
-        config: Config,
+        mut config: Config,
         targets: Vec<LaunchTarget>,
         project_root: PathBuf,
         startup: &mut StartupTrace,
@@ -3606,17 +3664,45 @@ impl App {
         defer_syntax: bool,
         editor_mode: bool,
     ) -> Result<Self> {
+        let _startup_safety =
+            crate::workspace_state::StartupSafety::close_on_exit(config.startup_safety.as_ref());
         let (theme_name, theme) = config.startup_theme()?;
         startup.mark(StartupPhase::ThemeResolved);
-        let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
-        let plugin_state_anchor =
-            crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?;
-        let reserved_user_roots = [config::default_config_root(), external_open::cache_root()]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>();
-        if !editor_mode {
-            project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+        let captured = config.startup_safety.take();
+        let safety = (!editor_mode).then(|| {
+            crate::workspace_state::StartupSafety::for_startup(captured.clone(), || {
+                [config::default_config_root(), external_open::cache_root()]
+                    .into_iter()
+                    .flatten()
+                    .collect()
+            })
+        });
+        let state_location = match safety.as_ref() {
+            Some(safety) => project_root::resolve_state_location_with_safety(
+                &project_root,
+                &config.workspace.state,
+                safety,
+            )?,
+            None => project_root::StateLocation::in_tree(&project_root, &config.workspace.state),
+        };
+        let home_workspace = safety
+            .as_ref()
+            .is_some_and(|safety| safety.is_home(&project_root))
+            && project_root::exact_origin_with_safety(
+                &project_root,
+                &config.workspace.state,
+                safety.as_deref().unwrap(),
+            )? == project_root::WorkspaceOrigin::Home;
+        let state_root = state_location.as_path().to_owned();
+        let plugin_state_anchor = state_location.plugin_anchor(
+            crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?,
+        );
+        if let Some(safety) = safety {
+            let admission = safety.validate(&project_root, &state_location);
+            safety.close();
+            admission?;
+        } else if let Some(captured) = captured {
+            captured.close();
         }
         let registry = Arc::new(Registry::new());
         startup.mark(StartupPhase::LanguageRegistryReady);
@@ -3783,6 +3869,7 @@ impl App {
             notifications: NotificationCenter::new(notification_limit),
             notifications_refresh_pending: false,
             action_feedback: None,
+            workspace_startup: workspace_startup::WorkspaceStartup::constructing(),
             active_action_id: None,
             plugin_physical_input: false,
             next_action_id: 1,
@@ -3809,6 +3896,7 @@ impl App {
             prompt_revision: 0,
             project_root,
             state_root,
+            home_workspace,
             editor_mode,
             running_as_root: false,
             plugin_state_anchor,
@@ -3966,6 +4054,7 @@ impl App {
         if let Some(path) = binary_argument {
             app.ask_for_external_program(path);
         }
+        app.finish_workspace_startup();
         startup.mark(StartupPhase::AppReady);
         Ok(app)
     }

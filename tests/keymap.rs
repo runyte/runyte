@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use runyte::test_support::isolated_startup_config;
+
 use std::collections::HashSet;
 
 use runyte::{
@@ -582,7 +584,7 @@ fn select_and_insert_modes_share_the_registry_without_duplicate_dispatch_tables(
 
 #[test]
 fn app_executes_three_key_space_window_sequences() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     for key in [
         KeyStroke::new(KeyCode::Char(' '), Modifiers::NONE),
         KeyStroke::new(KeyCode::Char('w'), Modifiers::NONE),
@@ -636,7 +638,7 @@ fn pane_swap_bindings_have_primary_and_compatibility_roles_in_every_window_mode(
 
 #[test]
 fn pane_swap_exchanges_complete_contents_follows_the_caret_and_is_its_own_inverse() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     app.execute(
         CommandInvocation::editor(EditorCommand::SplitVertical, Default::default()).unwrap(),
     )
@@ -693,7 +695,7 @@ fn pane_swap_exchanges_complete_contents_follows_the_caret_and_is_its_own_invers
 
 #[test]
 fn pane_swap_refuses_when_there_is_no_previous_pane() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
     let pane = app.active_pane;
     let buffer = app.panes[&pane].buffer;
 

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+use runyte::test_support::isolated_startup_config;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -82,7 +84,11 @@ fn explorer_tab_t_opens_terminal_here_in_the_same_pane() {
     let nested = directory.path().join("nested");
     fs::create_dir_all(nested.join("child")).unwrap();
     for mode in [Mode::Normal, Mode::Select] {
-        let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+        let mut app = App::new(
+            isolated_startup_config(Config::default()),
+            Some(directory.path().to_path_buf()),
+        )
+        .unwrap();
         app.handle_key(KeyStroke::ctrl('w')).unwrap();
         app.handle_key(KeyStroke::char('v')).unwrap();
         app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
@@ -129,7 +135,11 @@ fn explorer_tab_f_opens_the_finder_at_the_listed_directory() {
     fs::create_dir_all(nested.join("child")).unwrap();
     fs::write(nested.join("deep.txt"), "deep\n").unwrap();
     for mode in [Mode::Normal, Mode::Select] {
-        let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+        let mut app = App::new(
+            isolated_startup_config(Config::default()),
+            Some(directory.path().to_path_buf()),
+        )
+        .unwrap();
         app.handle_key(KeyStroke::plain(KeyCode::Enter)).unwrap();
         assert_eq!(app.active_buffer().directory_root(), Some(nested.as_path()));
         app.mode = mode;
@@ -314,7 +324,11 @@ fn a_listing_order_does_not_turn_a_rename_into_a_delete_and_create() {
 #[test]
 fn choosing_a_listing_order_saves_it_and_reprojects_the_explorer() {
     let directory = sorting_fixture("sort-choice");
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     let settings = TempDir::new("sort-choice-config");
     let config_path = settings.path().join("config.yaml");
     fs::write(&config_path, "editor:\n  explorer_sort: name\n").unwrap();
@@ -371,7 +385,11 @@ fn choosing_a_listing_order_saves_it_and_reprojects_the_explorer() {
 fn a_modified_explorer_refuses_a_reprojection_but_still_shows_details() {
     let directory = TempDir::new("sort-dirty");
     fs::write(directory.path().join("visible.txt"), "text").unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     assert!(app.buffers[0].apply(&Transaction::insert(0, "created\n")));
 
     app.handle_key(KeyStroke::new(KeyCode::Tab, Modifiers::NONE))
@@ -447,7 +465,11 @@ fn a_directory_with_a_trailing_whitespace_filename_is_refused_before_rendering()
 #[test]
 fn an_edited_control_character_name_is_rejected_before_confirmation() {
     let directory = TempDir::new("typed-control-filename");
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     assert!(app.buffers[0].apply(&Transaction::insert(0, "bad\tname\n")));
 
     app.handle_key(KeyStroke::new(KeyCode::Char('s'), Modifiers::CONTROL))
@@ -564,7 +586,11 @@ fn directory_buffers_use_the_normal_multi_cursor_editor_path() {
     let directory = TempDir::new("modal");
     fs::write(directory.path().join("a"), "a").unwrap();
     fs::write(directory.path().join("b"), "b").unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     app.panes.get_mut(&0).unwrap().selection =
         Selection::new(vec![Range::point(0), Range::point(2)], 0);
 
@@ -586,7 +612,11 @@ fn one_escape_leaves_insert_mode_when_path_completion_is_open_in_an_explorer() {
     let directory = TempDir::new("path-completion-escape");
     fs::create_dir_all(directory.path().join("dir_a")).unwrap();
     fs::write(directory.path().join("dir_a/some_existing"), "text").unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
 
     for code in [KeyCode::Char('A'), KeyCode::Char('s')] {
         app.handle_key(KeyStroke::new(code, Modifiers::NONE))
@@ -610,7 +640,11 @@ fn one_escape_leaves_insert_mode_when_path_completion_is_open_in_an_explorer() {
 fn writing_a_directory_inside_itself_is_rejected_before_confirmation() {
     let directory = TempDir::new("self-nested-directory");
     fs::create_dir(directory.path().join("dir_a")).unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     assert!(app.buffers[0].apply(&Transaction::insert("dir_a/".len(), "some_string")));
 
     for code in [KeyCode::Char(':'), KeyCode::Char('w'), KeyCode::Enter] {
@@ -631,7 +665,11 @@ fn typing_a_new_path_inside_an_existing_directory_creates_a_file() {
         let directory = TempDir::new("new-path-in-existing-directory");
         fs::create_dir(directory.path().join("docs")).unwrap();
         fs::write(directory.path().join("notes.md"), "notes").unwrap();
-        let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+        let mut app = App::new(
+            isolated_startup_config(Config::default()),
+            Some(directory.path().to_path_buf()),
+        )
+        .unwrap();
         assert_eq!(app.buffers[0].to_string(), "docs/\nnotes.md\n");
 
         let offset = if insert_after_docs {
@@ -868,7 +906,11 @@ fn applying_a_plan_from_a_listing_without_dotfiles_leaves_them_on_disk() {
     let directory = TempDir::new("hidden-apply");
     fs::write(directory.path().join(".env"), "secret").unwrap();
     fs::write(directory.path().join("gone"), "text").unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     assert_eq!(app.buffers[0].to_string(), "gone\n");
 
     assert!(app.buffers[0].apply(&Transaction::delete(0, "gone\n".len())));
@@ -891,7 +933,11 @@ fn the_dot_key_shows_and_hides_dotfiles_in_the_explorer() {
     let directory = TempDir::new("hidden-toggle");
     fs::write(directory.path().join(".env"), "secret").unwrap();
     fs::write(directory.path().join("visible.txt"), "text").unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     // The toggle writes the setting, so it must be pointed at a configuration
     // file of this test's own rather than the one this machine belongs to. It
     // lives outside the listed directory, which the explorer is showing.
@@ -936,7 +982,11 @@ fn a_toggle_that_cannot_be_saved_still_changes_the_listing() {
     let directory = TempDir::new("hidden-unsaved");
     fs::write(directory.path().join(".env"), "secret").unwrap();
     fs::write(directory.path().join("visible.txt"), "text").unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
 
     app.handle_key(KeyStroke::new(KeyCode::Char('.'), Modifiers::NONE))
         .unwrap();
@@ -960,7 +1010,11 @@ fn showing_dotfiles_reloads_every_clean_explorer_rather_than_the_active_pane_alo
         "nested",
     )
     .unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     assert_eq!(app.buffers[0].to_string(), "nested/\n");
 
     // The split takes an explorer of its own as soon as it opens `nested/`,
@@ -986,7 +1040,11 @@ fn showing_dotfiles_is_refused_while_the_explorer_has_unsaved_edits() {
     let directory = TempDir::new("hidden-dirty");
     fs::write(directory.path().join(".env"), "secret").unwrap();
     fs::write(directory.path().join("visible.txt"), "text").unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     assert!(app.buffers[0].apply(&Transaction::insert(0, "created\n")));
 
     app.handle_key(KeyStroke::new(KeyCode::Char('.'), Modifiers::NONE))
@@ -1001,7 +1059,11 @@ fn showing_dotfiles_is_refused_while_the_explorer_has_unsaved_edits() {
 #[test]
 fn writing_only_opens_confirmation_and_enter_applies_the_plan() {
     let directory = TempDir::new("confirm");
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     assert!(app.buffers[0].apply(&Transaction::insert(0, "created\n")));
 
     app.handle_key(KeyStroke::new(KeyCode::Char('s'), Modifiers::CONTROL))
@@ -1027,7 +1089,11 @@ fn enter_uses_the_injected_trash_backend_only_after_confirmation() {
     let trash = TempDir::new("trash-destination");
     let source = directory.path().join("gone");
     fs::write(&source, "recoverable contents").unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     app.set_trash_backend(Box::new(TemporaryTrash {
         destination: trash.path().to_path_buf(),
         fail: false,
@@ -1069,7 +1135,11 @@ fn trash_backend_failure_preserves_the_source_and_explorer_edits() {
     let trash = TempDir::new("trash-failure-destination");
     let source = directory.path().join("gone");
     fs::write(&source, "still here").unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     app.set_trash_backend(Box::new(TemporaryTrash {
         destination: trash.path().to_path_buf(),
         fail: true,
@@ -1103,7 +1173,11 @@ fn applying_a_plan_keeps_the_edited_order_until_the_explorer_is_reentered() {
     let directory = TempDir::new("saved-order");
     fs::write(directory.path().join("alpha"), "alpha").unwrap();
     fs::write(directory.path().join("middle"), "middle").unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     assert_eq!(app.buffers[0].to_string(), "alpha\nmiddle\n");
 
     assert!(app.buffers[0].apply(&Transaction::change(0, "alpha".len(), "zulu")));
@@ -1142,7 +1216,11 @@ fn writing_whitespace_only_explorer_edits_refreshes_the_listing() {
     let directory = TempDir::new("whitespace-only");
     fs::create_dir(directory.path().join("context")).unwrap();
     fs::write(directory.path().join("note.txt"), "text").unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     let canonical = "context/\nnote.txt\n";
     assert_eq!(app.buffers[0].to_string(), canonical);
 
@@ -1231,7 +1309,11 @@ fn question_mark_toggles_aligned_file_details_without_editing_the_listing() {
     fs::set_permissions(&file, fs::Permissions::from_mode(0o640)).unwrap();
     symlink("AGENTS.md", directory.path().join("CLAUDE.md")).unwrap();
     fs::create_dir(directory.path().join("nested")).unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     let settings = TempDir::new("details-toggle-config");
     let config_path = settings.path().join("config.yaml");
     fs::write(&config_path, "editor:\n  explorer_details: false\n").unwrap();
@@ -1302,7 +1384,11 @@ fn opening_a_symlink_resolves_it_to_the_file_it_points_at() {
     let target = directory.path().join("true_file.txt");
     fs::write(&target, "text\n").unwrap();
     symlink("true_file.txt", directory.path().join("file.txt")).unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     assert_eq!(app.buffers[0].to_string(), "file.txt\ntrue_file.txt\n");
 
     app.handle_key(KeyStroke::new(KeyCode::Enter, Modifiers::NONE))
@@ -1325,7 +1411,11 @@ fn a_symlinked_directory_opens_the_directory_it_points_at() {
     fs::create_dir(directory.path().join("nested")).unwrap();
     fs::write(directory.path().join("nested/inside.txt"), "text").unwrap();
     symlink("nested", directory.path().join("shortcut")).unwrap();
-    let mut app = App::new(Config::default(), Some(directory.path().to_path_buf())).unwrap();
+    let mut app = App::new(
+        isolated_startup_config(Config::default()),
+        Some(directory.path().to_path_buf()),
+    )
+    .unwrap();
     let shortcut = app.buffers[0].line_to_offset(1);
     app.panes.get_mut(&0).unwrap().selection = Selection::point(shortcut);
 

@@ -243,6 +243,9 @@ fn native_arguments_and_handle_isolation_survive_the_launching_process() {
             "__opener_launcher",
         ])
         .env("RUNYTE_OPENER_ROOT", root.path())
+        .envs(crate::test_support::state_environment(
+            std::path::Path::new(&(root.join("config"))),
+        ))
         .env("XDG_CONFIG_HOME", root.join("config"))
         .env("XDG_CACHE_HOME", root.join("cache"))
         .stdin(Stdio::null())

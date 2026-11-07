@@ -189,6 +189,7 @@ use crate::workspace::{
     windows_startup::{self, HostStartup as NativeHostStartup},
 };
 
+mod graphical;
 pub mod window;
 #[cfg(not(windows))]
 use window::Events;
@@ -226,22 +227,42 @@ pub fn main(edition: Edition, window: Option<&'static dyn WindowFrontend>) -> Re
             .take_while(|arg| arg != "--")
             .any(|arg| arg == "--window")
     {
-        let arguments = LaunchArguments::parse()?;
-        if arguments.window && !arguments.help && !arguments.version {
-            if let Some(message) = edition.window_refusal(cfg!(windows)) {
-                anyhow::bail!(message);
+        let arguments = match LaunchArguments::parse() {
+            Ok(arguments) => arguments,
+            Err(error) => {
+                return window.launch(
+                    Box::new(move || Err(error)),
+                    Config::default().editor.font_size,
+                );
             }
-            anyhow::ensure!(
-                matches!(
-                    arguments.mode,
-                    LaunchMode::Standalone | LaunchMode::Persistent
-                ),
-                "--window supports ide, editor, and mux modes"
-            );
-            let (config, _) = Config::load(arguments.config.as_deref())?;
+        };
+        if arguments.window && !arguments.help && !arguments.version {
+            let presentation = (|| {
+                if let Some(message) = edition.window_refusal(cfg!(windows)) {
+                    anyhow::bail!(message);
+                }
+                anyhow::ensure!(
+                    matches!(
+                        arguments.mode,
+                        LaunchMode::Standalone | LaunchMode::Persistent
+                    ),
+                    "--window supports ide, editor, and mux modes"
+                );
+                Ok(Config::load(arguments.config.as_deref())?
+                    .0
+                    .editor
+                    .font_size)
+            })();
+            let font_size = presentation
+                .as_ref()
+                .copied()
+                .unwrap_or(Config::default().editor.font_size);
             return window.launch(
-                Box::new(move || cli_main(environment)),
-                config.editor.font_size,
+                Box::new(move || {
+                    presentation?;
+                    cli_main(environment)
+                }),
+                font_size,
             );
         }
     }
@@ -1358,8 +1379,15 @@ async fn run(
                         None => Config::load(arguments.config.as_deref())?.0.workspace.state,
                     };
                     Some(
-                        project_root::discover(&directory, &state)?
-                            .context(project_root::NO_WORKSPACE_HERE)?,
+                        project_root::discover_with_home(&directory, &state)?
+                            .map(|workspace| workspace.root)
+                            .with_context(|| {
+                                workspace_requirement(&arguments, RunMode::Mux).refusal(
+                                    &directory,
+                                    None,
+                                    crate::app::user_home_directory().as_deref(),
+                                )
+                            })?,
                     )
                 } else {
                     None
@@ -1564,12 +1592,12 @@ async fn run(
     }
 
     #[cfg(windows)]
-    let (config, config_path) = match native_preloaded_config {
+    let (mut config, config_path) = match native_preloaded_config {
         Some(loaded) => loaded,
         None => Config::load(arguments.config.as_deref())?,
     };
     #[cfg(not(windows))]
-    let (config, config_path) = Config::load(arguments.config.as_deref())?;
+    let (mut config, config_path) = Config::load(arguments.config.as_deref())?;
     let automatic_persistent = uses_automatic_persistent_mode(&arguments, config.mode());
     if automatic_persistent {
         #[cfg(unix)]
@@ -1588,6 +1616,8 @@ async fn run(
     let editor = launch_is_editor(&arguments, config.mode());
     refuse_workspace_modes_as_root(&arguments, editor, running_as_root)?;
     let launch_directory = std::env::current_dir()?;
+    let workspace_directory =
+        graphical::prepare_targets(&mut arguments, &launch_directory, !editor)?;
     arguments.cwd_file = arguments
         .cwd_file
         .take()
@@ -1613,14 +1643,22 @@ async fn run(
     if let Some(cache_root) = external_open::cache_root() {
         reserved_user_roots.push(cache_root);
     }
+    let startup_safety = (!editor || arguments.init.is_some()).then(|| {
+        std::sync::Arc::new(crate::workspace_state::StartupSafety::capture(
+            &reserved_user_roots,
+        ))
+    });
+    config.startup_safety = startup_safety.clone();
     // `--init` makes a workspace and stops there. Opening one is a separate
     // launch, so initializing never also decides how to edit in it.
     if let Some(requested) = arguments.init.take() {
-        return initialize_workspace(
+        return initialize_workspace_with_safety(
             &requested,
             &launch_directory,
             &config.workspace.state,
-            &reserved_user_roots,
+            startup_safety
+                .as_deref()
+                .expect("workspace initialization safety"),
             &mut io::stdout().lock(),
         );
     }
@@ -1633,13 +1671,18 @@ async fn run(
     #[cfg(unix)]
     let selected_workspace = match arguments.workspace_selector.take() {
         Some(selector) => Some(
-            resolve_attached_workspace(&selector, &launch_directory, &config, &reserved_user_roots)
-                .await?,
+            resolve_attached_workspace(
+                &selector,
+                &launch_directory,
+                &config,
+                startup_safety.as_deref().expect("attachment safety"),
+            )
+            .await?,
         ),
         None => None,
     };
     #[cfg(not(unix))]
-    let selected_workspace: Option<PathBuf> = {
+    let selected_workspace: Option<project_root::DiscoveredWorkspace> = {
         anyhow::ensure!(
             arguments.workspace_selector.is_none(),
             "persistent mode is not yet supported on this platform"
@@ -1651,7 +1694,7 @@ async fn run(
         && arguments.mode_explicit
         && arguments.project_root.is_none()
         && !attaching_elsewhere;
-    let mut adopted_workspace = false;
+    let mut workspace_origin = None;
     let project_root = match arguments.project_root.take() {
         // Editor mode has no workspace. The launch directory stands in as
         // the root that relative paths are displayed against; nothing
@@ -1662,14 +1705,30 @@ async fn run(
         }
         _ if attaching_elsewhere => {
             let project_root = selected_workspace.expect("selector resolved a workspace");
+            workspace_origin = Some(project_root.origin);
+            let project_root = project_root.root;
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
         // `-a` with no selector uses the workspace the launch directory
         // belongs to. Naming a directory creates one; this does not.
         _ if attaching_current => {
-            let project_root = project_root::discover(&launch_directory, &config.workspace.state)?
-                .context(project_root::NO_WORKSPACE_HERE)?;
+            let project_root = project_root::discover_with_home_safety(
+                &workspace_directory,
+                &config.workspace.state,
+                startup_safety.as_deref().expect("workspace startup safety"),
+            )?
+            .map(|workspace| {
+                workspace_origin = Some(workspace.origin);
+                workspace.root
+            })
+            .with_context(|| {
+                workspace_requirement(&arguments, config.mode()).refusal(
+                    &workspace_directory,
+                    None,
+                    crate::app::user_home_directory().as_deref(),
+                )
+            })?;
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
@@ -1678,11 +1737,29 @@ async fn run(
         // question that has one right answer per launch, and a detached host
         // has no terminal on which to be asked it again.
         Some(requested) => {
-            let project_root = resolve_requested_project_root(&launch_directory, &requested)?;
+            let project_root = resolve_requested_project_root(&workspace_directory, &requested)?;
+            let inherited = arguments
+                .detached_host
+                .then(|| std::env::var(project_root::STARTUP_ORIGIN_ENV).ok())
+                .flatten();
+            workspace_origin = Some(project_root::startup_origin_with_safety(
+                &project_root,
+                &config.workspace.state,
+                inherited.as_deref(),
+                startup_safety.as_deref().expect("workspace startup safety"),
+            )?);
             startup.mark(StartupPhase::ProjectResolvedAutomatically);
             project_root
         }
-        None => match project_root::discover(&launch_directory, &config.workspace.state)? {
+        None => match project_root::discover_with_home_safety(
+            &workspace_directory,
+            &config.workspace.state,
+            startup_safety.as_deref().expect("workspace startup safety"),
+        )?
+        .map(|workspace| {
+            workspace_origin = Some(workspace.origin);
+            workspace.root
+        }) {
             Some(project_root) => {
                 startup.mark(StartupPhase::ProjectResolvedAutomatically);
                 project_root
@@ -1696,23 +1773,52 @@ async fn run(
                     .iter()
                     .map(|target| launch_directory.join(&target.path))
                     .collect::<Vec<_>>();
-                let project_root = project_root::adopt(
-                    &launch_directory,
+                let project_root = project_root::adopt_with_safety(
+                    &workspace_directory,
                     &config.workspace.state,
-                    &reserved_user_roots,
-                    &user_home_directories(),
-                    &targets,
+                    startup_safety
+                        .as_deref()
+                        .expect("workspace adoption safety"),
+                    &crate::app::user_home_directory()
+                        .into_iter()
+                        .collect::<Vec<_>>(),
+                    if arguments.graphical_launch && !targets.is_empty() {
+                        &targets[..1]
+                    } else {
+                        &targets
+                    },
+                    workspace_requirement(&arguments, config.mode()),
                 )?;
                 startup.mark(StartupPhase::ProjectResolvedAutomatically);
-                adopted_workspace = true;
+                workspace_origin = Some(project_root::WorkspaceOrigin::Created(
+                    project_root::CreatedBy::Adoption,
+                ));
                 project_root
             }
-            None => anyhow::bail!(project_root::NO_WORKSPACE_HERE),
+            None => anyhow::bail!(workspace_requirement(&arguments, config.mode()).refusal(
+                &workspace_directory,
+                None,
+                crate::app::user_home_directory().as_deref()
+            )),
         },
     };
-    let state_root = project_root::resolve_state_root(&project_root, &config.workspace.state);
+    let state_location = if editor {
+        project_root::StateLocation::in_tree(&project_root, &config.workspace.state)
+    } else {
+        project_root::resolve_state_location_with_safety(
+            &project_root,
+            &config.workspace.state,
+            startup_safety.as_deref().expect("workspace startup safety"),
+        )?
+    };
+    let state_root = state_location.as_path().to_owned();
     if !editor {
-        project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+        let safety = startup_safety.as_deref().expect("workspace startup safety");
+        if matches!(state_location, project_root::StateLocation::OutOfTree(_)) {
+            state_location.prepare_with_safety(&project_root, safety)?;
+        } else {
+            safety.validate(&project_root, &state_location)?;
+        }
     }
     // A selected workspace does not contain the launch directory, so the host
     // it starts is given the workspace's own root. Handing it the directory the
@@ -1722,7 +1828,7 @@ async fn run(
     let working_directory = if attaching_elsewhere {
         project_root.clone()
     } else {
-        launch_directory.clone()
+        workspace_directory.clone()
     };
     #[cfg(unix)]
     let recorded_workspace = if editor {
@@ -1740,7 +1846,7 @@ async fn run(
             | LaunchMode::RestartSession
             | LaunchMode::StopSession
     ) {
-        if arguments.mode != LaunchMode::Wait {
+        if arguments.mode != LaunchMode::Wait && !arguments.graphical_launch {
             anyhow::ensure!(
                 arguments.targets.is_empty(),
                 "this workspace mode does not accept file targets"
@@ -1748,7 +1854,7 @@ async fn run(
         }
         #[cfg(unix)]
         {
-            let endpoint = LocalEndpoint::discover(&state_root, &project_root)?;
+            let endpoint = LocalEndpoint::discover_location(&state_location, &project_root)?;
             let cwd_file = arguments.cwd_file.clone();
             return match arguments.mode {
                 LaunchMode::Persistent => {
@@ -1759,6 +1865,7 @@ async fn run(
                     // done.
                     if connect_control(&endpoint).await.is_err() {
                         let startup = HostStartup::new(std::env::current_exe()?, "attached")
+                            .with_workspace_origin(workspace_origin)
                             .with_working_directory(&working_directory)
                             .with_config(config_path.as_deref())
                             .with_logging(arguments.verbosity, arguments.log.as_deref());
@@ -1773,6 +1880,10 @@ async fn run(
                         cwd_file.as_deref(),
                         &config,
                         config_path.as_deref(),
+                        std::mem::take(&mut arguments.targets)
+                            .into_iter()
+                            .map(Into::into)
+                            .collect(),
                     )
                     .await
                 }
@@ -1935,23 +2046,20 @@ async fn run(
             environment,
         )?
     };
+    if let Some(origin) = workspace_origin {
+        app.note_workspace_origin(origin);
+    }
+    if arguments.mode == LaunchMode::Serve {
+        app.note_persistent_launch(arguments.detached_host);
+    }
     app.native_media = arguments.window;
+    if arguments.graphical_launch && !editor {
+        app.working_directory = workspace_directory;
+    }
     app.open_native_targets(native_targets)?;
     app.note_running_as_root(running_as_root);
     let startup_config = app.config.clone();
     app.note_config_deprecations(&startup_config);
-    if adopted_workspace {
-        app.push_notification(NotificationDraft::new(
-            NotificationSeverity::Info,
-            "Workspace",
-            "Created a workspace",
-            format!(
-                "no repository or workspace was found above {}, so it became one; its state is in {}",
-                project_root.display(),
-                state_root.display()
-            ),
-        ));
-    }
     if let Some(failure) = logging_failure {
         app.push_notification(NotificationDraft::new(
             NotificationSeverity::Warning,
@@ -1981,7 +2089,7 @@ async fn run(
             if show_startup_about {
                 app.app_mut().execute(about_invocation()?)?;
             }
-            let endpoint = LocalEndpoint::discover(&state_root, &project_root)?;
+            let endpoint = LocalEndpoint::discover_location(&state_location, &project_root)?;
             if let Some(recorded) = recorded_workspace.as_ref() {
                 endpoint.store_name_if_absent(&recorded.name)?;
             }
@@ -2534,29 +2642,52 @@ fn about_invocation() -> Result<CommandInvocation, CommandInvocationError> {
 }
 
 fn uses_automatic_persistent_mode(arguments: &LaunchArguments, configured: RunMode) -> bool {
-    // The persistent default is deliberately a bare-launch convenience. A
-    // target may carry a caller-relative path or an initial caret position,
-    // and the attach protocol does not represent all of those launch
-    // semantics. Keep target-bearing invocations on the ordinary standalone
-    // path unless a future protocol can preserve the complete target.
-    !arguments.window
+    // Terminal target-bearing launches keep their standalone semantics.
+    // Marked graphical launches forward complete bounded targets only after
+    // native attachment, so their configured persistent mode is preserved.
+    (!arguments.window || arguments.graphical_launch)
         && !arguments.mode_explicit
-        && arguments.targets.is_empty()
+        && (arguments.targets.is_empty() || arguments.graphical_launch)
         && arguments.init.is_none()
         && !arguments.editor
         && configured == RunMode::Mux
 }
 
-/// The home directory as the environment and as the account database name
-/// it. They differ under `sudo -E` and in some containers, and a workspace
-/// adopted at either would capture the launches below it.
-fn user_home_directories() -> Vec<PathBuf> {
-    let environment = crate::app::user_home_directory();
-    #[cfg(any(unix, windows))]
-    let account = crate::user_paths::system_home_directory();
-    #[cfg(not(any(unix, windows)))]
-    let account = None;
-    environment.into_iter().chain(account).collect()
+fn workspace_requirement(
+    arguments: &LaunchArguments,
+    configured: RunMode,
+) -> project_root::WorkspaceRequirement {
+    let mut requirement = project_root::WorkspaceRequirement::new(
+        if arguments.mode == LaunchMode::Standalone {
+            project_root::WorkspaceMode::Ide
+        } else {
+            project_root::WorkspaceMode::Mux
+        },
+        arguments.mode_explicit,
+    );
+    if arguments.mode_explicit {
+        let flag = match arguments.mode {
+            LaunchMode::Serve => Some("--serve"),
+            LaunchMode::Wait => Some("--wait"),
+            LaunchMode::RestartSession => Some("--session-restart"),
+            LaunchMode::StopSession => Some("--session-stop"),
+            _ => None,
+        };
+        if let Some(flag) = flag {
+            requirement.source = project_root::ModeSource::Flag(flag);
+        }
+    }
+    if !arguments.mode_explicit
+        && arguments.mode == LaunchMode::Standalone
+        && configured == RunMode::Mux
+    {
+        if !arguments.targets.is_empty() {
+            requirement.source = project_root::ModeSource::PositionalTargets;
+        } else if arguments.window {
+            requirement.source = project_root::ModeSource::WindowLaunch;
+        }
+    }
+    requirement
 }
 
 /// Whether this launch runs in editor mode: standalone, with no workspace.
@@ -2573,6 +2704,7 @@ fn launch_is_editor(arguments: &LaunchArguments, configured: RunMode) -> bool {
 
 /// `runyte --init DIRECTORY`: makes exactly `DIRECTORY` a workspace, or
 /// accepts one that already is, and says how to open it.
+#[cfg(all(test, unix))]
 fn initialize_workspace(
     requested: &Path,
     launch_directory: &Path,
@@ -2580,25 +2712,45 @@ fn initialize_workspace(
     reserved_user_roots: &[PathBuf],
     output: &mut impl Write,
 ) -> Result<()> {
+    let safety = crate::workspace_state::StartupSafety::capture(reserved_user_roots);
+    initialize_workspace_with_safety(
+        requested,
+        launch_directory,
+        configured_state,
+        &safety,
+        output,
+    )
+}
+
+fn initialize_workspace_with_safety(
+    requested: &Path,
+    launch_directory: &Path,
+    configured_state: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+    output: &mut impl Write,
+) -> Result<()> {
     let requested = if requested.is_absolute() {
         requested.to_path_buf()
     } else {
         launch_directory.join(requested)
     };
-    let existed = requested
-        .canonicalize()
-        .is_ok_and(|root| project_root::resolve_state_root(&root, configured_state).is_dir());
-    let project_root = project_root::initialize(&requested, configured_state, reserved_user_roots)?;
-    let root = project_root.display();
+    let existed = requested.canonicalize().is_ok_and(|root| {
+        project_root::resolve_state_location_with_safety(&root, configured_state, safety)
+            .is_ok_and(|location| location.as_path().is_dir())
+    });
+    let project_root = project_root::initialize_with_safety(&requested, configured_state, safety)?;
+    let root = project_root::display_workspace_path(
+        &project_root,
+        crate::app::user_home_directory().as_deref(),
+    );
+    let argument = project_root::workspace_shell_argument(&project_root);
     if existed {
         writeln!(output, "{root} is already a workspace")?;
     } else {
         writeln!(output, "initialized a workspace in {root}")?;
     }
-    writeln!(
-        output,
-        "open it with: runyte {root}   or   runyte --mux {root}"
-    )?;
+    let ide = project_root::ide_open_command(&argument);
+    writeln!(output, "open it with: {ide}   or   runyte --mux {argument}")?;
     Ok(())
 }
 
@@ -2650,8 +2802,8 @@ async fn resolve_attached_workspace(
     selector: &Path,
     working_directory: &Path,
     config: &Config,
-    reserved_user_roots: &[PathBuf],
-) -> Result<PathBuf> {
+    safety: &crate::workspace_state::StartupSafety,
+) -> Result<project_root::DiscoveredWorkspace> {
     let requested = resolve_known_workspace_from_directory(
         selector,
         working_directory,
@@ -2659,24 +2811,38 @@ async fn resolve_attached_workspace(
     )
     .await?
     .unwrap_or_else(|| workspace_selector_path(selector, working_directory));
-    initialize_attached_directory(
+    let origin =
+        project_root::exact_origin_with_safety(&requested, &config.workspace.state, safety)?;
+    let root = initialize_attached_directory_with_safety(
         &requested,
         selector,
         &config.workspace.state,
-        reserved_user_roots,
-    )
+        safety,
+    )?;
+    Ok(project_root::DiscoveredWorkspace { root, origin })
 }
 
 /// Resolves and initializes a directory selected for attachment.
 ///
 /// `display_selector` remains the spelling in an unknown-selector error even
 /// when a relative path has already been joined to the editor directory.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg(test)]
 fn initialize_attached_directory(
     requested: &Path,
     display_selector: &Path,
     state: &Path,
     reserved_user_roots: &[PathBuf],
+) -> Result<PathBuf> {
+    let safety = crate::workspace_state::StartupSafety::capture(reserved_user_roots);
+    initialize_attached_directory_with_safety(requested, display_selector, state, &safety)
+}
+
+#[cfg(any(unix, test))]
+fn initialize_attached_directory_with_safety(
+    requested: &Path,
+    display_selector: &Path,
+    state: &Path,
+    safety: &crate::workspace_state::StartupSafety,
 ) -> Result<PathBuf> {
     let unknown = || {
         anyhow::anyhow!(
@@ -2686,7 +2852,7 @@ fn initialize_attached_directory(
     };
     let directory = requested.canonicalize().map_err(|_| unknown())?;
     anyhow::ensure!(directory.is_dir(), unknown());
-    project_root::initialize(&directory, state, reserved_user_roots)
+    project_root::initialize_with_safety(&directory, state, safety)
 }
 
 #[cfg_attr(not(unix), allow(dead_code))]
@@ -2750,6 +2916,7 @@ struct AttachedClient {
     wait_tokens: Vec<WaitToken>,
     last_frame: Option<crate::protocol::HostFrame>,
     input_barrier: Option<u64>,
+    launch_pending: bool,
 }
 
 #[cfg(unix)]
@@ -2842,7 +3009,7 @@ async fn run_host_server(
                     anyhow::bail!("workspace host listener stopped unexpectedly");
                 };
                 match event {
-                    ServerEvent::Connected { id, peer_process, geometry, interactive, native_media, directory_handoff, responses } => {
+                    ServerEvent::Connected { id, peer_process, geometry, interactive, native_media, directory_handoff, workspace_open, responses } => {
                         peer_processes.insert(id, peer_process);
                         if interactive && active.is_some() {
                             log_warn!(
@@ -2869,6 +3036,7 @@ async fn run_host_server(
                                 wait_tokens: Vec::new(),
                                 last_frame: None,
                                 input_barrier: None,
+                                launch_pending: native_media,
                             };
                             if client.responses.try_send(HostResponse::Welcome {
                                 protocol: crate::workspace::transport::PROTOCOL_VERSION,
@@ -2884,6 +3052,7 @@ async fn run_host_server(
                                 active = Some(client);
                                 last_detached = Instant::now();
                                 host.app_mut().note_frontend_attached();
+                                if workspace_open { host.app_mut().note_workspace_opened(); }
                                 log_info!(
                                     "client",
                                     "interactive client attached";
@@ -2922,6 +3091,10 @@ async fn run_host_server(
                         }
                     }
                     ServerEvent::Request { id, request } => {
+                        if !matches!(request, ClientRequest::OpenLaunchTargets { .. })
+                            && let Some(client) = active.as_mut().filter(|client| client.id == id) {
+                            client.launch_pending = false;
+                        }
                         let interactive = active.as_ref().is_some_and(|client| client.id == id);
                         let control = controls.contains_key(&id);
                         if !interactive && !control {
@@ -3028,6 +3201,16 @@ async fn run_host_server(
                                 changed |= reply.publish_frame;
                             }
 
+                        } else if let ClientRequest::OpenLaunchTargets { targets } = request {
+                            let allowed = active.as_mut().is_some_and(|client| std::mem::take(&mut client.launch_pending));
+                            let result = graphical::open_targets(&mut host, targets, allowed);
+                            match result {
+                                Ok(()) => {
+                                    if let Some(client) = active.as_mut() { client.input_barrier = Some(0); }
+                                    changed = true;
+                                }
+                                Err(error) => send_active_response(&mut active, HostResponse::Error { message: error.to_string() }),
+                            }
                         } else if let ClientRequest::AttachWait { token } = request {
                             let response = match host.wait_status(token.into()) {
                                 Some(status) => {
@@ -3224,7 +3407,7 @@ async fn run_host_server(
                                         .expect("provisional switch request was matched"),
                                 );
                             }
-                            ClientRequest::Hello { .. } => {}
+                            ClientRequest::Hello { .. } | ClientRequest::OpenLaunchTargets { .. } => {}
                             ClientRequest::Invoke { .. }
                             | ClientRequest::Health
                             | ClientRequest::SessionPreview
@@ -3249,6 +3432,7 @@ async fn run_host_server(
                         }
                     }
                     ServerEvent::ProtocolError { id, message } => {
+                        if let Some(client) = active.as_mut().filter(|client| client.id == id) { client.launch_pending = false; }
                         // The one place that still knows which connection sent
                         // a malformed or truncated frame, and what preceded it.
                         log_warn!(
@@ -4225,6 +4409,7 @@ async fn run_workspace_switcher(
     cwd_file: Option<&Path>,
     config: &Config,
     config_path: Option<&Path>,
+    mut launch_targets: Vec<crate::protocol::LaunchTarget>,
 ) -> Result<()> {
     let color_depth = if window.is_some() {
         ui::TerminalColorDepth::TrueColor
@@ -4256,7 +4441,7 @@ async fn run_workspace_switcher(
         let attachment = tokio::select! {
             attachment = run_attached(&current, &mut terminal, &mut terminal_events, &mut geometry,
                 AttachOptions { window, wait_token: None, cwd_file, notice: notice.take(), color_depth,
-                    history: Some(&mut history), parent_handoff: Some(&mut parent_handoff), visit: pending_visit.take() }) => attachment,
+                    history: Some(&mut history), parent_handoff: Some(&mut parent_handoff), visit: pending_visit.take(), launch_targets: std::mem::take(&mut launch_targets) }) => attachment,
             signal = termination.recv() => return Err(terminated(signal)),
         };
         if let Some(handoff) = parent_handoff.take() {
@@ -4553,16 +4738,24 @@ async fn prepare_switch_target(
     if let Some(cache_root) = external_open::cache_root() {
         reserved_user_roots.push(cache_root);
     }
-    let requested = initialize_attached_directory(
+    let safety = crate::workspace_state::StartupSafety::capture(&reserved_user_roots);
+    let origin =
+        project_root::exact_origin_with_safety(&requested, &config.workspace.state, &safety)?;
+    let requested = initialize_attached_directory_with_safety(
         &requested,
         selector,
         &config.workspace.state,
-        &reserved_user_roots,
+        &safety,
     )?;
-    let startup =
-        HostStartup::new(std::env::current_exe()?, "destination").with_config(config_path);
-    let state_root = project_root::resolve_state_root(&requested, &config.workspace.state);
-    let endpoint = LocalEndpoint::discover(&state_root, &requested)?;
+    let startup = HostStartup::new(std::env::current_exe()?, "destination")
+        .with_config(config_path)
+        .with_workspace_origin(Some(origin));
+    let location = project_root::resolve_state_location_with_safety(
+        &requested,
+        &config.workspace.state,
+        &safety,
+    )?;
+    let endpoint = LocalEndpoint::discover_location(&location, &requested)?;
     if endpoint.project_root() == current.project_root() {
         return Ok(None);
     }
@@ -4640,6 +4833,7 @@ async fn attach_for_wait(
                 history: None,
                 parent_handoff: None,
                 visit: None,
+                launch_targets: Vec::new(),
             },
         ) => (attachment, true),
     };
@@ -4899,6 +5093,7 @@ struct AttachOptions<'a> {
     history: Option<&'a mut AttachmentHistory>,
     parent_handoff: Option<&'a mut Option<ParentHandoff>>,
     visit: Option<crate::protocol::DestinationVisit>,
+    launch_targets: Vec<crate::protocol::LaunchTarget>,
 }
 
 /// Runs one attachment to completion, drawing into a terminal it does not own.
@@ -4924,15 +5119,17 @@ async fn run_attached(
         history,
         parent_handoff,
         visit,
+        launch_targets,
     } = options;
     if let Some(window) = window {
         window.begin_attachment();
     }
-    let mut client = BufferedLocalClient::connect_with_media(
+    let mut client = BufferedLocalClient::connect_for_workspace_open(
         endpoint,
         *geometry,
         cwd_file.is_some(),
         terminal.native(),
+        true,
     )
     .await?;
     match client.recv_handshake().await? {
@@ -4944,9 +5141,7 @@ async fn run_attached(
         None => anyhow::bail!("workspace host disconnected during handshake"),
     }
     let _activity = AttachedWorkspaceActivity::begin(endpoint.project_root());
-    if let Some(message) = notice {
-        client.send(&ClientRequest::Notify { message }).await?;
-    }
+
     // Ratatui diffs against its previous buffer, which starts empty for a new
     // terminal and holds the previous workspace's frame for a reused one. Either
     // way the cells this frame leaves blank would not be emitted, so the screen
@@ -4970,6 +5165,40 @@ async fn run_attached(
         Some(response) => anyhow::bail!("workspace host sent no initial frame: {response:?}"),
         None => anyhow::bail!("workspace host disconnected before its initial frame"),
     };
+    if !launch_targets.is_empty() {
+        anyhow::ensure!(
+            window.is_some(),
+            "graphical targets require a native window"
+        );
+        client
+            .send(&ClientRequest::OpenLaunchTargets {
+                targets: launch_targets,
+            })
+            .await?;
+        // Serial zero belongs to this initial request, before physical input.
+        // A normal frame can be older than the semantic response; wait for the
+        // existing correlated complete-frame publication instead.
+        loop {
+            match client.recv().await? {
+                Some(HostResponse::InputBarrier { serial: 0, frame }) => {
+                    current_frame = (*frame).try_into().map_err(anyhow::Error::msg)?;
+                    break;
+                }
+                Some(
+                    HostResponse::Frame { .. }
+                    | HostResponse::TerminalDamage { .. }
+                    | HostResponse::EditorDamage { .. },
+                ) => {}
+                Some(HostResponse::Error { message } | HostResponse::Refused { message }) => {
+                    anyhow::bail!(message)
+                }
+                _ => anyhow::bail!("workspace host disconnected before opening graphical targets"),
+            }
+        }
+    }
+    if let Some(message) = notice {
+        client.send(&ClientRequest::Notify { message }).await?;
+    }
     if let Some(visit) = visit {
         client
             .send(&ClientRequest::VisitDestination {
@@ -5379,11 +5608,19 @@ fn parent_attach_selector(
     selector: Option<&Path>,
     directory: &Path,
     configured_state: &Path,
+    requirement: project_root::WorkspaceRequirement,
 ) -> Result<PathBuf> {
     match selector {
         Some(selector) => Ok(selector.to_path_buf()),
-        None => project_root::discover(directory, configured_state)?
-            .context(project_root::NO_WORKSPACE_HERE),
+        None => project_root::discover_with_home(directory, configured_state)?
+            .map(|workspace| workspace.root)
+            .with_context(|| {
+                requirement.refusal(
+                    directory,
+                    None,
+                    crate::app::user_home_directory().as_deref(),
+                )
+            }),
     }
 }
 
@@ -5402,8 +5639,12 @@ async fn run_parent_request(
         .context("owning Runyte host did not answer")??;
     if arguments.mode == LaunchMode::Persistent {
         let state = Config::load(arguments.config.as_deref())?.0.workspace.state;
-        let selector =
-            parent_attach_selector(arguments.workspace_selector.as_deref(), &directory, &state)?;
+        let selector = parent_attach_selector(
+            arguments.workspace_selector.as_deref(),
+            &directory,
+            &state,
+            workspace_requirement(arguments, RunMode::Mux),
+        )?;
         let selector = selector.as_path();
         control
             .send(&ClientRequest::ParentAttach {
@@ -5597,13 +5838,6 @@ async fn run_native_wait(
     let (config, config_path) = Config::load(arguments.config.as_deref())?;
     startup_trace.mark(StartupPhase::ConfigLoaded);
     let directory = std::env::current_dir()?;
-    let requested = match arguments.project_root.as_deref() {
-        Some(root) => resolve_requested_project_root(&directory, root)?,
-        None => match project_root::discover(&directory, &config.workspace.state)? {
-            Some(root) => root,
-            None => resolve_requested_project_root(&directory, &directory)?,
-        },
-    };
     let paths = arguments
         .targets
         .iter()
@@ -5628,13 +5862,32 @@ async fn run_native_wait(
         reserved_user_roots,
         roots,
     })?;
-    let state = project_root::resolve_state_root(&requested, &config.workspace.state);
+    let safety = scope.capture_safety();
+    let requested = match arguments.project_root.as_deref() {
+        Some(root) => resolve_requested_project_root(&directory, root)?,
+        None => match project_root::discover_with_home_safety(
+            &directory,
+            &config.workspace.state,
+            &safety,
+        )?
+        .map(|workspace| workspace.root)
+        {
+            Some(root) => root,
+            None => resolve_requested_project_root(&directory, &directory)?,
+        },
+    };
+    let state = project_root::resolve_state_location_with_safety(
+        &requested,
+        &config.workspace.state,
+        &safety,
+    )?
+    .into_path_buf();
     let current = scope.known_read_location(&requested, &state)?;
     let controls = tokio::select! {
         biased;
         event = termination.recv() => return Err(terminated(event)),
         _ = parent.wait() => anyhow::bail!("wait request lost its launching process before admission"),
-        result = ControlSnapshot::observe_at(&scope, Some(&current), &config.workspace.state, false) => result?,
+        result = ControlSnapshot::observe_at_with_safety(&scope, Some(&current), &config.workspace.state, false, &safety) => result?,
     };
     // A directory with two live publications has no implicit winner. Keep
     // the selected exact publication through the entire wait request.
@@ -5654,7 +5907,8 @@ async fn run_native_wait(
                 None => requested,
                 Some(HistoryTarget::Live { .. }) => unreachable!(),
             };
-            let layout = scope.initialize_layout(&project, &config.workspace.state)?;
+            let layout =
+                scope.initialize_layout_with_safety(&project, &config.workspace.state, &safety)?;
             let location = layout.publication_location()?;
             let mut startup = NativeHostStartup::new(std::env::current_exe()?);
             startup.env = layout.detached_environment()?;
@@ -5994,11 +6248,23 @@ async fn run_native_persistent(
         reserved_user_roots,
         roots,
     })?;
+    let safety = scope.capture_safety();
     let current = if arguments.workspace_selector.is_none() {
         Some(match arguments.project_root.as_deref() {
             Some(root) => resolve_requested_project_root(&directory, root)?,
-            None => project_root::discover(&directory, &config.workspace.state)?
-                .context(project_root::NO_WORKSPACE_HERE)?,
+            None => project_root::discover_with_home_safety(
+                &directory,
+                &config.workspace.state,
+                &safety,
+            )?
+            .map(|workspace| workspace.root)
+            .with_context(|| {
+                workspace_requirement(arguments, config.mode()).refusal(
+                    &directory,
+                    None,
+                    crate::app::user_home_directory().as_deref(),
+                )
+            })?,
         })
     } else {
         None
@@ -6010,15 +6276,20 @@ async fn run_native_persistent(
         .expect("persistent attachment has a selector or current directory");
     let current_read = current
         .as_deref()
-        .map(|project| {
-            let state = project_root::resolve_state_root(project, &config.workspace.state);
-            scope.known_read_location(project, &state)
+        .map(|project| -> Result<_> {
+            let state = project_root::resolve_state_location_with_safety(
+                project,
+                &config.workspace.state,
+                &safety,
+            )?
+            .into_path_buf();
+            Ok(scope.known_read_location(project, &state)?)
         })
         .transpose()?;
     let controls = tokio::select! {
         biased;
         event = termination.recv() => return Err(terminated(event)),
-        result = ControlSnapshot::observe_at(&scope, current_read.as_ref(), &config.workspace.state, false) => result?,
+        result = ControlSnapshot::observe_at_with_safety(&scope, current_read.as_ref(), &config.workspace.state, false, &safety) => result?,
     };
     let selected = controls.history().select(selector, Some(&directory))?;
     if let Some(event) = termination.pending_event().await {
@@ -6039,7 +6310,11 @@ async fn run_native_persistent(
                 None => workspace_selector_path(selector, &directory),
                 Some(HistoryTarget::Live { .. }) => unreachable!(),
             };
-            let layout = scope.initialize_layout(&requested, &config.workspace.state)?;
+            let layout = scope.initialize_layout_with_safety(
+                &requested,
+                &config.workspace.state,
+                &safety,
+            )?;
             let location = layout.publication_location()?;
             let mut startup = NativeHostStartup::new(std::env::current_exe()?);
             startup.env = layout.detached_environment()?;
@@ -6138,8 +6413,15 @@ async fn run_native_control_cli(
         reserved_user_roots,
         roots,
     })?;
-    let mut controls =
-        ControlSnapshot::observe(&scope, &config.workspace.state, arguments.include_hidden).await?;
+    let safety = scope.capture_safety();
+    let mut controls = ControlSnapshot::observe_at_with_safety(
+        &scope,
+        None,
+        &config.workspace.state,
+        arguments.include_hidden,
+        &safety,
+    )
+    .await?;
     match arguments.mode {
         LaunchMode::ListSessions => {
             print!(
@@ -6186,7 +6468,7 @@ async fn run_native_control_cli(
                 let directory = launch_directory.as_deref().context(
                     "--session-restart requires a workspace selector or current project",
                 )?;
-                Some(project_root::discover(directory, &config.workspace.state)?.context(
+                Some(project_root::discover_with_home_safety(directory, &config.workspace.state, &safety)?.map(|workspace| workspace.root).context(
                     "--session-restart requires a workspace selector or discoverable current project",
                 )?)
             } else {
@@ -6207,7 +6489,12 @@ async fn run_native_control_cli(
             };
             let original = publication.metadata().clone();
             let project = original.project_root()?;
-            let state = project_root::resolve_state_root(&project, &config.workspace.state);
+            let state = project_root::resolve_state_location_with_safety(
+                &project,
+                &config.workspace.state,
+                &safety,
+            )?
+            .into_path_buf();
             let layout = ResolvedLayout::from_scope(scope.clone(), &project, state)?;
             let location = layout.publication_location()?;
             let mut replacement = NativeHostStartup::new(std::env::current_exe()?);
@@ -7051,6 +7338,7 @@ fn start_host_services(
         .expect("terminal output is claimed once, when services start");
     let plugin_events = if editor { None } else { app.start_plugins() };
     let pipe_events = app.start_pipe_service();
+    app.app_mut().finish_workspace_startup();
     #[cfg(windows)]
     let _ = config_path;
     #[cfg(all(not(unix), not(windows)))]
@@ -7811,10 +8099,10 @@ MODES:
                          authenticated integrated terminal uses its parent
 
     A workspace is a Git, Jujutsu or Subversion working copy, or a directory
-    holding .runyte, found from the launch directory or above it. Without one,
-    ide makes the launch directory a workspace unless it is the home
-    directory, a shared or temporary directory, or the filesystem root, or a
-    target lies outside it; mux refuses. runyte --init DIRECTORY creates one.
+    holding .runyte, found from the launch directory or above it. Exactly in
+    home, ide and mux use out-of-tree state. Elsewhere ide makes the launch
+    directory a workspace unless it is shared, temporary, the filesystem root,
+    or a target lies outside it; mux refuses. runyte --init DIRECTORY creates one.
     As root only editor mode runs; for system files set SUDO_EDITOR=runed and
     use sudoedit.
 
@@ -8562,6 +8850,7 @@ mod tests {
             wait_tokens: Vec::new(),
             last_frame: None,
             input_barrier: None,
+            launch_pending: false,
         };
 
         // Visual responses have one replaceable slot, so a repaint burst
@@ -9345,7 +9634,7 @@ mod tests {
         assert_eq!(
             String::from_utf8(output).unwrap(),
             format!(
-                "initialized a workspace in {0}\nopen it with: runyte {0}   or   runyte --mux {0}\n",
+                "initialized a workspace in {0}\nopen it with: cd '{0}' && runyte   or   runyte --mux '{0}'\n",
                 canonical.display()
             )
         );
@@ -9384,22 +9673,90 @@ mod tests {
         let plain = root.path().join("plain");
         std::fs::create_dir(&plain).unwrap();
 
-        let error = super::parent_attach_selector(None, &plain, state).unwrap_err();
-        assert!(error.to_string().contains("no workspace here"), "{error}");
+        let error = super::parent_attach_selector(
+            None,
+            &plain,
+            state,
+            crate::project_root::WorkspaceRequirement::new(
+                crate::project_root::WorkspaceMode::Mux,
+                true,
+            ),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            crate::project_root::WorkspaceRequirement::new(
+                crate::project_root::WorkspaceMode::Mux,
+                true
+            )
+            .refusal(&plain, None, None)
+        );
         assert!(!plain.join(".runyte").exists());
 
         let project = root.path().join("project");
         std::fs::create_dir_all(project.join(".runyte")).unwrap();
         std::fs::create_dir(project.join("src")).unwrap();
         assert_eq!(
-            super::parent_attach_selector(None, &project.join("src"), state).unwrap(),
+            super::parent_attach_selector(
+                None,
+                &project.join("src"),
+                state,
+                crate::project_root::WorkspaceRequirement::new(
+                    crate::project_root::WorkspaceMode::Mux,
+                    true
+                )
+            )
+            .unwrap(),
             project.canonicalize().unwrap()
         );
 
         // A named selector is the caller's decision and passes unchanged.
         assert_eq!(
-            super::parent_attach_selector(Some(&plain), &project, state).unwrap(),
+            super::parent_attach_selector(
+                Some(&plain),
+                &project,
+                state,
+                crate::project_root::WorkspaceRequirement::new(
+                    crate::project_root::WorkspaceMode::Mux,
+                    true
+                )
+            )
+            .unwrap(),
             plain
+        );
+    }
+
+    #[test]
+    fn window_mux_fallback_names_its_source_and_positional_target_precedence() {
+        for (args, source) in [
+            (
+                vec!["--window"],
+                "window launch uses ide instead of mode: mux",
+            ),
+            (
+                vec!["--window", "notes.md"],
+                "file or directory targets override mode: mux",
+            ),
+        ] {
+            let arguments = LaunchArguments::parse_from(args.into_iter().map(Into::into)).unwrap();
+            assert!(!super::uses_automatic_persistent_mode(
+                &arguments,
+                RunMode::Mux
+            ));
+            let requirement = super::workspace_requirement(&arguments, RunMode::Mux);
+            assert_eq!(requirement.mode, crate::project_root::WorkspaceMode::Ide);
+            assert_eq!(
+                requirement.refusal(Path::new("/fixture"), None, None),
+                format!(
+                    "runyte needs a workspace in ide mode ({source}), and none was found in /fixture or any directory above it.\n  Open a project:      {}\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor",
+                    crate::project_root::ide_open_command("DIRECTORY")
+                )
+            );
+        }
+        let explicit = LaunchArguments::parse_from(["--window", "--ide"].map(Into::into)).unwrap();
+        assert_eq!(
+            super::workspace_requirement(&explicit, RunMode::Mux).source,
+            crate::project_root::ModeSource::Flag("--ide")
         );
     }
 

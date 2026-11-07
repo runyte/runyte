@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 
 mod frame;
 mod input;
+mod launch;
+pub use launch::LaunchTarget;
 
 pub use frame::{
     EditorDamageFrame, EditorSnapshot, ExternalFileStatus, FrameId, HostFrame, SnapshotRow,
@@ -218,8 +220,11 @@ use crate::workspace::{
 // Version 88 adds native media, preview and overflow-dismiss pointer action masks.
 // Version 89 distinguishes acknowledged preview focus handoffs from generic forwarding.
 // Version 90 adds the preview-zoom pointer action mask.
-// Version 91 admits 1 MiB document captures and larger bounded host responses.
-pub const VERSION: u32 = 91;
+// Version 91 was reserved for the preview capture change (#78), which landed as 94.
+// Version 92 distinguishes deliberate workspace opens from transport reconnects.
+// Version 93 adds bounded, one-shot graphical launch targets on native attachments.
+// Version 94 admits 1 MiB document captures and larger bounded host responses.
+pub const VERSION: u32 = 94;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -488,6 +493,9 @@ pub enum ClientRequest {
         directory_handoff: bool,
         /// Whether the attached frontend can decode and display media panes.
         native_media: bool,
+        /// A deliberate startup, attach or workspace switch. Transport-only
+        /// reconnects leave this false and preserve the current action echo.
+        workspace_open: bool,
     },
     MediaNavigate {
         pane: usize,
@@ -554,6 +562,10 @@ pub enum ClientRequest {
     ListBuffers,
     ReadBuffer {
         buffer: BufferId,
+    },
+    /// Initial file arguments from the active bundled graphical frontend.
+    OpenLaunchTargets {
+        targets: Vec<LaunchTarget>,
     },
     OpenBuffers {
         paths: Vec<Vec<u8>>,
@@ -810,6 +822,8 @@ impl ClientRequest {
                 project_root_bytes,
                 client_version,
                 geometry,
+                role,
+                workspace_open,
                 ..
             } => {
                 require(
@@ -824,6 +838,10 @@ impl ClientRequest {
                 require(
                     !client_version.is_empty() && client_version.len() <= 128,
                     "invalid client version length",
+                )?;
+                require(
+                    !workspace_open || *role == ClientRole::Interactive,
+                    "workspace open requires an interactive client",
                 )?;
                 geometry.validate()
             }
@@ -897,6 +915,7 @@ impl ClientRequest {
                 !message.is_empty() && message.len() <= MAX_NOTIFICATION_BYTES,
                 "client notification exceeds the protocol limit",
             ),
+            Self::OpenLaunchTargets { targets } => launch::validate_targets(targets),
             Self::OpenBuffers { paths, .. } | Self::CreateWait { paths } => {
                 require(
                     !paths.is_empty() && paths.len() <= MAX_PATHS,
@@ -1371,10 +1390,39 @@ where
 mod tests {
     use super::*;
 
+    #[test]
+    fn only_interactive_hello_can_request_a_workspace_opening_echo() {
+        let mut hello = ClientRequest::Hello {
+            protocol: VERSION,
+            features: vec![FeatureGroup::Snapshots],
+            project_root_bytes: encode_path(std::path::Path::new("fixture")),
+            client_kind: ClientKind::Tui,
+            client_version: CLIENT_VERSION.to_owned(),
+            role: ClientRole::Interactive,
+            geometry: input::FrameGeometry::default(),
+            directory_handoff: false,
+            native_media: false,
+            workspace_open: true,
+        };
+        assert!(hello.validate().is_ok());
+        if let ClientRequest::Hello { role, .. } = &mut hello {
+            *role = ClientRole::Control;
+        }
+        assert_eq!(
+            hello.validate().unwrap_err(),
+            "workspace open requires an interactive client"
+        );
+        if let ClientRequest::Hello { workspace_open, .. } = &mut hello {
+            *workspace_open = false;
+        }
+        assert!(hello.validate().is_ok());
+    }
+
     fn path_requests(bytes: Vec<u8>) -> Vec<ClientRequest> {
         let valid = encode_path(std::path::Path::new("valid"));
         vec![
             ClientRequest::Hello {
+                workspace_open: false,
                 protocol: VERSION,
                 features: vec![FeatureGroup::Snapshots],
                 project_root_bytes: bytes.clone(),
@@ -1578,7 +1626,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 91);
+        assert_eq!(VERSION, 94);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

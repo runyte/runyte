@@ -19,6 +19,8 @@
 //! run serially in release mode by CI. The equivalent local command is:
 //! `cargo test --release --test performance -- --ignored --test-threads=1`.
 
+use runyte::test_support::isolated_startup_config;
+
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -999,7 +1001,12 @@ fn wide_directory() -> &'static Path {
 }
 
 fn editor_in(root: &Path) -> App {
-    App::new_in_project(Config::default(), Some(root.join("note.txt")), root).unwrap()
+    App::new_in_project(
+        isolated_startup_config(Config::default()),
+        Some(root.join("note.txt")),
+        root,
+    )
+    .unwrap()
 }
 
 fn press(app: &mut App, character: char) {

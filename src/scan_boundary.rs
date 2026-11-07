@@ -7,12 +7,13 @@
 //! directory, `/` — so it is contained: it refuses to start from the root of
 //! the filesystem tree or from a virtual filesystem, never crosses onto
 //! another mounted filesystem, and stops after a fixed number of entries.
+//! Home-workspace scans use the same contained boundary.
 //! Knows nothing about pickers, ignore files, or what a scan collects.
 
 use std::path::Path;
 
 /// How many entries a contained scan visits before it stops and reports
-/// itself limited. Project scans have no such cap; a directory chosen as a
+/// itself limited. Ordinary project scans have no such cap; a directory chosen as a
 /// project is expected to be walked in full.
 pub const CONTAINED_SCAN_ENTRY_LIMIT: usize = 20_000;
 

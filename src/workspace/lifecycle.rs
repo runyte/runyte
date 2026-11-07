@@ -353,22 +353,37 @@ pub(super) fn resolve_workspace_endpoint_with_runtime(
     let requested = requested
         .canonicalize()
         .with_context(|| format!("cannot resolve workspace {}", requested.display()))?;
-    let project_root =
-        project_root::discover(&requested, state)?.context(project_root::NO_WORKSPACE_HERE)?;
-    let state_root = project_root::resolve_state_root(&project_root, state);
-    let mut reserved_user_roots = config_path
-        .map(|path| config::config_root_for(path, &project_root))
+    let discovered = project_root::discover(&requested, state)?;
+    let candidate = discovered
+        .as_ref()
+        .map_or(requested.as_path(), |found| found.root.as_path());
+    let mut reserved = config_path
+        .map(|path| config::config_root_for(path, candidate))
         .into_iter()
         .collect::<Vec<_>>();
-    if let Some(cache_root) = external_open::cache_root() {
-        reserved_user_roots.push(cache_root);
+    if let Some(cache) = external_open::cache_root() {
+        reserved.push(cache);
     }
-    project_root::validate_state_root(&state_root, &reserved_user_roots)?;
+    let safety = crate::workspace_state::StartupSafety::capture(&reserved);
+    let project_root = match discovered {
+        Some(found) => Some(found),
+        None => project_root::discover_with_home_safety(&requested, state, &safety)?,
+    }
+    .map(|found| found.root)
+    .with_context(|| {
+        project_root::WorkspaceRequirement::new(project_root::WorkspaceMode::Mux, true).refusal(
+            &requested,
+            None,
+            crate::app::user_home_directory().as_deref(),
+        )
+    })?;
+    let location = project_root::resolve_state_location_with_safety(&project_root, state, &safety)?;
+    safety.validate(&project_root, &location)?;
     match runtime {
         Some(runtime) => {
-            LocalEndpoint::discover_with_runtime(&state_root, &project_root, Some(runtime))
+            LocalEndpoint::discover_selected_with_runtime(&location, &project_root, Some(runtime))
         }
-        None => LocalEndpoint::discover(&state_root, &project_root),
+        None => LocalEndpoint::discover_location(&location, &project_root),
     }
 }
 
@@ -411,7 +426,7 @@ pub struct HostStartup {
     /// module derives from the endpoint. Tests inject their private
     /// `XDG_CACHE_HOME` here so a spawned host cannot register itself in the
     /// person's real cache, the same reason
-    /// [`LocalEndpoint::discover_with_runtime`] takes an explicit runtime root.
+    /// [`LocalEndpoint::discover_in_tree_with_runtime`] takes explicit fixture roots.
     pub env: Vec<(OsString, OsString)>,
     /// What the failure message calls this host, for example `"restarted"`.
     pub description: &'static str,
@@ -423,6 +438,7 @@ pub struct HostStartup {
     /// absolute path before the child is spawned, because the child may run in
     /// another directory.
     pub log: Option<PathBuf>,
+    workspace_origin: Option<crate::project_root::WorkspaceOrigin>,
 }
 
 impl HostStartup {
@@ -436,7 +452,16 @@ impl HostStartup {
             description,
             verbosity: 0,
             log: None,
+            workspace_origin: None,
         }
+    }
+
+    pub(crate) fn with_workspace_origin(
+        mut self,
+        origin: Option<crate::project_root::WorkspaceOrigin>,
+    ) -> Self {
+        self.workspace_origin = origin;
+        self
     }
 
     /// Hands this process's selected logging to the host it starts.
@@ -448,6 +473,16 @@ impl HostStartup {
 
     pub fn with_env(mut self, key: impl Into<OsString>, value: impl Into<OsString>) -> Self {
         self.env.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn with_envs(
+        mut self,
+        values: impl IntoIterator<Item = (impl Into<OsString>, impl Into<OsString>)>,
+    ) -> Self {
+        for (key, value) in values {
+            self.env.push((key.into(), value.into()));
+        }
         self
     }
 
@@ -538,6 +573,21 @@ pub async fn start_detached_host(endpoint: &LocalEndpoint, startup: HostStartup)
     }
     if let Some(supervisor) = endpoint.test_supervisor() {
         command.env("RUNYTE_TEST_SUPERVISOR_PID", supervisor.to_string());
+    }
+    command.env_remove(crate::project_root::STARTUP_ORIGIN_ENV);
+    if let Some(origin) = startup.workspace_origin {
+        command.env(
+            crate::project_root::STARTUP_ORIGIN_ENV,
+            origin.startup_handoff(&project_root),
+        );
+    }
+    #[cfg(debug_assertions)]
+    if let crate::workspace_state::StateLocation::OutOfTree(path) = endpoint.state_location()
+        && let Some(root) = path.parent().and_then(Path::parent)
+    {
+        command
+            .env("RUNYTE_TEST_OUT_OF_TREE_ROOT", &project_root)
+            .env("RUNYTE_TEST_STATE_HOME", root);
     }
     for (key, value) in &startup.env {
         command.env(key, value);

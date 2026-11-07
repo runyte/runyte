@@ -491,7 +491,7 @@ is limited to the same 200 characters the frontend displays.
 
 Pure limits in `src/document_preview/limits.rs` are shared with the helper.
 Helper requests and reply headers admit 6.25 MiB including framing, allowing
-sixfold JSON escaping and 256 KiB of metadata. Private protocol 91 keeps client
+sixfold JSON escaping and 256 KiB of metadata. Private protocol 94 keeps client
 requests at 8 MiB and allows host responses up to 56 MiB: the ordinary 8 MiB
 frame allowance plus eight captures at their worst-case 6 MiB encoded size.
 Both async and buffered readers use that host-response budget on Unix and

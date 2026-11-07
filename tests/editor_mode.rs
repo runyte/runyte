@@ -51,6 +51,20 @@ fn command(program: &Path, owner: &Path, directory: &Path, arguments: &[&str]) -
         .args(arguments)
         .current_dir(directory)
         .env_remove(runyte::workspace::parent::ENVIRONMENT)
+        // Assert the CLI message independently of the test runner's optional
+        // panic/error backtraces, including CI's RUST_BACKTRACE setting.
+        .env("RUST_BACKTRACE", "0")
+        .env("RUST_LIB_BACKTRACE", "0")
+        .envs(runyte::test_support::state_environment(
+            std::path::Path::new(&(process_dir(owner, "config"))),
+        ))
+        .env("HOME", process_dir(owner, "home"))
+        .env("RUNYTE_TEST_ACCOUNT_HOME", process_dir(owner, "home"))
+        .env("XDG_STATE_HOME", process_dir(owner, "state"))
+        .env(
+            "RUNYTE_TEST_STATE_HOME",
+            process_dir(owner, "state").join("runyte"),
+        )
         .env("XDG_CONFIG_HOME", process_dir(owner, "config"))
         .env("XDG_RUNTIME_DIR", process_dir(owner, "run"))
         .env("XDG_CACHE_HOME", process_dir(owner, "cache"))
@@ -121,7 +135,7 @@ fn a_mux_launch_outside_any_workspace_still_refuses_and_points_to_init() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
     assert!(
-        stderr.contains("no workspace here; run runyte --init DIRECTORY to create one"),
+        stderr.contains("runyte needs a workspace in mux mode (the --mux flag)"),
         "{stderr}"
     );
     assert!(!stderr.contains("Project directory"), "{stderr}");
@@ -140,7 +154,10 @@ fn a_bare_launch_with_mode_mux_outside_any_workspace_creates_none() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
-    assert!(stderr.contains("no workspace here"), "{stderr}");
+    assert!(
+        stderr.contains("runyte needs a workspace in mux mode (the mode setting)"),
+        "{stderr}"
+    );
     assert!(!directory.join(".runyte").exists());
 }
 
@@ -163,7 +180,7 @@ fn an_ide_launch_naming_a_file_elsewhere_makes_no_workspace() {
 }
 
 #[test]
-fn the_home_directory_is_not_made_a_workspace_by_an_ide_launch() {
+fn the_home_directory_uses_out_of_tree_state_for_an_ide_launch() {
     let owner = TestRuntimeRoot::new("ide-in-home").unwrap();
     let home = owner.join("home");
     fs::create_dir_all(&home).unwrap();
@@ -181,11 +198,13 @@ fn the_home_directory_is_not_made_a_workspace_by_an_ide_launch() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
+    assert!(!stderr.contains("not made one automatically"), "{stderr}");
     assert!(
-        stderr.contains("the home directory is not made one automatically"),
+        process_dir(&owner, "state")
+            .join("runyte/workspaces")
+            .is_dir(),
         "{stderr}"
     );
-    assert!(stderr.contains("runyte --init DIRECTORY"), "{stderr}");
     assert!(!home.join(".runyte").exists());
 }
 
@@ -374,4 +393,127 @@ fn runed_mcp_opens_a_file_rather_than_the_mcp_adapter() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("binary"), "{stderr}");
+}
+
+#[test]
+fn refusal_sites_report_the_full_mode_source_search_and_recovery() {
+    let owner = TestRuntimeRoot::new("refusal-text").unwrap();
+    let directory = process_dir(&owner, "notes");
+    let config = process_dir(&owner, "settings").join("config.yaml");
+    fs::write(&config, "mode: mux\nlsp:\n  enable: false\n").unwrap();
+    for (args, source) in [
+        (vec!["--mux"], "the --mux flag"),
+        (vec!["-a"], "the --mux flag"),
+        (
+            vec!["--config", config.to_str().unwrap()],
+            "the mode setting",
+        ),
+    ] {
+        let output = runyte(&owner, &directory, &args);
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            format!(
+                "Error: runyte needs a workspace in mux mode ({source}), and none was found in {} or any directory above it.\n  Open or create one:  runyte --mux DIRECTORY\n  Create one only:     runyte --init DIRECTORY\n",
+                directory.display()
+            )
+        );
+    }
+    let target = owner.join("outside.txt");
+    fs::write(&target, "text").unwrap();
+    for (args, source) in [
+        (vec![target.to_str().unwrap()], "the mode setting"),
+        (vec!["--ide", target.to_str().unwrap()], "the --ide flag"),
+        (
+            vec![
+                "--config",
+                config.to_str().unwrap(),
+                target.to_str().unwrap(),
+            ],
+            "file or directory targets override mode: mux",
+        ),
+    ] {
+        let output = runyte(&owner, &directory, &args);
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            format!(
+                "Error: runyte needs a workspace in ide mode ({source}), and none was found in {0} or any directory above it.\n{1} is outside {0}, so that directory is not made one automatically\n  Open a project:      cd DIRECTORY && runyte\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor\n",
+                directory.display(),
+                target.display()
+            )
+        );
+    }
+}
+
+#[test]
+fn suggested_commands_work_from_the_refused_launch_directory() {
+    use runyte::project_root::{WorkspaceMode, WorkspaceRequirement, workspace_shell_argument};
+    let owner = TestRuntimeRoot::new("refusal-commands").unwrap();
+    let launch = process_dir(&owner, "launch");
+    let bin = process_dir(&owner, "bin");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_runyte"), bin.join("runyte")).unwrap();
+    let mut paths = vec![bin];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let path = std::env::join_paths(paths).unwrap();
+    for mode in [WorkspaceMode::Ide, WorkspaceMode::Mux] {
+        let message = WorkspaceRequirement::new(mode, true).refusal(&launch, None, None);
+        for (index, line) in message.lines().skip(1).enumerate() {
+            let destination = process_dir(&owner, &format!("project {mode:?} {index} '$`"));
+            let advice = line.split_once(":  ").unwrap().1.trim();
+            let script = advice.replace("DIRECTORY", &workspace_shell_argument(&destination));
+            let output = command(Path::new("/bin/sh"), &owner, &launch, &["-c", &script])
+                .env("PATH", &path)
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(!stderr.contains("needs a workspace"), "{script}: {stderr}");
+            if advice.contains("--init") {
+                assert!(output.status.success(), "{script}: {stderr}");
+                assert!(destination.join(".runyte").is_dir());
+                // Execute each opening hint literally from the original directory.
+                let stdout = String::from_utf8(output.stdout).unwrap();
+                let hints = stdout
+                    .lines()
+                    .nth(1)
+                    .unwrap()
+                    .strip_prefix("open it with: ")
+                    .unwrap();
+                for hint in hints.split("   or   ") {
+                    let opened = command(Path::new("/bin/sh"), &owner, &launch, &["-c", hint])
+                        .env("PATH", &path)
+                        .output()
+                        .unwrap();
+                    let stderr = String::from_utf8_lossy(&opened.stderr);
+                    assert!(!stderr.contains("needs a workspace"), "{hint}: {stderr}");
+                    let state = destination.join(".runyte");
+                    if hint.starts_with("cd ") {
+                        assert!(!standalone_logs(&state).is_empty(), "{hint}: {stderr}");
+                    } else {
+                        assert!(state.join("host.log").is_file(), "{hint}: {stderr}");
+                    }
+                }
+            } else if advice.contains("--editor") {
+                assert!(stderr.starts_with("Error: "), "{script}: {stderr}");
+                assert_eq!(output.status.code(), Some(1));
+                assert!(!launch.join(".runyte").exists());
+            } else {
+                let state = destination.join(".runyte");
+                assert!(state.is_dir(), "{script}: {stderr}");
+                if mode == WorkspaceMode::Ide {
+                    assert!(!standalone_logs(&state).is_empty(), "{script}: {stderr}");
+                } else {
+                    assert!(state.join("host.log").is_file(), "{script}: {stderr}");
+                }
+            }
+            // A null-terminal mux attachment may have started a host. Always
+            // stop the exact private fixture workspace before its owner drops.
+            let _ = runyte(
+                &owner,
+                &launch,
+                &["--session-stop", destination.to_str().unwrap(), "--force"],
+            );
+        }
+    }
+    assert!(!owner.join("PWNED").exists());
 }

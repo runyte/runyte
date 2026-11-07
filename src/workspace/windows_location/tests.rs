@@ -416,6 +416,7 @@ fn projectless_scope_and_direct_layout_preserve_fingerprint_and_environment() {
                 cache_home,
                 local_app_data: Some(root.join("account")),
                 inventory_override: Some(root.join("inventory")),
+                ..CapturedRoots::default()
             };
             let scope = DiscoveryScope::resolve(DiscoveryInputs {
                 roots: roots.clone(),
@@ -519,4 +520,32 @@ fn scope_selected_runtime_is_not_readmitted_after_it_disappears() {
             .contains(&("XDG_RUNTIME_DIR".into(), Some(runtime.into_os_string())))
     );
     assert!(!project.join(".runyte").exists());
+}
+
+#[test]
+fn exact_home_initialization_uses_injected_state_and_keeps_native_layout_identity() {
+    let fixture = crate::test_support::TestRuntimeRoot::new("home-location").unwrap();
+    let home = fixture.create_private_dir("home").unwrap();
+    let config = fixture.create_private_dir("config").unwrap();
+    let cache = fixture.create_private_dir("cache").unwrap();
+    let scope = DiscoveryScope::resolve(DiscoveryInputs {
+        reserved_user_roots: vec![config.clone()],
+        roots: CapturedRoots {
+            cache_home: Some(cache.clone()),
+            inventory_override: Some(fixture.join("inventory")),
+            home_paths: vec![home.clone()],
+            user_state_root: Some(fixture.join("state/runyte")),
+            ..CapturedRoots::default()
+        },
+    })
+    .unwrap();
+    let layout = scope
+        .initialize_layout(&home, Path::new(".runyte"))
+        .unwrap();
+    let expected =
+        crate::workspace_state::StateLocation::out_of_tree(&home, &fixture.join("state/runyte"));
+    assert_eq!(layout.project_root(), home);
+    assert_eq!(layout.state_root(), expected.as_path());
+    assert!(layout.state_root().is_dir());
+    assert!(!home.join(".runyte").exists());
 }
