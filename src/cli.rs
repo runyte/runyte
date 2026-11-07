@@ -1462,9 +1462,12 @@ async fn run(
             let root = Storage::default_root();
             #[cfg(windows)]
             let root = Storage::default_location().map(|location| location.root().to_owned());
-            let result =
-                discovery::discover(root, &environment_fingerprint(), arguments.include_hidden)
-                    .await?;
+            let result = discovery::discover_with_policy(
+                root.map(crate::workspace::context::storage::ContextStorePolicy::for_discovery),
+                &environment_fingerprint(),
+                arguments.include_hidden,
+            )
+            .await?;
             serde_json::to_writer(stdout().lock(), &result)?;
             println!();
             return Ok(());

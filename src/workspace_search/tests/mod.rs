@@ -80,6 +80,10 @@ fn stale_disk_matches_in_open_buffers_do_not_exhaust_workspace_search() {
         }],
         contained: false,
         excluded: None,
+        private_root: None,
+        private_paths: Vec::new(),
+        private_identities: Vec::new(),
+        private_file_inventory_exhausted: false,
     };
 
     let (matches, limited) = perform(request, || false).unwrap().unwrap();
@@ -108,6 +112,10 @@ fn workspace_search_combines_live_and_unopened_matches_without_duplicates() {
         }],
         contained: false,
         excluded: None,
+        private_root: None,
+        private_paths: Vec::new(),
+        private_identities: Vec::new(),
+        private_file_inventory_exhausted: false,
     };
 
     let (matches, limited) = perform(request, || false).unwrap().unwrap();
@@ -137,6 +145,10 @@ fn a_contained_search_refuses_the_filesystem_root() {
         open_buffers: Vec::new(),
         contained: true,
         excluded: None,
+        private_root: None,
+        private_paths: Vec::new(),
+        private_identities: Vec::new(),
+        private_file_inventory_exhausted: false,
     };
 
     let error = perform(request, || false).unwrap_err();
@@ -163,6 +175,10 @@ fn a_contained_search_spends_its_budget_on_hidden_entries_too() {
         open_buffers: Vec::new(),
         contained,
         excluded: None,
+        private_root: None,
+        private_paths: Vec::new(),
+        private_identities: Vec::new(),
+        private_file_inventory_exhausted: false,
     };
 
     let (matches, limited) = perform(request(true), || false).unwrap().unwrap();
@@ -198,6 +214,10 @@ fn a_contained_search_passes_over_directories_it_cannot_read() {
         open_buffers: Vec::new(),
         contained,
         excluded: None,
+        private_root: None,
+        private_paths: Vec::new(),
+        private_identities: Vec::new(),
+        private_file_inventory_exhausted: false,
     };
 
     let contained = perform(request(true), || false);
@@ -226,6 +246,10 @@ fn home_search_excludes_library_disk_and_snapshots_but_an_explicit_root_can_sear
         id: 1,
         root,
         excluded,
+        private_root: None,
+        private_paths: Vec::new(),
+        private_identities: Vec::new(),
+        private_file_inventory_exhausted: false,
         matcher: Regex::new("needle").unwrap(),
         show_hidden: true,
         open_buffers: vec![WorkspaceSearchSnapshot {

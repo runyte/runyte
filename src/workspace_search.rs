@@ -45,6 +45,10 @@ pub(crate) struct WorkspaceSearchRequest {
     /// search starts in system directories the reader only partly owns.
     pub contained: bool,
     pub excluded: Option<PathBuf>,
+    pub private_root: Option<PathBuf>,
+    pub private_paths: Vec<PathBuf>,
+    pub private_identities: Vec<[u8; 24]>,
+    pub private_file_inventory_exhausted: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -163,7 +167,13 @@ pub(crate) fn perform(
         &request.matcher,
         request.show_hidden,
         request.contained,
-        request.excluded.as_deref(),
+        SearchExclusions {
+            ordinary: request.excluded.as_deref(),
+            private: request.private_root.as_deref(),
+            hidden_paths: &request.private_paths,
+            hidden_identities: &request.private_identities,
+            deny_files: request.private_file_inventory_exhausted,
+        },
         &open_paths,
         &cancelled,
     )?
@@ -182,6 +192,14 @@ pub(crate) fn perform(
             .excluded
             .as_ref()
             .is_some_and(|excluded| snapshot.path.starts_with(excluded))
+            || request
+                .private_root
+                .as_ref()
+                .is_some_and(|private| snapshot.path.starts_with(private))
+            || request
+                .private_paths
+                .iter()
+                .any(|private| snapshot.path.starts_with(private))
         {
             continue;
         }
@@ -204,15 +222,40 @@ pub(crate) fn perform(
     Ok(Some((matches, limited)))
 }
 
+struct SearchExclusions<'a> {
+    ordinary: Option<&'a Path>,
+    private: Option<&'a Path>,
+    hidden_paths: &'a [PathBuf],
+    hidden_identities: &'a [[u8; 24]],
+    deny_files: bool,
+}
+
 fn workspace_matches(
     root: &Path,
     matcher: &Regex,
     show_hidden: bool,
     contained: bool,
-    excluded: Option<&Path>,
+    exclusions: SearchExclusions<'_>,
     open_paths: &HashSet<&Path>,
     cancelled: &impl Fn() -> bool,
 ) -> Result<Option<(Vec<WorkspaceMatch>, bool)>> {
+    anyhow::ensure!(
+        !exclusions
+            .private
+            .is_some_and(|private| root.starts_with(private)),
+        "workspace search root is private context storage"
+    );
+    anyhow::ensure!(
+        !exclusions
+            .hidden_paths
+            .iter()
+            .any(|private| root.starts_with(private)),
+        "workspace search root is a private context buffer"
+    );
+    #[cfg(any(unix, windows))]
+    let private_inventory = exclusions
+        .private
+        .map(crate::workspace::context::storage::PrivateFileInventory::load);
     let boundary = if contained {
         let root = root.canonicalize()?;
         if let Some(reason) = crate::scan_boundary::refusal(&root) {
@@ -258,7 +301,23 @@ fn workspace_matches(
             if cancelled() {
                 return Ok(None);
             }
-            if excluded.is_some_and(|excluded| entry.path() == excluded) {
+            if exclusions
+                .ordinary
+                .is_some_and(|excluded| entry.path() == excluded)
+            {
+                continue;
+            }
+            if exclusions
+                .private
+                .is_some_and(|private| entry.path().starts_with(private))
+            {
+                continue;
+            }
+            if exclusions
+                .hidden_paths
+                .iter()
+                .any(|private| entry.path().starts_with(private))
+            {
                 continue;
             }
             let name = entry.file_name();
@@ -300,6 +359,9 @@ fn workspace_matches(
             if !file_type.is_file() || (!show_hidden && name.starts_with('.')) {
                 continue;
             }
+            if exclusions.deny_files {
+                continue;
+            }
             let length = match metadata {
                 Some(metadata) => metadata.len(),
                 None => entry.metadata()?.len(),
@@ -308,6 +370,13 @@ fn workspace_matches(
                 continue;
             }
             let path = entry.path();
+            #[cfg(any(unix, windows))]
+            if private_inventory
+                .as_ref()
+                .is_some_and(|inventory| inventory.denies_path(&path, exclusions.hidden_identities))
+            {
+                continue;
+            }
             // The captured rope is authoritative. Its stale disk contents
             // must not consume the result budget and hide unopened files.
             if open_paths.contains(path.as_path()) {
@@ -452,6 +521,10 @@ mod tests {
             open_buffers: Vec::new(),
             contained: false,
             excluded: None,
+            private_root: None,
+            private_paths: Vec::new(),
+            private_identities: Vec::new(),
+            private_file_inventory_exhausted: false,
         };
 
         assert!(perform(request, || true).unwrap().is_none());
@@ -467,6 +540,10 @@ mod tests {
             open_buffers: Vec::new(),
             contained: false,
             excluded: None,
+            private_root: None,
+            private_paths: Vec::new(),
+            private_identities: Vec::new(),
+            private_file_inventory_exhausted: false,
         };
 
         assert!(perform(request, || false).is_err());
@@ -487,6 +564,10 @@ mod tests {
                 open_buffers: Vec::new(),
                 contained: false,
                 excluded: None,
+                private_root: None,
+                private_paths: Vec::new(),
+                private_identities: Vec::new(),
+                private_file_inventory_exhausted: false,
             })
             .unwrap();
 

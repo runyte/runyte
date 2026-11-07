@@ -8,6 +8,7 @@ use crate::{
     terminal::TerminalOutput,
     test_support::TestRuntimeRoot,
 };
+use std::sync::Arc;
 
 struct Clipboard;
 impl SystemClipboard for Clipboard {
@@ -27,6 +28,127 @@ fn fixture() -> (TestRuntimeRoot, WorkspaceHost, ReadState) {
         WorkspaceHost::new(app),
         ReadState::new("owner:1".into()),
     )
+}
+
+#[cfg(unix)]
+#[test]
+fn private_store_hardlink_retracts_live_handles_and_retained_snapshot() {
+    use crate::{
+        workspace::context::storage::{ContextStorePolicy, Storage},
+        workspace_state::StartupSafety,
+    };
+    let root = TestRuntimeRoot::new("context-private-capture").unwrap();
+    let home = root.create_private_dir("home").unwrap();
+    let path = home.join("note.txt");
+    std::fs::write(&path, "private needle").unwrap();
+    let store_root = home.join(".cache/runyte/context");
+    let store = Storage::new_with_policy(ContextStorePolicy::captured(
+        store_root.clone(),
+        std::slice::from_ref(&home),
+        true,
+    ))
+    .unwrap();
+    let safety = StartupSafety::capture_with_homes(
+        &[],
+        || Some(root.join("state/runyte")),
+        std::slice::from_ref(&home),
+    )
+    .with_context_store(store_root, true);
+    let config = crate::config::Config {
+        startup_safety: Some(Arc::new(safety)),
+        ..crate::config::Config::default()
+    };
+    let app = App::new_in_project(config, Some(path.clone()), &home).unwrap();
+    let mut host = WorkspaceHost::new(app);
+    let mut state = ReadState::new("owner:private".into());
+    let (handle, revision) = buffer(&mut host, &mut state);
+    let pane = pane(&mut host, &mut state);
+    let opened = call(
+        &mut host,
+        &mut state,
+        Request::SnapshotOpen {
+            buffer: handle.clone(),
+            expected_revision: revision.clone(),
+        },
+    );
+    let snapshot = opened["snapshot"].as_str().unwrap().to_owned();
+    let private_link = store.root().join("captured.txt");
+    std::fs::hard_link(&path, &private_link).unwrap();
+    assert!(
+        call(
+            &mut host,
+            &mut state,
+            Request::BufferList {
+                offset: 0,
+                limit: 10
+            }
+        )["buffers"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        call(
+            &mut host,
+            &mut state,
+            Request::PaneContextList(wire::Empty {})
+        )["panes"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        host.context_read_request(
+            &mut state,
+            &scopes(),
+            Request::BufferRead {
+                buffer: handle.clone(),
+                expected_revision: revision,
+                from: 0,
+                to: 7,
+            }
+        )
+        .unwrap_err()
+        .code,
+        Code::NotFound
+    );
+    assert_eq!(
+        host.context_read_request(&mut state, &scopes(), Request::SelectionGet { pane })
+            .unwrap_err()
+            .code,
+        Code::NotFound
+    );
+    assert_eq!(
+        host.context_read_request(
+            &mut state,
+            &scopes(),
+            Request::SnapshotRead {
+                snapshot: snapshot.clone(),
+                from: 0,
+                to: 7,
+            }
+        )
+        .unwrap_err()
+        .code,
+        Code::Closed
+    );
+    std::fs::remove_file(private_link).unwrap();
+    let replacement = home.join("replacement.txt");
+    std::fs::write(&replacement, "ordinary replacement").unwrap();
+    host.app.buffers[0].path = Some(replacement);
+    assert!(
+        call(
+            &mut host,
+            &mut state,
+            Request::BufferList {
+                offset: 0,
+                limit: 10
+            }
+        )["buffers"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }
 fn scopes() -> BTreeSet<Scope> {
     [

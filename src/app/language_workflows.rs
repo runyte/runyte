@@ -1198,6 +1198,9 @@ impl App {
         if self.closed_buffers.contains(&index) {
             return false;
         }
+        if self.context_buffer_is_private(index) {
+            return false;
+        }
         let Some(buffer) = self.buffers.get(index) else {
             return false;
         };
@@ -1216,6 +1219,7 @@ impl App {
     }
 
     pub(super) fn open_global_search(&mut self, pattern: &str, mode: SearchMode) {
+        let _privacy_batch = self.context_privacy_batch();
         let matcher = match mode.compile(pattern) {
             Ok(matcher) => matcher,
             Err(error) => {
@@ -1231,6 +1235,7 @@ impl App {
             .iter()
             .enumerate()
             .filter(|(buffer_id, _)| !self.closed_buffers.contains(buffer_id))
+            .filter(|(buffer_id, _)| !self.context_buffer_is_private(*buffer_id))
             .filter_map(|(_, buffer)| {
                 let path = buffer.path.as_ref()?;
                 (!buffer.is_directory() && path.starts_with(&root)).then(|| {
@@ -1245,6 +1250,8 @@ impl App {
         let excluded = (root == self.project_root)
             .then(|| self.home_scan_exclusion())
             .flatten();
+        let (private_paths, private_identities, private_file_inventory_exhausted) =
+            self.private_context_buffer_exclusions();
         let request = WorkspaceSearchRequest {
             id,
             root,
@@ -1253,6 +1260,10 @@ impl App {
             open_buffers,
             contained: self.is_editor_mode() || self.home_workspace,
             excluded,
+            private_root: self.private_context_root(),
+            private_paths,
+            private_identities,
+            private_file_inventory_exhausted,
         };
         self.pending_workspace_search = Some(super::PendingWorkspaceSearch {
             id,
