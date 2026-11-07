@@ -66,7 +66,7 @@ impl App {
                 None
             }
         };
-        let identities = match cached {
+        match cached {
             Some(identities) => identities,
             None => {
                 let found = match Storage::open_existing_with_policy(policy.clone()) {
@@ -80,8 +80,7 @@ impl App {
                 }
                 found
             }
-        };
-        identities
+        }
     }
 
     #[cfg(any(unix, windows))]
@@ -254,6 +253,38 @@ impl App {
                 });
             if private_path {
                 return true;
+            }
+            {
+                let known = self.private_context_file_identities.borrow();
+                let Some(known) = known.as_ref() else {
+                    // Once the bounded provenance set is exhausted, no file
+                    // buffer can be proven independent of a private alias.
+                    return buffer.path.is_some() || buffer.media_path.is_some();
+                };
+                if buffer
+                    .accepted_file_identity()
+                    .into_iter()
+                    .chain(buffer.accepted_disk_file_identity())
+                    .any(|identity| known.contains(&identity.stable_bytes()))
+                {
+                    return true;
+                }
+                if !known.is_empty()
+                    && buffer.path.as_deref().is_some_and(|path| {
+                        crate::path_safety::open_regular_file(path, false)
+                            .ok()
+                            .and_then(|file| {
+                                file.metadata().ok().and_then(|metadata| {
+                                    crate::buffer::file_identity(&file, &metadata)
+                                        .ok()
+                                        .flatten()
+                                })
+                            })
+                            .is_some_and(|identity| known.contains(&identity.stable_bytes()))
+                    })
+                {
+                    return true;
+                }
             }
             let candidate = buffer.was_multiply_linked()
                 || buffer.path.as_deref().is_some_and(|path| {

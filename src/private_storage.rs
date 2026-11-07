@@ -278,7 +278,7 @@ mod platform {
             if stat.st_mode & libc::S_IFMT != libc::S_IFREG {
                 return Ok(None);
             }
-            Ok(Some((stat.st_dev, stat.st_ino)))
+            Ok(Some((stat.st_dev as u64, stat.st_ino as u64)))
         }
 
         /// The caller owns both names under its stable advisory lock.

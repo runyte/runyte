@@ -8,7 +8,6 @@ use crate::{
     terminal::TerminalOutput,
     test_support::TestRuntimeRoot,
 };
-use std::sync::Arc;
 
 struct Clipboard;
 impl SystemClipboard for Clipboard {
@@ -37,6 +36,7 @@ fn private_store_hardlink_retracts_live_handles_and_retained_snapshot() {
         workspace::context::storage::{ContextStorePolicy, Storage},
         workspace_state::StartupSafety,
     };
+    use std::sync::Arc;
     let root = TestRuntimeRoot::new("context-private-capture").unwrap();
     let home = root.create_private_dir("home").unwrap();
     let path = home.join("note.txt");

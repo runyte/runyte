@@ -166,3 +166,56 @@ fn native_inventory_limit_counts_every_pinned_entry() {
         io::ErrorKind::InvalidData
     );
 }
+
+#[test]
+fn captured_home_admission_and_private_hardlink_identity_survive_reopen() {
+    use crate::workspace::windows_process_identity::ProcessIdentity;
+
+    let fixture = TestRuntimeRoot::new("context-native-home-policy").unwrap();
+    let home = fixture.create_private_dir("home").unwrap();
+    let root = home.join("context");
+    let policy = ContextStorePolicy::captured(root.clone(), std::slice::from_ref(&home), true);
+    let store = Storage::new_with_policy(policy.clone()).unwrap();
+    let identity = store.identity("agent").unwrap();
+    let permissions = BTreeSet::from([Permission::Read]);
+    store.grant(&home, &identity, permissions.clone()).unwrap();
+    assert_eq!(store.permissions(&home, &identity).unwrap(), permissions);
+
+    let process = ProcessIdentity::current().unwrap();
+    let host_incarnation = random_token().unwrap();
+    let registration = Registration {
+        workspace_id: crate::workspace::workspace_id(&home),
+        root: home.clone(),
+        endpoint: store.socket_path(&host_incarnation).unwrap(),
+        host_incarnation,
+        mode: HostMode::Persistent,
+        pid: process.pid,
+        creation_time: process.creation_time,
+        environment: random_token().unwrap(),
+    };
+    store.register(&registration).unwrap();
+    let reopened = Storage::open_existing_with_policy(policy).unwrap();
+    assert_eq!(
+        reopened.discover(&registration.environment, true).unwrap(),
+        vec![registration.clone()]
+    );
+    assert_eq!(reopened.permissions(&home, &identity).unwrap(), permissions);
+    let override_store =
+        Storage::open_existing_with_policy(ContextStorePolicy::outside_only(root)).unwrap();
+    assert!(
+        override_store
+            .discover(&registration.environment, true)
+            .unwrap()
+            .is_empty()
+    );
+    assert!(override_store.permissions(&home, &identity).is_err());
+
+    let alias = home.join("private-alias.txt");
+    std::fs::hard_link(store.root().join("identity.json"), &alias).unwrap();
+    let file = crate::path_safety::open_regular_file(&alias, false).unwrap();
+    let metadata = file.metadata().unwrap();
+    let alias_identity = crate::buffer::file_identity(&file, &metadata)
+        .unwrap()
+        .unwrap();
+    assert!(store.file_identities().unwrap().contains(&alias_identity));
+}

@@ -462,6 +462,20 @@ fn trusted_home_store_is_hidden_and_private_hardlink_provenance_survives_unlink(
             .any(|result| result.path == renamed_second_alias)
     );
     assert!(matches.iter().any(|result| result.path == second_alias));
+
+    // Reopening a surviving one-link alias must inherit the observed inode's
+    // private provenance; a public file at the reused path remains readable.
+    private_app.close_buffer(0);
+    private_app.open_file(renamed_alias).unwrap();
+    let reopened = private_app.active().buffer;
+    assert!(private_app.context_buffer_is_private(reopened));
+    private_app.close_buffer(reopened);
+    private_app.open_file(renamed_second_alias).unwrap();
+    let reopened = private_app.active().buffer;
+    assert!(private_app.context_buffer_is_private(reopened));
+    private_app.close_buffer(reopened);
+    private_app.open_file(second_alias).unwrap();
+    assert!(!private_app.context_buffer_is_private(private_app.active().buffer));
 }
 
 #[cfg(unix)]
