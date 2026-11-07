@@ -377,7 +377,7 @@ and memory behavior.
 
 | Setting | Default | Values | What it does |
 | --- | --- | --- | --- |
-| `mode` | `ide` | `editor`, `ide`, `mux` | The mode of a launch with no `--editor`, `--ide`, or `--mux`. `editor` needs no workspace; `mux` makes a bare `runyte` start or reuse the project's host. The deprecated `workspace.mode` (`standalone`, `persistent`) is still read, with a notification naming its replacement. Restart required. |
+| `mode` | `ide` | `editor`, `ide`, `mux` | The mode of a launch with no `--editor`, `--ide`, or `--mux`. `editor` needs no workspace; `mux` makes a bare `runyte` or `runyte --window` start or reuse the project's host. The deprecated `workspace.mode` (`standalone`, `persistent`) is still read, with a notification naming its replacement. Restart required. |
 | `workspace.session_strip` | `auto` | `auto`, `always`, `hidden` | When to show the row of running persistent sessions. `auto` shows it when more than one is running. |
 | `workspace.idle_retirement_minutes` | `0` | 0–43200 | Minutes a clean, unattached host stays alive. `0` keeps hosts running. Applies without restarting the host. |
 | `workspace.state` | `.runyte` | path | Where the workspace keeps runtime state. `workspace.root` is an accepted alias. See [Where workspace state lives](configuration.md#where-workspace-state-lives). |

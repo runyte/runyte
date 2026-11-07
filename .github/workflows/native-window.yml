@@ -144,6 +144,7 @@ jobs:
         run: |
           xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --no-system-fonts
           xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --no-system-fonts --mux
+          xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --configured-mode --mux
           xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --graphical-launch
           xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --graphical-launch --mux
           xvfb-run -a -s '-screen 0 1280x900x24' python3 tests/native_window.py --binary target/debug/runyte-desktop --startup-failure config
