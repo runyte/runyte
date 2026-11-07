@@ -178,6 +178,7 @@ impl App {
         buffer_id: usize,
         language_before: Option<LanguageId>,
     ) {
+        self.note_context_buffer_acceptance(buffer_id);
         self.invalidate_partial_guards(buffer_id);
         if !self.buffers[buffer_id].is_read_only() {
             self.word_index_notify_update(buffer_id);

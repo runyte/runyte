@@ -146,7 +146,13 @@ impl WorkspaceHost {
         } else {
             std::env::var_os("RUNYTE_CHANNEL_HOME").map(std::path::PathBuf::from)
         };
-        self.start_context_with_root(mode, Storage::default_root())
+        self.start_context_with_root(
+            mode,
+            self.app
+                .context_store_policy
+                .as_ref()
+                .map(|policy| policy.root().to_owned()),
+        )
     }
 
     #[cfg(unix)]
@@ -169,7 +175,9 @@ impl WorkspaceHost {
                     let store = self.context.storage.clone().unwrap();
                     self.context_initial_grants(&store)?
                 } else {
-                    self.context_initial_grants(&Storage::open_existing(root.clone())?)?
+                    self.context_initial_grants(&Storage::open_existing_with_policy(
+                        self.context_storage_policy(&root),
+                    )?)?
                 };
                 self.context_adopt_grants(initial);
                 if !self.context.grants.is_empty() {
@@ -196,7 +204,7 @@ impl WorkspaceHost {
         } else {
             std::env::var_os("RUNYTE_CHANNEL_HOME").map(std::path::PathBuf::from)
         };
-        let location = Storage::default_location();
+        let location = self.app.context_store_location.clone();
         let environment = storage::environment_fingerprint();
         self.start_context_windows(mode, location, environment)
     }
@@ -230,18 +238,26 @@ impl WorkspaceHost {
         let loaded = (|| -> anyhow::Result<()> {
             self.context_validate_storage_root(location.root())?;
             let initial = if defaults {
-                let store = Arc::new(Storage::open_location(location.clone())?);
+                let store = Arc::new(Storage::open_location_with_policy(
+                    location.clone(),
+                    self.context_storage_policy(location.root()),
+                )?);
                 let initial = self.context_initial_grants(&store)?;
                 self.context.storage = Some(store);
                 initial
             } else {
-                self.context_initial_grants(&Storage::open_existing(location.root().to_owned())?)?
+                self.context_initial_grants(&Storage::open_existing_with_policy(
+                    self.context_storage_policy(location.root()),
+                )?)?
             };
             let granted = !initial.grants.is_empty();
             self.context_adopt_grants(initial);
             if granted {
                 if self.context.storage.is_none() {
-                    self.context.storage = Some(Arc::new(Storage::open_location(location)?));
+                    let policy = self.context_storage_policy(location.root());
+                    self.context.storage = Some(Arc::new(Storage::open_location_with_policy(
+                        location, policy,
+                    )?));
                 }
                 self.context_enable()?;
             }
@@ -326,7 +342,10 @@ impl WorkspaceHost {
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("Private context storage unavailable"))?;
                 self.context_validate_storage_root(location.root())?;
-                self.context.storage = Some(Arc::new(Storage::open_location(location)?));
+                let policy = self.context_storage_policy(location.root());
+                self.context.storage = Some(Arc::new(Storage::open_location_with_policy(
+                    location, policy,
+                )?));
             }
         }
         Ok(self.context.storage.clone().unwrap())
@@ -349,9 +368,12 @@ impl WorkspaceHost {
     fn context_open_storage(&mut self, root: std::path::PathBuf) -> anyhow::Result<()> {
         self.context_validate_storage_root(&root)?;
         #[cfg(unix)]
-        let storage = Storage::new(root)?;
+        let storage = Storage::new_with_policy(self.context_storage_policy(&root))?;
         #[cfg(windows)]
-        let storage = Storage::open_location(storage::StorageLocation::explicit(root)?)?;
+        let storage = Storage::open_location_with_policy(
+            storage::StorageLocation::explicit(root.clone())?,
+            self.context_storage_policy(&root),
+        )?;
         self.context.storage = Some(Arc::new(storage));
         Ok(())
     }
@@ -363,7 +385,8 @@ impl WorkspaceHost {
             .ok_or_else(|| anyhow::anyhow!("Context storage has no existing ancestor"))?;
         let resolved = ancestor.canonicalize()?.join(root.strip_prefix(ancestor)?);
         anyhow::ensure!(
-            !resolved.starts_with(&self.app.project_root)
+            self.context_storage_policy(root)
+                .admits_workspace(&self.app.project_root, &resolved)
                 && !root
                     .components()
                     .any(|part| matches!(part, std::path::Component::ParentDir)),
@@ -375,6 +398,15 @@ impl WorkspaceHost {
             "Windows context publication requires Unicode workspace and storage roots"
         );
         Ok(())
+    }
+
+    fn context_storage_policy(&self, root: &std::path::Path) -> storage::ContextStorePolicy {
+        self.app
+            .context_store_policy
+            .as_ref()
+            .filter(|policy| policy.root() == root)
+            .cloned()
+            .unwrap_or_else(|| storage::ContextStorePolicy::outside_only(root.to_owned()))
     }
 
     fn context_enable(&mut self) -> anyhow::Result<()> {
@@ -493,7 +525,9 @@ impl WorkspaceHost {
             let inventory = self.context.storage.clone().or_else(|| {
                 let root = root?;
                 self.context_validate_storage_root(&root).ok()?;
-                Storage::open_existing(root).ok().map(Arc::new)
+                Storage::open_existing_with_policy(self.context_storage_policy(&root))
+                    .ok()
+                    .map(Arc::new)
             });
             if let Some(store) = inventory
                 && let Ok(known) = store.identities()

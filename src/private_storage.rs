@@ -201,6 +201,90 @@ mod platform {
             Ok(Self(file))
         }
 
+        /// Enumerates a bounded set of names from the pinned directory, even
+        /// if its original pathname is subsequently replaced.
+        pub(crate) fn entries(&self, limit: usize) -> io::Result<(Vec<std::ffi::OsString>, bool)> {
+            // `dup` would share the directory cursor with other readers.
+            let fd = unsafe {
+                libc::openat(
+                    self.0.as_raw_fd(),
+                    c".".as_ptr(),
+                    libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                )
+            };
+            if fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let directory = unsafe { libc::fdopendir(fd) };
+            if directory.is_null() {
+                let error = io::Error::last_os_error();
+                unsafe { libc::close(fd) };
+                return Err(error);
+            }
+            let mut names = Vec::new();
+            let result = loop {
+                #[cfg(target_os = "macos")]
+                unsafe {
+                    *libc::__error() = 0
+                };
+                #[cfg(not(target_os = "macos"))]
+                unsafe {
+                    *libc::__errno_location() = 0
+                };
+                let entry = unsafe { libc::readdir(directory) };
+                if entry.is_null() {
+                    let error = io::Error::last_os_error();
+                    break if error.raw_os_error() == Some(0) {
+                        Ok((names, false))
+                    } else {
+                        Err(error)
+                    };
+                }
+                let name = unsafe { std::ffi::CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+                if name == b"." || name == b".." {
+                    continue;
+                }
+                if names.len() == limit {
+                    break Ok((names, true));
+                }
+                names.push(OsStr::from_bytes(name).to_os_string());
+            };
+            let closed = unsafe { libc::closedir(directory) };
+            if closed < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            result
+        }
+
+        /// Reads one entry's identity without following a link or imposing the
+        /// single-link rule used for private record contents.
+        pub(crate) fn regular_entry_identity(
+            &self,
+            name: &OsStr,
+        ) -> io::Result<Option<(u64, u64)>> {
+            let name = leaf(name)?;
+            let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+            if unsafe {
+                libc::fstatat(
+                    self.0.as_raw_fd(),
+                    name.as_ptr(),
+                    &mut stat,
+                    libc::AT_SYMLINK_NOFOLLOW,
+                )
+            } < 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            if stat.st_mode & libc::S_IFMT != libc::S_IFREG {
+                return Ok(None);
+            }
+            // Darwin's dev_t is signed; MetadataExt exposes the same value
+            // as u64 for buffer identity comparisons.
+            #[allow(clippy::unnecessary_cast)]
+            let identity = (stat.st_dev as u64, stat.st_ino as u64);
+            Ok(Some(identity))
+        }
+
         /// The caller owns both names under its stable advisory lock.
         pub(crate) fn rename(&self, from: &OsStr, to: &OsStr) -> io::Result<()> {
             let (from, to) = (leaf(from)?, leaf(to)?);

@@ -112,7 +112,7 @@ There are two permissions, and both start off:
 
 | Key | Permission | What the identity's agents may do in this workspace |
 | --- | --- | --- |
-| `1` | Read | Read every buffer (unsaved text included), selection and pane, every terminal's screen, history, number and title, and take part in the [agent channel](#agent-channel), direct messages included |
+| `1` | Read | Read buffers outside the private context store (unsaved text included), their selection and pane, every terminal's screen, history, number and title, and take part in the [agent channel](#agent-channel), direct messages included |
 | `2` | Write | Also edit and append to buffers, [type into any terminal and press Enter there](#writing-to-terminals) |
 
 Write needs Read: turning Write on turns Read on, and turning Read off turns
@@ -145,8 +145,12 @@ handles. `list_workspaces` reports each workspace's `permissions` (`read`,
 
 The default identity is `agent`. Without Remember, a grant lasts until the
 owning editor or persistent host exits. Private credentials and remembered
-grants stay in Runyte's account cache, outside the project. `RUNYTE_CONTEXT_HOME`
-can select an absolute private store shared by the editor and MCP process.
+grants stay in Runyte's account cache. The standard store may sit inside an
+exact account-home workspace; Runyte excludes it from file finding, content
+search and agent buffer, pane and snapshot reads. Other workspaces require the
+store outside the project. `RUNYTE_CONTEXT_HOME` can select an absolute private
+store shared by the editor and MCP process, but an explicit override does not
+receive the home-workspace exception.
 See the [user guide](user-guide/agent-access-to-workspace-context.md#what-a-grant-covers) for platform locations.
 A grant remembered by an earlier release is read as Read only if it included
 both terminal and editor reads, and as a revocation otherwise; never as Write.

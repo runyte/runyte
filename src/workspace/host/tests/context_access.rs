@@ -1009,6 +1009,69 @@ async fn configured_defaults_apply_where_nothing_was_decided_and_a_revocation_st
 
 #[cfg(unix)]
 #[tokio::test]
+async fn standard_home_store_keeps_default_remembered_and_revoked_grants_across_starts() {
+    use crate::workspace_state::StartupSafety;
+    let root = TestRuntimeRoot::new("context-home-lifecycle").unwrap();
+    let home = root.create_private_dir("home").unwrap();
+    let store_root = home.join(".cache/runyte/context");
+    let start = |mode, standard, name: &str| {
+        let safety = StartupSafety::capture_with_homes(
+            &[],
+            || Some(root.join("state/runyte")),
+            std::slice::from_ref(&home),
+        )
+        .with_context_store(store_root.clone(), standard);
+        let mut config = crate::config::Config {
+            startup_safety: Some(Arc::new(safety)),
+            ..crate::config::Config::default()
+        };
+        config.mcp.default_grants = [(name.to_owned(), vec!["read".to_owned()])].into();
+        let app = App::new_in_project(config, None, &home).unwrap();
+        let mut host = WorkspaceHost::new(app);
+        let events = host.start_context(mode);
+        (host, events)
+    };
+    let (mut host, _events) = start(HostMode::Standalone, true, "agent");
+    assert!(host.context_enabled());
+    assert!(host.context.defaulted.contains("agent"));
+    assert!(store_root.exists());
+    host.app.context_ui.decision = Some(crate::app::context_access::Decision::Grant {
+        identity: "agent".into(),
+        permissions: write(),
+        remember: true,
+    });
+    host.sync_context();
+    drop(host);
+    std::fs::create_dir(home.join(".git")).unwrap();
+    std::fs::write(home.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let (mut host, _events) = start(HostMode::Persistent, true, "agent");
+    assert!(host.context_enabled());
+    assert!(host.context.remembered.contains("agent"));
+    assert!(
+        host.context
+            .grants
+            .values()
+            .any(|(_, permissions)| *permissions == write())
+    );
+    host.app.context_ui.decision =
+        Some(crate::app::context_access::Decision::Revoke("agent".into()));
+    host.sync_context();
+    drop(host);
+    let (host, _events) = start(HostMode::Standalone, true, "agent");
+    assert!(!host.context_enabled());
+    assert!(host.context.denied.contains("agent"));
+    drop(host);
+    let (host, _events) = start(HostMode::Standalone, false, "other");
+    assert!(!host.context_enabled());
+    assert!(host.app.notifications().entries().iter().any(|notice| {
+        notice
+            .body
+            .contains("Context storage must be outside the workspace")
+    }));
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn a_revocation_made_without_defaults_still_holds_once_one_is_configured() {
     let root = TestRuntimeRoot::new("context-defaults-later").unwrap();
     let project = root.path().join("project");

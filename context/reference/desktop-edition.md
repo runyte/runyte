@@ -686,4 +686,5 @@ worker. Failure to create a platform window remains stderr-only. Finder file-ope
 Apple Events and manual macOS Finder/Dock acceptance remain outside automated
 acceptance. `tests/native_window.py` adds marked graphical IDE/mux launches from
 another directory and retained configuration/storage refusal checks on isolated
-X11 displays.
+X11 displays. Its `--configured-mode --mux` run starts a bare terminal
+`--window` under `mode: mux` and reattaches through the same command (#88).

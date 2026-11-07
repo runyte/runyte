@@ -366,3 +366,178 @@ fn home_policy_is_captured_for_finder_and_search_without_changing_editor_mode() 
     );
     assert_eq!(checkout.state_root, app.state_root);
 }
+
+#[cfg(unix)]
+#[test]
+fn trusted_home_store_is_hidden_and_private_hardlink_provenance_survives_unlink() {
+    use crate::{
+        file_picker::{ScanScope, scan_files},
+        workspace::context::storage::{ContextStorePolicy, Storage},
+        workspace_state::StartupSafety,
+    };
+    let fixture = TestRuntimeRoot::new("home-context-private").unwrap();
+    let home = fixture.create_private_dir("home").unwrap();
+    let root = home.join(".cache/runyte/context");
+    let store = Storage::new_with_policy(ContextStorePolicy::captured(
+        root.clone(),
+        std::slice::from_ref(&home),
+        true,
+    ))
+    .unwrap();
+    store.identity("agent").unwrap();
+    let private_record = store.root().join("identity.json");
+    let private_alias = home.join("private-alias.txt");
+    std::fs::hard_link(&private_record, &private_alias).unwrap();
+    let ordinary = home.join("ordinary.txt");
+    std::fs::write(&ordinary, "public needle").unwrap();
+    let ordinary_alias = home.join("ordinary-alias.txt");
+    std::fs::hard_link(&ordinary, &ordinary_alias).unwrap();
+    let config = || Config {
+        startup_safety: Some(Arc::new(
+            StartupSafety::capture_with_homes(
+                &[],
+                || Some(fixture.join("state/runyte")),
+                std::slice::from_ref(&home),
+            )
+            .with_context_store(root.clone(), true),
+        )),
+        ..Config::default()
+    };
+    let mut private_app =
+        App::new_in_project(config(), Some(private_alias.clone()), &home).unwrap();
+    let public_app = App::new_in_project(config(), Some(ordinary_alias), &home).unwrap();
+    assert!(!public_app.context_buffer_is_private(0));
+    let scope = public_app.unfiltered_scan_scope();
+    assert!(matches!(scope, ScanScope::Protected { .. }));
+    let (entries, _, _) = scan_files(&home, &scope, &public_app.state_root, true).unwrap();
+    assert!(entries.iter().any(|entry| entry.path == ordinary));
+    assert!(!entries.iter().any(|entry| entry.path == private_alias));
+    assert!(!entries.iter().any(|entry| entry.path.starts_with(&root)));
+    assert!(scan_files(&root, &scope, &public_app.state_root, true).is_err());
+    std::fs::remove_file(&private_record).unwrap();
+    assert!(private_app.context_buffer_is_private(0));
+    let scope = private_app.unfiltered_scan_scope();
+    let (entries, _, _) = scan_files(&home, &scope, &private_app.state_root, true).unwrap();
+    assert!(!entries.iter().any(|entry| entry.path == private_alias));
+    let renamed_alias = home.join("renamed-private-alias.txt");
+    std::fs::rename(&private_alias, &renamed_alias).unwrap();
+    let scope = private_app.unfiltered_scan_scope();
+    let (entries, _, _) = scan_files(&home, &scope, &private_app.state_root, true).unwrap();
+    assert!(!entries.iter().any(|entry| entry.path == renamed_alias));
+    // A reload accepts text from a second private inode into the same slot.
+    // Both observed private identities survive removal of their store links.
+    let second_record = store.root().join("second-record");
+    std::fs::write(&second_record, "credential B").unwrap();
+    let second_alias = home.join("second-private-alias.txt");
+    std::fs::hard_link(&second_record, &second_alias).unwrap();
+    private_app.buffers[0].path = Some(second_alias.clone());
+    private_app.discard_buffer_changes(0).unwrap();
+    std::fs::remove_file(&second_record).unwrap();
+    let renamed_second_alias = home.join("renamed-second-private-alias.txt");
+    std::fs::rename(&second_alias, &renamed_second_alias).unwrap();
+    std::fs::write(&second_alias, "public credential C").unwrap();
+    let scope = private_app.unfiltered_scan_scope();
+    let (entries, _, _) = scan_files(&home, &scope, &private_app.state_root, true).unwrap();
+    assert!(!entries.iter().any(|entry| entry.path == renamed_alias));
+    assert!(
+        !entries
+            .iter()
+            .any(|entry| entry.path == renamed_second_alias)
+    );
+    assert!(entries.iter().any(|entry| entry.path == second_alias));
+    let (service, requests) = crate::workspace_search::WorkspaceSearchService::controlled();
+    private_app.attach_workspace_search(service);
+    private_app.open_global_search("credential", SearchMode::Sensitive);
+    let request = requests.recv().unwrap();
+    assert!(request.open_buffers.is_empty());
+    assert!(request.private_paths.is_empty());
+    assert_eq!(request.private_identities.len(), 2);
+    let (matches, _) = crate::workspace_search::perform(request, || false)
+        .unwrap()
+        .unwrap();
+    assert!(!matches.iter().any(|result| result.path == renamed_alias));
+    assert!(
+        !matches
+            .iter()
+            .any(|result| result.path == renamed_second_alias)
+    );
+    assert!(matches.iter().any(|result| result.path == second_alias));
+
+    // Reopening a surviving one-link alias must inherit the observed inode's
+    // private provenance; a public file at the reused path remains readable.
+    private_app.close_buffer(0);
+    private_app.open_file(renamed_alias).unwrap();
+    let reopened = private_app.active().buffer;
+    assert!(private_app.context_buffer_is_private(reopened));
+    private_app.close_buffer(reopened);
+    private_app.open_file(renamed_second_alias).unwrap();
+    let reopened = private_app.active().buffer;
+    assert!(private_app.context_buffer_is_private(reopened));
+    private_app.close_buffer(reopened);
+    private_app.open_file(second_alias).unwrap();
+    assert!(!private_app.context_buffer_is_private(private_app.active().buffer));
+}
+
+#[cfg(unix)]
+#[test]
+fn ordinary_hardlink_stays_visible_until_a_private_store_link_appears() {
+    use crate::{
+        workspace::context::storage::{ContextStorePolicy, Storage},
+        workspace_state::StartupSafety,
+    };
+    let fixture = TestRuntimeRoot::new("home-context-late-store").unwrap();
+    let home = fixture.create_private_dir("home").unwrap();
+    let root = home.join(".cache/runyte/context");
+    let ordinary = home.join("ordinary.txt");
+    std::fs::write(&ordinary, "public until linked privately").unwrap();
+    let alias = home.join("ordinary-alias.txt");
+    std::fs::hard_link(&ordinary, &alias).unwrap();
+    let safety = StartupSafety::capture_with_homes(
+        &[],
+        || Some(fixture.join("state/runyte")),
+        std::slice::from_ref(&home),
+    )
+    .with_context_store(root.clone(), true);
+    let config = Config {
+        startup_safety: Some(Arc::new(safety)),
+        ..Config::default()
+    };
+    let app = App::new_in_project(config, Some(alias), &home).unwrap();
+    assert!(!app.context_buffer_is_private(0));
+    let store = Storage::new_with_policy(ContextStorePolicy::captured(
+        root,
+        std::slice::from_ref(&home),
+        true,
+    ))
+    .unwrap();
+    let private_link = store.root().join("new-record");
+    std::fs::hard_link(&ordinary, &private_link).unwrap();
+    assert!(app.context_buffer_is_private(0));
+    std::fs::remove_file(private_link).unwrap();
+    assert!(app.context_buffer_is_private(0));
+}
+
+#[cfg(unix)]
+#[test]
+fn explicit_context_store_remains_private_without_home_admission() {
+    use crate::{workspace::context::storage::Storage, workspace_state::StartupSafety};
+    let fixture = TestRuntimeRoot::new("explicit-context-private").unwrap();
+    let home = fixture.create_private_dir("home").unwrap();
+    let project = fixture.create_private_dir("project").unwrap();
+    let root = home.join("private-context");
+    let store = Storage::new(root.clone()).unwrap();
+    store.identity("agent").unwrap();
+    let safety = StartupSafety::capture_with_homes(
+        &[],
+        || Some(fixture.join("state/runyte")),
+        std::slice::from_ref(&home),
+    )
+    .with_context_store(root, false);
+    let config = Config {
+        startup_safety: Some(Arc::new(safety)),
+        ..Config::default()
+    };
+    let app =
+        App::new_in_project(config, Some(store.root().join("identity.json")), &project).unwrap();
+    assert!(app.context_buffer_is_private(0));
+}

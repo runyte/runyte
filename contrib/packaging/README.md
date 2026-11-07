@@ -55,7 +55,7 @@ launcher stores the binary's absolute path; register it again after moving
 the binary. It opens `--window --graphical-launch`, accepting file arguments. An escaped
 absolute `Path=` records the effective account’s home directory rather than
 trusting inherited `HOME`. Register again after changing that account path. Running
-`runyte --window` directly in a workspace still uses the ordinary IDE mode.
+`runyte --window` directly follows the configured `mode`, as a bare `runyte` does.
 
 On Wayland, the desktop finds the icon through this installed entry and the
 window's matching application ID. Install it before opening a fresh window.

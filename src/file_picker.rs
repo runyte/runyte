@@ -116,9 +116,76 @@ pub enum ScanScope {
         from: Option<PathBuf>,
         excluded: Option<PathBuf>,
     },
+    /// Private context storage is excluded from every scan scope, including
+    /// unfiltered and explicitly selected roots.
+    Protected {
+        scope: Box<ScanScope>,
+        root: PathBuf,
+        hidden_paths: Vec<PathBuf>,
+        hidden_identities: Vec<[u8; 24]>,
+        deny_files: bool,
+    },
 }
 
 impl ScanScope {
+    pub fn protecting(
+        self,
+        root: Option<PathBuf>,
+        hidden_paths: Vec<PathBuf>,
+        hidden_identities: Vec<[u8; 24]>,
+        deny_files: bool,
+    ) -> Self {
+        match root {
+            Some(root) => Self::Protected {
+                scope: Box::new(self),
+                root,
+                hidden_paths,
+                hidden_identities,
+                deny_files,
+            },
+            None => self,
+        }
+    }
+
+    fn base(&self) -> &Self {
+        match self {
+            Self::Protected { scope, .. } => scope.base(),
+            _ => self,
+        }
+    }
+
+    fn private_root(&self) -> Option<&Path> {
+        match self {
+            Self::Protected { root, .. } => Some(root),
+            _ => None,
+        }
+    }
+
+    fn private_paths(&self) -> &[PathBuf] {
+        match self {
+            Self::Protected { hidden_paths, .. } => hidden_paths,
+            _ => &[],
+        }
+    }
+
+    fn private_identities(&self) -> &[[u8; 24]] {
+        match self {
+            Self::Protected {
+                hidden_identities, ..
+            } => hidden_identities,
+            _ => &[],
+        }
+    }
+
+    fn private_file_inventory_exhausted(&self) -> bool {
+        matches!(
+            self,
+            Self::Protected {
+                deny_files: true,
+                ..
+            }
+        )
+    }
     /// The ordinary scope: every ignore file from `from` down to the root.
     pub fn ignoring(from: impl Into<PathBuf>) -> Self {
         Self::Ignoring { from: from.into() }
@@ -140,17 +207,21 @@ impl ScanScope {
 
     /// The directory ignore rules are inherited from, if any are read.
     fn ignore_root(&self) -> Option<&Path> {
-        match self {
+        match self.base() {
             Self::Ignoring { from }
             | Self::Contained {
                 from: Some(from), ..
             } => Some(from),
             Self::Everything | Self::Contained { from: None, .. } => None,
+            Self::Protected { .. } => unreachable!(),
         }
     }
 
     const fn is_contained(&self) -> bool {
-        matches!(self, Self::Contained { .. })
+        match self {
+            Self::Protected { scope, .. } => scope.is_contained(),
+            _ => matches!(self, Self::Contained { .. }),
+        }
     }
 }
 
@@ -658,7 +729,7 @@ impl FilePicker {
     /// the same thing an unlabelled title says about the project root.
     pub fn scope_label(&self, project_root: &Path) -> Option<String> {
         let root = (self.root != project_root).then(|| self.root.display().to_string());
-        match (&self.scope, root) {
+        match (self.scope.base(), root) {
             (ScanScope::Ignoring { .. }, root) => root,
             (ScanScope::Everything, None) => Some("all files".to_owned()),
             (ScanScope::Everything, Some(root)) => Some(format!("all files in {root}")),
@@ -670,6 +741,7 @@ impl FilePicker {
             (ScanScope::Contained { from: None, .. }, _) => {
                 Some(format!("all files in {}", self.root.display()))
             }
+            (ScanScope::Protected { .. }, _) => unreachable!(),
         }
     }
 
@@ -3313,10 +3385,22 @@ fn scan_with(
         .canonicalize()
         .unwrap_or_else(|_| state_root.to_path_buf());
     anyhow::ensure!(
-        !root.starts_with(&state_root) && !contains_reserved_component(&root),
+        !root.starts_with(&state_root)
+            && !scope
+                .private_root()
+                .is_some_and(|private| root.starts_with(private))
+            && !scope
+                .private_paths()
+                .iter()
+                .any(|private| root.starts_with(private))
+            && !contains_reserved_component(&root),
         "picker root {} is inside reserved Runyte or Git state",
         root.display()
     );
+    #[cfg(any(unix, windows))]
+    let private_inventory = scope
+        .private_root()
+        .map(crate::workspace::context::storage::PrivateFileInventory::load);
     let boundary = if scope.is_contained() {
         if let Some(reason) = crate::scan_boundary::refusal(&root) {
             anyhow::bail!(reason);
@@ -3449,7 +3533,14 @@ fn scan_with(
                 continue;
             }
             let is_directory = file_type.is_dir();
-            if matches!(scope, ScanScope::Contained { excluded: Some(excluded), .. } if path == *excluded)
+            if matches!(scope.base(), ScanScope::Contained { excluded: Some(excluded), .. } if path == *excluded)
+                || scope
+                    .private_root()
+                    .is_some_and(|private| path.starts_with(private))
+                || scope
+                    .private_paths()
+                    .iter()
+                    .any(|private| path.starts_with(private))
                 || name_text == ".git"
                 || name_text == ".runyte"
                 || path == state_root
@@ -3476,6 +3567,15 @@ fn scan_with(
                 }
                 pending.push((path, relative, rules.clone()));
             } else if file_type.is_file() {
+                if scope.private_file_inventory_exhausted() {
+                    continue;
+                }
+                #[cfg(any(unix, windows))]
+                if private_inventory.as_ref().is_some_and(|inventory| {
+                    inventory.denies_path(&path, scope.private_identities())
+                }) {
+                    continue;
+                }
                 batch.push(ScanEntry::file(path));
                 if batch.len() == SCAN_BATCH && !emit(std::mem::take(&mut batch)) {
                     return Ok(ScanTally {

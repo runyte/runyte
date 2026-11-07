@@ -1462,9 +1462,12 @@ async fn run(
             let root = Storage::default_root();
             #[cfg(windows)]
             let root = Storage::default_location().map(|location| location.root().to_owned());
-            let result =
-                discovery::discover(root, &environment_fingerprint(), arguments.include_hidden)
-                    .await?;
+            let result = discovery::discover_with_policy(
+                root.map(crate::workspace::context::storage::ContextStorePolicy::for_discovery),
+                &environment_fingerprint(),
+                arguments.include_hidden,
+            )
+            .await?;
             serde_json::to_writer(stdout().lock(), &result)?;
             println!();
             return Ok(());
@@ -2642,11 +2645,11 @@ fn about_invocation() -> Result<CommandInvocation, CommandInvocationError> {
 }
 
 fn uses_automatic_persistent_mode(arguments: &LaunchArguments, configured: RunMode) -> bool {
+    // A bare launch follows the configured mode in either frontend.
     // Terminal target-bearing launches keep their standalone semantics.
     // Marked graphical launches forward complete bounded targets only after
     // native attachment, so their configured persistent mode is preserved.
-    (!arguments.window || arguments.graphical_launch)
-        && !arguments.mode_explicit
+    !arguments.mode_explicit
         && (arguments.targets.is_empty() || arguments.graphical_launch)
         && arguments.init.is_none()
         && !arguments.editor
@@ -2680,12 +2683,9 @@ fn workspace_requirement(
     if !arguments.mode_explicit
         && arguments.mode == LaunchMode::Standalone
         && configured == RunMode::Mux
+        && !arguments.targets.is_empty()
     {
-        if !arguments.targets.is_empty() {
-            requirement.source = project_root::ModeSource::PositionalTargets;
-        } else if arguments.window {
-            requirement.source = project_root::ModeSource::WindowLaunch;
-        }
+        requirement.source = project_root::ModeSource::PositionalTargets;
     }
     requirement
 }
@@ -9727,35 +9727,49 @@ mod tests {
     }
 
     #[test]
-    fn window_mux_fallback_names_its_source_and_positional_target_precedence() {
-        for (args, source) in [
-            (
-                vec!["--window"],
-                "window launch uses ide instead of mode: mux",
-            ),
-            (
-                vec!["--window", "notes.md"],
-                "file or directory targets override mode: mux",
-            ),
-        ] {
-            let arguments = LaunchArguments::parse_from(args.into_iter().map(Into::into)).unwrap();
-            assert!(!super::uses_automatic_persistent_mode(
-                &arguments,
-                RunMode::Mux
-            ));
-            let requirement = super::workspace_requirement(&arguments, RunMode::Mux);
-            assert_eq!(requirement.mode, crate::project_root::WorkspaceMode::Ide);
-            assert_eq!(
-                requirement.refusal(Path::new("/fixture"), None, None),
-                format!(
-                    "runyte needs a workspace in ide mode ({source}), and none was found in /fixture or any directory above it.\n  Open a project:      {}\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor",
-                    crate::project_root::ide_open_command("DIRECTORY")
-                )
-            );
-        }
-        let explicit = LaunchArguments::parse_from(["--window", "--ide"].map(Into::into)).unwrap();
+    fn bare_window_follows_configured_mux_and_targets_keep_ide() {
+        let parse = |args: &[&str]| {
+            LaunchArguments::parse_from(args.iter().map(|arg| (*arg).into())).unwrap()
+        };
+        // A bare window launch takes the same automatic persistent path as a
+        // bare terminal launch, so its refusal is the ordinary mux one.
+        let mut bare = parse(&["--window"]);
+        assert!(super::uses_automatic_persistent_mode(&bare, RunMode::Mux));
+        assert!(!super::uses_automatic_persistent_mode(&bare, RunMode::Ide));
+        assert!(!super::uses_automatic_persistent_mode(
+            &parse(&["--window", "--ide"]),
+            RunMode::Mux
+        ));
+        assert!(!super::uses_automatic_persistent_mode(
+            &parse(&["--window", "--editor"]),
+            RunMode::Mux
+        ));
+        bare.mode = crate::launch::LaunchMode::Persistent;
+        let requirement = super::workspace_requirement(&bare, RunMode::Mux);
+        assert_eq!(requirement.mode, crate::project_root::WorkspaceMode::Mux);
+        assert_eq!(requirement.source, crate::project_root::ModeSource::Setting);
         assert_eq!(
-            super::workspace_requirement(&explicit, RunMode::Mux).source,
+            requirement.refusal(Path::new("/fixture"), None, None),
+            "runyte needs a workspace in mux mode (the mode setting), and none was found in /fixture or any directory above it.\n  Open or create one:  runyte --mux DIRECTORY\n  Create one only:     runyte --init DIRECTORY"
+        );
+
+        // Terminal window launches naming a target keep standalone semantics.
+        let targeted = parse(&["--window", "notes.md"]);
+        assert!(!super::uses_automatic_persistent_mode(
+            &targeted,
+            RunMode::Mux
+        ));
+        let requirement = super::workspace_requirement(&targeted, RunMode::Mux);
+        assert_eq!(requirement.mode, crate::project_root::WorkspaceMode::Ide);
+        assert_eq!(
+            requirement.refusal(Path::new("/fixture"), None, None),
+            format!(
+                "runyte needs a workspace in ide mode (file or directory targets override mode: mux), and none was found in /fixture or any directory above it.\n  Open a project:      {}\n  Create one:          runyte --init DIRECTORY\n  Edit without one:    runyte --editor",
+                crate::project_root::ide_open_command("DIRECTORY")
+            )
+        );
+        assert_eq!(
+            super::workspace_requirement(&parse(&["--window", "--ide"]), RunMode::Mux).source,
             crate::project_root::ModeSource::Flag("--ide")
         );
     }

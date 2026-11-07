@@ -175,6 +175,9 @@ impl WorkspaceHost {
         if self.app.host_buffer_is_closed(index) {
             return Err(Error::new(Code::Closed, "Buffer closed"));
         }
+        if self.app.context_buffer_is_private(index) {
+            return Err(Error::new(Code::NotFound, "Unknown buffer handle"));
+        }
         Ok(index)
     }
     fn context_pane(&self, state: &ReadState, handle: &str) -> Result<PaneTarget, Error> {
@@ -194,6 +197,9 @@ impl WorkspaceHost {
         {
             return Err(Error::new(Code::Stale, "Pane target changed"));
         }
+        if target.terminal.is_none() && self.app.context_buffer_is_private(target.buffer) {
+            return Err(Error::new(Code::NotFound, "Unknown pane handle"));
+        }
         Ok(target)
     }
 
@@ -211,13 +217,17 @@ impl WorkspaceHost {
             ));
         }
         request.validate()?;
+        let _privacy_batch = self.app.context_privacy_batch();
         state.expire();
         // Closed resources invalidate their captures, even if their old bytes
         // remain immutable. They cannot be resurrected through snapshot handles.
         state
             .snapshots
             .retain(|_, snapshot| match &snapshot.capture {
-                Capture::Buffer { index, .. } => !self.app.host_buffer_is_closed(*index),
+                Capture::Buffer { index, .. } => {
+                    !self.app.host_buffer_is_closed(*index)
+                        && !self.app.context_buffer_is_private(*index)
+                }
                 Capture::Terminal { capture, .. } => {
                     self.app.terminals.get(capture.terminal).is_some()
                 }
@@ -227,6 +237,7 @@ impl WorkspaceHost {
             Request::BufferList { offset, limit } => {
                 let indices = (0..self.app.buffers.len())
                     .filter(|index| !self.app.host_buffer_is_closed(*index))
+                    .filter(|index| !self.app.context_buffer_is_private(*index))
                     .skip(offset)
                     .take(limit + 1)
                     .collect::<Vec<_>>();
@@ -456,6 +467,9 @@ impl WorkspaceHost {
                 }
                 for id in ids {
                     let pane = &self.app.panes[&id];
+                    if pane.terminal.is_none() && self.app.context_buffer_is_private(pane.buffer) {
+                        continue;
+                    }
                     let handle = state.pane(PaneTarget {
                         id,
                         generation: pane.binding_generation,
