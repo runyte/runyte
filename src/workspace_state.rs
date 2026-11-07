@@ -276,13 +276,8 @@ impl StartupSafety {
         }
     }
 
-    #[cfg(all(test, any(unix, windows)))]
+    #[cfg(all(test, unix))]
     pub(crate) fn with_context_store(mut self, root: PathBuf, standard: bool) -> Self {
-        #[cfg(windows)]
-        {
-            self.context_location =
-                crate::workspace::context::storage::StorageLocation::explicit(root.clone()).ok();
-        }
         self.context_root = Some(root);
         self.context_standard = standard;
         self
