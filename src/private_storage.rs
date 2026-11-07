@@ -278,7 +278,11 @@ mod platform {
             if stat.st_mode & libc::S_IFMT != libc::S_IFREG {
                 return Ok(None);
             }
-            Ok(Some((stat.st_dev as u64, stat.st_ino as u64)))
+            // Darwin's dev_t is signed; MetadataExt exposes the same value
+            // as u64 for buffer identity comparisons.
+            #[allow(clippy::unnecessary_cast)]
+            let identity = (stat.st_dev as u64, stat.st_ino as u64);
+            Ok(Some(identity))
         }
 
         /// The caller owns both names under its stable advisory lock.

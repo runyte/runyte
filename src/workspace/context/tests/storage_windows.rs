@@ -170,12 +170,13 @@ fn native_inventory_limit_counts_every_pinned_entry() {
 #[test]
 fn captured_home_admission_and_private_hardlink_identity_survive_reopen() {
     use crate::workspace::windows_process_identity::ProcessIdentity;
+    use std::sync::Arc;
 
     let fixture = TestRuntimeRoot::new("context-native-home-policy").unwrap();
     let home = fixture.create_private_dir("home").unwrap();
     let root = home.join("context");
     let policy = ContextStorePolicy::captured(root.clone(), std::slice::from_ref(&home), true);
-    let store = Storage::new_with_policy(policy.clone()).unwrap();
+    let store = Arc::new(Storage::new_with_policy(policy.clone()).unwrap());
     let identity = store.identity("agent").unwrap();
     let permissions = BTreeSet::from([Permission::Read]);
     store.grant(&home, &identity, permissions.clone()).unwrap();
@@ -193,7 +194,7 @@ fn captured_home_admission_and_private_hardlink_identity_survive_reopen() {
         creation_time: process.creation_time,
         environment: random_token().unwrap(),
     };
-    store.register(&registration).unwrap();
+    let _publication = store.register_owned(&registration).unwrap();
     let reopened = Storage::open_existing_with_policy(policy).unwrap();
     assert_eq!(
         reopened.discover(&registration.environment, true).unwrap(),
