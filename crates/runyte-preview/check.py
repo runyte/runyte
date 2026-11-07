@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory(prefix='runyte-preview-assets-') as temp:
         _, rejected, _ = render(html.replace('image.png', reference), path=page)
         assert rejected == denied, reference
 render('<html><style>body { background: white }</style><h1>Malformed <b>document')
-request = dict(text='x'*131073, language='text',path=None,width=640,height=360,scale=1,scroll=[0,0],selection=None)
+request = dict(text='x'*(1024*1024+1), language='text',path=None,width=640,height=360,scale=1,scroll=[0,0],selection=None)
 result = subprocess.run(helper,input=json.dumps(request).encode(),env=env, capture_output=True,timeout=6)
 assert result.returncode != 0 and b'budget' in result.stderr
 print('Traversal/symlink denial, malformed HTML and oversized-input rejection passed')

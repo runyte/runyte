@@ -31,6 +31,11 @@ use crate::{
 
 const PROTOCOL_VERSION: u32 = crate::protocol::VERSION;
 pub(super) const MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+/// Preserve the ordinary frame budget and add room for all eight captures,
+/// each at its worst-case JSON expansion. Client requests retain their 8 MiB
+/// bound; only responses from the authenticated host use this allowance.
+pub(super) const MAX_HOST_MESSAGE_BYTES: usize = MAX_MESSAGE_BYTES
+    + 6 * crate::document_preview::MAX_BYTES * crate::document_preview::MAX_CAPTURES;
 /// Deep enough that an ordinary burst of frames — one per keystroke, plus
 /// overlay redraws — never backs up against a client that is still draining.
 /// Reaching this depth means the client has genuinely stopped reading.
@@ -522,7 +527,7 @@ where
             .recv_handshake()
             .await
             .context("workspace host stopped before answering the client handshake")?;
-        write_message(&mut writer, &response).await?;
+        write_host_message(&mut writer, &response).await?;
         #[cfg(windows)]
         if matches!(response, HostResponse::Refused { .. }) {
             retain_refused_peer(&mut reader).await;
@@ -540,7 +545,7 @@ where
                 biased;
                 response = response_rx.recv() => {
                     let Some(response) = response else { break };
-                    write_message(&mut writer, &response).await?;
+                    write_host_message(&mut writer, &response).await?;
                     response_rx.mark_delivered();
                 }
                 request = reader.read::<ClientRequest>() => {
@@ -699,6 +704,7 @@ pub(super) fn request_allowed_for_role(request: &ClientRequest, role: ClientRole
 pub(super) struct MessageReader<R> {
     reader: BufReader<R>,
     pending: Vec<u8>,
+    maximum: usize,
 }
 
 impl<R: AsyncRead + Unpin> MessageReader<R> {
@@ -711,6 +717,14 @@ impl<R: AsyncRead + Unpin> MessageReader<R> {
         Self {
             reader: BufReader::new(reader),
             pending: Vec::new(),
+            maximum: MAX_MESSAGE_BYTES,
+        }
+    }
+
+    pub(super) fn host_responses(reader: R) -> Self {
+        Self {
+            maximum: MAX_HOST_MESSAGE_BYTES,
+            ..Self::new(reader)
         }
     }
 
@@ -729,9 +743,9 @@ impl<R: AsyncRead + Unpin> MessageReader<R> {
                 .iter()
                 .position(|byte| *byte == b'\n')
                 .map_or(available.len(), |position| position + 1);
-            if self.pending.len().saturating_add(take) > MAX_MESSAGE_BYTES {
+            if self.pending.len().saturating_add(take) > self.maximum {
                 self.pending = Vec::new();
-                bail!("workspace transport message exceeds {MAX_MESSAGE_BYTES} bytes");
+                bail!("workspace transport message exceeds {} bytes", self.maximum);
             }
             self.pending.extend_from_slice(&available[..take]);
             self.reader.consume(take);
@@ -751,6 +765,14 @@ pub(super) async fn write_message<W: AsyncWrite + Unpin, T: Serialize>(
     message: &T,
 ) -> Result<()> {
     write_message_with_timeout(writer, message, CONNECTION_WRITE_STALL).await
+}
+
+async fn write_host_message<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    response: &HostResponse,
+) -> Result<()> {
+    let message = encode_message_with_limit(response, MAX_HOST_MESSAGE_BYTES)?;
+    write_encoded_with_timeout(writer, &message, CONNECTION_WRITE_STALL).await
 }
 
 #[cfg(unix)]
@@ -798,36 +820,46 @@ pub(super) async fn write_message_with_timeout<W: AsyncWrite + Unpin, T: Seriali
 pub(super) struct EncodedMessage(Vec<u8>);
 
 pub(super) fn encode_message<T: Serialize>(message: &T) -> Result<EncodedMessage> {
-    struct BoundedJson(Vec<u8>);
+    encode_message_with_limit(message, MAX_MESSAGE_BYTES)
+}
+
+fn encode_message_with_limit<T: Serialize>(message: &T, maximum: usize) -> Result<EncodedMessage> {
+    struct BoundedJson {
+        bytes: Vec<u8>,
+        maximum: usize,
+    }
     impl std::io::Write for BoundedJson {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            if bytes.len() > (MAX_MESSAGE_BYTES - 1).saturating_sub(self.0.len()) {
+            if bytes.len() > (self.maximum - 1).saturating_sub(self.bytes.len()) {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!("workspace transport message exceeds {MAX_MESSAGE_BYTES} bytes"),
+                    format!("workspace transport message exceeds {} bytes", self.maximum),
                 ));
             }
-            let needed = self.0.len() + bytes.len();
-            if needed > self.0.capacity() {
+            let needed = self.bytes.len() + bytes.len();
+            if needed > self.bytes.capacity() {
                 let capacity = needed
                     .saturating_add(1)
-                    .max(self.0.capacity().saturating_mul(2))
-                    .clamp(1024, MAX_MESSAGE_BYTES);
+                    .max(self.bytes.capacity().saturating_mul(2))
+                    .clamp(1024, self.maximum);
                 // Bound the requested payload capacity, including newline room;
                 // allocator bookkeeping/rounding remains allocator-owned.
-                self.0.reserve_exact(capacity - self.0.len());
+                self.bytes.reserve_exact(capacity - self.bytes.len());
             }
-            self.0.extend_from_slice(bytes);
+            self.bytes.extend_from_slice(bytes);
             Ok(bytes.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
     }
-    let mut bytes = BoundedJson(Vec::new());
+    let mut bytes = BoundedJson {
+        bytes: Vec::new(),
+        maximum,
+    };
     serde_json::to_writer(&mut bytes, message)?;
-    bytes.0.push(b'\n');
-    Ok(EncodedMessage(bytes.0))
+    bytes.bytes.push(b'\n');
+    Ok(EncodedMessage(bytes.bytes))
 }
 
 #[cfg(windows)]
@@ -860,6 +892,10 @@ async fn write_encoded_with_timeout<W: AsyncWrite + Unpin>(
         .context("workspace transport write timed out")??;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "tests/preview_transport.rs"]
+pub(super) mod preview_tests;
 
 #[cfg(test)]
 mod tests {

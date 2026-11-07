@@ -9,6 +9,9 @@ use std::io::{BufRead, Read, Write};
 mod assets;
 mod format;
 mod raster;
+// Share pure limits without linking the editor into the renderer library.
+#[path = "../../../src/document_preview/limits.rs"]
+mod limits;
 
 #[derive(Clone, Deserialize)]
 struct Request {
@@ -72,13 +75,13 @@ pub fn serve(
         let mut line = Vec::new();
         input
             .by_ref()
-            .take(1024 * 1024 + 1)
+            .take((limits::MAX_HELPER_MESSAGE_BYTES + 1) as u64)
             .read_until(b'\n', &mut line)?;
         if line.is_empty() {
             return Ok(());
         }
-        if line.len() > 1024 * 1024 || line.last() != Some(&b'\n') {
-            return Err("request exceeds 1 MiB or lacks framing".into());
+        if line.len() > limits::MAX_HELPER_MESSAGE_BYTES || line.last() != Some(&b'\n') {
+            return Err("preview request exceeds wire budget or lacks framing".into());
         }
         render(
             serde_json::from_slice(&line)?,
@@ -100,9 +103,11 @@ pub fn run_once(
         return Err("unknown preview helper argument".into());
     }
     let mut bytes = Vec::new();
-    input.take(1024 * 1024 + 1).read_to_end(&mut bytes)?;
-    if bytes.len() > 1024 * 1024 {
-        return Err("request exceeds 1 MiB".into());
+    input
+        .take((limits::MAX_HELPER_MESSAGE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > limits::MAX_HELPER_MESSAGE_BYTES {
+        return Err("preview request exceeds wire budget".into());
     }
     render(
         serde_json::from_slice(&bytes)?,
@@ -250,7 +255,7 @@ fn render(
     mut out: impl Write,
     fonts: Fonts,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if request.text.len() > 128 * 1024
+    if request.text.len() > limits::MAX_BYTES
         || request.width == 0
         || request.height == 0
         || request.width > 4096
@@ -341,7 +346,7 @@ fn render(
             link = doc
                 .get_node(id)
                 .and_then(|n| n.attr("href".into()))
-                .map(str::to_owned);
+                .map(|href| href.chars().take(200).collect());
         }
     }
     let scroll = [doc.viewport_scroll().x, doc.viewport_scroll().y];
@@ -357,10 +362,14 @@ fn render(
         renderer.resize(raster.width, raster.height);
         *render_size = [raster.width, raster.height];
     }
+    let selected = doc.get_selected_text().unwrap_or_default();
+    if selected.len() > limits::MAX_BYTES {
+        return Err("selected preview text exceeds 1 MiB; select a smaller section".into());
+    }
     let reply = Reply {
         width: request.width,
         height: request.height,
-        selected: doc.get_selected_text().unwrap_or_default(),
+        selected,
         link,
         scroll,
         raster_width: raster.width,
@@ -399,6 +408,10 @@ fn render(
     out.flush()?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "tests/budgets.rs"]
+mod budget_tests;
 
 #[cfg(test)]
 mod tests {

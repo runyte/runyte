@@ -1,5 +1,30 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::{Arc, AtomicBool, Ordering, Request, State, render_request};
+
+#[test]
+fn copied_preview_text_uses_the_one_mib_budget_and_expanded_reply_header() {
+    fn reply(text: &str) -> Vec<u8> {
+        let mut bytes = serde_json::to_vec(&serde_json::json!({
+            "width": 1, "height": 1, "raster_width": 1, "raster_height": 1,
+            "selected": text, "link": null, "scroll": [0, 0], "max_scroll": [0, 0],
+            "origin": [0, 0], "cacheable": false, "themed": false,
+        }))
+        .unwrap();
+        bytes.push(b'\n');
+        bytes.extend_from_slice(&[1, 2, 3, 4]);
+        bytes
+    }
+    let maximum = "\0".repeat(runyte::document_preview::MAX_BYTES);
+    let bytes = reply(&maximum);
+    assert!(bytes.len() > 6 * 1024 * 1024);
+    let (header, pixels) = super::read_reply(&mut bytes.as_slice(), (1, 1)).unwrap();
+    assert_eq!(header.selected, maximum);
+    assert_eq!(pixels, [1, 2, 3, 4]);
+    let bytes = reply(&format!("{maximum}x"));
+    assert!(super::read_reply(&mut bytes.as_slice(), (1, 1)).is_err());
+    let oversized = vec![b'x'; runyte::document_preview::MAX_HELPER_MESSAGE_BYTES + 1];
+    assert!(super::read_reply(&mut oversized.as_slice(), (1, 1)).is_err());
+}
 #[test]
 fn dropping_view_cancels_its_pending_helper_request() {
     let flag = Arc::new(AtomicBool::new(false));

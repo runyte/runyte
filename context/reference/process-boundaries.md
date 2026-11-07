@@ -28,7 +28,7 @@ The desktop edition owns two helper roles:
 | Role | Engine and direction | Transport and bounds | Source |
 | --- | --- | --- | --- |
 | `pdf` | Runyte starts Hayro for a page or visible-region refinement | Path and render arguments in; bounded JSON header and RGBA bytes out over stdout. Regular input files up to 128 MiB, at most 10,000 pages, 8,388,608 raster pixels, 8 MiB header. Each invocation has a 15-second wall deadline and CPU limit; address space is 1 GiB on Linux and initial mappings plus 1 GiB on macOS. | `crates/runyte-native/src/pdf.rs`, `crates/runyte-native/src/media.rs` |
-| `preview` | Runyte starts Blitz for captured document text | JSON requests on stdin; bounded metadata and RGBA replies on stdout; stderr capture is bounded. Captures and assets, raster dimensions and output bytes have separate limits. An optional theme palette travels as sRGB channels with at most 64 syntax scopes. Requests have a five-second wall deadline and Linux has a 2 GiB address-space limit. | `crates/runyte-native/src/preview.rs`, `src/document_preview.rs`, `crates/runyte-preview/src/` |
+| `preview` | Runyte starts Blitz for captured document text | JSON requests on stdin; bounded metadata and RGBA replies on stdout; stderr capture is bounded. Captures and copied text admit 1 MiB each; JSON requests and reply headers admit 6.25 MiB each. Assets, raster dimensions and output bytes have separate limits. An optional theme palette travels as sRGB channels with at most 64 syntax scopes. Requests have a five-second wall deadline and Linux has a 2 GiB address-space limit. | `crates/runyte-native/src/preview.rs`, `src/document_preview.rs`, `crates/runyte-preview/src/` |
 
 The detailed rendering and asset limits live in
 [native window](desktop-edition.md) and

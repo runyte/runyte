@@ -103,7 +103,7 @@ The working directory starts where Runyte was launched.
 | `:path` | | Show the active buffer's absolute path in a wrapped popup; Tab offers copying it to the system clipboard (`s`) or the unnamed Runyte register (`r`) |
 | `:cd <path>` | | Change the working directory; retarget an active explorer |
 | `:explorer [path]` | `files` | Open an editable directory explorer |
-| `:preview` | — | Native document preview of selected text or the complete buffer |
+| `:preview` | — | Native document preview of selected text or the complete buffer (up to 1 MiB / 1024 KiB) |
 | `:render` | `markdown` | Render a Markdown document, or return to its source |
 | `:diff-disk` | | Compare a fresh disk snapshot with the active file buffer |
 | `:diff-remote` | | Compare a fresh remote snapshot with the active provider document |

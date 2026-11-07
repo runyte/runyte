@@ -599,6 +599,41 @@ impl Helper {
         })
     }
 }
+/// Read one bounded header and its raster before the retained helper is reused.
+fn read_reply(output: &mut impl BufRead, expected: (u32, u32)) -> Result<(Reply, Vec<u8>), String> {
+    let mut header = Vec::new();
+    output
+        .by_ref()
+        .take((runyte::document_preview::MAX_HELPER_MESSAGE_BYTES + 1) as u64)
+        .read_until(b'\n', &mut header)
+        .map_err(|e| e.to_string())?;
+    if header.len() > runyte::document_preview::MAX_HELPER_MESSAGE_BYTES
+        || header.last() != Some(&b'\n')
+    {
+        return Err("Preview header exceeds wire budget or is incomplete".into());
+    }
+    let reply: Reply = serde_json::from_slice(&header).map_err(|e| e.to_string())?;
+    if (reply.width, reply.height) != expected
+        || reply.selected.len() > runyte::document_preview::MAX_BYTES
+        || reply.raster_width < reply.width
+        || reply.raster_height < reply.height
+        || reply.raster_width > 8192
+        || reply.raster_height > 8192
+        || u64::from(reply.raster_width) * u64::from(reply.raster_height) > 8_000_000
+        || reply
+            .origin
+            .iter()
+            .chain(reply.scroll.iter())
+            .chain(reply.max_scroll.iter())
+            .any(|x| !x.is_finite() || *x < 0.0)
+    {
+        return Err("Invalid preview dimensions or selection".into());
+    }
+    let mut pixels = vec![0; reply.raster_width as usize * reply.raster_height as usize * 4];
+    output.read_exact(&mut pixels).map_err(|e| e.to_string())?;
+    Ok((reply, pixels))
+}
+
 fn render_request(
     request: &Request,
     cancel: &AtomicBool,
@@ -622,36 +657,7 @@ fn render_request(
                 .write_all(&bytes)
                 .and_then(|_| input.flush())
                 .map_err(|e| e.to_string())?;
-            let mut header = Vec::new();
-            output
-                .by_ref()
-                .take(200_000)
-                .read_until(b'\n', &mut header)
-                .map_err(|e| e.to_string())?;
-            if header.last() != Some(&b'\n') {
-                return Err("Incomplete preview header".into());
-            }
-            let reply: Reply = serde_json::from_slice(&header).map_err(|e| e.to_string())?;
-            if (reply.width, reply.height) != expected
-                || reply.selected.len() > 128 * 1024
-                || reply.raster_width < reply.width
-                || reply.raster_height < reply.height
-                || reply.raster_width > 8192
-                || reply.raster_height > 8192
-                || u64::from(reply.raster_width) * u64::from(reply.raster_height) > 8_000_000
-                || reply
-                    .origin
-                    .iter()
-                    .chain(reply.scroll.iter())
-                    .chain(reply.max_scroll.iter())
-                    .any(|x| !x.is_finite() || *x < 0.0)
-            {
-                return Err("Invalid preview dimensions or selection".into());
-            }
-            let mut pixels =
-                vec![0; reply.raster_width as usize * reply.raster_height as usize * 4];
-            output.read_exact(&mut pixels).map_err(|e| e.to_string())?;
-            Ok((reply, pixels))
+            read_reply(&mut output, expected)
         })();
         let _ = tx.send((input, output, result));
     });

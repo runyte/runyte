@@ -22,6 +22,7 @@ and `:markdown` behavior remains separate.
 Shared state holds bounded, presentation-neutral text captures keyed by pane.
 Private bundled-client protocol version 77 carries captures and dismissals;
 version 79 adds the live `editor.preview_theme_colors` setting to editor frames.
+Version 91 raises captures to 1 MiB and expands bounded host responses.
 Native views own scroll, hit coordinates, selection and images. Blitz types exist only in the
 workspace library `crates/runyte-preview`, linked only into the desktop edition.
 The desktop executable dispatches `--helper preview` before editor startup; the
@@ -56,7 +57,7 @@ The helper is created on demand, never during ordinary editing. Parsing,
 highlighting, fonts, assets, layout and painting run outside both editor loops.
 Work queues and responses are bounded; hidden, refreshed and closed views
 cancel obsolete work. The retained helper is released when no preview remains
-visible or after 30 seconds without a request. Limits include 128 KiB of captured
+visible or after 30 seconds without a request. Limits include 1 MiB of captured
 text, eight captures, five seconds per-request wall time and Linux address-space
 containment.
 Failures remain dismissible diagnostics. This is not an OS security sandbox.
@@ -478,3 +479,51 @@ ground after window and font resizing, then toggles the setting off, on and
 off through `:config-reload` without recapturing. The white-page transitions
 prove that the preview remains active: the themed ground alone would also
 match the source editor after an accidental dismissal.
+
+## 1 MiB capture budget — issue #70
+
+[Issue #70](https://github.com/runyte/runyte/issues/70) raises whole-buffer and
+selected-text capture admission from 128 KiB to 1 MiB (1024 KiB), without
+changing the 256-range or eight-capture limits. Joined selections charge their
+newline separators. Rendered selection/copy text also admits 1 MiB; larger
+rendered selections produce a diagnostic rather than truncation. Link feedback
+is limited to the same 200 characters the frontend displays.
+
+Pure limits in `src/document_preview/limits.rs` are shared with the helper.
+Helper requests and reply headers admit 6.25 MiB including framing, allowing
+sixfold JSON escaping and 256 KiB of metadata. Private protocol 94 keeps client
+requests at 8 MiB and allows host responses up to 56 MiB: the ordinary 8 MiB
+frame allowance plus eight captures at their worst-case 6 MiB encoded size.
+Both async and buffered readers use that host-response budget on Unix and
+Windows. The protocol bump prevents older clients from accepting captures or
+frames beyond their limits. Existing persistent hosts must be stopped with a
+compatible client before restarting with the new build.
+
+The five-second request deadline and Linux 2 GiB address-space limit remain.
+Admission does not guarantee rendering completion: document structure and
+highlighting complexity can exhaust these bounds before the source byte limit.
+
+
+Release samples on Linux x86-64 (AMD Ryzen AI 9 365, Rust 1.97.1) used
+exactly 1,048,576 ASCII bytes per capture, a 640×360 viewport, one-shot helper
+startup through output, a five-second external deadline, and the production
+2 GiB address-space bound. The machine also ran builds and tests, so these are
+capacity observations rather than isolated benchmark guarantees. Peak RSS was
+sampled from `/proc` every 10 ms and may miss a short peak.
+
+| Capture | Wall time | Sampled peak RSS | Outcome |
+| --- | ---: | ---: | --- |
+| Plain text | 484 ms | 193 MiB | Rendered |
+| Markdown headings and prose | 520 ms | 171 MiB | Rendered |
+| Markdown tables, fenced Rust and prose | 600 ms | 171 MiB | Rendered |
+| Static HTML paragraphs | 160 ms | 81 MiB | Rendered |
+| Repeated highlighted Rust functions | 5,019 ms | 336 MiB | Killed at the five-second deadline |
+
+The Rust sample confirms that the raised byte ceiling does not guarantee
+completion of a heavily highlighted document. No deadline or memory allowance
+was raised to accommodate it. Engine acceptance separately checks retained
+rendering, selection, assets, viewport bounds and cache behavior. The new
+native reply test admits exactly 1 MiB of copied text even with sixfold JSON
+escaping; a real helper fixture selects over 128 KiB and produces a header
+over the previous 200,000-byte ceiling. Native macOS and Windows execution
+was not performed for this change.

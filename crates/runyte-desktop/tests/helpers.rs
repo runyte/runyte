@@ -60,6 +60,70 @@ fn preview_one_shot_and_retained_frames_use_the_desktop_executable() {
     );
     assert!(frame(frame(&retained.stdout)).is_empty());
 }
+
+#[test]
+fn preview_helpers_admit_one_mib_after_worst_case_json_expansion() {
+    let start = "<!--";
+    let end = "--><body>Large capture</body>";
+    let text = format!(
+        "{start}{}{end}",
+        "\u{1}".repeat(runyte::document_preview::MAX_BYTES - start.len() - end.len())
+    );
+    let mut request: serde_json::Value = serde_json::from_slice(&request()).unwrap();
+    request["text"] = text.into();
+    let bytes = serde_json::to_vec(&request).unwrap();
+    assert!(bytes.len() > 6 * 1024 * 1024 - 1024);
+    for retained in [false, true] {
+        let mut input = bytes.clone();
+        let args = if retained {
+            input.push(b'\n');
+            &["--helper", "preview", "--serve"][..]
+        } else {
+            &["--helper", "preview"][..]
+        };
+        let output = invoke(args, &input);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(frame(&output.stdout).is_empty());
+    }
+    request["text"] = format!("{}x", request["text"].as_str().unwrap()).into();
+    let bytes = serde_json::to_vec(&request).unwrap();
+    let output = invoke(&["--helper", "preview"], &bytes);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("input or viewport budget"));
+}
+
+#[test]
+fn preview_helper_copies_a_rendered_selection_above_the_old_limit() {
+    let text = format!("{}END", format!("{}\n", "\"".repeat(1000)).repeat(150));
+    let request = serde_json::to_vec(&serde_json::json!({
+        "text": format!("<body style='margin:0'><pre style='margin:0;font:1px/1px monospace'>{text}</pre></body>"),
+        "language": "html", "path": null, "width": 1000, "height": 200,
+        "scale": 1, "scroll": [0, 0], "selection": [[0, 0.5], [1.5, 150.5]]
+    })).unwrap();
+    let output = invoke(&["--helper", "preview"], &request);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let end = output
+        .stdout
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .unwrap();
+    assert!(end > 200_000);
+    let header: serde_json::Value = serde_json::from_slice(&output.stdout[..end]).unwrap();
+    let selected = header["selected"].as_str().unwrap();
+    assert!(selected.len() > 128 * 1024);
+    assert_eq!(
+        selected.bytes().filter(|byte| *byte == b'"').count(),
+        150_000
+    );
+}
 /// The first pixel of a Markdown page rendered with `theme`, as RGBA.
 fn markdown_ground(theme: serde_json::Value) -> [u8; 4] {
     let request = serde_json::to_vec(&serde_json::json!({
