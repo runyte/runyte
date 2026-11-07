@@ -275,6 +275,7 @@ impl App {
             let mut remaining = CONTENT_ENTRY_LIMIT;
             for (_, buffer) in self.buffers.iter().enumerate().filter(|(index, buffer)| {
                 !self.closed_buffers.contains(index)
+                    && !self.context_buffer_is_private(*index)
                     && !buffer.is_directory()
                     && buffer
                         .path
@@ -544,6 +545,7 @@ impl App {
     }
 
     pub(super) fn rebuild_resource_finder(&mut self) {
+        let _privacy_batch = self.context_privacy_batch();
         let Some(query) = self.picker.as_ref().map(|picker| picker.query.clone()) else {
             return;
         };

@@ -45,6 +45,62 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn only_captured_standard_store_admits_exact_home_workspace() {
+    let fixture = Fixture::new();
+    let home = fixture.0.join("home");
+    std::fs::create_dir(&home).unwrap();
+    let root = home.join(".cache/runyte/context");
+    let trusted = ContextStorePolicy::captured(root.clone(), std::slice::from_ref(&home), true);
+    let store = Storage::new_with_policy(trusted.clone()).unwrap();
+    let identity = store.identity("agent").unwrap();
+    let permissions = BTreeSet::from([Permission::Read]);
+    store.grant(&home, &identity, permissions.clone()).unwrap();
+    assert_eq!(store.permissions(&home, &identity).unwrap(), permissions);
+    let record = Registration {
+        root: home.clone(),
+        workspace_id: crate::workspace::identity::workspace_id(&home),
+        host_incarnation: random_token().unwrap(),
+        endpoint: store.socket_path(&random_token().unwrap()).unwrap(),
+        mode: HostMode::Standalone,
+        pid: std::process::id(),
+        environment: "a".repeat(64),
+    };
+    let record = Registration {
+        endpoint: store.socket_path(&record.host_incarnation).unwrap(),
+        ..record
+    };
+    store.register(&record).unwrap();
+    assert_eq!(
+        store.discover(&record.environment, true).unwrap(),
+        vec![record.clone()]
+    );
+    let reopened = Storage::open_existing_with_policy(trusted).unwrap();
+    assert_eq!(
+        reopened.discover(&record.environment, true).unwrap(),
+        vec![record.clone()]
+    );
+    for policy in [
+        ContextStorePolicy::outside_only(root.clone()),
+        ContextStorePolicy::captured(root.clone(), std::slice::from_ref(&home), false),
+    ] {
+        let overridden = Storage::open_existing_with_policy(policy).unwrap();
+        assert!(
+            overridden
+                .discover(&record.environment, true)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(overridden.permissions(&home, &identity).is_err());
+    }
+    std::fs::create_dir(home.join("ordinary")).unwrap();
+    assert!(
+        store
+            .grant(&home.join("ordinary"), &identity, permissions)
+            .is_ok()
+    );
+}
+
+#[test]
 fn identities_are_stable_distinct_private_and_redacted() {
     let fixture = Fixture::new();
     let store = fixture.store();

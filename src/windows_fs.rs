@@ -202,6 +202,14 @@ impl Identity {
     }
 }
 
+pub(crate) fn link_count(file: &File) -> io::Result<u64> {
+    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(u64::from(info.nNumberOfLinks))
+}
+
 pub(crate) fn wide(path: &Path) -> io::Result<Vec<u16>> {
     let mut units: Vec<_> = path.as_os_str().encode_wide().collect();
     if units.contains(&0) {

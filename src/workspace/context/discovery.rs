@@ -3,7 +3,7 @@
 //! Metadata-only discovery: private registrations are hints until a bounded
 //! same-user probe confirms the exact live host. This never attaches or grants.
 
-use super::storage::{Registration, Storage};
+use super::storage::{ContextStorePolicy, Registration, Storage};
 use futures_util::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
@@ -59,16 +59,29 @@ pub async fn discover(
     environment: &str,
     include_hidden: bool,
 ) -> io::Result<Discovery> {
+    discover_with_policy(
+        root.map(ContextStorePolicy::outside_only),
+        environment,
+        include_hidden,
+    )
+    .await
+}
+
+pub(crate) async fn discover_with_policy(
+    policy: Option<ContextStorePolicy>,
+    environment: &str,
+    include_hidden: bool,
+) -> io::Result<Discovery> {
     let mut result = Discovery {
         schema: SCHEMA,
         truncated: false,
         workspaces: Vec::new(),
         hidden: 0,
     };
-    let Some(root) = root else {
+    let Some(policy) = policy else {
         return Ok(result);
     };
-    let storage = match Storage::open_existing(root) {
+    let storage = match Storage::open_existing_with_policy(policy) {
         Ok(storage) => storage,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(result),
         Err(error) => return Err(error),

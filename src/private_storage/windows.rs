@@ -83,6 +83,17 @@ fn relative(
     create: bool,
     directory: bool,
 ) -> io::Result<File> {
+    relative_with_links(parent, name, access, create, directory, false)
+}
+
+fn relative_with_links(
+    parent: &File,
+    name: &OsStr,
+    access: u32,
+    create: bool,
+    directory: bool,
+    allow_multiple_links: bool,
+) -> io::Result<File> {
     let mut units = leaf(name)?;
     let mut name = UNICODE_STRING {
         Length: (units.len() * 2) as u16,
@@ -116,6 +127,8 @@ fn relative(
                 if create { FILE_CREATE } else { FILE_OPEN },
                 (if directory {
                     FILE_DIRECTORY_FILE
+                } else if allow_multiple_links {
+                    0
                 } else {
                     FILE_NON_DIRECTORY_FILE
                 }) | FILE_OPEN_REPARSE_POINT
@@ -131,7 +144,22 @@ fn relative(
             ));
         }
         let file = unsafe { File::from_raw_handle(handle) };
-        if let Err(error) = regular(&file, directory) {
+        let validated = if allow_multiple_links {
+            let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+            if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+                Err(io::Error::last_os_error())
+            } else if info.dwFileAttributes
+                & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY)
+                != 0
+            {
+                Err(invalid("private entry is not a regular non-reparse file"))
+            } else {
+                Ok(())
+            }
+        } else {
+            regular(&file, directory)
+        };
+        if let Err(error) = validated {
             if create {
                 let _ = delete(&file);
             }
@@ -265,6 +293,13 @@ pub(crate) fn truncate(file: &File) -> io::Result<()> {
 
 #[allow(dead_code)] // Some callers remain disabled until their native integration is ready.
 impl Directory {
+    pub(crate) fn regular_entry_identity(&self, name: &OsStr) -> io::Result<Option<Identity>> {
+        match relative_with_links(&self.0, name, FILE_READ_ATTRIBUTES, false, false, true) {
+            Ok(file) => Identity::of(&file).map(Some),
+            Err(error) if error.kind() == io::ErrorKind::InvalidInput => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
     /// Enumerates names relative to this pinned directory, on a separately
     /// reopened file object so simultaneous scans never share a native cursor.
     /// Every non-dot entry counts, including names the caller will ignore.

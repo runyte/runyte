@@ -7,6 +7,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     path::{Component, Path, PathBuf},
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -296,6 +297,7 @@ mod native_input;
 mod navigation_workflows;
 mod pane_drag;
 use navigation_workflows::DestinationScope;
+mod context_privacy;
 mod diff_work;
 mod editor_mode;
 mod indentation_workflows;
@@ -3139,6 +3141,18 @@ pub struct App {
     pub project_root: PathBuf,
     pub state_root: PathBuf,
     home_workspace: bool,
+    #[cfg(any(unix, windows))]
+    pub(crate) context_store_policy: Option<crate::workspace::context::storage::ContextStorePolicy>,
+    #[cfg(windows)]
+    pub(crate) context_store_location: Option<crate::workspace::context::storage::StorageLocation>,
+    #[cfg(any(unix, windows))]
+    private_context_buffers: RefCell<HashSet<usize>>,
+    #[cfg(any(unix, windows))]
+    /// Observed private inodes remain excluded after their store entry moves.
+    /// `None` means the bounded inventory was exhausted, so scans fail closed.
+    private_context_file_identities: RefCell<Option<HashSet<[u8; 24]>>>,
+    #[cfg(any(unix, windows))]
+    private_context_inventory: Rc<RefCell<context_privacy::ContextPrivacyInventory>>,
     /// Editor mode: a standalone session with no workspace. `project_root`
     /// then only names the launch directory, which relative paths are
     /// displayed against; nothing scoped to a project reads it, and
@@ -3364,6 +3378,9 @@ impl App {
             return;
         }
         let result = self.buffers[event.buffer].apply_file_observation(&event);
+        if !matches!(result, ObservationApply::Stale { .. }) {
+            self.note_context_buffer_acceptance(event.buffer);
+        }
         if !matches!(result, ObservationApply::Stale { notify: true }) {
             return;
         }
@@ -3693,6 +3710,14 @@ impl App {
                 &config.workspace.state,
                 safety.as_deref().unwrap(),
             )? == project_root::WorkspaceOrigin::Home;
+        // Capture the default context location and its provenance before the
+        // startup reservation closes. A home VCS checkout qualifies too.
+        #[cfg(any(unix, windows))]
+        let context_store_policy = safety
+            .as_ref()
+            .and_then(|safety| safety.context_policy(&project_root));
+        #[cfg(windows)]
+        let context_store_location = safety.as_ref().and_then(|safety| safety.context_location());
         let state_root = state_location.as_path().to_owned();
         let plugin_state_anchor = state_location.plugin_anchor(
             crate::plugin::state::resolve_anchor(config.workspace.state_anchor)?,
@@ -3897,6 +3922,18 @@ impl App {
             project_root,
             state_root,
             home_workspace,
+            #[cfg(any(unix, windows))]
+            context_store_policy,
+            #[cfg(windows)]
+            context_store_location,
+            #[cfg(any(unix, windows))]
+            private_context_buffers: RefCell::new(HashSet::new()),
+            #[cfg(any(unix, windows))]
+            private_context_file_identities: RefCell::new(Some(HashSet::new())),
+            #[cfg(any(unix, windows))]
+            private_context_inventory: Rc::new(RefCell::new(
+                context_privacy::ContextPrivacyInventory::default(),
+            )),
             editor_mode,
             running_as_root: false,
             plugin_state_anchor,
@@ -4021,6 +4058,12 @@ impl App {
             next_lsp_token: 1,
             next_completion_session: 1,
         };
+        // Classify accepted startup text while its private-store link is
+        // still observable. Later unlinking or retargeting cannot declassify it.
+        let _privacy_batch = app.context_privacy_batch();
+        for buffer in 0..app.buffers.len() {
+            app.note_context_buffer_acceptance(buffer);
+        }
         if defer_syntax {
             for buffer in 0..app.buffers.len() {
                 app.reparse_whole(buffer);

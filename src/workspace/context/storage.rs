@@ -18,6 +18,59 @@ use std::{
 const RECORD_LIMIT: usize = 64 * 1024;
 const DISCOVERY_LIMIT: usize = 512;
 
+/// One fresh, bounded identity view for a file-finder or search pass. The
+/// private records themselves are never opened as ordinary text.
+pub(crate) struct PrivateFileInventory(Option<Vec<crate::buffer::FileIdentity>>);
+
+impl PrivateFileInventory {
+    pub(crate) fn load(root: &Path) -> Self {
+        let identities = match Storage::open_existing(root.to_owned()) {
+            Ok(store) => store.file_identities().ok(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Some(Vec::new()),
+            Err(_) => None,
+        };
+        Self(identities)
+    }
+
+    pub(crate) fn denies_path(&self, path: &Path, hidden_identities: &[[u8; 24]]) -> bool {
+        #[cfg(unix)]
+        let multiple = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.nlink() > 1)
+        };
+        #[cfg(windows)]
+        let multiple = crate::path_safety::open_regular_file(path, false)
+            .ok()
+            .and_then(|file| crate::windows_fs::link_count(&file).ok())
+            .is_some_and(|count| count > 1);
+        if !multiple && hidden_identities.is_empty() {
+            return false;
+        }
+        let identity = crate::path_safety::open_regular_file(path, false)
+            .ok()
+            .and_then(|file| {
+                file.metadata().ok().and_then(|metadata| {
+                    crate::buffer::file_identity(&file, &metadata)
+                        .ok()
+                        .flatten()
+                })
+            });
+        if identity
+            .as_ref()
+            .is_some_and(|identity| hidden_identities.contains(&identity.stable_bytes()))
+        {
+            return true;
+        }
+        if !multiple {
+            return identity.is_none();
+        }
+        let Some(identities) = self.0.as_ref() else {
+            return true;
+        };
+        identity.is_none_or(|identity| identities.contains(&identity))
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Identity {
@@ -147,6 +200,92 @@ pub struct Storage {
     root: PathBuf,
     directory: Directory,
     read_only: bool,
+    policy: ContextStorePolicy,
+}
+
+/// One startup's admitted context location. Only the standard account-owned
+/// store may be nested in an exact captured home workspace.
+#[derive(Clone, Debug)]
+pub(crate) struct ContextStorePolicy {
+    root: PathBuf,
+    resolved_root: PathBuf,
+    trusted_homes: Vec<PathBuf>,
+}
+
+impl ContextStorePolicy {
+    pub(crate) fn outside_only(root: PathBuf) -> Self {
+        let resolved_root = crate::path_safety::canonicalize_existing_prefix(&root)
+            .unwrap_or_else(|_| root.clone());
+        Self {
+            root,
+            resolved_root,
+            trusted_homes: Vec::new(),
+        }
+    }
+
+    /// `standard` is provenance, not a path comparison: an explicit override
+    /// spelling the standard path remains outside-only.
+    pub(crate) fn captured(root: PathBuf, homes: &[PathBuf], standard: bool) -> Self {
+        let resolved = crate::path_safety::canonicalize_existing_prefix(&root)
+            .unwrap_or_else(|_| root.clone());
+        let canonical_homes = homes
+            .iter()
+            .filter_map(|home| home.canonicalize().ok())
+            .collect::<Vec<_>>();
+        Self::captured_canonical(root, resolved, &canonical_homes, standard)
+    }
+
+    pub(crate) fn captured_canonical(
+        root: PathBuf,
+        resolved_root: PathBuf,
+        homes: &[PathBuf],
+        standard: bool,
+    ) -> Self {
+        let trusted_homes = if standard {
+            homes
+                .iter()
+                .filter(|home| resolved_root.starts_with(home))
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Self {
+            root,
+            resolved_root,
+            trusted_homes,
+        }
+    }
+
+    /// A separate MCP/discovery process captures the standard location once.
+    /// Callers supplying another root never acquire the home exception.
+    pub(crate) fn for_discovery(root: PathBuf) -> Self {
+        #[cfg(unix)]
+        let default = Storage::default_root();
+        #[cfg(windows)]
+        let default = Storage::default_location().map(|location| location.root().to_owned());
+        let standard = std::env::var_os("RUNYTE_CONTEXT_HOME").is_none()
+            && default.as_deref() == Some(root.as_path());
+        if standard {
+            Self::captured(root, &crate::project_root::user_home_directories(), true)
+        } else {
+            Self::outside_only(root)
+        }
+    }
+
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub(crate) fn private_root(&self) -> Option<&Path> {
+        Some(self.resolved_root.as_path())
+    }
+
+    pub(crate) fn admits_workspace(&self, workspace: &Path, store: &Path) -> bool {
+        !store.starts_with(workspace)
+            || (self.trusted_homes.iter().any(|home| home == workspace)
+                && self.private_root() == Some(store))
+    }
 }
 
 #[cfg(windows)]
@@ -297,6 +436,11 @@ impl Storage {
     }
 
     pub fn new(root: PathBuf) -> io::Result<Self> {
+        Self::new_with_policy(ContextStorePolicy::outside_only(root))
+    }
+
+    pub(crate) fn new_with_policy(policy: ContextStorePolicy) -> io::Result<Self> {
+        let root = policy.root.clone();
         if !root.is_absolute() {
             return Err(invalid("context storage requires an absolute path"));
         }
@@ -317,11 +461,23 @@ impl Storage {
             root,
             directory,
             read_only: false,
+            policy,
         })
     }
 
     #[cfg(windows)]
     pub fn open_location(location: StorageLocation) -> io::Result<Self> {
+        Self::open_location_with_policy(
+            location.clone(),
+            ContextStorePolicy::outside_only(location.root),
+        )
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn open_location_with_policy(
+        location: StorageLocation,
+        policy: ContextStorePolicy,
+    ) -> io::Result<Self> {
         let relative = location
             .root
             .strip_prefix(&location.anchor)
@@ -332,10 +488,16 @@ impl Storage {
             root,
             directory,
             read_only: false,
+            policy,
         })
     }
     /// Existing stores only; missing or insecure paths fail without writes.
     pub fn open_existing(root: PathBuf) -> io::Result<Self> {
+        Self::open_existing_with_policy(ContextStorePolicy::outside_only(root))
+    }
+
+    pub(crate) fn open_existing_with_policy(policy: ContextStorePolicy) -> io::Result<Self> {
+        let root = policy.root.clone();
         if !root.is_absolute() {
             return Err(invalid("context storage requires an absolute path"));
         }
@@ -345,11 +507,31 @@ impl Storage {
             root,
             directory,
             read_only: true,
+            policy,
         })
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Enumerate regular private entries relative to the pinned directory.
+    /// This is bounded and never reads credential contents.
+    pub(crate) fn file_identities(&self) -> io::Result<Vec<crate::buffer::FileIdentity>> {
+        let mut identities = Vec::new();
+        for name in self.entries()? {
+            #[cfg(unix)]
+            let identity = self
+                .directory
+                .regular_entry_identity(&name)?
+                .map(|(device, inode)| crate::buffer::FileIdentity { device, inode });
+            #[cfg(windows)]
+            let identity = self.directory.regular_entry_identity(&name)?;
+            if let Some(identity) = identity {
+                identities.push(identity);
+            }
+        }
+        Ok(identities)
     }
 
     pub fn load_identity(&self, name: &str) -> io::Result<Option<Identity>> {
@@ -462,7 +644,7 @@ impl Storage {
 
     fn workspace_root(&self, root: &Path) -> io::Result<PathBuf> {
         let root = root.canonicalize()?;
-        if !root.is_dir() || self.root.starts_with(&root) {
+        if !root.is_dir() || !self.policy.admits_workspace(&root, &self.root) {
             return Err(invalid("context storage must be outside the workspace"));
         }
         Ok(root)
@@ -601,7 +783,7 @@ impl Storage {
                 .root
                 .components()
                 .any(|part| matches!(part, std::path::Component::ParentDir))
-            || self.root.starts_with(&record.root)
+            || !self.policy.admits_workspace(&record.root, &self.root)
             || record.workspace_id != crate::workspace::identity::workspace_id(&record.root)
             || record.endpoint != self.socket_path(&record.host_incarnation)?
         {
@@ -611,16 +793,6 @@ impl Storage {
     }
 
     fn entries(&self) -> io::Result<Vec<OsString>> {
-        #[cfg(unix)]
-        let (entries, truncated) = {
-            let entries = std::fs::read_dir(&self.root)?
-                .take(DISCOVERY_LIMIT + 1)
-                .map(|entry| entry.map(|entry| entry.file_name()))
-                .collect::<io::Result<Vec<_>>>()?;
-            let truncated = entries.len() > DISCOVERY_LIMIT;
-            (entries, truncated)
-        };
-        #[cfg(windows)]
         let (entries, truncated) = self.directory.entries(DISCOVERY_LIMIT)?;
         if truncated {
             return Err(invalid("context storage inventory exceeds its limit"));

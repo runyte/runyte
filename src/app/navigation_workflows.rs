@@ -10,6 +10,7 @@ use crate::finder::{ResourceItem, ResourceKind, ResourceTarget};
 
 impl App {
     pub fn open_destination_inventory(&self) -> Vec<OpenDestinationEntry> {
+        let _privacy_batch = self.context_privacy_batch();
         let mut entries = Vec::new();
         for (index, buffer) in self.buffers.iter().enumerate() {
             if !self.buffer_is_discoverable(index) {
@@ -166,6 +167,7 @@ impl App {
     /// The terminal list keeps the ones that can still be typed into ahead of
     /// the ones whose program has exited, which are history.
     fn destination_rows(&self, scope: DestinationScope) -> Vec<DestinationRow> {
+        let _privacy_batch = self.context_privacy_batch();
         let mut rows = Vec::new();
         if scope != DestinationScope::Terminals {
             for (index, buffer) in self.buffers.iter().enumerate() {
