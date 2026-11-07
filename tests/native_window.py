@@ -26,6 +26,7 @@ parser.add_argument("--animations", action="store_true", help="exercise media pl
 parser.add_argument("--startup-failure", choices=("config", "state"), help="verify a retained graphical startup refusal")
 parser.add_argument("--graphical-launch", action="store_true", help="use configured mode and first-file workspace from another directory")
 parser.add_argument("--mux", action="store_true", help="exercise persistent window attachment and frontend handoff")
+parser.add_argument("--configured-mode", action="store_true", help="select ide or mux through the mode setting of a bare terminal --window launch")
 parser.add_argument("--no-system-fonts", action="store_true", help="verify the embedded fonts with an empty Fontconfig font directory list")
 parser.add_argument("--paint-benchmark", action="store_true", help="measure warmed cell painting; requires RUNYTE_NATIVE_PAINT_TIMING=1")
 parser.add_argument("--paint-font-size", type=int, default=15, choices=range(8, 49), help="font size for --paint-benchmark")
@@ -181,6 +182,12 @@ if args.document_preview:
     (root/'selection.html').write_text('<html><body style="margin:0;background:white;font:20px monospace"><p style="margin:0">Selectable text</p><a href="https://example.com">Link target</a><div style="height:2000px;width:2000px;background:#09a"></div></body></html>')
 log=open(root/'window.log','w')
 launch=[str(binary),'--window','--mux' if args.mux else '--ide','--config',str(storage/'config/config.yaml')]
+if args.configured_mode:
+    # A bare terminal window launch follows the configured mode, as a bare
+    # terminal launch does; no mode flag is passed.
+    config_path = storage/'config/config.yaml'
+    config_path.write_text(config_path.read_text().replace('mode: ide\n', 'mode: ' + ('mux' if args.mux else 'ide') + '\n', 1))
+    launch=[str(binary),'--window','--config',str(config_path)]
 launch_directory = root
 if args.graphical_launch:
     (storage/'config/config.yaml').write_text('mode: ' + ('mux' if args.mux else 'ide') + '\nlsp:\n  enable: false\n')

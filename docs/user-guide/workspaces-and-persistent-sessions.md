@@ -116,7 +116,8 @@ open it with: cd '/path/to/project' && runyte   or   runyte --mux '/path/to/proj
 - It refuses a state directory that would overlap your configuration or cache
   directories.
 
-**`mode: mux`** makes a bare `runyte` attach like `runyte -a`.
+**`mode: mux`** makes a bare `runyte` attach like `runyte -a`, and a bare
+`runyte --window` attach like `runyte --window --mux`.
 
 - Launches naming a target — a file or a directory, including `runyte .` — run
   in ide mode in this process, so their relative paths and
