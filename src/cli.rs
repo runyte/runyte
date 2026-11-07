@@ -9745,6 +9745,10 @@ mod tests {
         let requirement = super::workspace_requirement(&bare, RunMode::Mux);
         assert_eq!(requirement.mode, crate::project_root::WorkspaceMode::Mux);
         assert_eq!(requirement.source, crate::project_root::ModeSource::Setting);
+        assert_eq!(
+            requirement.refusal(Path::new("/fixture"), None, None),
+            "runyte needs a workspace in mux mode (the mode setting), and none was found in /fixture or any directory above it.\n  Open or create one:  runyte --mux DIRECTORY\n  Create one only:     runyte --init DIRECTORY"
+        );
 
         // Terminal window launches naming a target keep standalone semantics.
         let targeted = parse(&["--window", "notes.md"]);
