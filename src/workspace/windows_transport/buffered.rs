@@ -300,7 +300,7 @@ async fn run_connected<S: AsyncRead + AsyncWrite + Unpin>(
 }
 
 async fn read_responses<R: AsyncRead + Unpin>(reader: R, responses: ResponseSender) -> Result<()> {
-    let mut reader = MessageReader::new(reader);
+    let mut reader = MessageReader::host_responses(reader);
     let mut frames = FrameCoalescer::default();
     while let Some(response) = reader.read::<HostResponse>().await? {
         responses

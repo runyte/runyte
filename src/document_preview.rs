@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Bounded, engine-independent capture for the experimental native renderer.
-pub const MAX_BYTES: usize = 128 * 1024;
+mod limits;
+pub use limits::{MAX_BYTES, MAX_HELPER_MESSAGE_BYTES};
+pub const MAX_CAPTURES: usize = 8;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DocumentPreview {
     pub generation: u64,
@@ -108,7 +110,7 @@ pub fn capture(
 ) -> Result<(String, bool), &'static str> {
     if spans.is_empty() {
         if buffer.len_bytes() > MAX_BYTES {
-            return Err("preview prototype limit is 128 KiB; select a smaller section");
+            return Err("preview limit is 1 MiB; select a smaller section");
         }
         return Ok((buffer.to_string(), false));
     }
@@ -118,12 +120,12 @@ pub fn capture(
     let mut text = String::new();
     for &(from, to) in spans {
         if to.saturating_sub(from) > MAX_BYTES {
-            return Err("selected preview exceeds 128 KiB");
+            return Err("selected preview exceeds 1 MiB");
         }
         let part = buffer.slice(from, to);
         let separator = usize::from(!text.is_empty());
         if text.len() + part.len() + separator > MAX_BYTES {
-            return Err("selected preview exceeds 128 KiB");
+            return Err("selected preview exceeds 1 MiB");
         }
         if separator != 0 {
             text.push('\n');
