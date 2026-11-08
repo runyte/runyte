@@ -3,7 +3,7 @@
 [![CI](https://github.com/runyte/runyte/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/runyte/runyte/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/badge/coverage-%E2%89%A589%25-brightgreen)](context/reference/test-coverage.md)
 
-https://github.com/user-attachments/assets/5f039873-8232-4ad9-b089-0d54b2b05e85
+https://github.com/user-attachments/assets/51ffece5-40d1-4809-b18d-b6dea2f42615
 
 Runyte is a Helix-style modal text editor living in your terminal or its own native window.
 It supports multiple panes, and each pane shows a text file, a terminal, or a file manager.
