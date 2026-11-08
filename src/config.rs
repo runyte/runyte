@@ -17,6 +17,7 @@ mod catppuccin;
 mod core_themes;
 mod everforest;
 mod fragments;
+mod imported;
 mod nightfox;
 mod one_off;
 mod paths;
@@ -1128,6 +1129,7 @@ fn built_in_themes() -> HashMap<String, ThemeDefinition> {
         .chain(everforest::themes())
         .chain(one_off::themes())
         .chain(nightfox::themes())
+        .chain(imported::themes())
         .chain(zenbones::themes());
     for (name, mut theme) in registered {
         terminal_palette::apply_builtin(&name, &mut theme);
@@ -2675,19 +2677,44 @@ themes:
     fn theme_appearance_follows_the_background_rather_than_the_name() {
         let config = Config::default();
         let dark = [
+            "ayu-mirage",
             "base16",
+            "carbonfox",
+            "doom-one",
+            "dracula",
+            "duskfox",
             "frappe",
             "gruvbox",
+            "kanagawa-dragon",
+            "kanagawa-wave",
             "macchiato",
             "matrix",
             "mocha",
             "neon",
+            "night-owl",
+            "nightfox",
+            "nord",
             "nordfox",
             "nordfox-warm",
+            "rose-pine",
+            "rose-pine-moon",
+            "synthwave-84",
             "terafox",
             "terafox-soft",
+            "tomorrow-night",
+            "tomorrow-night-blue",
+            "tomorrow-night-bright",
+            "tomorrow-night-eighties",
         ];
-        let light = ["latte", "paper"];
+        let light = [
+            "dawnfox",
+            "dayfox",
+            "kanagawa-lotus",
+            "latte",
+            "paper",
+            "rose-pine-dawn",
+            "tomorrow",
+        ];
         for name in config.theme_names() {
             let expected = if dark.contains(&name) {
                 ThemeAppearance::Dark
@@ -2853,10 +2880,20 @@ themes:
         assert_eq!(
             config.theme_names(),
             [
+                "atom-one-dark",
                 "atom-one-light",
+                "ayu-dark",
+                "ayu-light",
+                "ayu-mirage",
                 "base16",
+                "carbonfox",
                 "dark",
+                "dawnfox",
+                "dayfox",
+                "doom-one",
+                "dracula",
                 "duckbones-dark",
+                "duskfox",
                 "ember-dark",
                 "ember-light",
                 "everforest-dark-hard",
@@ -2865,13 +2902,26 @@ themes:
                 "everforest-light-hard",
                 "everforest-light-medium",
                 "everforest-light-soft",
+                "flexoki-dark",
+                "flexoki-light",
                 "forestbones-dark",
                 "forestbones-light",
                 "frappe",
+                "github-dark",
+                "github-dark-dimmed",
+                "github-dark-high-contrast",
                 "github-light",
                 "graphite-dark",
                 "graphite-light",
                 "gruvbox",
+                "gruvbox-light",
+                "gruvbox-material-dark",
+                "gruvbox-material-light",
+                "iceberg-dark",
+                "iceberg-light",
+                "kanagawa-dragon",
+                "kanagawa-lotus",
+                "kanagawa-wave",
                 "kanagawabones-dark",
                 "latte",
                 "light",
@@ -2881,21 +2931,39 @@ themes:
                 "neobones-dark",
                 "neobones-light",
                 "neon",
+                "night-owl",
+                "nightfox",
+                "nord",
                 "nordbones-dark",
                 "nordbones-dark-soft",
                 "nordfox",
                 "nordfox-warm",
                 "ocean-dark",
                 "ocean-light",
+                "oxocarbon-dark",
+                "oxocarbon-light",
                 "paper",
+                "papercolor-dark",
+                "papercolor-light",
+                "rose-pine",
+                "rose-pine-dawn",
+                "rose-pine-moon",
                 "rosebones-dark",
                 "rosebones-light",
                 "seoulbones-dark",
                 "seoulbones-light",
+                "solarized-dark",
+                "solarized-light",
+                "synthwave-84",
                 "terafox",
                 "terafox-soft",
                 "tokyobones-dark",
                 "tokyobones-light",
+                "tomorrow",
+                "tomorrow-night",
+                "tomorrow-night-blue",
+                "tomorrow-night-bright",
+                "tomorrow-night-eighties",
                 "vimbones-light",
                 "zenbones-dark",
                 "zenbones-light",
@@ -3623,6 +3691,7 @@ themes:
             ("everforest", everforest::themes().collect()),
             ("one-off", one_off::themes().collect()),
             ("nightfox", nightfox::themes().collect()),
+            ("imported", imported::themes().collect()),
             ("zenbones", zenbones::themes().collect()),
         ];
         let mut registered = HashMap::new();
@@ -3722,8 +3791,19 @@ themes:
                 theme.diff_removed.unwrap(),
             ];
             // Graphite deliberately replaces semantic hues with gray levels.
+            // These two keep the shared marks but cannot be read on every
+            // shared row ground, so those rows are tinted per theme.
+            let own_rows = match name {
+                "atom-one-dark" => 3..4,
+                "solarized-dark" => 3..6,
+                _ => 0..0,
+            };
             if !matches!(name, "graphite-dark" | "graphite-light") {
-                assert_eq!(actual, expected, "wrong Git palette for {name}");
+                for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+                    if !own_rows.contains(&index) {
+                        assert_eq!(*actual, expected, "wrong Git palette for {name}");
+                    }
+                }
             }
 
             for (role, color, dominant) in [
@@ -3754,8 +3834,15 @@ themes:
                 ("changed row", theme.diff_changed.unwrap()),
                 ("removed row", theme.diff_removed.unwrap()),
             ] {
+                // `solarized-light`'s text is below 4.5:1 even on white, so
+                // no row ground can hold that floor for it.
+                let floor = if name == "solarized-light" {
+                    contrast(theme.foreground, theme.background) * 0.86
+                } else {
+                    4.5
+                };
                 assert!(
-                    contrast(theme.foreground, ground) >= 4.5,
+                    contrast(theme.foreground, ground) >= floor,
                     "{name} ordinary text is unreadable on its {role}"
                 );
                 let distance = perceptual_distance(theme.background, ground);
