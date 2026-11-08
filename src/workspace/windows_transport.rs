@@ -7,7 +7,9 @@ mod buffered;
 pub use buffered::BufferedLocalClient;
 mod client;
 mod server;
-pub use super::transport_shared::{ResponseReceiver, ResponseSender, response_channel};
+pub use super::transport_shared::{
+    ResponseReceiver, ResponseSender, TransportFailureCause, response_channel,
+};
 pub use crate::protocol::{
     CLIENT_VERSION, ClientKind, ClientRequest, ClientRole, FeatureGroup, HostResponse,
     MAX_FEATURE_GROUPS, TransportChange, decode_path, encode_path,

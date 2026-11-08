@@ -32,6 +32,26 @@ role and PID, the short workspace ID, the subsystem, the message and any
 2026-08-27T12:34:56.789+02:00 WARN  host[8123] ws=a1b2c3d4 lsp: language server stopped: exited with 1 language=rust
 ```
 
+### When a window or terminal client disappears
+
+A persistent session outlives whatever is attached to it. If the attached
+window or terminal goes away without detaching, the host keeps running and
+leaves one warning in that session's `:notifications`, stamped with the time.
+You see it when you next attach.
+
+- If the host knows why, the warning says so: a write to the client timed out,
+  the client stopped reading, a message was invalid or truncated, or the
+  connection reported an I/O error.
+- Otherwise the warning says the cause is unknown. A connection that simply
+  closes cannot be told apart from a crash, a killed process or a closed
+  terminal, so Runyte does not guess.
+- `:detach`, quitting, closing a window normally, switching to another session
+  and control commands leave no warning.
+- A warning stays with the session that lost its client. Other running sessions
+  are not affected.
+- The warning names only the cause. It never includes document text, terminal
+  output or anything you typed. It lasts as long as the host does.
+
 ### Levels and startup controls
 
 | Flags | Level |

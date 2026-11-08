@@ -13,6 +13,8 @@ mod catalog;
 #[cfg_attr(windows, allow(dead_code))] // Native catalog callers follow host acceptance.
 mod catalog_values;
 pub mod context;
+#[cfg(any(unix, windows))]
+pub(crate) mod departure;
 mod host;
 mod identity;
 #[cfg(unix)]

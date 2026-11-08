@@ -1818,7 +1818,9 @@ mod tests {
                             let _ = responses.send(HostResponse::Error { message }).await;
                         }
                     }
-                    ServerEvent::Request { .. } | ServerEvent::TransportFailure { .. } => {}
+                    ServerEvent::Request { .. }
+                    | ServerEvent::TransportFailure { .. }
+                    | ServerEvent::HandoffDelivered { .. } => {}
                 }
             }
         });
@@ -1994,7 +1996,9 @@ mod tests {
                             let _ = responses.send(HostResponse::Error { message }).await;
                         }
                     }
-                    ServerEvent::Request { .. } | ServerEvent::TransportFailure { .. } => {}
+                    ServerEvent::Request { .. }
+                    | ServerEvent::TransportFailure { .. }
+                    | ServerEvent::HandoffDelivered { .. } => {}
                 }
             }
             // A real host answers first and unpublishes as it winds down. The

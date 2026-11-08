@@ -2948,6 +2948,7 @@ async fn run_host_server(
     let mut idle_tick = tokio::time::interval(Duration::from_secs(1));
     idle_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut active: Option<AttachedClient> = None;
+    let mut departures = crate::workspace::departure::AttachmentDepartures::default();
     let mut peer_processes = std::collections::HashMap::new();
     let mut control_attachments = std::collections::HashMap::new();
     let mut parent_switches: std::collections::HashMap<String, (u64, Instant)> =
@@ -3050,6 +3051,7 @@ async fn run_host_server(
                                 host_version: env!("CARGO_PKG_VERSION").to_owned(),
                             }).is_ok() {
                                 active = Some(client);
+                                departures.attached(id);
                                 last_detached = Instant::now();
                                 host.app_mut().note_frontend_attached();
                                 if workspace_open { host.app_mut().note_workspace_opened(); }
@@ -3091,6 +3093,12 @@ async fn run_host_server(
                         }
                     }
                     ServerEvent::Request { id, request } => {
+                        // Before the attachment check: a client that detaches
+                        // and exits can have its closure noticed by a frame
+                        // publication while this request is still queued.
+                        if matches!(request, ClientRequest::Detach) {
+                            departures.expect_leaving(id);
+                        }
                         if !matches!(request, ClientRequest::OpenLaunchTargets { .. })
                             && let Some(client) = active.as_mut().filter(|client| client.id == id) {
                             client.launch_pending = false;
@@ -3117,6 +3125,8 @@ async fn run_host_server(
                                         parent_switches.remove(&receipt);
                                         send_control_response(&mut controls, id, HostResponse::Error { message:
                                             "outer TUI could not receive the attachment request; reconnect it before retrying".to_owned() });
+                                    } else if let Some(client) = active.as_ref() {
+                                        departures.expect_switch(client.id);
                                     }
                                     active = None;
                                     last_detached = Instant::now();
@@ -3214,6 +3224,7 @@ async fn run_host_server(
                         } else if let ClientRequest::AttachWait { token } = request {
                             let response = match host.wait_status(token.into()) {
                                 Some(status) => {
+                                    departures.note_wait(id, token);
                                     if let Some(client) = active.as_mut()
                                         && !client.wait_tokens.contains(&token)
                                     {
@@ -3448,7 +3459,8 @@ async fn run_host_server(
                             send_control_response(&mut controls, id, response);
                         }
                     }
-                    ServerEvent::TransportFailure { id, message } => {
+                    ServerEvent::TransportFailure { id, message, cause } => {
+                        departures.transport_failed(id, cause);
                         // A framing error ends the connection, so no response
                         // is sent and no further request will arrive. This is
                         // the only place a malformed or truncated frame is
@@ -3461,6 +3473,7 @@ async fn run_host_server(
                             "interactive" => active.as_ref().is_some_and(|client| client.id == id)
                         );
                     }
+                    ServerEvent::HandoffDelivered { id } => departures.handoff_delivered(id),
                     ServerEvent::Disconnected { id } => {
                         peer_processes.remove(&id);
                         control_attachments.remove(&id);
@@ -3488,6 +3501,13 @@ async fn run_host_server(
                             // interactive one whose closure was already
                             // recorded where the failing write observed it.
                             log_debug!("client", "connection closed"; "connection" => id);
+                        }
+                        let notice = departures.ended(id, |token| {
+                            wait_is_finished(host.wait_status(token.into()))
+                        });
+                        if let Some(notice) = notice {
+                            host.app_mut().push_notification(notice);
+                            changed = true;
                         }
                     }
                 }
@@ -3739,9 +3759,11 @@ async fn run_host_server(
             // A background operation may finish after its initiating TUI has
             // disconnected. Consume that stale request here so the next,
             // unrelated attachment is not switched out from under itself.
-            if active.is_some() {
+            if let Some(id) = active.as_ref().map(|client| client.id) {
                 key_hints.clear();
-                switch_attached_workspace(&mut host, &mut active, root);
+                if switch_attached_workspace(&mut host, &mut active, root) {
+                    departures.expect_switch(id);
+                }
                 last_detached = Instant::now();
                 changed = false;
             }
@@ -3751,6 +3773,9 @@ async fn run_host_server(
             key_hints.clear();
             match request {
                 PersistentExitRequest::Detach => {
+                    if let Some(client) = active.as_ref() {
+                        departures.expect_leaving(client.id);
+                    }
                     finish_attached_detach(&mut host, &mut active);
                     last_detached = Instant::now();
                     changed = false;
@@ -4161,9 +4186,8 @@ fn send_active_response(active: &mut Option<AttachedClient>, response: HostRespo
             // control message in silence.
             tokio::sync::mpsc::error::TrySendError::Full(HostResponse::Frame { .. }) => {}
             tokio::sync::mpsc::error::TrySendError::Full(_) => {
-                // The client is still connected, so no `Disconnected` event
-                // will follow: this is the only record a stalled reader
-                // produces.
+                // Dropping the attachment closes this connection's response
+                // channels, so its task ends and reports why it did.
                 log_warn!(
                     "client",
                     "interactive client stopped reading; ending the attachment";
@@ -4281,12 +4305,26 @@ fn finish_attached_quit(
     true
 }
 
+/// Whether the wait an attachment was serving has reached its end, which is
+/// when its client closes on its own without detaching.
+pub(crate) fn wait_is_finished(status: Option<crate::workspace::WaitStatus>) -> bool {
+    matches!(
+        status,
+        Some(
+            crate::workspace::WaitStatus::Completed
+                | crate::workspace::WaitStatus::Cancelled { .. }
+        )
+    )
+}
+
+/// Hands the attached client to another workspace, returning whether the
+/// instruction reached its connection. Either way the attachment ends here.
 #[cfg(unix)]
 fn switch_attached_workspace(
     host: &mut WorkspaceHost,
     active: &mut Option<AttachedClient>,
     request: crate::app::WorkspaceSwitchRequest,
-) {
+) -> bool {
     let tokens = active
         .as_ref()
         .map(|client| client.wait_tokens.clone())
@@ -4332,7 +4370,7 @@ fn switch_attached_workspace(
                 }),
         },
     );
-    *active = None;
+    active.take().is_some()
 }
 
 /// Reads the terminal's current shape.

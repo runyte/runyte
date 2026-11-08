@@ -1555,6 +1555,409 @@ async fn detach_reattach_preserves_notification_history_and_unread_state() {
     fs::remove_dir_all(root).unwrap();
 }
 
+const LOST_CLIENT_TITLE: &str = "Client connection lost";
+
+async fn serve_plain_project(
+    sandbox: &TestSandbox,
+) -> Option<(PathBuf, ChildGuard, LocalEndpoint)> {
+    serve_note(sandbox, None).await
+}
+
+async fn serve_note(
+    sandbox: &TestSandbox,
+    note: Option<&str>,
+) -> Option<(PathBuf, ChildGuard, LocalEndpoint)> {
+    let root = plain_project();
+    if let Some(note) = note {
+        fs::write(root.join("note.txt"), note).unwrap();
+    }
+    fs::create_dir(root.join(".runyte")).unwrap();
+    let child = sandbox
+        .runyte(env!("CARGO_BIN_EXE_runyte"))
+        .arg("--serve")
+        .arg("note.txt")
+        .current_dir(&root)
+        .env("XDG_RUNTIME_DIR", sandbox.runtime_dir())
+        .env("XDG_CACHE_HOME", sandbox.cache_dir())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut child = ChildGuard(Some(child));
+    let endpoint = LocalEndpoint::discover_in_tree_with_runtime(
+        &root.join(".runyte"),
+        &root,
+        Some(sandbox.runtime_dir()),
+    )
+    .unwrap();
+    if !wait_for_endpoint(&mut child, &endpoint).await {
+        fs::remove_dir_all(root).unwrap();
+        return None;
+    }
+    Some((root, child, endpoint))
+}
+
+/// Attaches, opens `:notifications`, returns its text, and detaches.
+async fn read_notifications(endpoint: &LocalEndpoint) -> String {
+    let (mut client, _welcome) = connect_interactive_when_available(endpoint, geometry()).await;
+    let frame = next_idle_frame(&mut client).await;
+    assert!(matches!(
+        invoke_when_current(&mut client, "notifications", frame).await,
+        HostResponse::CommandResult { .. }
+    ));
+    client.send(&ClientRequest::ListBuffers).await.unwrap();
+    let buffer = match semantic_response_after(&mut client, None, "listing buffers").await {
+        HostResponse::Buffers { buffers } => buffers
+            .into_iter()
+            .find(|buffer| !buffer.closed && buffer.name == "[notifications]")
+            .expect("the notifications command did not open its buffer"),
+        response => panic!("expected buffers, got {response:?}"),
+    };
+    client
+        .send(&ClientRequest::ReadBuffer { buffer: buffer.id })
+        .await
+        .unwrap();
+    let text = match semantic_response_after(&mut client, None, "reading notifications").await {
+        HostResponse::Buffer { buffer } => buffer.text,
+        response => panic!("expected notification contents, got {response:?}"),
+    };
+    assert_eq!(detach(&mut client, "detaching after reading").await, None);
+    text
+}
+
+/// The notice is retained at the connection's final event, which a new
+/// attachment can overtake.
+async fn await_lost_client_notice(endpoint: &LocalEndpoint) -> String {
+    let deadline = Instant::now() + EDITOR_STATE_TIMEOUT;
+    loop {
+        let text = read_notifications(endpoint).await;
+        if text.contains(LOST_CLIENT_TITLE) {
+            return text;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no lost-client notice was retained:\n{text}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// Closes an interactive attachment without detaching, as a dead client does.
+async fn lose_attachment(endpoint: &LocalEndpoint) {
+    let (mut client, _welcome) = connect_interactive_when_available(endpoint, geometry()).await;
+    next_idle_frame(&mut client).await;
+    drop(client);
+}
+
+/// Identical consecutive notices collapse into one entry that says how often
+/// it repeated, so an extra notice shows up as a repeat rather than a second
+/// title. A quiet departure followed by one real loss must read as one event.
+fn assert_exactly_one_loss(text: &str) {
+    assert_eq!(text.matches(LOST_CLIENT_TITLE).count(), 1, "{text}");
+    assert!(!text.contains("repeated"), "{text}");
+    assert!(text.contains("WARNING"), "{text}");
+}
+
+#[tokio::test]
+async fn only_an_unexplained_loss_is_retained_for_the_next_attachment() {
+    let sandbox = TestSandbox::new();
+    let Some((root, _child, endpoint)) = serve_plain_project(&sandbox).await else {
+        return;
+    };
+
+    let (mut intentional, _welcome) =
+        connect_interactive_when_available(&endpoint, geometry()).await;
+    next_idle_frame(&mut intentional).await;
+    assert_eq!(
+        detach(&mut intentional, "an intentional detach").await,
+        None
+    );
+
+    let mut control = LocalClient::connect(&endpoint, geometry(), false)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut control).await,
+        HostResponse::Welcome { .. }
+    ));
+    drop(control);
+
+    let quiet = read_notifications(&endpoint).await;
+    assert!(!quiet.contains(LOST_CLIENT_TITLE), "{quiet}");
+
+    lose_attachment(&endpoint).await;
+    let retained = await_lost_client_notice(&endpoint).await;
+    assert_exactly_one_loss(&retained);
+    assert!(retained.contains("cause is unknown"), "{retained}");
+
+    let reread = read_notifications(&endpoint).await;
+    assert_exactly_one_loss(&reread);
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The framed handshake a bundled interactive client sends, for fixtures that
+/// have to misbehave at the socket in a way `LocalClient` will not.
+fn interactive_hello(endpoint: &LocalEndpoint, geometry: FrameGeometry) -> Vec<u8> {
+    let hello = ClientRequest::Hello {
+        workspace_open: false,
+        protocol: runyte::protocol::VERSION,
+        directory_handoff: false,
+        native_media: false,
+        features: vec![
+            runyte::protocol::FeatureGroup::Snapshots,
+            runyte::protocol::FeatureGroup::Input,
+            runyte::protocol::FeatureGroup::Buffers,
+            runyte::protocol::FeatureGroup::Wait,
+        ],
+        project_root_bytes: runyte::protocol::encode_path(endpoint.project_root()),
+        client_kind: runyte::protocol::ClientKind::Tui,
+        client_version: env!("CARGO_PKG_VERSION").to_owned(),
+        role: runyte::protocol::ClientRole::Interactive,
+        geometry: geometry.into(),
+    };
+    let mut frame = serde_json::to_vec(&hello).unwrap();
+    frame.push(b'\n');
+    frame
+}
+
+#[tokio::test]
+async fn a_client_that_stops_reading_times_out_into_one_retained_notice() {
+    use tokio::io::AsyncWriteExt;
+
+    // Paging through a screenful of text makes each update large, so a client
+    // that keeps typing but never reads fills its socket and stalls the host.
+    let line = "0123456789".repeat(32);
+    let note = format!("{line}\n").repeat(2_000);
+    let sandbox = TestSandbox::new();
+    let Some((root, _child, endpoint)) = serve_note(&sandbox, Some(&note)).await else {
+        return;
+    };
+    let (width, height) = (320, 100);
+    let huge = FrameGeometry {
+        screen: Rect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        },
+        editor: Rect {
+            x: 0,
+            y: 0,
+            width,
+            height: height - 2,
+        },
+        status: Rect {
+            x: 0,
+            y: height - 2,
+            width,
+            height: 1,
+        },
+        message: Rect {
+            x: 0,
+            y: height - 1,
+            width,
+            height: 1,
+        },
+    };
+
+    let mut stalled = tokio::net::UnixStream::connect(endpoint.socket())
+        .await
+        .unwrap();
+    stalled
+        .write_all(&interactive_hello(&endpoint, huge))
+        .await
+        .unwrap();
+    for page in 0..400 {
+        let key = if page % 8 < 4 { 'f' } else { 'b' };
+        let input = ClientRequest::Input {
+            event: InputEvent::Key(KeyStroke::new(KeyCode::Char(key), Modifiers::CONTROL)).into(),
+            repeated: false,
+            presented_frame: None,
+        };
+        let mut message = serde_json::to_vec(&input).unwrap();
+        message.push(b'\n');
+        // The host reads and writes one connection in turn, so once its write
+        // stalls this typing backs up until the stall budget closes the socket.
+        if stalled.write_all(&message).await.is_err() {
+            break;
+        }
+    }
+
+    // Attaching is refused until the stall budget ends the silent attachment.
+    let retained = await_lost_client_notice(&endpoint).await;
+    assert_exactly_one_loss(&retained);
+    assert!(retained.contains("timed out"), "{retained}");
+    assert!(!retained.contains("cause is unknown"), "{retained}");
+    drop(stalled);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn a_known_transport_failure_keeps_its_reason_and_no_payload() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let sandbox = TestSandbox::new();
+    let Some((root, _child, endpoint)) = serve_plain_project(&sandbox).await else {
+        return;
+    };
+
+    let frame = interactive_hello(&endpoint, geometry());
+    let mut stream = tokio::net::UnixStream::connect(endpoint.socket())
+        .await
+        .unwrap();
+    stream.write_all(&frame).await.unwrap();
+    let (reader, mut writer) = stream.split();
+    let mut welcome = String::new();
+    BufReader::new(reader)
+        .read_line(&mut welcome)
+        .await
+        .unwrap();
+    assert!(welcome.contains(r#""type":"welcome""#), "{welcome}");
+    // A frame that ends inside itself, carrying text a notice must not echo.
+    writer
+        .write_all(br#"{"Input":{"secret-typed-text"#)
+        .await
+        .unwrap();
+    writer.shutdown().await.unwrap();
+    drop(stream);
+
+    let retained = await_lost_client_notice(&endpoint).await;
+    assert_exactly_one_loss(&retained);
+    assert!(
+        retained.contains("invalid or truncated message"),
+        "{retained}"
+    );
+    assert!(!retained.contains("cause is unknown"), "{retained}");
+    assert!(!retained.contains("secret-typed-text"), "{retained}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn a_delivered_workspace_switch_is_not_a_lost_client() {
+    let sandbox = TestSandbox::new();
+    let Some((root, _child, endpoint)) = serve_plain_project(&sandbox).await else {
+        return;
+    };
+    let destination = plain_project();
+
+    let (mut client, _welcome) = connect_interactive_when_available(&endpoint, geometry()).await;
+    let frame = next_idle_frame(&mut client).await;
+    let mut reply = invoke_with_argument_when_current(
+        &mut client,
+        "session-attach",
+        Some(&destination.to_string_lossy()),
+        frame,
+    )
+    .await;
+    while !matches!(reply, HostResponse::SwitchWorkspace { .. }) {
+        assert!(
+            matches!(
+                reply,
+                HostResponse::CommandResult { .. }
+                    | HostResponse::Frame { .. }
+                    | HostResponse::TerminalDamage { .. }
+                    | HostResponse::EditorDamage { .. }
+            ),
+            "expected a workspace switch, got {reply:?}"
+        );
+        reply = response(&mut client).await;
+    }
+    // A real client closes on receipt, without detaching.
+    drop(client);
+
+    lose_attachment(&endpoint).await;
+    let retained = await_lost_client_notice(&endpoint).await;
+    assert_exactly_one_loss(&retained);
+    assert!(!retained.contains("session switch"), "{retained}");
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(destination).unwrap();
+}
+
+#[tokio::test]
+async fn a_client_leaving_after_its_wait_ended_is_not_a_lost_client() {
+    let sandbox = TestSandbox::new();
+    let Some((root, _child, endpoint)) = serve_plain_project(&sandbox).await else {
+        return;
+    };
+
+    let mut control = LocalClient::connect(&endpoint, geometry(), false)
+        .await
+        .unwrap();
+    assert!(matches!(
+        response(&mut control).await,
+        HostResponse::Welcome { .. }
+    ));
+    control
+        .send(&ClientRequest::CreateWait {
+            paths: vec![runyte::protocol::encode_path(&root.join("note.txt"))],
+        })
+        .await
+        .unwrap();
+    let HostResponse::WaitCreated { token, .. } = response(&mut control).await else {
+        panic!("expected the wait to be created");
+    };
+
+    let (mut waiting, _welcome) = connect_interactive_when_available(&endpoint, geometry()).await;
+    waiting
+        .send(&ClientRequest::AttachWait { token })
+        .await
+        .unwrap();
+    let attached = semantic_response_after(&mut waiting, None, "attaching the wait").await;
+    assert!(
+        matches!(attached, HostResponse::WaitState { .. }),
+        "{attached:?}"
+    );
+
+    control
+        .send(&ClientRequest::CancelWait { token })
+        .await
+        .unwrap();
+    let cancelled = semantic_response_after(&mut control, None, "cancelling the wait").await;
+    assert!(
+        matches!(cancelled, HostResponse::WaitState { .. }),
+        "{cancelled:?}"
+    );
+    // A wait-owned client closes on its wait's outcome, without detaching.
+    drop(waiting);
+    drop(control);
+
+    lose_attachment(&endpoint).await;
+    assert_exactly_one_loss(&await_lost_client_notice(&endpoint).await);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn a_lost_client_is_retained_only_by_the_host_that_lost_it() {
+    let sandbox = TestSandbox::new();
+    let Some((root_a, child_a, endpoint_a)) = serve_plain_project(&sandbox).await else {
+        return;
+    };
+    let Some((root_b, child_b, endpoint_b)) = serve_plain_project(&sandbox).await else {
+        fs::remove_dir_all(root_a).unwrap();
+        return;
+    };
+
+    let pid_a = child_a.0.as_ref().unwrap().id();
+    let pid_b = child_b.0.as_ref().unwrap().id();
+    lose_attachment(&endpoint_b).await;
+
+    assert_exactly_one_loss(&await_lost_client_notice(&endpoint_b).await);
+    let unaffected = read_notifications(&endpoint_a).await;
+    assert!(!unaffected.contains(LOST_CLIENT_TITLE), "{unaffected}");
+    assert!(
+        process_is_running(pid_a),
+        "the other host must keep running"
+    );
+    assert!(
+        process_is_running(pid_b),
+        "the affected host must keep running"
+    );
+
+    fs::remove_dir_all(root_a).unwrap();
+    fs::remove_dir_all(root_b).unwrap();
+}
+
 #[tokio::test]
 async fn killed_host_leaves_files_intact_and_its_endpoint_is_recoverable() {
     let sandbox = TestSandbox::new();

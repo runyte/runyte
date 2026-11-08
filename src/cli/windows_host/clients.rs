@@ -10,8 +10,11 @@ use crate::{
     protocol::{ClientRequest, FeatureGroup, HostResponse, WaitToken, decode_path, encode_path},
     workspace::{
         HostCommand, HostInputOutcome, PublicationKey, WorkspaceHost, WorkspaceSelection,
-        windows_endpoint::EndpointMetadata, windows_pipe::MAX_CONNECTIONS,
-        windows_process_identity::PinnedProcess, windows_transport::ResponseSender,
+        departure::AttachmentDepartures,
+        windows_endpoint::EndpointMetadata,
+        windows_pipe::MAX_CONNECTIONS,
+        windows_process_identity::PinnedProcess,
+        windows_transport::{ResponseSender, TransportFailureCause},
     },
 };
 use anyhow::Context;
@@ -106,6 +109,7 @@ pub(super) struct Clients {
     switch_action: Option<NativeSwitchAction>,
     parent_attach: Option<ParentAttachIntent>,
     released_parent_request: Option<(u64, Incoming)>,
+    departures: AttachmentDepartures,
 }
 
 impl Default for Clients {
@@ -122,6 +126,7 @@ impl Default for Clients {
             switch_action: None,
             parent_attach: None,
             released_parent_request: None,
+            departures: AttachmentDepartures::default(),
         }
     }
 }
@@ -192,6 +197,7 @@ impl Clients {
                 },
             );
             if interactive {
+                self.departures.attached(id);
                 self.active = Some(id);
                 self.active_ready = None;
                 // This capability belongs to the accepted physical client,
@@ -348,6 +354,7 @@ impl Clients {
         }
         let sent = self.send(host, owner, HostResponse::NativeSwitchCommitted { receipt });
         if sent {
+            self.departures.expect_switch(owner);
             self.disconnected(host, owner);
         }
         sent
@@ -440,6 +447,7 @@ impl Clients {
             let _ = self.send(host, owner, response);
         }
         if self.active == Some(owner) {
+            self.departures.expect_switch(owner);
             self.disconnected(host, owner);
         }
         self.publish_requested = true;
@@ -553,6 +561,7 @@ impl Clients {
         self.hints.clear();
         match request {
             crate::app::PersistentExitRequest::Detach => {
+                self.departures.expect_leaving(id);
                 self.finish_active_waits(host, id);
                 self.send(
                     host,
@@ -673,11 +682,41 @@ impl Clients {
         }
     }
 
+    /// Records why a connection failed. Its final event follows separately,
+    /// and is where any loss is retained.
+    pub(super) fn connection_failed(
+        &mut self,
+        host: &mut WorkspaceHost,
+        id: u64,
+        cause: TransportFailureCause,
+    ) {
+        self.departures.transport_failed(id, cause);
+        self.disconnected(host, id);
+    }
+
+    pub(super) fn handoff_delivered(&mut self, id: u64) {
+        self.departures.handoff_delivered(id);
+    }
+
+    /// Handles a connection's final event. Earlier paths may already have
+    /// ended the attachment, so the notice is decided here and only here.
+    pub(super) fn connection_closed(&mut self, host: &mut WorkspaceHost, id: u64) {
+        self.disconnected(host, id);
+        let notice = self.departures.ended(id, |token| {
+            crate::cli::wait_is_finished(host.wait_status(token.into()))
+        });
+        if let Some(notice) = notice {
+            host.app_mut().push_notification(notice);
+            self.publish_requested |= self.active.is_some();
+        }
+    }
+
     pub(super) fn disconnected(&mut self, host: &mut WorkspaceHost, id: u64) {
         if self
             .pending_switch
             .is_some_and(|pending| pending.owner == id)
         {
+            self.departures.switch_interrupted(id);
             self.pending_switch = None;
             self.switch_action = None;
         }
@@ -744,6 +783,11 @@ impl Clients {
         incoming: Incoming,
         rename: impl FnOnce(&str) -> io::Result<RenameFuture>,
     ) -> bool {
+        // Before the peer lookup: a client that detaches and exits can have
+        // its closure noticed by a publication while this is still queued.
+        if matches!(incoming, Incoming::Request(ClientRequest::Detach)) {
+            self.departures.expect_leaving(id);
+        }
         let Some(peer) = self.peers.get_mut(&id) else {
             return false;
         };
@@ -946,6 +990,7 @@ impl Clients {
                 false
             }
             ClientRequest::AttachWait { token } if interactive => {
+                self.departures.note_wait(id, token);
                 let response = match host.wait_status(token.into()) {
                     Some(status) => {
                         if matches!(status, crate::workspace::WaitStatus::Pending { .. }) {
@@ -1290,6 +1335,7 @@ impl Clients {
         self.switch_action = None;
         self.parent_attach = None;
         self.released_parent_request = None;
+        self.departures = AttachmentDepartures::default();
     }
 
     pub(super) fn parent_attach_valid(
