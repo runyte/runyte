@@ -3062,6 +3062,7 @@ fn goto_word_keeps_a_fitting_one_key_target_at_the_right_edge() {
 #[test]
 fn goto_word_drops_a_two_key_target_that_crosses_the_right_edge() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.soft_wrap = false;
     let line = format!("{}aa", "aa ".repeat(26));
     seed(&mut app, &line);
     app.active_mut().wrap_width = 79;
@@ -3076,6 +3077,7 @@ fn goto_word_drops_a_two_key_target_that_crosses_the_right_edge() {
 #[test]
 fn goto_word_right_edge_is_measured_in_terminal_cells() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.soft_wrap = false;
     seed(&mut app, "界界 aa bb");
     app.active_mut().wrap_width = 7;
 
@@ -3090,6 +3092,7 @@ fn goto_word_right_edge_is_measured_in_terminal_cells() {
 #[test]
 fn goto_word_right_edge_accounts_for_tabs() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.soft_wrap = false;
     seed(&mut app, "\t\t aa bb");
     app.active_mut().wrap_width = 11;
 
@@ -3104,6 +3107,7 @@ fn goto_word_right_edge_accounts_for_tabs() {
 #[test]
 fn goto_word_excludes_words_past_a_horizontally_scrolled_view() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.soft_wrap = false;
     seed(&mut app, "zz zz aa bb cc");
     app.active_mut().scroll_col = 6;
     app.active_mut().wrap_width = 5;

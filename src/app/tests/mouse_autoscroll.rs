@@ -180,6 +180,7 @@ fn mouse_autoscroll_skips_folds_and_keeps_other_panes_still() {
     )
     .unwrap();
     let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    app.config.editor.soft_wrap = false;
     app.fold_all_syntax();
     app.panes.insert(1, Pane::new(0));
     app.layout = Layout::Split {

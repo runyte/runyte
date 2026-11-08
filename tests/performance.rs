@@ -226,7 +226,7 @@ fn wrapping_prose() -> PathBuf {
 
 fn editor_at(path: &Path, soft_wrap: bool) -> HeadlessEditor {
     let mut editor = HeadlessEditor::new_in(fixture_root()).unwrap();
-    if soft_wrap {
+    if !soft_wrap {
         editor
             .execute(
                 CommandInvocation::editor(

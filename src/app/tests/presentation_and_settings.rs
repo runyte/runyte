@@ -279,6 +279,7 @@ fn pointer_click_drag_wheel_and_resize_use_the_prepared_projection() {
     let mut config = Config::default();
     config.editor.line_numbers = false;
     let mut app = App::new(config, None).unwrap();
+    app.config.editor.soft_wrap = false;
     seed(
         &mut app,
         "a界b\none\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\nthirteen\nfourteen\nfifteen",

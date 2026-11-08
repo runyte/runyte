@@ -1435,7 +1435,13 @@ fn fixture_parent() {
     let project = root.join("project");
     fs::create_dir(&project).unwrap();
     fs::create_dir_all(root.join("config")).unwrap();
-    fs::write(root.join("config/config.yaml"), "lsp:\n  enable: false\n").unwrap();
+    // This fixture checks horizontal clipping across a resize, so wrapping
+    // must stay off even when it is enabled by default for ordinary editing.
+    fs::write(
+        root.join("config/config.yaml"),
+        "editor:\n  soft_wrap: false\nlsp:\n  enable: false\n",
+    )
+    .unwrap();
     let file = project.join("note.txt");
     // The marker begins beyond the 80-column viewport but fits after the
     // resize to 100 columns. Seeing it requires a newly rendered host frame;

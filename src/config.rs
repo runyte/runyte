@@ -1245,7 +1245,7 @@ impl Default for EditorConfig {
             directory_tree_width: 33,
             explorer_sort: ExplorerSort::Name,
             explorer_details: false,
-            soft_wrap: false,
+            soft_wrap: true,
             always_wrap_rendered_markdown: true,
             render_whitespace: false,
             zen_width: 100,
@@ -2057,6 +2057,23 @@ themes:
         assert!(matches!(explicit_null.keys, Some(serde_yaml::Value::Null)));
         let absent: Config = serde_yaml::from_str("editor: {}\n").unwrap();
         assert!(absent.keys.is_none());
+    }
+
+    #[test]
+    fn soft_wrap_defaults_on_and_an_explicit_opt_out_is_preserved() {
+        assert!(Config::default().editor.soft_wrap);
+        let root = TempDir::new();
+        let (first_launch, _) = Config::load(Some(&root.path("missing.yaml"))).unwrap();
+        assert!(first_launch.editor.soft_wrap);
+        for yaml in ["{}", "editor: {}", "editor: {tab_width: 2}"] {
+            let config: Config = serde_yaml::from_str(yaml).unwrap();
+            assert!(config.editor.soft_wrap, "{yaml}");
+        }
+        let config: Config = serde_yaml::from_str("editor: {soft_wrap: false}").unwrap();
+        assert!(!config.editor.soft_wrap);
+        let written = serde_yaml::to_string(&config).unwrap();
+        let restored: Config = serde_yaml::from_str(&written).unwrap();
+        assert!(!restored.editor.soft_wrap);
     }
 
     #[test]

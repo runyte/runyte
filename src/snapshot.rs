@@ -3914,7 +3914,7 @@ mod tests {
 
         let _ = prepared_snapshot(&mut app, 100, 40);
         assert_eq!(app.visible_pane_rebuilds.get(), 3);
-        app.config.editor.soft_wrap = true;
+        app.config.editor.soft_wrap = false;
         let _ = prepared_snapshot(&mut app, 100, 40);
         assert_eq!(app.visible_pane_rebuilds.get(), 4);
         app.theme.background = crate::config::Color::White;
@@ -4118,6 +4118,7 @@ mod tests {
     #[test]
     fn visible_queries_skip_folded_lines_and_clip_a_long_line() {
         let mut app = App::new(Config::default(), None).unwrap();
+        app.config.editor.soft_wrap = false;
         let source = format!(
             "fn outer() {{\n{}\n}}\nfn after() {{}}\n",
             "    let hidden = 1;\n".repeat(500)
@@ -4141,6 +4142,7 @@ mod tests {
         assert_ne!(app.visible_highlights.borrow()[&0].ranges, folded);
 
         let mut app = App::new(Config::default(), None).unwrap();
+        app.config.editor.soft_wrap = false;
         let source = format!("-- {}\nlocal answer = 42\n", "x".repeat(100_000));
         app.buffers[0].apply(&Transaction::insert(0, source));
         let language = app.registry.language_for_name("lua").unwrap();
@@ -4315,6 +4317,7 @@ mod tests {
         config.editor.line_numbers = false;
         config.editor.tab_width = usize::MAX;
         let mut app = App::new(config, None).unwrap();
+        app.config.editor.soft_wrap = false;
         app.buffers[0].apply(&Transaction::insert(0, "\t界界界 trailing text"));
 
         let snapshot = prepared_snapshot(&mut app, 8, 6);

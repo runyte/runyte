@@ -346,7 +346,7 @@ definitions, which are file-only.
 | `editor.show_hidden_files` | `false` | boolean | Show dotfiles in the explorer, finder, and workspace search. `.` toggles it in an explorer. |
 | `editor.explorer_sort` | `name` | `name`, `modified`, `size`, each also `_descending` | Explorer order. Directories always come first. |
 | `editor.explorer_details` | `false` | boolean | Show `ls -l` style mode, owner, size, and time columns. `?` toggles it in an explorer. |
-| `editor.soft_wrap` | `false` | boolean | Wrap long lines visually without changing the text. |
+| `editor.soft_wrap` | `true` | boolean | Wrap long lines visually without changing the text. |
 | `editor.always_wrap_rendered_markdown` | `true` | boolean | Always wrap rendered Markdown pages, including rendered scratchpads. When false, follow `editor.soft_wrap`. Does not affect Markdown source. |
 | `editor.render_whitespace` | `false` | boolean | Show `·` for spaces, `→` for tabs, and `¬` for line endings. |
 | `editor.zen_width` | `100` | 1–1000 | Maximum text width while `:zen` is active. |

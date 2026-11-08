@@ -824,6 +824,7 @@ fn the_ends_of_the_jumplist_report_rather_than_move() {
 #[test]
 fn local_motion_records_nothing_but_a_file_boundary_does() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.soft_wrap = false;
     seed(&mut app, "one\ntwo\nthree\nfour\n");
 
     for _ in 0..3 {
