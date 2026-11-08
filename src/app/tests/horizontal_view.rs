@@ -25,6 +25,7 @@ fn newline_and_wrap_prefer_left_edge_but_keep_caret_visible() {
         "\t".repeat(12),
     ] {
         let mut config = Config::default();
+        config.editor.soft_wrap = false;
         config.editor.smart_newline = false;
         let mut app = App::new(config, None).unwrap();
         seed(&mut app, &format!("{indentation}{}", "x".repeat(60)));
@@ -58,6 +59,7 @@ fn newline_and_wrap_prefer_left_edge_but_keep_caret_visible() {
         "e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}e\u{301}",
     ] {
         let mut config = Config::default();
+        config.editor.soft_wrap = false;
         config.editor.hard_wrap_width = 30;
         let mut app = App::new(config, None).unwrap();
         let source = format!("{} {last_word}", "alpha beta ".repeat(8));
@@ -102,7 +104,9 @@ fn newline_and_wrap_prefer_left_edge_but_keep_caret_visible() {
 
 #[test]
 fn ordinary_horizontal_motion_retains_scroll_until_caret_needs_space() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut config = Config::default();
+    config.editor.soft_wrap = false;
+    let mut app = App::new(config, None).unwrap();
     seed(&mut app, &"x".repeat(80));
     set_cursor(&mut app, 0, 12);
     app.active_mut().scroll_col = 8;
@@ -149,7 +153,9 @@ fn prepare(app: &mut App) {
 #[test]
 fn rejected_and_noop_wraps_preserve_the_horizontal_view() {
     for readonly in [false, true] {
-        let mut app = App::new(Config::default(), None).unwrap();
+        let mut config = Config::default();
+        config.editor.soft_wrap = false;
+        let mut app = App::new(config, None).unwrap();
         seed(&mut app, "alpha beta gamma");
         if readonly {
             app.buffers[0] = Buffer::virtual_text("[readonly]", "alpha beta gamma");
@@ -177,6 +183,7 @@ fn line_structure_edits_request_reset_but_ordinary_edits_do_not() {
         "type",
     ] {
         let mut config = Config::default();
+        config.editor.soft_wrap = false;
         config.editor.hard_wrap_width = 16;
         config.editor.scratch_markdown = false;
         let mut app = App::new(config, None).unwrap();
@@ -291,6 +298,7 @@ fn soft_wrap_toggle_does_not_reset_unwrapped_diff_panes() {
 fn hostile_zero_width_lines_use_a_bounded_suffix_and_cache_idle_checks() {
     for character in ['\u{200b}', '\u{301}'] {
         let mut app = App::new(Config::default(), None).unwrap();
+        app.config.editor.soft_wrap = false;
         seed(&mut app, &character.to_string().repeat(100_000));
         app.mode = Mode::Insert;
         set_cursor(&mut app, 0, 100_000);

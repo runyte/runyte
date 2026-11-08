@@ -56,6 +56,7 @@ fn insert_mode_backspace_and_delete_take_whole_emoji() {
 #[test]
 fn line_end_and_vertical_motion_land_on_the_start_of_an_emoji() {
     let mut app = app_with(&format!("abcdefgh\n{SHRUG}{SHRUG}{SHRUG}\n"));
+    app.config.editor.soft_wrap = false;
     app.motion(Motion::LineEnd);
     assert_eq!(head(&app), 7);
     for column in 0..8 {

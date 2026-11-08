@@ -181,6 +181,9 @@ impl App {
             && buffer.is_some_and(|buffer| buffer.markdown_render_source().is_some());
         (self.config.editor.soft_wrap || markdown_override)
             && self.diff_session(pane_id).is_none()
+            // Media projections use one logical row per page; wrapping would
+            // turn next-page motions into movement within the same page.
+            && buffer.is_none_or(|buffer| buffer.media_path.is_none())
             && viable
     }
 

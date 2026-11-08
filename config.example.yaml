@@ -28,7 +28,7 @@ editor:
   motion_repeat_multiplier: 2
   directory_tree_width: 33 # preferred sidebar width in columns
   show_hidden_files: false # press . in an explorer to toggle for the session
-  soft_wrap: false
+  soft_wrap: true
   # When false, rendered Markdown follows soft_wrap. Source is unaffected.
   always_wrap_rendered_markdown: true
   # Draw spaces as ·, tabs from →, and line endings as ¬.

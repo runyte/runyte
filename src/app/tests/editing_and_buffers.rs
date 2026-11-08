@@ -329,6 +329,7 @@ fn lowercase_r_remains_a_single_character_normal_mode_command() {
 #[test]
 fn count_prefixes_repeat_motions_and_address_lines() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.soft_wrap = false;
     seed(&mut app, "zero\none\ntwo\nthree\nfour\n");
 
     press(&mut app, '3');
@@ -348,10 +349,8 @@ fn count_prefixes_repeat_motions_and_address_lines() {
 }
 
 #[test]
-fn soft_wrap_makes_vertical_motion_follow_visual_lines() {
-    let mut config = Config::default();
-    config.editor.soft_wrap = true;
-    let mut app = App::new(config, None).unwrap();
+fn default_soft_wrap_makes_vertical_motion_follow_visual_lines() {
+    let mut app = App::new(Config::default(), None).unwrap();
     seed(&mut app, "abcdef\nxy");
     app.active_mut().wrap_width = 3;
     set_cursor(&mut app, 0, 1);
@@ -393,6 +392,7 @@ fn soft_wrap_vertical_motion_stops_at_document_edges() {
 #[test]
 fn page_and_window_motions_count_screen_rows_from_where_the_pane_is_scrolled() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.soft_wrap = false;
     let document = (0..60).fold(String::new(), |mut text, line| {
         text.push_str(&format!("line {line}\n"));
         text
@@ -486,11 +486,11 @@ fn wrapping_namespace_wraps_and_toggles_soft_wrap_and_whitespace_markers() {
     press(&mut app, 'u');
     assert_eq!(text(&app), "alpha beta\ngamma");
 
-    assert!(!app.config.editor.soft_wrap);
+    assert!(app.config.editor.soft_wrap);
     for stroke in [' ', 'p', 's'] {
         press(&mut app, stroke);
     }
-    assert!(app.config.editor.soft_wrap);
+    assert!(!app.config.editor.soft_wrap);
 
     assert!(!app.config.editor.render_whitespace);
     for stroke in [' ', 'p', '.'] {
@@ -3181,6 +3181,7 @@ fn disabled_smart_newline_does_not_add_syntax_indentation() {
 #[test]
 fn view_alignment_places_the_cursor_line_at_the_top_middle_or_bottom() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.soft_wrap = false;
     let document = (0..60).fold(String::new(), |mut text, line| {
         text.push_str(&format!("line {line}\n"));
         text
@@ -3272,7 +3273,9 @@ fn soft_wrapped_alignment_and_scrolling_are_measured_in_wrapped_segments() {
 /// a time in both directions and stops at the document's own edges.
 #[test]
 fn scrolling_the_view_without_soft_wrap_moves_one_line_and_stops_at_the_top() {
-    let mut app = App::new(Config::default(), None).unwrap();
+    let mut config = Config::default();
+    config.editor.soft_wrap = false;
+    let mut app = App::new(config, None).unwrap();
     seed(&mut app, "one\ntwo\nthree\nfour\n");
     app.active_mut().scroll_row = 2;
 
@@ -3797,6 +3800,7 @@ fn configurable_context_actions_keep_choices_and_do_not_leak_removed_keys() {
     let mut app = configurable_path_menu(
         "ui: {context-actions: {next: [F9], previous: [F8], accept: [F7], cancel: []}}",
     );
+    app.config.editor.soft_wrap = false;
     app.path_popup = None;
     seed(&mut app, "one\ntwo\nthree");
     app.context_action_menu = Some(simple_context_menu());

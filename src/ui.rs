@@ -7667,15 +7667,8 @@ mod tests {
     #[test]
     fn soft_wrap_toggle_marks_the_status_position() {
         let mut app = App::new(Config::default(), None).unwrap();
-        let before = rendered(&mut app, 80, 8);
-        assert!(before.contains(" 1:1 · 100%"), "{before:?}");
-        assert!(!before.contains("↪ 1:1"), "{before:?}");
-
-        for key in [' ', 'p', 's'] {
-            app.handle_key(crate::input::KeyStroke::char(key)).unwrap();
-        }
-        let enabled = rendered(&mut app, 80, 8);
-        assert!(enabled.contains("↪ 1:1 · 100%"), "{enabled:?}");
+        let initial = rendered(&mut app, 80, 8);
+        assert!(initial.contains("↪ 1:1 · 100%"), "{initial:?}");
 
         for key in [' ', 'p', 's'] {
             app.handle_key(crate::input::KeyStroke::char(key)).unwrap();
@@ -7683,6 +7676,12 @@ mod tests {
         let disabled = rendered(&mut app, 80, 8);
         assert!(disabled.contains(" 1:1 · 100%"), "{disabled:?}");
         assert!(!disabled.contains("↪ 1:1"), "{disabled:?}");
+
+        for key in [' ', 'p', 's'] {
+            app.handle_key(crate::input::KeyStroke::char(key)).unwrap();
+        }
+        let enabled = rendered(&mut app, 80, 8);
+        assert!(enabled.contains("↪ 1:1 · 100%"), "{enabled:?}");
     }
 
     #[test]

@@ -488,6 +488,7 @@ fn line_selection_extends_from_an_empty_line() {
 #[test]
 fn line_selection_ends_at_the_first_other_command() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.soft_wrap = false;
     seed(&mut app, "alpha\nbravo\ncharlie");
     set_cursor(&mut app, 0, 0);
 
@@ -1460,6 +1461,7 @@ fn a_transient_line_yank_leaves_a_caret_and_pastes_the_line_below() {
 #[test]
 fn a_transient_line_yank_pastes_above_the_caret_it_left_with_capital_p() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.soft_wrap = false;
     seed(&mut app, "alpha\nbravo\ncharlie\n");
     press(&mut app, 'j');
     press(&mut app, 'x');
@@ -1699,6 +1701,7 @@ fn a_full_text_characterwise_selection_still_keeps_its_line() {
 #[test]
 fn y_yanks_the_caret_character_and_capital_y_yanks_whole_lines() {
     let mut caret = App::new(Config::default(), None).unwrap();
+    caret.config.editor.soft_wrap = false;
     seed(&mut caret, "alpha\nbravo");
     set_cursor(&mut caret, 0, 1);
     press(&mut caret, 'y');
@@ -1711,6 +1714,7 @@ fn y_yanks_the_caret_character_and_capital_y_yanks_whole_lines() {
     // `v` with no motion selects nothing but the caret, so it yanks the
     // same character and hands the mode back like any other selection.
     let mut select = App::new(Config::default(), None).unwrap();
+    select.config.editor.soft_wrap = false;
     seed(&mut select, "alpha\nbravo");
     set_cursor(&mut select, 0, 1);
     press(&mut select, 'v');
@@ -1720,6 +1724,7 @@ fn y_yanks_the_caret_character_and_capital_y_yanks_whole_lines() {
     assert_eq!(select.mode, Mode::Normal);
 
     let mut line = App::new(Config::default(), None).unwrap();
+    line.config.editor.soft_wrap = false;
     seed(&mut line, "alpha\nbravo\ncharlie");
     set_cursor(&mut line, 0, 2);
     press(&mut line, 'Y');
@@ -1735,6 +1740,7 @@ fn y_yanks_the_caret_character_and_capital_y_yanks_whole_lines() {
     // The register `Y` writes is the one `x y` writes, over every row the
     // selection touches rather than only the caret's.
     let mut spanning = App::new(Config::default(), None).unwrap();
+    spanning.config.editor.soft_wrap = false;
     seed(&mut spanning, "alpha\nbravo\ncharlie");
     press(&mut spanning, 'v');
     press(&mut spanning, 'j');
@@ -1744,6 +1750,7 @@ fn y_yanks_the_caret_character_and_capital_y_yanks_whole_lines() {
     assert_eq!(spanning.mode, Mode::Normal);
 
     let mut extended = App::new(Config::default(), None).unwrap();
+    extended.config.editor.soft_wrap = false;
     seed(&mut extended, "alpha\nbravo\ncharlie");
     press(&mut extended, 'x');
     press(&mut extended, 'x');
@@ -1754,6 +1761,7 @@ fn y_yanks_the_caret_character_and_capital_y_yanks_whole_lines() {
     // which on an empty last line resolves backwards onto the previous
     // line's terminator and would yank the row above this one.
     let mut trailing = App::new(Config::default(), None).unwrap();
+    trailing.config.editor.soft_wrap = false;
     seed(&mut trailing, "alpha\nbravo\n");
     set_cursor(&mut trailing, 2, 0);
     press(&mut trailing, 'Y');

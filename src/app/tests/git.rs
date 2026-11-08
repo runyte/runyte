@@ -1604,6 +1604,7 @@ fn one_very_long_decorated_commit_does_not_hide_hints_on_a_narrow_pane() {
         ))))),
     )
     .unwrap();
+    app.config.editor.soft_wrap = false;
     let commit = |digit: char, subject: String, decorations: &[&str]| {
         let oid = digit.to_string().repeat(40);
         CommitSummary {
@@ -3265,6 +3266,7 @@ fn a_hidden_live_terminal_requires_exact_branch_name_before_checkout() {
     );
     ports.replace_git(Box::new(Rc::clone(&provider)));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.config.editor.soft_wrap = false;
     app.execute_command("git-branches").unwrap();
     press(&mut app, 'k');
 
@@ -4516,6 +4518,7 @@ fn commit_detail_colours_only_rows_inside_its_patch_region() {
         "Add new issues\n\n- catppuccin theme\n- everforest theme\n",
         "-removed from the file\n+added to the file\n",
     );
+    app.config.editor.soft_wrap = false;
     let text = app.active_buffer().to_string();
     let bullet_row = text
         .lines()
@@ -4545,6 +4548,7 @@ fn commit_detail_colours_only_rows_inside_its_patch_region() {
 #[test]
 fn commit_detail_diff_boundary_handles_empty_message_and_empty_patch() {
     let mut with_patch = open_commit_detail("", "-first patch row\n");
+    with_patch.config.editor.soft_wrap = false;
     let text = with_patch.active_buffer().to_string();
     let patch_row = text
         .lines()
@@ -4559,6 +4563,7 @@ fn commit_detail_diff_boundary_handles_empty_message_and_empty_patch() {
     );
 
     let mut without_patch = open_commit_detail("- message only\n", "");
+    without_patch.config.editor.soft_wrap = false;
     let rows = visible_diff_rows(&mut without_patch);
     assert!(
         rows.iter().all(|(_, diff)| diff.is_none()),
@@ -8654,6 +8659,7 @@ fn fetch_action_captures_exact_rows_without_requiring_clean_buffers() {
     );
     ports.replace_git(Box::new(Rc::clone(&provider)));
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
+    app.config.editor.soft_wrap = false;
     app.execute_command("git-branches").unwrap();
     // A local branch need not be checked out, and its upstream may have vanished.
     press(&mut app, 'j');

@@ -335,6 +335,8 @@ fn pdf_page_shortcuts_and_counted_vertical_requests_use_media_scope() {
     app.native_media = true;
     app.open_file(path.clone()).unwrap();
     app.update_native_media_pages(&path, 4);
+    assert!(app.config.editor.soft_wrap);
+    assert!(!app.pane_soft_wrap(app.active_pane));
     for (next, previous) in [('f', 'b'), ('d', 'u'), ('n', 'p')] {
         key(&mut app, KeyCode::Char(next), Modifiers::CONTROL);
         assert_eq!(app.active().cursor(app.active_buffer()).row, 1);

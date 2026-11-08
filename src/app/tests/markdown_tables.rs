@@ -468,6 +468,7 @@ fn markdown_file_source_stays_unwrapped_while_its_page_wraps() {
     let path = temporary("wrap-source.md");
     fs::write(&path, "alpha beta gamma delta epsilon").unwrap();
     let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    app.config.editor.soft_wrap = false;
     assert!(!app.pane_soft_wrap(0));
     press(&mut app, '?');
     assert!(app.active_buffer().markdown_render_source().is_some());

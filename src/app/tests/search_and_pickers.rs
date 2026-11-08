@@ -622,6 +622,7 @@ fn a_vim_search_prompt_with_no_match_echoes_as_information() {
 #[test]
 fn view_and_window_modes_update_presentation_state() {
     let mut app = App::new(Config::default(), None).unwrap();
+    app.config.editor.soft_wrap = false;
     let content = (0..100)
         .map(|row| format!("line {row}"))
         .collect::<Vec<_>>()
@@ -5506,6 +5507,7 @@ fn configured_markdown_scope_moves_and_removes_actions_without_changing_other_mo
     let mut config = Config::default();
     config.editor.scratch_markdown = true;
     let mut app = App::new(config, None).unwrap();
+    app.config.editor.soft_wrap = false;
     seed(&mut app, "one\ntwo\nthree");
     assert_eq!(
         app.key_binding_scope(),
