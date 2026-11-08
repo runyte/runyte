@@ -23,12 +23,11 @@
 | **Global status line** | Mode, workspace directory, active-buffer state, cursor, Git/LSP state, and unread notifications. |
 | **Interaction line** | An active prompt or the last action echo. |
 
-These names are also the vocabulary of help and source documentation, and any
-future extension surface must inherit them. The canonical definitions live in
+Help and the source code use these same names. The full definitions are in
 [`context/reference/ui-vocabulary.md`](../../context/reference/ui-vocabulary.md).
 
-**Which surface a task gets** depends on its lifetime and interaction, not on
-the shape of its box:
+**Where a task opens** depends on how long it lasts and how you interact with
+it:
 
 | Surface | Used for |
 | --- | --- |
@@ -48,14 +47,14 @@ Special buffers:
   ninth retires the least recent one once it is detached;
 - stay available while dirty, until saved or discarded.
 
-A rendered Markdown page is the exception: it is neither counted nor retired
-while its document is open, and it closes with that document.
+A rendered Markdown page is the exception. It is not counted or retired while
+its document is open, and it closes with that document.
 
-A pathless scratch buffer is ordinary text, not a special buffer.
+A scratch buffer with no path is ordinary text, not a special buffer.
 
-For example, `Space g l` opens a Git-log buffer for ordinary browsing, while
-`Space g f` opens a fuzzy commit picker that disappears after one choice. Both
-open the same retained special commit-detail buffer when a commit is selected.
+For example, `Space g l` opens a Git-log buffer for browsing. `Space g f` opens
+a fuzzy commit picker that disappears after one choice. When you select a
+commit, both open the same commit-detail buffer.
 
 **Pane titles** name the buffer kind:
 
@@ -84,17 +83,17 @@ open the same retained special commit-detail buffer when a commit is selected.
 | `rust-analyzer 0E 2W` | Language-server summary. |
 | `E1 W2 I3` | Unread notification counts, in their semantic theme colours. At narrow widths they compact to the highest severity plus the total, such as `E4`. |
 
-Fields after the position appear only when they apply. Pane titles carry file
-and buffer identity. The active theme is not shown; `Space o t` shows and
-changes it.
+Fields after the position appear only when they apply. Pane titles show which
+file or buffer you are in. The active theme is not shown here. Use `Space o t`
+to see and change it.
 
 **The percentage:**
 
-- The first line reads `0%` and the last `100%`. No line between them does: a
-  cursor one rounding step from either end reads `1%` or `99%`.
+- The first line reads `0%` and the last `100%`. No line between them does. A
+  cursor very close to either end reads `1%` or `99%`.
 - A one-line buffer reads `100%`.
-- It follows the cursor, not the topmost visible line, so `Z j` and the other
-  view-scroll keys leave it alone until the cursor moves.
+- It follows the cursor, not the top visible line. `Z j` and the other
+  view-scroll keys don't change it until the cursor moves.
 
 ### Interaction line
 
@@ -108,42 +107,42 @@ The interaction line teaches each command as you use it:
 | Unavailable | `binding (action · unavailable: message)` |
 | Unbound keys | `No binding: g z` |
 
-- Commands that wait for a character keep showing the actual keys typed,
-  including configured bindings and counts, and say what to type next.
-  `m r` asks for the existing pair; `m r (` asks for its replacement.
-  Find, replace, surround, register, and named-macro commands show this guidance
-  until their last operand arrives. `Esc` cancels the pending input.
-  Two-key jump labels also show the first label key while waiting for the
-  second; completion, cancellation, and invalid input leave visible feedback.
-- An active prompt uses the line temporarily. Errors, warnings, service output,
+- Commands that wait for a character show the keys you typed, including
+  configured bindings and counts, and say what to type next. `m r` asks for the
+  existing pair. `m r (` asks for its replacement. Find, replace, surround,
+  register and named-macro commands do the same until their last character
+  arrives. `Esc` cancels.
+- Two-key jump labels also show the first label key while waiting for the
+  second. Completing, cancelling or typing something invalid leaves visible
+  feedback.
+- An active prompt uses the line temporarily. Errors, warnings, service output
   and other notifications never replace the prompt or the echo.
-- A failure carries the outcome's own message, not only the fact that it
-  failed.
-- A message longer than the space left, or spanning several lines, is cut to
-  fit and ends with `...`. `:not` keeps the complete text. A prompt being typed
-  is never cut, since its cursor position depends on the full text.
-- A mistyped sequence (`No binding: g z`) is also shown in the key hints, but
-  is not kept as a notification: it says nothing worth reading later, and a
-  burst of mistyping would otherwise be the largest and only unbounded source
-  of unread notifications.
+- A failure shows its own message, not just the fact that it failed.
+- A message that is too long, or spans several lines, is cut to fit and ends
+  with `...`. `:not` keeps the complete text. A prompt you are typing is never
+  cut.
+- A mistyped sequence (`No binding: g z`) is shown in the key hints but is not
+  kept as a notification. It isn't worth reading later, and mistyping would
+  flood your unread notifications.
 
-**Pasting into prompts.** Single-line prompts and filters reject a whole paste
-that contains control characters, including a trailing newline or tab.
+**Pasting into prompts.** Single-line prompts and filters reject any paste that
+contains control characters, including a trailing newline or tab.
 
-- The text, cursor, and selected result stay unchanged, and the prompt shows
+- The text, cursor and selected result don't change. The prompt shows
   `Control characters are not allowed; nothing was inserted` until the next
   input.
 - This applies to the command line, search and rename prompts, Finder and list
   queries, session-directory queries, and typed Git confirmations.
 - Literal backslash sequences such as `\n` are ordinary prompt text.
 - Buffers and terminal sessions still accept multiline paste. Terminal paste
-  actions, including macOS `Cmd-v`, keep line breaks even when the terminal
-  sends them as carriage returns, and keep existing LF and CRLF separators.
+  actions, including macOS `Cmd-v`, keep line breaks. This works even if the
+  terminal sends them as carriage returns. Existing LF and CRLF separators are
+  kept.
 
 ### Notifications
 
-`:notifications` (alias `:not`) opens `[notifications]`: one searchable,
-read-only buffer with the retained history, newest first.
+`:notifications` (alias `:not`) opens `[notifications]`, a read-only buffer you
+can search. It shows the retained history, newest first.
 
 Each entry has:
 
@@ -174,15 +173,14 @@ So the interaction line can say an action `failed` while its notification is
 
 - The configured entry count (`notifications.history_limit`), plus at most
   1 MiB per notification and 8 MiB per workspace.
-- Git failures keep labelled stdout and stderr within the 1 MiB budget, enough
-  for thousands of ordinary lines, and add a visible truncation marker when a
-  hostile hook exceeds it. The rest of an overlong stream is still drained
-  while the subprocess runs, so keeping less text never breaks an otherwise
-  successful hook or helper.
-- Successful asynchronous Git output updates the action echo while it is still
-  current. Multiline output, or output whose echo has been superseded, is kept
-  as `INFO`. The `:lsp-status` report updates its echo the same way, and is
-  always kept as `INFO` as well.
+- Git failures keep labelled stdout and stderr within the 1 MiB budget. That is
+  enough for thousands of ordinary lines. A hook that exceeds it gets a visible
+  truncation marker. The rest of the output is still read while the subprocess
+  runs, so a hook that would succeed doesn't break.
+- Successful background Git output updates the action echo while it is still
+  current. Multiline output, or output whose echo has been replaced, is kept as
+  `INFO`. The `:lsp-status` report updates its echo the same way and is always
+  kept as `INFO`.
 
 ### Help, hints, and the tutorial
 
@@ -201,19 +199,19 @@ Press a prefix such as `g`, `Space`, or `Ctrl-w` and a popup lists what can
 follow.
 
 - The default grammar groups commands under labelled `Space` namespaces. The
-  popup shows one namespace row at a time, then the namespace's entries when
-  you enter it.
-- Short keys stay as fast or compatibility bindings. A row naming two keys,
-  such as `Space s a, &`, runs the same command either way, so the namespace
-  teaches the short spelling rather than hiding it.
-- Bindings added by plugins or configuration under an unlabelled prefix fold
-  the same way: several bindings under `Space =` appear as one `Space =` row,
+  popup shows one row per namespace, then that namespace's entries when you
+  enter it.
+- Short keys are kept for speed and compatibility. A row with two keys, such as
+  `Space s a, &`, runs the same command either way. The hint shows you the short
+  key too.
+- Bindings from plugins or your configuration under an unlabelled prefix fold
+  the same way. Several bindings under `Space =` appear as one `Space =` row,
   named after their shared command name or by how many there are.
 - `Space l` (**Language (LSP)**), `Space x` (**Syntax (Tree-sitter)**), and
   `Space g` (**Git**) are dimmed with a reason when the service is not ready:
-  no language server, no parser, or no Git / no repository. They stay
-  navigable so each command can explain itself; LSP status and restart can
-  stay usable without an attached document.
+  no language server, no parser, or no Git / no repository. You can still
+  navigate them so each command can explain itself. LSP status and restart can
+  work without an attached document.
 
 In the popup:
 
@@ -248,42 +246,40 @@ The generated key lists cover each mode:
 
 #### Help buffers
 
-`:help guide` (also `:help reference`) jumps to the complete user guide,
-assembled from the same chapters as the website. The other help topics remain
-short introductions with keys adapted to the active keymap.
+`:help guide` (also `:help reference`) jumps to the complete user guide. It is
+built from the same chapters as the website. The other help topics are short
+introductions, with keys adapted to the active keymap.
 
-- Both kinds of help are ordinary read-only buffers: they scroll, search,
-  split, and close with `q`, `:c`, or `Space b c`. Nothing is truncated to fit
-  the window, and opening one kind does not replace the other.
-- The about page and help colour section titles, commands, key bindings, file
-  paths, web links, and technical examples with the theme's syntax colours.
-  They are not Markdown: visible backticks stay ordinary searchable, copyable
-  text, and colouring changes no buffer coordinate and makes nothing
-  clickable.
+- Both kinds of help are ordinary read-only buffers. They scroll, search, split,
+  and close with `q`, `:c`, or `Space b c`. Nothing is cut to fit the window,
+  and opening one kind does not replace the other.
+- The about page and help use the theme's syntax colours for section titles,
+  commands, key bindings, file paths, web links and technical examples. They
+  are not Markdown. Visible backticks are ordinary text you can search and
+  copy, and nothing becomes clickable.
 - A read-only buffer is marked `[RO]` in the pane title and the status line,
   and its help says so: `Help · RUNYTE · GIT STATUS · Read-only`. The status
-  line describes the buffer on screen; the help title describes the buffer
-  type it is about, so help for an editable type is not titled read-only.
+  line describes the buffer on screen. The help title describes the type of
+  buffer it is about, so help for an editable type is not titled read-only.
 
 #### The about page
 
-`:about` is centred against the pane, not against fixed columns in its text.
-Resize the window or split the view and the page moves, without a character
-being rewritten. The space around it is drawn, not stored, so search,
-scrolling, and clicks land on the text. A page taller than its pane starts at
+`:about` is centred in the pane. Resize the window or split the view and the
+page moves with it. The space around it is drawn, not stored, so search,
+scrolling and clicks land on the text. A page taller than its pane starts at
 its first row and scrolls like any read-only buffer.
 
 #### The tutorial
 
-`:tutorial` opens two ordinary panes: read-only instructions and disposable
-scratch text. Complete each exercise by performing the described actions.
-The instructions announce success while the result stays visible. When ready,
-type `:tutorial next` and press Enter; unfinished exercises cannot be skipped.
-In Terminal Insert mode, press `Ctrl-\` before entering the command.
+`:tutorial` opens two ordinary panes: read-only instructions and scratch text
+you can throw away. Complete each exercise by doing what it describes. The
+instructions tell you when you succeed. When you are ready, type
+`:tutorial next` and press Enter. You can't skip unfinished exercises. In
+Terminal Insert mode, press `Ctrl-\` before entering the command.
 
-- **First choice:** show Vim-like motion spellings, Helix-like ones, or both.
-  This changes only the spellings in the tutorial, never Runyte's behavior or
-  keymap.
+- **First choice:** show Vim-like key spellings, Helix-like ones, or both. This
+  only changes the spellings in the tutorial. It never changes Runyte's
+  behavior or keymap.
 - **Lessons:** modes; selection-first editing with characterwise and
   `x`/`X` whole-line selections; search; multiple carets; `Space` discovery;
   `Ctrl-w` pane commands.
@@ -335,28 +331,27 @@ unchanged. For terminals that reserve Shift for native selection, assign
   `right mouse click (yanked to system clipboard)`.
   The native window uses the same behavior for document and terminal-review
   selections; right-drag in PDF and image previews pans instead.
-- **Character rule.** The pointer names the character under it, not the gap
-  before it, so a drag covers the characters it started and ended on, in
-  either direction. Pressing past a line's end places the caret on its last
-  character, or past it in Insert mode, as keyboard motion does.
+- **Character rule.** The pointer picks the character under it, not the gap
+  before it. A drag covers the characters it started and ended on, in either
+  direction. Pressing past a line's end places the caret on its last character,
+  or past it in Insert mode, as the keyboard does.
 - **Native link clicks.** Ctrl-left-click (Cmd-left-click on macOS) uses the
-  clicked character, ignoring existing selections. It follows the same paths,
-  Markdown labels and heading links, and web URLs as `gf` in document views and
-  terminal panes. Live terminals stay in input mode; reviewed terminals use
-  their frozen text. Supported wrapped terminal URLs resolve from any of their
-  rows. This gesture, including its drag and release, is never sent to the child.
-  Extra modifiers retain their ordinary mouse behavior; prompts and overlays
-  keep ownership of input. The interaction line names the gesture and its
-  result, such as
+  clicked character and ignores existing selections. It follows the same paths,
+  Markdown labels and heading links, and web URLs as `gf` in documents and
+  terminal panes. Live terminals stay in input mode. Reviewed terminals use
+  their frozen text. A wrapped terminal URL works from any of its rows. This
+  gesture is never sent to the program. Other modifiers keep their usual mouse
+  behavior, and prompts and overlays keep control of input. The interaction
+  line names the gesture and its result, such as
   `Ctrl-left-click (opened https://example.com in the default browser)`.
-- **Terminal panes.** A click focuses a live terminal in Insert mode; a
+- **Terminal panes.** A click focuses a live terminal in Insert mode. A
   reviewed terminal stays in Normal/review until a terminal insert key returns
   to the live screen. A left drag in review selects cells and enters Select
-  mode, and right-click copies that selection. Clicking another pane focuses
-  it in Normal mode. Dragging from a document press still selects and enters
-  Select mode.
-- Pointer coordinates go through the same fold- and wrap-aware rows used for
-  drawing, so collapsed lines and wide Unicode glyphs never disagree.
+  mode, and right-click copies that selection. Clicking another pane focuses it
+  in Normal mode. Dragging from a document still selects and enters Select
+  mode.
+- The pointer uses the same rows as drawing, so folded lines and wide Unicode
+  glyphs line up correctly.
 - Passive pointer motion never clears key hints or status and does not
   redraw.
 - Mouse capture is released on every exit and error path.
@@ -371,12 +366,12 @@ text selection. To keep that instead, set `editor.mouse: false` and restart.
 | `Ctrl-o` / `Ctrl-i` | Every recorded position, including terminal surfaces and positions within one file |
 | `Alt-o` / `Alt-i` | The same history, stopping only on a different buffer or terminal surface |
 
-`Alt-o` leaves a document you have read through in one press, rather than one
-per section.
+`Alt-o` leaves a document in one press, even if you jumped through several
+sections of it.
 
-Closing a buffer with `:c` or `Space b c` keeps every pane. Each pane returns
-to its own most recently used live buffer, or gets a new scratch buffer when
-none remains.
+Closing a buffer with `:c` or `Space b c` keeps every pane. Each pane goes back
+to its own most recently used live buffer. If none is left, it gets a new
+scratch buffer.
 
 ### Contextual actions (`Tab`)
 

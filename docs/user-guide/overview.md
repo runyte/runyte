@@ -12,11 +12,11 @@
 - Operating-system clipboard yank and paste
 - Structural Tree-sitter selection, text objects, outlines, syntax-aware
   indentation, and pane-local code folding
-- Word completion from every open buffer, including the explorer, with no
-  language server and no trigger key required
-- Unicode-aware buffer positions and terminal widths: an emoji such as `🤷‍♀️`
-  or `👍🏽`, or a letter with its accents, is one character to the caret,
-  selections, deletion, wrapping and the integrated terminal
+- Word completion from all open buffers, including the explorer. It needs no
+  language server and no trigger key
+- Unicode-aware positions and widths. An emoji such as `🤷‍♀️` or `👍🏽`, or a
+  letter with accents, counts as one character for the caret, selections,
+  deletion, wrapping and the integrated terminal
 
 **Languages**
 
@@ -44,16 +44,16 @@
 
 **Layout and display**
 
-- Arbitrarily nested vertical and horizontal splits with recency-aware
-  directional focus
+- Vertical and horizontal splits, nested as deep as you like
+- Directional focus that remembers the pane you came from
 - Shared buffers between split panes
 - Configurable Unicode-aware soft wrapping and visual-line movement
 - Soft-wrap continuation arrows in the line-number gutter
 - A centred, editable writing viewport toggled with `:zen`, and a plain
   maximized pane toggled with `:fullscreen`
-- Which-key-style hints for every registered command family, plus exact
-  completed-command descriptions and results on the interaction line
-- Differential, flicker-free terminal rendering through Ratatui
+- Key hints for every group of commands
+- The interaction line tells you what each command did
+- Flicker-free terminal rendering through Ratatui
 - Fold-aware mouse cursor placement, drag selection, wheel scrolling, and pane
   resize
 
@@ -65,12 +65,13 @@
 
 **Terminals and sessions**
 
-- Terminal panes running any interactive program — a shell, `htop`, `vim`, a
-  coding agent — with scrollback, modal navigation over it, and a command that
-  sends a buffer's selection to one as a single paste
-- Optional `--mux` local workspace persistence for unsaved editor,
-  language-service, and live terminal-session state
-- `$EDITOR`-compatible `--wait` requests with revision-safe local edits
+- Terminal panes that run any interactive program: a shell, `htop`, `vim`, or a
+  coding agent
+- Scrollback that you can navigate with modal keys
+- A command that sends a selection to a terminal as one paste
+- Optional `--mux` mode. Unsaved buffers, language servers and terminals stay
+  alive after you close Runyte
+- `--wait` lets Runyte work as your `$EDITOR`
 
 **Configuration**
 

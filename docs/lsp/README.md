@@ -11,7 +11,7 @@ server:
    Windows. When combining snippets, keep one `lsp:`
    heading and place every language entry below it.
 3. Run `:config-reload` in each running workspace that should adopt the new
-   definitions. Unchanged servers keep running; servers with changed definitions
+   definitions. Unchanged servers keep running. Servers with changed definitions
    stop and start again on the next request. Changing `lsp.enable` itself
    requires restarting the editor or persistent session. Then open a file in
    that language, approve workspace LSP execution in the
@@ -33,24 +33,24 @@ These command lines are exercised by `tests/lsp_real_servers.rs`:
 - [Go / gopls](gopls.yaml)
 - [Markdown / Marksman](marksman.yaml)
 
-On Windows, executable discovery accepts native `.exe` and `.com` files;
-it does not launch `.cmd`, `.bat` or `.ps1` wrappers. For a server installed
-as a script (including npm wrappers), set `command` to its native interpreter,
-such as an absolute path to `node.exe`, and put the installed server script
-path followed by its arguments in `args`. Native Windows CI exercises
-rust-analyzer in `tests/lsp_windows_acceptance.rs`; the other listed servers
-have not yet received native Windows acceptance.
+On Windows, executable discovery accepts native `.exe` and `.com` files. It
+does not launch `.cmd`, `.bat` or `.ps1` wrappers. For a server installed as a
+script (including npm wrappers), set `command` to its native interpreter, such
+as an absolute path to `node.exe`. Put the server script path first in `args`,
+then its arguments. Native Windows CI exercises rust-analyzer in
+`tests/lsp_windows_acceptance.rs`; the other listed servers have not yet
+received native Windows acceptance.
 
 The key immediately below `lsp` must be one of Runyte's built-in language
-names. `command` names the executable to launch, `args` is its argument list,
-optional `initialization_options` is passed verbatim in the LSP handshake, and
-optional `roots` replaces the language's built-in project-root markers.
-Runyte starts one process per configured language and project root, and does
-not invoke a shell; see
-[Server roots](../user-guide/language-support.md#server-roots).
-Unknown keys below `lsp` are rejected, apart from the reserved `enable` setting
-and legacy `servers` wrapper.
+names. `command` names the executable to launch and `args` is its argument
+list. Optional `initialization_options` is passed as is in the LSP handshake.
+Optional `roots` replaces the language's built-in project-root markers. Runyte
+starts one process per configured language and project root, and does not
+invoke a shell. See [Server
+roots](../user-guide/language-support.md#server-roots). Unknown keys below
+`lsp` are rejected, apart from the reserved `enable` setting and legacy
+`servers` wrapper.
 
 Older configurations may contain an extra `servers:` level. It remains
-accepted, but has no behavior of its own; new snippets use the flatter
+accepted, but has no behavior of its own. New snippets use the flatter
 `lsp.<language>` shape.

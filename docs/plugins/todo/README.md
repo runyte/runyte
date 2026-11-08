@@ -11,7 +11,7 @@ library, Python bridge, terminal renderer, account or network service is needed.
 | Rust | [rust/src/main.rs](rust/src/main.rs) | Rust 1.88+, `serde_json` and `libc`; build with the included lockfile |
 | C | [c/todo.c](c/todo.c) | C11 compiler, POSIX, pkg-config and json-c 0.19+ |
 
-The examples target Linux and macOS. Each owns its own task list; enabling all
+The examples target Linux and macOS. Each owns its own task list. Enabling all
 three does not share tasks between them. The original [tasks.py](../tasks.py)
 remains the smaller example of using the Python client.
 The Rust variant is a separate Cargo package, which Cargo omits from the
@@ -52,8 +52,8 @@ export PKG_CONFIG_PATH="$HOME/.local/json-c-0.19/lib/pkgconfig${PKG_CONFIG_PATH:
 export LD_LIBRARY_PATH="$HOME/.local/json-c-0.19/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 ```
 
-Keep these environment variables set when building and running the showcase;
-the dynamic loader must select the supported library too. Linux CI builds the
+Keep these environment variables set when building and running the showcase.
+The dynamic loader must select the supported library too. Linux CI builds the
 same release at a pinned source revision and runs its upstream tests before
 running the unchanged cross-language conformance gate.
 
@@ -120,17 +120,16 @@ plugin ID changes.
 | Discover available list actions | `Tab` |
 
 Choosing `add` from the `Tab` action list opens the command palette with
-`::todo-python-add ` filled in (or the corresponding Rust/C command).
-Type a quoted title such as `"Write release notes"` and press Enter; Escape
-cancels without adding a task. Quotes preserve spaces in the typed title; no
-shell evaluates it. Adding uses a typed command argument, without a separate
-input form. Removal is immediate and has no undo. Other commands act on the
-selected task IDs in the current view.
-Normal movement, selections, search, copying, splits, help, Navigator and Finder
-come from Runyte. Split a list into two panes, toggle a task, then switch filters
-to show how both panes follow the same model while retaining their own selections.
-Compare the three implementations in adjacent panes to demonstrate that language
-choice does not change the native interaction.
+`::todo-python-add ` filled in (or the corresponding Rust/C command). Type a
+quoted title such as `"Write release notes"` and press Enter. Escape cancels
+without adding a task. Quotes preserve spaces in the typed title; no shell
+evaluates it. Adding uses a typed command argument, without a separate input
+form. Removal is immediate and has no undo. Other commands act on the selected
+task IDs in the current view. Normal movement, selections, search, copying,
+splits, help, Navigator and Finder come from Runyte. Split a list into two
+panes, toggle a task, then switch filters. Both panes follow the same model and
+keep their own selections. Compare the three implementations in adjacent panes
+to demonstrate that language choice does not change the native interaction.
 
 ## Behavior and boundaries
 
@@ -148,7 +147,7 @@ exercise that lifecycle; substitute the other IDs as needed. A stopped plugin's
 old view remains readable with Runyte's unavailable marker.
 
 The implementations use a small event loop with one outstanding host request.
-Another command receives `busy` while an update is pending; the reader continues
+Another command receives `busy` while an update is pending. The reader continues
 handling responses and view closure. Publication uses the captured view and exact
 revision, and commits candidate task data only after the host acknowledges it.
 Definite refusals discard that candidate. A closure received before publication
@@ -157,8 +156,8 @@ settles also discards the candidate. A timeout, ambiguous acknowledgement or
 `pane.show` uses only the original pending invocation's foreground authority.
 
 Input frames are bounded to 1 MiB including their newline, with small fixed read
-chunks. Output uses nonblocking writes with a two-second delivery deadline;
-opening/publishing has one eight-second deadline inside the host's command
+chunks. Output uses nonblocking writes with a two-second delivery deadline.
+Opening/publishing has one eight-second deadline inside the host's command
 lifetime. EOF stops promptly, even with an outstanding request. When idle, each
 process blocks on input without a timer or polling loop. Diagnostics and task
 data never go to stdout outside protocol frames.
@@ -166,7 +165,7 @@ data never go to stdout outside protocol frames.
 JSON decoding and escaping come from Python's standard library, `serde_json`,
 and [json-c](https://json-c.github.io/json-c/json-c-current-release/doc/html/json__tokener_8h.html)
 respectively. The C implementation enables strict parsing and UTF-8 validation.
-Runyte plugins run as trusted local programs; capability grants describe the
+Runyte plugins run as trusted local programs. Capability grants describe the
 host API they use, as explained in the [plugin contract](../../plugins.md).
 
 ## Verify parity
@@ -187,7 +186,7 @@ outgoing message against the public schema, and runs the same cases for each
 language: Unicode and limits, multi-row actions, filters, stale context, refusal
 rollback, stable IDs, view closure, uncertain outcomes, fragmented input and EOF.
 Programs are compiled before tests run. Without `--require-all`, missing compiled
-variants are reported as skips; Python still runs. The complete
+variants are reported as skips. Python still runs. The complete
 [conformance runner](../conformance.md) includes this suite, and CI builds and
 requires all variants on Linux and macOS. These wire checks simulate the host;
 they do not claim an automated TUI demonstration or Rust editor coverage.

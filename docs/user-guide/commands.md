@@ -2,12 +2,13 @@
 
 ### The command palette
 
-`:` opens the command palette: the commands that can run in the active view,
-with their aliases, usage, and a short description, grouped by category.
+`:` opens the command palette. It lists the commands that can run in the active
+view, grouped by category. Each one shows its aliases, usage and a short
+description.
 
-Exact names and aliases rank first, followed by name or alias prefixes, then
-matches in descriptions and other metadata. For example, `:t` and `:term`
-offer `:terminal` first, while `:tu` offers `:tutorial` first.
+Exact names and aliases come first, then name or alias prefixes, then matches
+in descriptions. For example, `:t` and `:term` offer `:terminal` first, and
+`:tu` offers `:tutorial` first.
 
 | Key | Action |
 | --- | --- |
@@ -17,36 +18,36 @@ offer `:terminal` first, while `:tu` offers `:tutorial` first.
 | Enter | Run it |
 | Escape | Close the palette |
 
-- **The palette is contextual.** A command is listed only when it could run
-  here: its platform, mode, and frontend support it, the service it needs is
-  ready, and the active view supplies its target. Explorer actions appear in
-  an explorer, `:terminal-rename` in a pane showing a terminal, `:diff-off`
-  while a comparison is open, `:pipe-cancel` while a pipe runs. A pane showing
-  a terminal offers no document actions, whatever file it returns to; typing
-  one there, such as `:write`, reports `the active pane is showing a
+- **The palette is contextual.** It lists a command only when it could run
+  here. Its platform, mode and frontend must support it, the service it needs
+  must be ready, and the active view must supply its target. Explorer actions
+  appear in an explorer, `:terminal-rename` in a pane showing a terminal,
+  `:diff-off` while a comparison is open, `:pipe-cancel` while a pipe runs. A
+  pane showing a terminal offers no document actions. If you type one there,
+  such as `:write`, you get `the active pane is showing a
   terminal`. Leave the terminal (`Space t q`) to act on the document.
-- **Typing a hidden command still works as far as it can.** Every name and
-  alias resolves. Enter on one that cannot run here closes the palette and
-  reports why in the interaction line, for example
-  `… · unavailable: the active view is not a directory buffer`, leaving the
-  editor as it was. It is never replaced by another matching command.
-- Management and recovery entry points stay listed whenever they can run
-  themselves, even when what they manage is not ready: `:service-health`,
+- **You can still type a hidden command.** Every name and alias resolves. If
+  the command can't run here, Enter closes the palette and tells you why in the
+  interaction line, for example
+  `… · unavailable: the active view is not a directory buffer`. The editor
+  stays as it was, and Runyte never runs a different matching command instead.
+- Management and recovery commands stay listed even when what they manage is
+  not ready: `:service-health`,
   `:lsp-trust`, `:plugins`, `:git-refresh` after a failed discovery, and the
-  `:help` family. An entry point is not hidden because its list would be
-  empty.
-- The full inventory is the [command list](#command-list) below, and
-  `:help` documents every command whatever the active view.
-- `::` opens the plugin-only palette; see [Plugins](plugins.md#plugins).
+  `:help` family. They are not hidden just because their list would be empty.
+- The full list is the [command list](#command-list) below. `:help` documents
+  every command, whatever the active view.
+- `::` opens the plugin-only palette. See [Plugins](plugins.md#plugins).
 
 #### Path arguments
 
-Once a command taking a path is selected, the rows become filesystem hints,
-from the editor working directory or from the absolute path being typed.
+When you select a command that takes a path, the rows become filesystem hints.
+They start from the working directory, or from the absolute path you are
+typing.
 
 - Directories come first, with a trailing separator. Completing one keeps the
-  palette open for its children. Running `:open` on a directory opens the
-  explorer.
+  palette open so you can continue into it. Running `:open` on a directory opens
+  the explorer.
 - `~` means your home directory, so `:open ~/.bashrc` and `:open ~/projects`
   work without a shell.
 - Dotfiles are offered when the name typed begins with `.`, or when hidden
@@ -63,23 +64,23 @@ paths.
 
 - `:cd sr` Enter Enter completes to `src/`, then changes into it.
 - A new name that is a prefix of an existing one is completed too:
-  `:w notes` beside `notes.md` becomes `:w notes.md`. Hints follow only a
-  cursor at the end of the line, so press Left, then Enter, to submit `notes`
-  as typed.
-- Completion inside a buffer — words, language-server items, paths — still
-  uses only Tab; Enter there inserts a newline.
+  `:w notes` beside `notes.md` becomes `:w notes.md`. To submit `notes` as
+  typed, press Left, then Enter. Hints only appear with the cursor at the end
+  of the line.
+- Completion inside a buffer (words, language-server items, paths) still uses
+  only Tab. Enter there inserts a newline.
 
 #### The working directory
 
 The working directory starts where Runyte was launched.
 
-- `:cd <path>` changes it. Relative paths resolve from the current working
-  directory. With an explorer active, `:cd` also retargets that explorer; from
-  a file, the file stays open.
+- `:cd <path>` changes it. Relative paths start from the current working
+  directory. In an explorer, `:cd` also moves that explorer. In a file, the
+  file stays open.
 - `Space E` opens the working directory. `Space e` opens the active buffer's
-  directory and selects its file, so Enter returns to it; from a rendered
-  Markdown page it uses the source document. A pathless buffer falls back to
-  the working directory.
+  directory and selects its file, so Enter takes you back. On a rendered
+  Markdown page it uses the source document. A buffer with no path uses the
+  working directory.
 - `Space f` (or `Space / f`) always opens the project Finder in name mode, and
   `:fuzzy-grep` its content mode.
 - `:file-picker-directory` and `:fuzzy-grep-directory` search the active

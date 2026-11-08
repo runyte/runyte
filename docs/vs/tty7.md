@@ -2,11 +2,14 @@
 
 [All comparisons](README.md) · Last verified: 2026-09-26
 
-Scope: tty7’s published documentation and the original Runyte comparison were checked on the date above; no comparative performance measurements. The Runyte native-window qualification was updated against this checkout on 2026-10-09; tty7 claims were not reverified.
+Scope: tty7’s published documentation and the original Runyte comparison were
+checked on the date above; no comparative performance measurements. The Runyte
+native-window qualification was updated against this checkout on 2026-10-09.
+The tty7 claims were not reverified.
 
 ## Summary
 
-tty7 is a graphical terminal workbench with its own GPU-rendered window. Runyte makes a modal editor the centre of its workspace. Its terminal edition runs inside an existing terminal; the desktop edition also offers a [GPUI window](../user-guide/files-and-buffers.md#desktop-edition). Both can host coding agents and retain terminal processes independently of the visible interface. [tty7 overview](https://github.com/l0ng-ai/tty7).
+tty7 is a graphical terminal workbench with its own GPU-rendered window. Runyte makes a modal editor the centre of its workspace. Its terminal edition runs inside an existing terminal. The desktop edition also offers a [GPUI window](../user-guide/files-and-buffers.md#desktop-edition). Both can host coding agents and retain terminal processes independently of the visible interface. [tty7 overview](https://github.com/l0ng-ai/tty7).
 
 This comparison spans different layers: tty7 can provide the terminal in which Runyte runs. Its command-input editing is distinct from Runyte’s project-file editor.
 
@@ -37,4 +40,4 @@ These are workflow recommendations based on the capabilities above.
 
 - **Runyte:** You want modal project editing within the terminal environment you already use.
 - **tty7:** You want a graphical terminal application that manages remote connections and agent activity.
-- **Together:** Runyte could be your editor inside tty7. This is a composition option, not a validated integration; let each layer own a clear part of the layout.
+- **Together:** Runyte could be your editor inside tty7. This is a composition option, not a validated integration. Let each layer own a clear part of the layout.

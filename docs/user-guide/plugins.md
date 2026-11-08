@@ -29,7 +29,7 @@ limits, and the stable API.
 - Keys for plugin commands are set with `plugins[].bindings`.
 
 **The manager** (`:plugins`) lists configured, disabled, and failed plugins.
-Select one to see its capabilities, jobs, activity, helpers, and diagnostics;
+Select one to see its capabilities, jobs, activity, helpers, and diagnostics.
 Enter offers lifecycle actions.
 
 - Restart does not replay old actions.
@@ -41,7 +41,7 @@ Enter offers lifecycle actions.
 
 **Edit text.** Explicitly enabled process plugins can register commands, read
 the invoking buffer's text and selections, and return replacements as one
-undoable edit. They run asynchronously; if the text changed meanwhile, the
+undoable edit. They run asynchronously. If the text changed meanwhile, the
 stale result is rejected.
 
 **Application views.** Plugins can provide retained native views, typed
@@ -60,7 +60,7 @@ and bounded local filesystem operations with native confirmation.
   such as filters or a database path, above it.
 - **Read-only documents** open on demand and scroll, search, and copy as one
   buffer, even when received in chunks. The supported limit is 8 MiB and
-  250,000 lines; loading can fail while the host's shared memory allowance is
+  250,000 lines. Loading can fail while the host's shared memory allowance is
   in use. A shortened preview stays a preview until the full content is
   published.
 
@@ -79,7 +79,7 @@ masked secret fields.
   into the directory. Shift-Tab returns to the previous field and Escape
   cancels. Enter completes the selected suggestion while the path does not
   name an existing entry, and submits once it does. Relative paths start at
-  the workspace root; spaces and quotes are literal; `~` and environment
+  the workspace root. Spaces and quotes are literal. `~` and environment
   variables are not expanded. Older hosts keep ordinary text fields.
 
 **Documents.** Applications can create named unsaved documents and save them
@@ -92,7 +92,7 @@ normal editing, highlighting, and remote saves.
 - Providers with conditional writes save normally. Weaker providers need
   native confirmation describing the overwrite race and replacement
   guarantee. Cancelling keeps the text and undo.
-- Newer edits stay dirty during uploads; save-and-close waits for confirmed
+- Newer edits stay dirty during uploads. Save-and-close waits for confirmed
   success.
 - An explicit rebind reconciles restarted providers and uncertain writes.
 - `:diff-remote` compares fresh remote text with your edits without changing
@@ -105,7 +105,7 @@ normal editing, highlighting, and remote saves.
 
 **Subscriptions.** Applications can subscribe to buffer, pane, owned
 view/job, and attachment metadata, with consistent baselines and bounded,
-ordered delivery. New buffers are reported without polling; slow consumers
+ordered delivery. New buffers are reported without polling. Slow consumers
 get an explicit resynchronization marker.
 
 **Helpers.** Applications can launch
@@ -162,7 +162,7 @@ lists remaining work:
 
 **SFTP.** Verifies SSH host keys, uses explicit identity files or an existing
 SSH agent, and opens remote UTF-8 documents up to 8 MiB. Run `::sftp .` with
-its documented profile; Enter opens a file, and `:write` confirms the remaining
+its documented profile. Enter opens a file, and `:write` confirms the remaining
 remote overwrite race.
 
 **FTP/FTPS.** Defaults to certificate-verified FTPS with encrypted data
@@ -184,7 +184,7 @@ keep their identity and unsaved text.
 **Media controller.** Plays workspace audio and video through an installed
 mpv, with a native playlist: play, pause, relative seek, next, previous, and
 stop. Video appears in mpv's own window. Playback continues across detach and
-protects the persistent session while active; pausing releases that
+protects the persistent session while active. Pausing releases that
 protection, and stop closes the player. The
 [service adapter guide](../plugins/media-services.md) covers Spotify
 prerequisites and YouTube browser playback separately.

@@ -8,8 +8,8 @@ persistent sessions, language servers, plugins and MCP access. Windows release
 builds are available starting with 0.3.2. See the [Windows guide](user-guide/install-and-run.md#windows-support)
 for build requirements and the explicit feature limits.
 
-Integrated Git is available when a native Git executable is found on PATH;
-machines without Git keep it disabled. Restart Runyte after installing Git.
+Integrated Git is available when a native Git executable is found on PATH.
+Machines without Git keep it disabled. Restart Runyte after installing Git.
 The Windows guide lists native path and worktree limitations.
 
 ## How do I use PowerShell as the integrated terminal on Windows?
@@ -17,17 +17,18 @@ The Windows guide lists native path and worktree limitations.
 Run `:terminal powershell.exe` in Runyte. This opens Windows PowerShell in the
 active pane and is the recommended way to choose it for a terminal session.
 
-If you know what you are doing, Runyte uses `%COMSPEC%` to choose the program
-for a bare `:terminal` (or `Space t n`) on Windows, falling back to `cmd.exe`.
-You can change `COMSPEC` in the environment that starts Runyte, but other
-programs may also use it and expect `cmd.exe`. See the
-[terminal guide](user-guide/terminals.md#terminals) for more about terminal commands.
+If you know what you are doing, you can set `%COMSPEC%`. Runyte uses it to
+choose the program for a bare `:terminal` (or `Space t n`) on Windows, or
+`cmd.exe` if it is not set. You can change `COMSPEC` in the environment that
+starts Runyte, but other programs may also use it and expect `cmd.exe`. See the
+[terminal guide](user-guide/terminals.md#terminals) for more about terminal
+commands.
 
 ## Why don't Alt-based keybindings work on macOS?
 
 On macOS, Runyte's `Alt` bindings use the **Option (`⌥`)** key. For example,
 `Alt-o` means holding Option while pressing `o`. Your terminal must send
-Option as an Alt/Meta modifier; otherwise, macOS may use it to type special
+Option as an Alt/Meta modifier. Otherwise, macOS may use it to type special
 characters or compose accents instead.
 
 In Apple's **Terminal** app:
@@ -42,10 +43,10 @@ programs running in windows that use it. Option combinations in those windows
 will act as terminal shortcuts instead of typing their usual special
 characters. See [Apple's Terminal keyboard settings guide](https://support.apple.com/guide/terminal/trmlkbrd/mac).
 
-In Runyte's Normal and Select modes, `Alt-o` jumps backward to a different
-buffer or terminal surface in navigation history, and `Alt-i` jumps forward.
-They skip positions within the current buffer. A message such as
-`no earlier buffer` or `no later buffer` means the shortcut was received, but
-there is no destination in that direction.
+In Runyte's Normal and Select modes, `Alt-o` jumps backward to the previous
+buffer or terminal you visited, and `Alt-i` jumps forward. They skip positions
+within the current buffer. A message such as `no earlier buffer` or
+`no later buffer` means the shortcut was received, but there is no destination
+in that direction.
 
 See the [user guide](user-guide/key-bindings.md#key-bindings) for more about keybindings.

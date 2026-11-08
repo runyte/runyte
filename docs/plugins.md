@@ -13,10 +13,10 @@ Start with the [authoring guide](plugins/authoring.md),
 transport and headless testing facade are not plugin APIs.
 
 External agents use the separately paired [workspace context
-profile](plugins/context.md). It provides scoped reads and, with the person's
-Write grant, buffer edits, terminal text and a guarded Enter, over a private
-Unix socket or named pipe; ordinary plugin capabilities do not grant access to
-that transport.
+profile](plugins/context.md). It provides scoped reads over a private Unix
+socket or named pipe. With the person's Write grant, it also provides buffer
+edits, terminal text and a guarded Enter. Ordinary plugin capabilities do not
+grant access to that transport.
 
 ## Install and enable the example
 
@@ -55,7 +55,7 @@ its owning host; restart an existing persistent host after changing it.
 The plugin-authored `runyte` range is copied into configuration for pre-launch
 admission, then checked against the process's registration. A user may narrow
 that range but cannot widen plugin support. Explicit `api` and valid `runyte`
-metadata are required; experimental configuration must be regenerated.
+metadata are required. Experimental configuration must be regenerated.
 
 ## Plugin command names
 
@@ -109,7 +109,7 @@ wire behavior and do not grant authority.
 Requests have correlated IDs and may finish out of order. Handles and revisions
 are opaque, owned by one connection generation. Mutations address captured,
 explicit targets and revisions; they never follow the newly active pane.
-Malformed messages can disconnect; unknown methods return `unsupported`.
+Malformed messages can disconnect. Unknown methods return `unsupported`.
 Applications must not replay mutations after uncertain outcomes.
 
 The [application contract](plugins/applications.md) defines commands, native
@@ -126,7 +126,7 @@ A text plugin's registration looks like:
 ## Lifecycle and trust
 
 `:plugins` shows configured entries, effective compatibility, grants, activity,
-cleanup and bounded diagnostics. `:plugin-stop <id>` stops an owner;
+cleanup and bounded diagnostics. `:plugin-stop <id>` stops an owner.
 `:plugin-restart <id>` waits for cleanup and establishes a fresh connection.
 On Windows, `processes` is advertised and negotiated like other host
 capabilities. Native helpers use bounded binary pipes and a private job that

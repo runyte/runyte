@@ -98,7 +98,7 @@ Present workflow recommendations as judgments based on the comparison.
 - Check Runyte claims against the [README](../../README.md), relevant
   [user-guide](../user-guide/README.md) sections, and current source. Read the
   [keymap register](../../context/reference/helix-keymap-v1.md) before discussing
-  command compatibility; do not call Runyte Helix-compatible. Use the
+  command compatibility. Do not call Runyte Helix-compatible. Use the
   [UI vocabulary](../../context/reference/ui-vocabulary.md) for Runyte surfaces.
 - Keep optional [plugins](../plugins.md) and the
   [built-in MCP adapter](../mcp.md) distinct. Describe
@@ -112,5 +112,5 @@ Present workflow recommendations as judgments based on the comparison.
 Check that every page has the three prescribed sections, the common table rows,
 an index backlink, a verification date, and working repository-relative links.
 Review external sources for support and check table formatting and whitespace.
-Documentation-only changes do not require Rust builds or coverage runs; follow
+Documentation-only changes do not require Rust builds or coverage runs. Follow
 repository guidance if code changes are also part of the task.

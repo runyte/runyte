@@ -37,4 +37,5 @@ These are workflow recommendations based on the capabilities above.
 
 - **Runyte:** You like multiple selections and want terminal layout, project search, and Git workflows managed by the editor.
 - **Kakoune:** You want a selection-oriented editor that you compose with shell scripts, a window manager, and language-tool integrations.
-- **Together:** Kakoune can be used as a separate editor in a terminal pane, but choose one editor to own a given unsaved document to avoid competing edits.
+- **Together:** You can use Kakoune as a separate editor in a terminal pane.
+  Pick one editor for each unsaved document, so they don't compete.
