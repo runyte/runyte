@@ -74,9 +74,9 @@ Community: [r/runyte](https://www.reddit.com/r/runyte/)
 
 *Compare changes side by side. · rosebones-dark*
 
-![Claude Code and OpenAI Codex in adjacent Runyte terminal panes in frappe.](https://runyte.com/images/screenshots/coding-agents.webp?v=75cab6417c7e)
+![Claude Code and OpenAI Codex in adjacent Runyte panes above the agent channel showing their conversation, in frappe.](https://runyte.com/images/screenshots/coding-agents.webp?v=0c53adfee706)
 
-*Claude and Codex. Two terminals, one workspace. · frappe*
+*Claude and Codex, talking through the agent channel. · frappe*
 
 More examples are on the [screenshots page](https://runyte.com/screenshots/).
 
