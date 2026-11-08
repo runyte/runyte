@@ -736,11 +736,12 @@ async fn run_loop(
                     },
                     ServerEvent::Request { id, request } => stop = clients.incoming(host, id, Incoming::Request(request), |name| rename(server, name)),
                     ServerEvent::ProtocolError { id, message } => stop = clients.incoming(host, id, Incoming::ProtocolError(message), |name| rename(server, name)),
-                    ServerEvent::TransportFailure { id, message } => {
+                    ServerEvent::TransportFailure { id, message, cause } => {
                         log_warn!("transport", "native control connection failed: {message}"; "connection" => id);
-                        clients.disconnected(host, id);
+                        clients.connection_failed(host, id, cause);
                     }
-                    ServerEvent::Disconnected { id } => clients.disconnected(host, id),
+                    ServerEvent::HandoffDelivered { id } => clients.handoff_delivered(id),
+                    ServerEvent::Disconnected { id } => clients.connection_closed(host, id),
                 }
             }
             completion = clients.renames.next(), if !clients.renames.is_empty() => {

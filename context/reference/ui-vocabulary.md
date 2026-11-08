@@ -529,6 +529,18 @@ The configured history limit bounds entries; independent 1 MiB per-entry and
 8 MiB per-workspace payload limits bound memory. Truncation is explicit in the
 retained text. A notification buffer is materialized only while one is open.
 
+A persistent host retains one `WARNING` from source `Session`, titled `Client
+connection lost`, for each interactive attachment that ends without being asked
+to. Ending on purpose is the recorded exception, so an unrecognised path errs
+towards a notice: an explicit detach, a quit, a delivered session switch and a
+wait-owned client whose wait has finished stay quiet, as do control clients. A
+switch counts as delivered only once its connection has finished writing the
+handoff, not when the reply is queued. The decision belongs to `workspace::departure` and is made once, at the connection's
+final event, so a failure and the closure that follows it cannot both report.
+Its reason comes from the closed `TransportFailureCause` set rather than from
+error text; without one the notice says the cause is unknown, because a closed
+connection does not distinguish a crash from a killed or hung-up client.
+
 ## Diagnostic log
 
 A **diagnostic log** is the durable local file the process that owns `App`

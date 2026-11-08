@@ -34,7 +34,7 @@ use super::transport_shared::{
     write_message,
 };
 pub use super::transport_shared::{
-    ResponseReceiver, ResponseSender, ServerEvent, response_channel,
+    ResponseReceiver, ResponseSender, ServerEvent, TransportFailureCause, response_channel,
 };
 
 pub const PROTOCOL_VERSION: u32 = crate::protocol::VERSION;
@@ -3911,11 +3911,13 @@ mod tests {
             let Some(ServerEvent::TransportFailure {
                 id: failed,
                 message,
+                cause,
             }) = failure
             else {
                 panic!("expected a transport failure before disconnection, got {failure:?}");
             };
             assert_eq!(failed, id);
+            assert_eq!(cause, TransportFailureCause::InvalidMessage, "{name}");
             assert!(
                 message.contains("workspace transport"),
                 "the {name} framing reason must survive: {message}"
@@ -3927,6 +3929,113 @@ mod tests {
                 Some(ServerEvent::Disconnected { id: disconnected }) if disconnected == id
             ));
         }
+    }
+
+    fn workspace_handoff() -> HostResponse {
+        HostResponse::SwitchWorkspace {
+            target: Box::new(crate::protocol::WorkspaceSwitchTarget::Previous),
+            working_directory_bytes: encode_path(std::path::Path::new("/")),
+            running_only: false,
+            visit: None,
+        }
+    }
+
+    /// A connection past its handshake, with the host's end of it.
+    async fn welcomed_connection(
+        server: &mut LocalServer,
+        endpoint: &LocalEndpoint,
+    ) -> (LocalClient, u64, ResponseSender) {
+        let mut client = LocalClient::connect(endpoint, FrameGeometry::default(), false)
+            .await
+            .unwrap();
+        let Some(ServerEvent::Connected { id, responses, .. }) = server.recv().await else {
+            panic!("expected connection");
+        };
+        responses
+            .send(HostResponse::Welcome {
+                protocol: PROTOCOL_VERSION,
+                pid: std::process::id(),
+                features: vec![FeatureGroup::Control],
+                host_version: CLIENT_VERSION.to_owned(),
+            })
+            .await
+            .unwrap();
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::Welcome { .. })
+        ));
+        (client, id, responses)
+    }
+
+    #[tokio::test]
+    async fn a_written_handoff_is_reported_before_the_connection_closes() {
+        let (root, endpoint) = endpoint("handoff-delivered");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            drop(root);
+            return;
+        };
+        let (mut client, id, responses) = welcomed_connection(&mut server, &endpoint).await;
+        responses.try_send(workspace_handoff()).unwrap();
+        assert!(matches!(
+            client.recv().await.unwrap(),
+            Some(HostResponse::SwitchWorkspace { .. })
+        ));
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), server.recv())
+                .await
+                .unwrap(),
+            Some(ServerEvent::HandoffDelivered { id: delivered }) if delivered == id
+        ));
+        drop(client);
+        drop(responses);
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), server.recv())
+                .await
+                .unwrap(),
+            Some(ServerEvent::Disconnected { id: closed }) if closed == id
+        ));
+        endpoint.cleanup().unwrap();
+        drop(root);
+    }
+
+    #[tokio::test]
+    async fn a_handoff_queued_for_a_departed_client_is_never_reported_delivered() {
+        let (root, endpoint) = endpoint("handoff-undelivered");
+        let Some(mut server) = bind_or_skip(&endpoint).await else {
+            drop(root);
+            return;
+        };
+        let (client, id, responses) = welcomed_connection(&mut server, &endpoint).await;
+        drop(client);
+        // Whether the write observes the hang-up or EOF ends the connection
+        // first, the reply never reaches anyone.
+        let _ = responses.try_send(workspace_handoff());
+        let event = tokio::time::timeout(Duration::from_secs(1), server.recv())
+            .await
+            .unwrap();
+        assert!(
+            matches!(event, Some(ServerEvent::Disconnected { id: closed }) if closed == id),
+            "a departed client must close with no delivery report or failure: {event:?}"
+        );
+        endpoint.cleanup().unwrap();
+        drop(root);
+    }
+
+    #[tokio::test]
+    async fn a_refused_reply_marks_the_queue_as_overrun() {
+        let (responses, receiver) = response_channel();
+        let reply = || HostResponse::Error {
+            message: "x".to_owned(),
+        };
+        for _ in 0..super::super::transport_shared::RESPONSE_CAPACITY {
+            responses.try_send(reply()).unwrap();
+        }
+        assert!(!receiver.overrun(), "a queue that still fits is healthy");
+        assert!(matches!(
+            responses.try_send(reply()),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_))
+        ));
+        assert!(receiver.overrun());
     }
 
     #[tokio::test]
@@ -4398,11 +4507,13 @@ mod tests {
         let Some(ServerEvent::TransportFailure {
             id: failed,
             message,
+            cause,
         }) = failure
         else {
             panic!("expected a write failure before disconnection, got {failure:?}");
         };
         assert_eq!(failed, id);
+        assert_eq!(cause, TransportFailureCause::WriteTimedOut);
         assert!(
             message.contains("workspace transport write timed out"),
             "{message}"
