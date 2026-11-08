@@ -442,6 +442,7 @@ impl App {
 
     pub fn note_plugin_frontend(&mut self, attached: bool) {
         if self.plugins.frontend_attached != attached {
+            self.pane_resize = None;
             self.plugins.frontend_attached = attached;
             self.plugins.attachment_generation += 1;
             self.plugins.viewport_cache.clear();

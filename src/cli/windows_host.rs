@@ -736,11 +736,12 @@ async fn run_loop(
                     },
                     ServerEvent::Request { id, request } => stop = clients.incoming(host, id, Incoming::Request(request), |name| rename(server, name)),
                     ServerEvent::ProtocolError { id, message } => stop = clients.incoming(host, id, Incoming::ProtocolError(message), |name| rename(server, name)),
-                    ServerEvent::TransportFailure { id, message } => {
+                    ServerEvent::TransportFailure { id, message, cause } => {
                         log_warn!("transport", "native control connection failed: {message}"; "connection" => id);
-                        clients.disconnected(host, id);
+                        clients.connection_failed(host, id, cause);
                     }
-                    ServerEvent::Disconnected { id } => clients.disconnected(host, id),
+                    ServerEvent::HandoffDelivered { id } => clients.handoff_delivered(id),
+                    ServerEvent::Disconnected { id } => clients.connection_closed(host, id),
                 }
             }
             completion = clients.renames.next(), if !clients.renames.is_empty() => {
@@ -1120,7 +1121,7 @@ async fn run_loop(
                 let idle = Duration::from_secs((host.config.workspace.idle_retirement_minutes as u64).saturating_mul(60));
                 stop = !idle.is_zero() && !attached && clients.renames.is_empty() && host.may_retire_idle() && clients.last_detached().elapsed() >= idle;
             }
-            _ = status_animation.tick(), if attached && host.has_long_running_action() => { changed = true; }
+            _ = status_animation.tick(), if attached && host.has_presentation_animation() => { changed = true; }
             _ = frame_tick.tick(), if attached && frame_pending && !host.finder_scan_refills() => { changed = true; }
             _ = finder_refresh.tick(), if host.finder_terminals_dirty() => {
                 if host.refresh_finder_terminals() && !host.resource_finder_scan_pending() { changed = true; }

@@ -208,6 +208,7 @@ mod markdown_tables;
 mod mouse_autoscroll;
 mod navigation_and_files;
 mod pane_moves;
+mod pane_resize;
 mod paste_many_selections;
 mod plugin_activity_health;
 mod plugin_document_lifecycle;

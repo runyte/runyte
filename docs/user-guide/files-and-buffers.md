@@ -888,8 +888,8 @@ The preferred width is `editor.directory_tree_width`: 33 columns by default,
 | To | Do |
 | --- | --- |
 | Resize for this workspace | Drag the tree's right border |
-| Widen / narrow by 5 from the tree | `:resize-right + 5` / `:resize-right - 5` |
-| Widen the adjacent pane by narrowing the tree | `:resize-left + 5` from that pane |
+| Widen / narrow from the tree | `:resize`, then `l` / `h`; Enter applies |
+| Narrow the tree from an adjacent pane | `:resize`, Tab to its left edge, then `h`; Enter applies |
 
 Other edges behave as for ordinary panes. The tree always leaves at least 24
 columns for the pane layout.

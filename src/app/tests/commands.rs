@@ -1206,86 +1206,6 @@ fn directional_focus_follows_shared_edges_in_a_nested_pane_grid() {
 }
 
 #[test]
-fn resize_commands_move_each_named_boundary_in_cells() {
-    let geometry = FrameGeometry {
-        screen: Rect {
-            width: 40,
-            height: 22,
-            ..Rect::default()
-        },
-        editor: Rect {
-            width: 40,
-            height: 20,
-            ..Rect::default()
-        },
-        status: Rect::default(),
-        message: Rect::default(),
-    };
-
-    let mut horizontal = App::new(Config::default(), None).unwrap();
-    horizontal.split(Axis::Horizontal, None).unwrap();
-    horizontal.active_pane = 0;
-    let before = horizontal
-        .prepare_view(geometry)
-        .pane(0)
-        .unwrap()
-        .area
-        .width;
-    horizontal
-        .execute(parse_colon_command("resize-right + 4").unwrap())
-        .unwrap();
-    assert_eq!(
-        horizontal
-            .prepare_view(geometry)
-            .pane(0)
-            .unwrap()
-            .area
-            .width,
-        before + 4
-    );
-    horizontal.active_pane = 1;
-    let before = horizontal
-        .prepare_view(geometry)
-        .pane(1)
-        .unwrap()
-        .area
-        .width;
-    horizontal
-        .execute(parse_colon_command("resize-left - 2").unwrap())
-        .unwrap();
-    assert_eq!(
-        horizontal
-            .prepare_view(geometry)
-            .pane(1)
-            .unwrap()
-            .area
-            .width,
-        before - 2
-    );
-
-    let mut vertical = App::new(Config::default(), None).unwrap();
-    vertical.split(Axis::Vertical, None).unwrap();
-    vertical.active_pane = 0;
-    let before = vertical.prepare_view(geometry).pane(0).unwrap().area.height;
-    vertical
-        .execute(parse_colon_command("resize-bottom +3").unwrap())
-        .unwrap();
-    assert_eq!(
-        vertical.prepare_view(geometry).pane(0).unwrap().area.height,
-        before + 3
-    );
-    vertical.active_pane = 1;
-    let before = vertical.prepare_view(geometry).pane(1).unwrap().area.height;
-    vertical
-        .execute(parse_colon_command("resize-top + 2").unwrap())
-        .unwrap();
-    assert_eq!(
-        vertical.prepare_view(geometry).pane(1).unwrap().area.height,
-        before + 2
-    );
-}
-
-#[test]
 fn equalizing_levels_pane_widths_and_then_each_column_of_heights() {
     let geometry = FrameGeometry {
         screen: Rect {
@@ -1309,12 +1229,8 @@ fn equalizing_levels_pane_widths_and_then_each_column_of_heights() {
     app.active_pane = 1;
     app.split(Axis::Vertical, None).unwrap();
 
-    app.active_pane = 0;
-    app.execute(parse_colon_command("resize-right + 12").unwrap())
-        .unwrap();
-    app.active_pane = 1;
-    app.execute(parse_colon_command("resize-bottom + 6").unwrap())
-        .unwrap();
+    app.layout.resize_between_cells(0, 1, geometry.editor, 12);
+    app.layout.resize_between_cells(1, 3, geometry.editor, 6);
 
     for ch in [' ', 'w', '='] {
         app.handle_key(KeyStroke::new(KeyCode::Char(ch), Modifiers::NONE))

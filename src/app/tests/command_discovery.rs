@@ -376,29 +376,16 @@ fn pane_commands_follow_the_layout_and_the_maximized_view() {
     let mut app = App::new(Config::default(), None).unwrap();
     prepare(&mut app);
     assert_offers(&mut app, &["zen", "vsplit", "hsplit", "quit"]);
-    assert_hides(
-        &mut app,
-        &[
-            "window-close",
-            "fullscreen",
-            "resize-left",
-            "resize-right",
-            "resize-top",
-            "resize-bottom",
-        ],
-    );
+    assert_hides(&mut app, &["window-close", "fullscreen", "resize"]);
 
     app.split_window(Axis::Horizontal).unwrap();
     prepare(&mut app);
     assert_offers(&mut app, &["window-close", "fullscreen"]);
-    // The new pane is on the right of the old one, so only its left edge
-    // has a neighbour to move.
-    assert_offers(&mut app, &["resize-left"]);
-    assert_hides(&mut app, &["resize-right", "resize-top", "resize-bottom"]);
+    assert_offers(&mut app, &["resize"]);
 
     app.execute_command("fullscreen").unwrap();
     assert_offers(&mut app, &["fullscreen"]);
-    assert_hides(&mut app, &["window-close"]);
+    assert_hides(&mut app, &["window-close", "resize"]);
 }
 
 #[test]
@@ -685,7 +672,7 @@ fn provider_documents_and_commit_messages_offer_their_own_writes() {
 #[test]
 fn a_focused_directory_tree_can_always_be_closed() {
     let mut app = App::new(Config::default(), None).unwrap();
-    assert_hides(&mut app, &["window-close"]);
+    assert_hides(&mut app, &["window-close", "resize"]);
     app.directory_tree.visible = true;
     app.directory_tree.focused = true;
     assert_offers(&mut app, &["window-close"]);

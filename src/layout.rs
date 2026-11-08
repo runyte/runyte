@@ -19,7 +19,7 @@ pub struct Rect {
     pub height: u16,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Layout {
     Pane(usize),
     Split {

@@ -119,8 +119,9 @@ impl App {
         // Character-taking commands own the next key before the registry can
         // interpret it as a command or prefix. In particular, the first Space
         // in `r Space Space` is replacement text; only the second Space starts
-        // the application command tree.
-        if self.grammar.awaiting_character().is_some() {
+        // the application command tree. Live jump labels own the keyboard the
+        // same way: `z n` names a target even where no such binding exists.
+        if self.grammar.awaiting_character().is_some() || self.jump.is_some() {
             return None;
         }
         match self.grammar.kind() {
@@ -140,7 +141,8 @@ impl App {
 
     /// Registry mode a frontend should use while observing this key.
     pub fn key_hint_mode_for_key(&self, key: KeyStroke) -> Option<Mode> {
-        if matches!(self.mode, Mode::Insert | Mode::Replace)
+        if self.jump.is_none()
+            && matches!(self.mode, Mode::Insert | Mode::Replace)
             && (key.canonical_for_binding() == self.keymap.window_prefix()
                 || !self.grammar.pending_sequence().is_empty())
         {
@@ -849,6 +851,9 @@ impl App {
         approval: bool,
         fresh: bool,
     ) -> Result<()> {
+        if self.pane_resize.is_some() {
+            return self.handle_input_inner(input, false);
+        }
         if self.context_overlay_active() {
             self.handle_context_input(input, approval);
             return Ok(());
@@ -949,23 +954,28 @@ impl App {
         let recording_before = self.recording_macro;
         let recordable = !matches!(input, InputEvent::Pointer(_));
         let recorded_input = input.clone();
-        let result = match input {
-            InputEvent::Key(key) => self.handle_key_stroke(key),
-            InputEvent::Text(text) => self.handle_text(&text),
-            InputEvent::ClipboardPaste => {
-                if self.jump.take().is_some() {
-                    self.status("jump cancelled");
-                    self.report_input_feedback();
-                } else if !overlay_owns_input
-                    && self.active_terminal().is_none()
-                    && self.mode != Mode::Command
-                {
-                    self.grammar.reset();
-                    self.execute_editor_command(EditorCommand::ClipboardPaste)?;
+        let result = if self.pane_resize.is_some() {
+            self.handle_resize_input(input);
+            Ok(())
+        } else {
+            match input {
+                InputEvent::Key(key) => self.handle_key_stroke(key),
+                InputEvent::Text(text) => self.handle_text(&text),
+                InputEvent::ClipboardPaste => {
+                    if self.jump.take().is_some() {
+                        self.status("jump cancelled");
+                        self.report_input_feedback();
+                    } else if !overlay_owns_input
+                        && self.active_terminal().is_none()
+                        && self.mode != Mode::Command
+                    {
+                        self.grammar.reset();
+                        self.execute_editor_command(EditorCommand::ClipboardPaste)?;
+                    }
+                    Ok(())
                 }
-                Ok(())
+                InputEvent::Pointer(_) => Ok(()),
             }
-            InputEvent::Pointer(_) => Ok(()),
         };
         if result.is_ok() {
             self.retire_detached_ephemeral_buffers();
@@ -1019,6 +1029,9 @@ impl App {
         view: &PreparedView,
         repetitions: u16,
     ) -> Result<PointerOutcome> {
+        if self.pane_resize.is_some() {
+            return Ok(PointerOutcome::Unchanged);
+        }
         use crate::keymap::pointer_actions::{Action as PointerAction, Trigger};
         let bindings = self.keymap.pointer().clone();
         let press = |action| bindings.press(action, event);
@@ -6103,6 +6116,7 @@ impl App {
     /// outcomes; `Result::Err` is reserved for a fatal invariant failure at
     /// the application boundary.
     pub fn execute(&mut self, invocation: CommandInvocation) -> Result<CommandOutcome> {
+        self.pane_resize = None;
         self.with_selection_action(|app| app.execute_selection_action(invocation))
     }
 
@@ -6947,17 +6961,9 @@ impl App {
                 Ok(())
             }
             (Colon::Reload, InvocationParameters::None) => self.reload_active(),
-            (Colon::ResizeRight, InvocationParameters::PaneResize(delta)) => {
-                self.resize_pane_edge(1, 0, delta)
-            }
-            (Colon::ResizeLeft, InvocationParameters::PaneResize(delta)) => {
-                self.resize_pane_edge(-1, 0, delta)
-            }
-            (Colon::ResizeTop, InvocationParameters::PaneResize(delta)) => {
-                self.resize_pane_edge(0, -1, delta)
-            }
-            (Colon::ResizeBottom, InvocationParameters::PaneResize(delta)) => {
-                self.resize_pane_edge(0, 1, delta)
+            (Colon::Resize, InvocationParameters::None) => {
+                self.begin_resize();
+                Ok(())
             }
             (Colon::WriteQuit, InvocationParameters::None) => {
                 let buffer = self.active().buffer;

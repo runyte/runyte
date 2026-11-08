@@ -249,10 +249,15 @@ impl App {
                     refuse("only one pane")
                 }
             }
-            Context::PaneEdgeRight => self.pane_edge_context(1, 0).map_err(str::to_owned),
-            Context::PaneEdgeLeft => self.pane_edge_context(-1, 0).map_err(str::to_owned),
-            Context::PaneEdgeTop => self.pane_edge_context(0, -1).map_err(str::to_owned),
-            Context::PaneEdgeBottom => self.pane_edge_context(0, 1).map_err(str::to_owned),
+            Context::PaneResize => {
+                if self.maximized.is_some() {
+                    refuse("Leave fullscreen or Zen before resizing panes")
+                } else if self.panes.len() > 1 || self.directory_tree_geometry.is_some() {
+                    Ok(())
+                } else {
+                    refuse("Only one pane; no boundary to resize")
+                }
+            }
             Context::PersistentAttachment => {
                 if self.persistent_session {
                     Ok(())
@@ -305,10 +310,7 @@ const fn needs_document(context: CommandContext) -> bool {
             | Context::RunningPipe
             | Context::ClosablePane
             | Context::Fullscreen
-            | Context::PaneEdgeRight
-            | Context::PaneEdgeLeft
-            | Context::PaneEdgeTop
-            | Context::PaneEdgeBottom
+            | Context::PaneResize
             | Context::PersistentAttachment
             | Context::QuitDirectoryHandoff
             | Context::PluginStop

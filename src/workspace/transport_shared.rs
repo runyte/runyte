@@ -10,12 +10,12 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, bail};
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::{
     io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
@@ -83,11 +83,68 @@ pub enum ServerEvent<P = Option<u32>> {
     /// and is always followed by [`ServerEvent::Disconnected`].
     TransportFailure {
         id: u64,
+        /// The full error, for the host's diagnostic log only.
         message: String,
+        /// The part safe to retain and show to the person.
+        cause: TransportFailureCause,
+    },
+    /// A reply that hands the client to another workspace was written in full.
+    ///
+    /// A queued reply proves nothing: the client can vanish before the write,
+    /// and a write that observes the hang-up reports no failure. This is the
+    /// host's only evidence that a handoff left the connection. It precedes
+    /// [`ServerEvent::Disconnected`] and any request read after that write.
+    HandoffDelivered {
+        id: u64,
     },
     Disconnected {
         id: u64,
     },
+}
+
+/// Why a connection failed, as a closed set of causes.
+///
+/// [`ServerEvent::TransportFailure`] carries the error text for the log, but
+/// that text is not bounded by anything the host controls. This is what may
+/// reach a retained notification.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransportFailureCause {
+    /// A write to the client made no progress within the stall budget.
+    WriteTimedOut,
+    /// The client fell so far behind that its replies could not be queued.
+    StoppedReading,
+    /// A message could not be framed, or arrived malformed or truncated.
+    InvalidMessage,
+    /// The operating system reported a failure on the connection.
+    ConnectionError,
+}
+
+impl TransportFailureCause {
+    pub const fn reason(self) -> &'static str {
+        match self {
+            Self::WriteTimedOut => {
+                "the host timed out writing to the client, which had stopped reading"
+            }
+            Self::StoppedReading => {
+                "the client stopped reading, so the host could not queue its replies"
+            }
+            Self::InvalidMessage => "the connection carried an invalid or truncated message",
+            Self::ConnectionError => "the connection failed with an I/O error",
+        }
+    }
+
+    fn of(error: &anyhow::Error) -> Self {
+        if error
+            .chain()
+            .any(|cause| cause.is::<tokio::time::error::Elapsed>())
+        {
+            Self::WriteTimedOut
+        } else if error.chain().any(|cause| cause.is::<std::io::Error>()) {
+            Self::ConnectionError
+        } else {
+            Self::InvalidMessage
+        }
+    }
 }
 
 /// Semantic responses retain FIFO order; complete frames and pane damage
@@ -100,6 +157,7 @@ pub struct ResponseSender {
     frame: tokio::sync::watch::Sender<Option<VisualResponse>>,
     next_visual: Arc<AtomicU64>,
     delivered_visual: Arc<AtomicU64>,
+    overrun: Arc<AtomicBool>,
 }
 
 pub struct ResponseReceiver {
@@ -108,6 +166,7 @@ pub struct ResponseReceiver {
     pending_final: Option<HostResponse>,
     frame: tokio::sync::watch::Receiver<Option<VisualResponse>>,
     delivered_visual: Arc<AtomicU64>,
+    overrun: Arc<AtomicBool>,
     in_flight_visual: Option<u64>,
     messages_closed: bool,
     final_messages_closed: bool,
@@ -126,6 +185,7 @@ pub fn response_channel() -> (ResponseSender, ResponseReceiver) {
     let (frame, frame_rx) = tokio::sync::watch::channel(None);
     let next_visual = Arc::new(AtomicU64::new(0));
     let delivered_visual = Arc::new(AtomicU64::new(0));
+    let overrun = Arc::new(AtomicBool::new(false));
     (
         ResponseSender {
             messages,
@@ -133,6 +193,7 @@ pub fn response_channel() -> (ResponseSender, ResponseReceiver) {
             frame,
             next_visual,
             delivered_visual: delivered_visual.clone(),
+            overrun: overrun.clone(),
         },
         ResponseReceiver {
             messages: message_rx,
@@ -140,11 +201,22 @@ pub fn response_channel() -> (ResponseSender, ResponseReceiver) {
             pending_final: None,
             frame: frame_rx,
             delivered_visual,
+            overrun,
             in_flight_visual: None,
             messages_closed: false,
             final_messages_closed: false,
             frame_closed: false,
         },
+    )
+}
+
+fn is_handoff_response(response: &HostResponse) -> bool {
+    matches!(
+        response,
+        HostResponse::SwitchWorkspace { .. }
+            | HostResponse::ParentSwitchWorkspace { .. }
+            | HostResponse::NativeSwitchCommitted { .. }
+            | HostResponse::NativeSwitchAborted { .. }
     )
 }
 
@@ -196,7 +268,11 @@ impl ResponseSender {
                 )
             });
         }
-        self.messages.try_send(response)
+        self.messages.try_send(response).inspect_err(|error| {
+            if matches!(error, mpsc::error::TrySendError::Full(_)) {
+                self.overrun.store(true, Ordering::Release);
+            }
+        })
     }
 
     pub async fn send(
@@ -259,6 +335,11 @@ impl ResponseSender {
 }
 
 impl ResponseReceiver {
+    /// Whether a reply was ever refused because the queue was full.
+    pub(super) fn overrun(&self) -> bool {
+        self.overrun.load(Ordering::Acquire)
+    }
+
     /// A final reply can become ready after `select!` has polled the semantic
     /// lane empty. Recheck that lane before returning the final reply, and
     /// retain the one final reply if a semantic response arrived meanwhile.
@@ -547,6 +628,11 @@ where
                     let Some(response) = response else { break };
                     write_host_message(&mut writer, &response).await?;
                     response_rx.mark_delivered();
+                    if is_handoff_response(&response)
+                        && events.send(ServerEvent::HandoffDelivered { id }).await.is_err()
+                    {
+                        break;
+                    }
                 }
                 request = reader.read::<ClientRequest>() => {
                     match request? {
@@ -587,12 +673,20 @@ where
     // away is the opposite case: the write that observes it fails, but the
     // connection ended the way connections are meant to, so only
     // `Disconnected` follows.
-    if let Some(error) = result.as_ref().err().filter(|error| !peer_hung_up(error)) {
+    let failure = match result.as_ref() {
+        Err(error) if peer_hung_up(error) => None,
+        Err(error) => Some((error.to_string(), TransportFailureCause::of(error))),
+        // The host gives up on a client whose replies no longer fit and drops
+        // its senders, so the loop ends without any write having failed.
+        Ok(()) if response_rx.overrun() => Some((
+            "workspace transport response queue overflowed".to_owned(),
+            TransportFailureCause::StoppedReading,
+        )),
+        Ok(()) => None,
+    };
+    if let Some((message, cause)) = failure {
         let _ = events
-            .send(ServerEvent::TransportFailure {
-                id,
-                message: error.to_string(),
-            })
+            .send(ServerEvent::TransportFailure { id, message, cause })
             .await;
     }
     let _ = events.send(ServerEvent::Disconnected { id }).await;
@@ -881,10 +975,10 @@ async fn write_encoded_with_timeout<W: AsyncWrite + Unpin>(
         let count = tokio::time::timeout(stall, writer.write(&bytes[written..]))
             .await
             .context("workspace transport write timed out")??;
-        ensure!(
-            count > 0,
-            "workspace transport peer stopped accepting bytes"
-        );
+        if count == 0 {
+            return Err(std::io::Error::from(std::io::ErrorKind::WriteZero))
+                .context("workspace transport peer stopped accepting bytes");
+        }
         written += count;
     }
     tokio::time::timeout(stall, writer.flush())

@@ -176,6 +176,7 @@ pub struct EditorSnapshot {
     /// The area a pane being Alt-dragged would occupy if it were released
     /// now, outlined over the panes it would displace.
     pub pane_drop: Option<Rect>,
+    pub resize: Option<ResizeSnapshot>,
     pub pointer_bindings: crate::keymap::pointer_actions::Bindings,
     pub window_bindings: crate::keymap::native_window::Bindings,
     pub preview_bindings: crate::keymap::native_preview::Bindings,
@@ -184,6 +185,25 @@ pub struct EditorSnapshot {
     pub preview_structural: bool,
     pub status: StatusSnapshot,
     pub session_strip: Option<SessionStripSnapshot>,
+}
+
+/// Presentation-only draft: live panes and their terminal sizes remain unchanged.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResizeSnapshot {
+    /// Content fade progress; 255 hides all original content.
+    pub fade: u8,
+    pub panes: Vec<ResizePaneSnapshot>,
+    pub selected_edge: Option<Rect>,
+    pub controls: String,
+    pub decisions: String,
+    pub detail: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResizePaneSnapshot {
+    pub area: Rect,
+    pub title: String,
+    pub active: bool,
 }
 
 /// A bounded viewport of the sidebar, with real paths kept apart from labels.
@@ -981,6 +1001,7 @@ impl App {
             terminal_theme_colors: self.config.editor.terminal_theme_colors,
             preview_theme_colors: self.config.editor.preview_theme_colors,
             mode: self.mode,
+            resize: self.resize_snapshot(&panes),
             panes,
             pane_drop: self.pane_drop_preview(prepared),
             pointer_bindings: self.keymap().pointer().clone(),

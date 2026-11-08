@@ -132,10 +132,7 @@ The working directory starts where Runyte was launched.
 | `:vsplit [path]` | | Create a side-by-side split |
 | `:hsplit [path]` | `split` | Create a stacked split |
 | `:window-close` | `wc` | Close the active pane, but not the last one |
-| `:resize-right +/- N` | | Grow or shrink the pane at its right edge by N cells |
-| `:resize-left +/- N` | | Grow or shrink the pane at its left edge by N cells |
-| `:resize-top +/- N` | | Grow or shrink the pane at its top edge by N cells |
-| `:resize-bottom +/- N` | | Grow or shrink the pane at its bottom edge by N cells |
+| `:resize` | | Preview pane resizing and extension; Enter applies, Escape cancels |
 | `:zen` | | Toggle a centred, maximized editable writing viewport |
 | `:fullscreen` | | Toggle the active pane across the whole editor area, at its ordinary width |
 

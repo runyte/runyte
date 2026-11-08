@@ -974,3 +974,95 @@ fn completed_wait_ownership_is_retained_until_host_history_prunes_the_token() {
     clients.reconcile(&mut fixture.host);
     assert!(!clients.peers[&2].waits.contains(&token));
 }
+
+fn lost_client_notices(host: &WorkspaceHost) -> Vec<String> {
+    host.app()
+        .notifications()
+        .entries()
+        .iter()
+        .filter(|entry| entry.title == "Client connection lost")
+        .map(|entry| entry.body.clone())
+        .collect()
+}
+
+#[test]
+fn a_failed_connection_retains_one_notice_with_its_reason() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _responses = fixture.connect_interactive(&mut clients, 1);
+    clients.connection_failed(&mut fixture.host, 1, TransportFailureCause::WriteTimedOut);
+    clients.connection_closed(&mut fixture.host, 1);
+    let notices = lost_client_notices(&fixture.host);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(
+        notices[0].contains(TransportFailureCause::WriteTimedOut.reason()),
+        "{notices:?}"
+    );
+    assert!(clients.departures.ended(1, |_| false).is_none());
+}
+
+#[test]
+fn an_unexplained_closure_is_retained_with_neutral_wording() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _responses = fixture.connect_interactive(&mut clients, 1);
+    clients.connection_closed(&mut fixture.host, 1);
+    let notices = lost_client_notices(&fixture.host);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].contains("cause is unknown"), "{notices:?}");
+}
+
+#[test]
+fn an_explicit_detach_and_a_control_closure_are_quiet() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _interactive = fixture.connect_interactive(&mut clients, 1);
+    let _control = fixture.connect(&mut clients, 2);
+    request(&mut clients, &mut fixture.host, 1, ClientRequest::Detach);
+    clients.connection_closed(&mut fixture.host, 1);
+    clients.connection_closed(&mut fixture.host, 2);
+    assert!(lost_client_notices(&fixture.host).is_empty());
+}
+
+#[test]
+fn a_committed_switch_is_quiet_once_delivered() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _responses = fixture.connect_interactive(&mut clients, 1);
+    assert!(clients.reserve_switch(&mut fixture.host, 1, 9));
+    assert!(clients.commit_switch(&mut fixture.host, 1, 9));
+    clients.handoff_delivered(1);
+    clients.connection_closed(&mut fixture.host, 1);
+    assert!(lost_client_notices(&fixture.host).is_empty());
+}
+
+#[test]
+fn a_committed_switch_that_never_left_the_connection_is_a_loss() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _responses = fixture.connect_interactive(&mut clients, 1);
+    assert!(clients.reserve_switch(&mut fixture.host, 1, 9));
+    assert!(clients.commit_switch(&mut fixture.host, 1, 9));
+    clients.connection_closed(&mut fixture.host, 1);
+    let notices = lost_client_notices(&fixture.host);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(
+        notices[0].contains("during a session switch"),
+        "{notices:?}"
+    );
+}
+
+#[test]
+fn losing_the_client_inside_a_switch_is_attributed_to_the_switch() {
+    let mut fixture = Fixture::new();
+    let mut clients = Clients::default();
+    let _responses = fixture.connect_interactive(&mut clients, 1);
+    assert!(clients.reserve_switch(&mut fixture.host, 1, 9));
+    clients.connection_closed(&mut fixture.host, 1);
+    let notices = lost_client_notices(&fixture.host);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(
+        notices[0].contains("during a session switch"),
+        "{notices:?}"
+    );
+}

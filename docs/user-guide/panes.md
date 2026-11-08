@@ -17,10 +17,7 @@ spelling. From Insert and Replace modes, `Ctrl-w` reaches focus movement
 | `Space w f` / `Space w z`, or `Ctrl-w f` / `Ctrl-w z` | Toggle the full-screen pane / the centred Zen viewport |
 | `Ctrl-h/j/k/l` | Move between panes without a prefix, when `editor.fast_pane_keys` is on |
 | `:vsplit [path]` / `:hsplit [path]` (`:split`) | Create a side-by-side / stacked split |
-| `:resize-right +/- N` | Grow or shrink the active pane at its right edge by `N` terminal cells |
-| `:resize-left +/- N` | Grow or shrink the active pane at its left edge by `N` terminal cells |
-| `:resize-top +/- N` | Grow or shrink the active pane at its top edge by `N` terminal cells |
-| `:resize-bottom +/- N` | Grow or shrink the active pane at its bottom edge by `N` terminal cells |
+| `:resize` | Preview pane resizing and extension; Enter applies, Escape cancels |
 
 Borders can also be dragged with the mouse. The key-hint popup after
 `Space w` lists every window command.
@@ -63,9 +60,37 @@ with three full-height columns, `BCD`.
 | Keys | Result |
 | --- | --- |
 | `Space w v` then `Space f` | Open a file beside the current one |
-| `:resize-right + 10` | Make the active pane 10 cells wider |
+| `:resize`, ten `l` presses, Enter | Move the initially selected vertical edge ten columns right |
 | `Space w =` | Level every split again |
 | `Ctrl-w l` in Insert mode | Move right without leaving Insert mode |
+
+### Keyboard resize preview
+
+`:resize` briefly fades pane contents away and replaces them with a labelled layout preview. The active pane
+has a tinted background and its selected edge has a bright handle. The status
+line lists the controls; the interaction line keeps Apply and Cancel visible.
+
+- `Tab` / `Shift-Tab` cycles clockwise / counterclockwise through movable edges,
+  initially choosing the right edge when available.
+- `h/l` or Left/Right moves a vertical edge one column; `k/j` or Up/Down moves
+  a horizontal edge one row. Directions move the edge literally: moving a left
+  edge right shrinks the active pane. Perpendicular keys leave it unchanged.
+- `H/J/K/L` or Shift+arrows extends the active pane in that direction to the
+  nearest valid neighbouring far edge, using the same rules as Shift-Alt-drag.
+  Every affected pane is previewed. Covered or fragmented pane views disappear;
+  their buffers, unsaved edits and terminal sessions survive acceptance.
+- `u` undoes a preview change, including an extension (up to 256 changes).
+- `Enter` applies the complete draft. `Esc` discards it.
+
+The directory tree's right edge, also reachable from an adjacent pane's left
+edge, can be resized but cannot be absorbed by an extension. Fullscreen and Zen
+must be left before resizing. A changed screen size, underlying layout or
+frontend attachment cancels the draft. Terminal processes retain their actual
+sizes throughout the preview and receive the new sizes only after acceptance.
+Mouse input and pasted text do not edit anything while this mode owns input.
+
+The former `:resize-left`, `:resize-right`, `:resize-top` and `:resize-bottom`
+commands have been replaced by `:resize`.
 
 ### Splitting
 
@@ -102,7 +127,7 @@ where the physical Backspace and Enter keys still navigate and open.
 
 ### Equalizing
 
-`Space w =` evens out splits after `:resize-*` or dragging a border.
+`Space w =` evens out splits after `:resize` or dragging a border.
 
 1. Every pane gets the same width.
 2. Every pane sharing a column gets the same height.

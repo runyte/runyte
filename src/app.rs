@@ -296,6 +296,7 @@ mod movement;
 mod native_input;
 mod navigation_workflows;
 mod pane_drag;
+mod pane_resize;
 use navigation_workflows::DestinationScope;
 mod context_privacy;
 mod diff_work;
@@ -3342,6 +3343,7 @@ pub struct App {
     indentation_prompt_scope: Option<crate::indentation::Scope>,
     indentation_prompt_hint: Option<String>,
     settings_origin_buffer: Option<usize>,
+    pane_resize: Option<pane_resize::ResizePreview>,
     pointer_drag: Option<PointerDrag>,
     /// A consumed Alt-left press owns its trailing reports even after cancellation.
     pane_pointer_owned: bool,
@@ -4047,6 +4049,7 @@ impl App {
             indentation_prompt_scope: None,
             indentation_prompt_hint: None,
             settings_origin_buffer: None,
+            pane_resize: None,
             pointer_drag: None,
             pane_pointer_owned: false,
             pane_pointer_button: None,

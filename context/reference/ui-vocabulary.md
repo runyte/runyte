@@ -46,6 +46,15 @@ them, regardless of which extensibility direction is chosen.
   `EditorSnapshot.pane_drop` carries only the optional rectangle; the editor
   owns hit testing and the move. Private bundled-client protocol version 80
   carries this field for both terminal and desktop attachments.
+- **Resize preview** — the keyboard-owned layout draft opened by `:resize`.
+  Labelled tiles replace pane content; the active tile is tinted and a thick
+  edge with a handle identifies the selected boundary. Every surviving tile
+  reflects the draft, including secondary effects of extensions. The status
+  line teaches effective controls and the interaction line keeps Apply/Cancel
+  beside dimensions and feedback. Live pane views and PTY sizes stay unchanged
+  until Enter. Escape, a geometry/layout change or attachment change discards
+  the draft. Private bundled-client protocol version 95 carries the draft
+  tiles, selected edge and effective legend in `EditorSnapshot.resize`.
 - **Pane title** — structural buffer identity in the pane's top border, such as
   `[file] path`, `[explorer] path`, `[notifications]`, or `[log]`, plus `[+]`,
   `[STALE]`, and `[RO]`, in that order, and finally `[zen]` or `[fullscreen]`
@@ -519,6 +528,18 @@ host retains it across TUI detach/reattach, but it is never written to disk.
 The configured history limit bounds entries; independent 1 MiB per-entry and
 8 MiB per-workspace payload limits bound memory. Truncation is explicit in the
 retained text. A notification buffer is materialized only while one is open.
+
+A persistent host retains one `WARNING` from source `Session`, titled `Client
+connection lost`, for each interactive attachment that ends without being asked
+to. Ending on purpose is the recorded exception, so an unrecognised path errs
+towards a notice: an explicit detach, a quit, a delivered session switch and a
+wait-owned client whose wait has finished stay quiet, as do control clients. A
+switch counts as delivered only once its connection has finished writing the
+handoff, not when the reply is queued. The decision belongs to `workspace::departure` and is made once, at the connection's
+final event, so a failure and the closure that follows it cannot both report.
+Its reason comes from the closed `TransportFailureCause` set rather than from
+error text; without one the notice says the cause is unknown, because a closed
+connection does not distinguish a crash from a killed or hung-up client.
 
 ## Diagnostic log
 

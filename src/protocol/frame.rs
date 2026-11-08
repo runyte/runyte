@@ -206,6 +206,7 @@ impl EditorDamageFrame {
             || base.editor.preview_theme_colors != next.editor.preview_theme_colors
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
+            || base.editor.resize != next.editor.resize
             || base.editor.pane_drop != next.editor.pane_drop
             || base.editor.pointer_bindings != next.editor.pointer_bindings
             || base.editor.window_bindings != next.editor.window_bindings
@@ -365,6 +366,7 @@ impl TerminalDamageFrame {
             || base.editor.preview_theme_colors != next.editor.preview_theme_colors
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
+            || base.editor.resize != next.editor.resize
             || base.editor.pane_drop != next.editor.pane_drop
             || base.editor.pointer_bindings != next.editor.pointer_bindings
             || base.editor.window_bindings != next.editor.window_bindings
@@ -589,6 +591,63 @@ impl TryFrom<SessionStripSnapshot> for core::SessionStripSnapshot {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResizeSnapshot {
+    /// Content fade progress; 255 hides all original content.
+    pub fade: u8,
+    pub panes: Vec<ResizePaneSnapshot>,
+    pub selected_edge: Option<Rect>,
+    pub controls: String,
+    pub decisions: String,
+    pub detail: String,
+}
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResizePaneSnapshot {
+    pub area: Rect,
+    pub title: String,
+    pub active: bool,
+}
+impl From<core::ResizeSnapshot> for ResizeSnapshot {
+    fn from(value: core::ResizeSnapshot) -> Self {
+        Self {
+            fade: value.fade,
+            panes: value
+                .panes
+                .into_iter()
+                .map(|p| ResizePaneSnapshot {
+                    area: p.area.into(),
+                    title: p.title,
+                    active: p.active,
+                })
+                .collect(),
+            selected_edge: value.selected_edge.map(Into::into),
+            controls: value.controls,
+            decisions: value.decisions,
+            detail: value.detail,
+        }
+    }
+}
+impl From<ResizeSnapshot> for core::ResizeSnapshot {
+    fn from(value: ResizeSnapshot) -> Self {
+        Self {
+            fade: value.fade,
+            panes: value
+                .panes
+                .into_iter()
+                .map(|p| core::ResizePaneSnapshot {
+                    area: p.area.into(),
+                    title: p.title,
+                    active: p.active,
+                })
+                .collect(),
+            selected_edge: value.selected_edge.map(Into::into),
+            controls: value.controls,
+            decisions: value.decisions,
+            detail: value.detail,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EditorSnapshot {
     pub geometry: FrameGeometry,
     pub theme: Theme,
@@ -598,6 +657,7 @@ pub struct EditorSnapshot {
     pub directory_tree: Option<DirectoryTreeSnapshot>,
     pub panes: Vec<PaneSnapshot>,
     pub pane_drop: Option<Rect>,
+    pub resize: Option<ResizeSnapshot>,
     pub pointer_bindings: [[u64; 14]; 27],
     pub window_bindings: Vec<WindowBinding>,
     pub window_authored: u8,
@@ -679,6 +739,7 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
             directory_tree: value.directory_tree.map(Into::into),
             panes: value.panes.into_iter().map(Into::into).collect(),
             pane_drop: value.pane_drop.map(Into::into),
+            resize: value.resize.map(Into::into),
             pointer_bindings: *value.pointer_bindings.masks(),
             preview_bindings: value
                 .preview_bindings
@@ -812,6 +873,7 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
                 .map(TryInto::try_into)
                 .collect::<Result<_, _>>()?,
             pane_drop: value.pane_drop.map(Into::into),
+            resize: value.resize.map(Into::into),
             pointer_bindings,
             status: value.status.into(),
             session_strip: value.session_strip.map(TryInto::try_into).transpose()?,
@@ -1208,6 +1270,7 @@ mod tests {
                 directory_tree: None,
                 session_strip: None,
                 pane_drop: None,
+                resize: None,
                 pointer_bindings: *crate::keymap::pointer_actions::Bindings::default().masks(),
                 window_bindings: Vec::new(),
                 window_authored: 0,
@@ -1459,6 +1522,53 @@ mod tests {
         let wire = serde_json::to_vec(&next).unwrap();
         let decoded: HostFrame = serde_json::from_slice(&wire).unwrap();
         assert_eq!(decoded.editor.pane_drop, next.editor.pane_drop);
+    }
+
+    #[test]
+    fn resize_preview_round_trips_and_invalidates_both_damage_paths() {
+        let base = terminal_frame(1, 1, 'x');
+        let mut next = base.clone();
+        next.editor.resize = Some(ResizeSnapshot {
+            fade: 255,
+            panes: vec![ResizePaneSnapshot {
+                area: Rect {
+                    x: 0,
+                    y: 0,
+                    width: 40,
+                    height: 20,
+                },
+                title: "[terminal #1] shell".into(),
+                active: true,
+            }],
+            selected_edge: Some(Rect {
+                x: 39,
+                y: 0,
+                width: 1,
+                height: 20,
+            }),
+            controls: "Tab edge".into(),
+            decisions: "Enter apply · Esc cancel".into(),
+            detail: "Right edge".into(),
+        });
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        let decoded: HostFrame =
+            serde_json::from_slice(&serde_json::to_vec(&next).unwrap()).unwrap();
+        let core: CoreHostFrame = decoded.try_into().unwrap();
+        let round_trip: HostFrame = core.into();
+        assert_eq!(round_trip.editor.resize, next.editor.resize);
+        let mut moved = next.clone();
+        moved
+            .editor
+            .resize
+            .as_mut()
+            .unwrap()
+            .selected_edge
+            .as_mut()
+            .unwrap()
+            .x += 1;
+        assert!(TerminalDamageFrame::between(&next, &moved).is_none());
+        assert!(EditorDamageFrame::between(&next, &moved).is_none());
     }
 
     #[test]
