@@ -20,7 +20,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-The generated GitHub Primer light primitives embedded by github-nvim-theme
+The generated GitHub Primer primitives embedded by github-nvim-theme
 carry the following separate MIT notice:
 
 The MIT License (MIT)
