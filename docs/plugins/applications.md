@@ -65,8 +65,8 @@ summary. Enter opens the selected entry's available lifecycle actions. The manag
 does not read disabled bundles or expose configured settings, arguments or raw
 process output.
 Disabled entries must first be enabled in configuration before they can restart.
-Configuration is bounded at 128 entries with at most eight enabled workers;
-exceeding either limit reports a configuration failure without starting workers.
+Configuration is bounded at 128 entries with at most eight enabled workers.
+Exceeding either limit reports a configuration failure without starting workers.
 
 `:plugin-stop <configured-id>` stops an owner and
 `:plugin-restart <configured-id>` explicitly requests a fresh connection.
@@ -77,10 +77,10 @@ Pending restart and cleanup protect ordinary quit and idle retirement. If proces
 cleanup cannot be verified, the failed entry retains its slot and refuses restart.
 
 Stopping removes commands, bindings, subscriptions and input surfaces. Retained
-application views stay readable and show `[unavailable]`; dirty provider documents
+application views stay readable and show `[unavailable]`. Dirty provider documents
 remain editable, with remote saving unavailable until an explicit provider rebind.
 Editor-owned terminal sessions survive plugin stop. Saved workspace preferences
-remain on disk; live handles belong to the old connection and cannot be reused.
+remain on disk. Live handles belong to the old connection and cannot be reused.
 Persistent-session detach retains the same manager and workers without restarting
 them. An unchanged manager starts no refresh timer or redraw loop.
 
@@ -102,11 +102,11 @@ with its active short spelling (or full name) and a trailing space. Enter the ar
 Enter to invoke it; Escape cancels. Actions without arguments invoke directly.
 
 Views are special buffers backed by bounded semantic models. Purposes are
-`document`, `list` and `dashboard`; each row has a stable ID, one line of text
+`document`, `list` and `dashboard`. Each row has a stable ID, one line of text
 and an `ordinary`, `muted`, `heading`, `warning` or `error` role. Controls and
 ANSI sequences are rejected. Warning/error spans use the theme's diagnostic
 colors. The bundled frontend protocol is version 53, including application
-activity in persistent-session health; the plugin protocol remains independent.
+activity in persistent-session health. The plugin protocol remains independent.
 
 Creation stays in the background. `pane.show` requires the ID of a still-pending
 invoking command, the same frontend attachment, pane target, and command/input
@@ -135,7 +135,7 @@ in both fast-pane variants. The same runtime command metadata supplies the
 palette, hints, help and action list. A command can declare up to sixteen
 required positional arguments, each with `name` and `type` (`string`, `boolean`,
 `integer`, or `enum` with `choices`). Quotes preserve spaces; arguments undergo
-no shell evaluation. Boolean spellings are `true`/`false`; integers are signed
+no shell evaluation. Boolean spellings are `true`/`false`. Integers are signed
 64-bit values. Command handlers receive an `arguments` object of typed values.
 
 ## Wire contract
@@ -143,11 +143,11 @@ no shell evaluation. Boolean spellings are `true`/`false`; integers are signed
 Both `hello` and `registered` advertise effective control, job, helper, activity,
 settings and state limits. Their optional `limits.resources` inventory adds view,
 model, text/snapshot, subscription, input and retained-payload ceilings. Current
-stable hosts provide it. Ignore unknown host fields for compatible additions;
-new message kinds or closed enum values require explicit feature selection. Counts are per owner except `plugin_instances` and
+stable hosts provide it. Ignore unknown host fields for compatible additions.
+New message kinds or closed enum values require explicit feature selection. Counts are per owner except `plugin_instances` and
 `host_retained_payload_bytes` (per host), and `input_surfaces` (per attached
 frontend). Byte fields count UTF-8 or encoded payload as specified by the relevant
-operation; the inventory does not override wire-envelope or temporary-reservation
+operation. The inventory does not override wire-envelope or temporary-reservation
 limits and does not promise that all independently valid resources fit together.
 `watched_sources` bounds aggregate subscription/source pairs as well as the unique
 source table; `observation_state_bytes` bounds one captured source's metadata.
@@ -163,7 +163,7 @@ and configured keymaps are atomic. Capability checks govern host operations and
 do not sandbox the trusted process.
 
 Requests in either direction have `type`, `id`, `method`, `params`. A response
-contains exactly one `result` or `error`. Host command IDs use `h:`; plugin
+contains exactly one `result` or `error`. Host command IDs use `h:`. Plugin
 request IDs use canonical `p:1`, `p:2`, ... increasing in **send order**. This
 concrete encoding implements connection-wide uniqueness with bounded bookkeeping.
 Responses may arrive out of order. Reusing or decreasing a request ID terminates
@@ -225,7 +225,7 @@ over a buffer (both are null over a terminal). These handles keep background wor
 targeted after focus changes. `buffer.list` and `pane.list` issue additional editor
 handles; neither operation scans the filesystem.
 
-Jobs start `running`; cancellation moves them to `cancelling`; terminal states
+Jobs start `running`. Cancellation moves them to `cancelling`. Terminal states
 are `succeeded`, `failed`, `cancelled`, and `outcome_unknown`. Terminal transitions
 cannot be repeated. Cancellation is idempotent and rejects subsequent success.
 Job acceptance and terminal changes generate reliable `job.changed` events;
@@ -239,7 +239,7 @@ Control requests time out after ten seconds independently. Finite jobs have
 explicit deadlines from one second to one hour. Expiry requests cancellation;
 failure to acknowledge cancellation within two seconds stops the owner. Neither
 quiescent connections nor jobs with no pending updates create polling timers.
-Disconnect destroys live handles and fails outstanding work locally; it cannot
+Disconnect destroys live handles and fails outstanding work locally. It cannot
 promise a final response to a dead peer or determine a remote mutation's outcome.
 
 The command and the job have separate lifetimes:
@@ -270,19 +270,19 @@ Limits advertised in hello/registered: 64 commands, 16 outstanding host control
 requests, four active finite jobs, 1 MiB per encoded line including newline,
 32 queued outbound messages and 4 MiB queued payload. Each worker may enqueue
 16 incoming messages totalling at most 4 MiB, leaving capacity for other owners.
-The most recent bounded set of 64 jobs is available through `job.get`; terminal
+The most recent bounded set of 64 jobs is available through `job.get`. Terminal
 history may be evicted, while active jobs are retained. Job titles are bounded
 plain text. Protocol bodies and child stderr are not logged by the host.
 
 Run `python3 docs/plugins/check_schema.py` and
 `python3 docs/plugins/check_applications.py` with the development-only
 `jsonschema` package. Structural checks do not establish ownership, command
-collisions, deadlines, queue capacity, revision preconditions or state transitions;
-those require the Rust host/worker tests.
+collisions, deadlines, queue capacity, revision preconditions or state transitions.
+Those require the Rust host/worker tests.
 
 ## Editor operations and memory
 
-Text offsets are Unicode scalar positions; changes use half-open ranges.
+Text offsets are Unicode scalar positions. Changes use half-open ranges.
 `selection.get/set` results include `spans` in the same order as `ranges`: these
 authoritative operative spans account for the pane's native selection semantics.
 Anchor/head values preserve direction and must not be used to infer spans.
@@ -302,11 +302,11 @@ are retained per owner. Reading renews a 30-second idle deadline; closing the
 source buffer, explicit release, expiry or disconnect releases the snapshot.
 An expired snapshot returns `closed`. Chunks never combine different revisions.
 
-An instance can hold sixteen native views. Base models have at most 10,000 rows;
-negotiated complete documents use the separate bounds below.
+An instance can hold sixteen native views. Base models have at most 10,000 rows.
+Negotiated complete documents use the separate bounds below.
 Models contain at most 4 MiB of canonical JSON and project to at most 4 MiB of
-text. Single-message models must fit the encoded line with envelope headroom;
-larger models use the staging operations described below. View projections
+text. Single-message models must fit the encoded line with envelope headroom.
+Larger models use the staging operations described below. View projections
 and immutable snapshots share a 48 MiB retained payload allowance per plugin
 and 160 MiB across the host. The remaining portions of the plan's 64/256 MiB
 budgets are reserved for bounded queues, decoding and publication copies.
@@ -329,12 +329,12 @@ has empty `text` and exactly one `{text,role}` cell per column. Without columns,
 rows use their original single-line text and have no cells. Runyte clips each
 column at 32 terminal cells on grapheme boundaries, retaining the complete value
 in the model. Optional `detail` and `preview` blocks are `{text,role}`, at most
-64 KiB and 1,024 lines each; `status` uses the same shape but one line and 1,024
-bytes. Line feeds are permitted in multiline blocks; other control characters
+64 KiB and 1,024 lines each. `status` uses the same shape but one line and 1,024
+bytes. Line feeds are permitted in multiline blocks. Other control characters
 are rejected. Headers and blocks do not identify selectable data rows. Enter
-requires a selected data row; other view commands remain available on empty
+requires a selected data row. Other view commands remain available on empty
 views. An optional `actions` list restricts view commands to those registered
-local names; an omitted or empty list retains all registered view commands.
+local names. An omitted or empty list retains all registered view commands.
 
 ### Row-dependent actions
 
@@ -342,7 +342,7 @@ Negotiate optional feature `view-row-actions` to override action availability fo
 individual rows. List it in registration's `optional_features` and check the
 acknowledged `features` before sending the new field. Older hosts can keep using
 the original model-wide actions or a plugin-owned contextual picker. The wire
-protocol remains `runyte-1`; capability `views` is still required.
+protocol remains `runyte-1`. Capability `views` is still required.
 
 With the feature selected, each row may contain `actions: [local_command_name]`.
 An omitted row list inherits the model's action restriction. A supplied row list
@@ -360,7 +360,7 @@ views and pending queries), the model-wide list applies. Primary actions still
 require selected data rows, and pending queries still refuse primary dispatch.
 Availability is shared by the Tab menu, command-palette admission and execution
 through Enter, configured bindings or full command names. Help and key hints
-continue to describe registered bindings; they do not create additional actions.
+continue to describe registered bindings. They do not create additional actions.
 Selection changes require reopening an already-open action menu. Model changes
 are rechecked on acceptance, and unseen revisions cannot execute.
 
@@ -380,7 +380,7 @@ polling are needed to choose the menu.
 
 With optional feature `job-feedback`, `job.finish` accepts a `message` of
 1–1,024 UTF-8 bytes without control characters. Omission preserves the original
-behavior; authored `null` is invalid. Capability `jobs` and the owned job handle
+behavior. Authored `null` is invalid. Capability `jobs` and the owned job handle
 remain required, and host-owned jobs still finish through their IO completion.
 A refused message leaves the job state unchanged.
 
@@ -406,8 +406,8 @@ Negotiate `view-action-presentation` to add command `presentation` objects:
 {"label":"Add database","group":"Database","order":10,"listed":true}
 ```
 
-Labels are 1–160 UTF-8 bytes; optional group names are 1–64 bytes. Neither may
-contain control characters. `order` is an unsigned 16-bit integer, default 0;
+Labels are 1–160 UTF-8 bytes. Optional group names are 1–64 bytes. Neither may
+contain control characters. `order` is an unsigned 16-bit integer, default 0.
 `listed` defaults to true. At most 16 distinct groups occur in one registration.
 Command identifiers, aliases, arguments and configured bindings keep their
 existing grammar. Spaces belong in labels, not identifiers.
@@ -416,9 +416,9 @@ Registration may include this field only after hello advertises the feature and
 the registration requests it. The Python client omits presentations on older
 hosts when the feature was optional. After acknowledgement, an optional model or
 header `action_presentation` map overrides complete presentations by registered
-view-command ID. The map has at most 64 distinct keys and 16 distinct groups;
-missing entries inherit registration. Duplicate keys and invalid or unregistered
-references are rejected. Empty authored maps still require negotiation; `null`
+view-command ID. The map has at most 64 distinct keys and 16 distinct groups.
+Missing entries inherit registration. Duplicate keys and invalid or unregistered
+references are rejected. Empty authored maps still require negotiation. `null`
 is invalid for presentations, group names and the map.
 
 Tab groups listed commands in named, non-selectable sections. Commands sort by
@@ -434,16 +434,16 @@ Retained presentation metadata counts toward the owner's payload budget.
 ### Labelled top metadata
 
 With `view-metadata`, models and headers may contain `metadata`, an ordered array
-of at most 16 `{label,value}` entries. Labels are 1–64 UTF-8 bytes; values are at
+of at most 16 `{label,value}` entries. Labels are 1–64 UTF-8 bytes. Values are at
 most 1,024 bytes and may be empty. Neither accepts controls. Authored empty arrays
-require the feature too; `null` is invalid.
+require the feature too. `null` is invalid.
 
 Each entry renders as `label: value` above status, columns and rows. Labels and
 values carry separate semantic styling; ordinary wrapping and selection apply.
 For example, use `Filters: none` or `Database path: /tmp/example.sqlite`.
 Metadata has no data-row identity and cannot become a primary-action target.
 It counts toward model, projection and retained budgets. Header patches replace
-the entire array and presentation map; omitted header fields restore their
+the entire array and presentation map. Omitted header fields restore their
 absent defaults. Existing `detail` and `preview` blocks retain their original
 placement and headings for older plugins.
 
@@ -468,10 +468,10 @@ header selects one with `help`:
 ```
 
 A registration holds at most 16 topics with distinct IDs, following command-name
-grammar. Titles are 1–64 UTF-8 bytes; each topic has 1–16 paragraphs of 1–2,048
+grammar. Titles are 1–64 UTF-8 bytes. Each topic has 1–16 paragraphs of 1–2,048
 bytes. Neither accepts control characters, and titles plus paragraphs total at
 most 64 KiB. Invalid or duplicate topics reject the complete registration.
-Authored topics, even an empty list, require the feature, and so does `help`;
+Authored topics, even an empty list, require the feature, and so does `help`.
 `null` is invalid for both. A model or header naming an unregistered topic is
 rejected as `invalid_argument` and keeps the previous model. Header patches
 replace `help` with the rest of the header, so omitting it clears the topic.
@@ -487,7 +487,7 @@ labels. Topics therefore describe workflows and should not repeat action or key
 tables that could drift from the registry.
 
 Paragraphs are plain text. Visible backticks mark code, as in Runyte's own
-help; nothing else is interpreted, and braces are never key markers. The help
+help. Nothing else is interpreted, and braces are never key markers. The help
 buffer is the ordinary shared read-only help document: searchable, scrollable
 and splittable. It is rendered when opened and does not follow later
 publications. Reopen it after the view changes.
@@ -506,8 +506,8 @@ entry point outside the plugin's own views. The Python client's
 With `view-document` and capability `views`, a model/header may carry `document`,
 a complete UTF-8 body of at most **8 MiB and 250,000 LF-delimited lines**. It must
 have purpose `document`, empty rows and columns, and no detail or preview block.
-An empty document is valid; `null` is invalid. Tabs and line feeds are accepted;
-all other controls are rejected. No trailing newline is inserted.
+An empty document is valid. `null` is invalid. Tabs and line feeds are accepted.
+All other controls are rejected. No trailing newline is inserted.
 
 This is one ordinary read-only buffer: movement, selection, whole-document
 search and copying cover the entire loaded body, including transport chunk
@@ -519,7 +519,7 @@ header changes do not clamp selections and scrolling to the metadata.
 Complete text is not unlimited. Document JSON is limited to 16 MiB and prepared
 payload to 64 MiB. The host reserves 96 MiB before document preparation, including
 staging, encoded content, working copies and rope publication. Negotiated owners
-have a 160 MiB retained allowance; the aggregate host allowance remains 160 MiB.
+have a 160 MiB retained allowance. The aggregate host allowance remains 160 MiB.
 Retained parents, the current document, other resources and other owners can
 therefore prevent another load. Refusal leaves the previous readable view in
 place. These bounds describe accounted payload, not allocator RSS or the
@@ -527,8 +527,8 @@ plugin's own memory/storage.
 
 Staged model/patch inputs for negotiated owners may reach 16 MiB, with unchanged
 128 KiB chunks and 1 MiB framing. Decoded non-document models retain the original
-4 MiB bounds. Old owners keep the 48 MiB allowance and existing model limits;
-registration's resource inventory reports the selected retained allowance.
+4 MiB bounds. Old owners keep the 48 MiB allowance and existing model limits.
+Registration's resource inventory reports the selected retained allowance.
 The new feature bounds above supplement, rather than reinterpret, the inventory's
 base `model_bytes` and `model_rows` fields.
 
@@ -536,8 +536,8 @@ The Python client offers `publish_document(view, revision, title, text, ...)`
 and uses internal staging automatically. Format or escape data before publishing
 it: label lossless escaped text and binary/invalid-UTF-8 hexadecimal distinctly,
 and never present an incomplete prefix as a full value. The host does not fetch
-missing source bytes. Database plugins must capture or retrieve them themselves;
-opening a captured SQL result must not silently rerun that SQL.
+missing source bytes. Database plugins must capture or retrieve them themselves.
+Opening a captured SQL result must not silently rerun that SQL.
 
 ### Model patches and staging
 
@@ -557,8 +557,8 @@ and oversized staged arrays refuse the candidate before excess values are retain
 For larger updates, `view.stage.open` captures a view and `expected_revision`,
 `kind: model|patch`, and exact UTF-8 `bytes` (1 byte–4 MiB, or 16 MiB
 with `view-document`). Write JSON text with
-`view.stage.write {stage,offset,text}` in contiguous chunks of at most 128 KiB;
-each reply gives the next offset. A staged patch is `{header?,operations}`.
+`view.stage.write {stage,offset,text}` in contiguous chunks of at most 128 KiB.
+Each reply gives the next offset. A staged patch is `{header?,operations}`.
 `view.stage.commit` prepares and publishes the complete document once; stale
 revisions, malformed candidates and cancelled stages never partly publish.
 Incomplete commits retain the stage for further writes. Two stages may exist
@@ -566,10 +566,10 @@ per owner and writes renew a 30-second idle expiry. Closing a stage also
 cancels its already admitted, unfinished publication. Creation can start with
 a small empty view followed by staged publication.
 
-`view.get` and publication return `{view,revision,model}` for small models;
-large models return `{view,revision,bytes,rows}`. To read a large model, open
+`view.get` and publication return `{view,revision,model}` for small models.
+Large models return `{view,revision,bytes,rows}`. To read a large model, open
 `view.snapshot.open {view,expected_revision}` and use its `{snapshot,revision,bytes}`
-result. Read with `{snapshot,offset,limit}` (limit 1–128 KiB); replies are
+result. Read with `{snapshot,offset,limit}` (limit 1–128 KiB). Replies are
 `{offset,text,eof}`, with UTF-8 byte offsets. Chunks come from one immutable
 canonical JSON encoding even if the live view changes. Two snapshots per owner
 have 30-second refreshed idle expiry. Closing the view or owner releases them;
@@ -588,7 +588,7 @@ stopped-owner reservations until actual worker completion.
 
 `catalog.py` demonstrates explicit filtering over 5,000 deterministic local
 records with capabilities `views` and `interaction`. Run `::catalog`,
-then Tab → Filter. The native prompt sends no query while typing; Enter starts a
+then Tab → Filter. The native prompt sends no query while typing. Enter starts a
 finite lookup and empty text restores all records. Refresh explicitly retries.
 One worker and one replaceable latest intent bound concurrent lookup work. There
 is no background timer while settled. The Observations action displays the last
@@ -620,7 +620,7 @@ the query. Handlers for other row operations must continue to require selected
 IDs. Invocations include optional `query_revision`; action menus capture it and
 refuse entries from an older query. Menus also capture the row IDs the selection
 covers. A publication that keeps them, such as a counter redrawn every second,
-leaves an open menu usable; one that changes which rows the selection covers
+leaves an open menu usable. One that changes which rows the selection covers
 refuses its entries. Matching publication still needs a prepared
 frame before actions can use the new model. The SDK's `set_query`, `publish_model`
 and `patch_view` expose these preconditions without automatic retries.
@@ -630,10 +630,10 @@ and an issued pane handle. Its state contains `model_revision`, `visible`, `top`
 and `bottom`; endpoints are stable data-row IDs or null. The host derives them
 from final wrapped/folded/diff-aware prepared rows, excluding headers and padding.
 Two panes can therefore report different endpoints for one model. An unavailable
-prepared model has a null revision; the host never interprets old frame rows
+prepared model has a null revision. The host never interprets old frame rows
 through a newer projection. Hidden, covered, maximized-away and detached panes
 report no visible endpoints. Closing the pane or view produces a closed source.
-Only watched viewports are scanned; changes use the existing coalescible queue
+Only watched viewports are scanned. Changes use the existing coalescible queue
 and do not create timers or request another frame.
 
 `{"kind":"view_actions","view":"…"}` observes accepted commands. Its baseline
@@ -644,7 +644,7 @@ and `selected_count`. The `request` identifies the existing `command.invoke`,
 which alone carries the full selected IDs and arguments. An observation does not
 invoke the command again or grant foreground authority. Rejected dispatches and
 later command results do not create actions. Queue capacity is checked before
-acceptance; an oversized callback is refused without stopping its cooperative
+acceptance. An oversized callback is refused without stopping its cooperative
 owner. Reliable delivery failure stops the owner. Accepted actions retain FIFO
 order through state coalescing, resynchronization and unsubscribe acknowledgement.
 Both new source kinds require `views` and remain owner-scoped.
@@ -665,13 +665,13 @@ plugins:
 ```
 
 Run `::files .`. Enter opens the selected regular text file or browses
-the selected directory; Tab offers Parent, Refresh, Trash and native destination
+the selected directory. Tab offers Parent, Refresh, Trash and native destination
 prompts for New, New directory, Rename selected and Copy selected. Destination-taking
 actions use the colon palette: `::files-create "new note.txt"`,
 `::files-mkdir subdir`, `::files-rename renamed.txt`, and
 `::files-copy copy.txt`. Destinations are relative to the directory shown.
 Rename, Copy and Trash operate on exactly one selected entry. The native
-confirmation shows the proposed operations; Enter applies with trash semantics,
+confirmation shows the proposed operations. Enter applies with trash semantics,
 Escape cancels, and its existing `P` key explicitly chooses permanent deletion.
 There is no background polling. Refresh reads again, and a completed filesystem
 operation refreshes the retained view without taking focus.
@@ -687,15 +687,15 @@ it labels symlinks without following them as actions.
 require listing its children. It resolves symlink aliases only inside the workspace,
 returns the requested relative path, kind, byte length and an opaque metadata
 revision, and rejects a mismatching optional `expected_revision` with `stale`.
-It retains no directory handle; byte length for a directory is filesystem metadata,
+It retains no directory handle. Byte length for a directory is filesystem metadata,
 not the summed contents. Revisions describe observations and are not mutation
-permissions. The manager uses stat before entering/opening a row; mutations still
+permissions. The manager uses stat before entering/opening a row. Mutations still
 require a prepared directory plan and native confirmation.
 
 Directory reads, plan preparation and document loading run on a bounded blocking
 pool, with two pending local requests per owner and sixteen across the host.
-Reads and results retain their slot even if the owner stops before IO finishes;
-late results cannot recreate resources for that owner. Each directory snapshot
+Reads and results retain their slot even if the owner stops before IO finishes.
+Late results cannot recreate resources for that owner. Each directory snapshot
 contains at most 1,024 entries, including dotfiles. Pages contain at most 128
 entries; pass `expected_revision` from the first page to reject changes between
 pages. At most two directory snapshots and two prepared plans are retained per
@@ -708,7 +708,7 @@ The latter three name an entry from the issued directory and admit regular files
 of at most 8 MiB or directories with bounded descendants. Directory sources permit
 at most 1,024 entries including the root, 32 descendant path components, 64 MiB of
 regular-file data and 4 MiB of captured path/fingerprint metadata. Symlink targets
-are counted as metadata and copied as links without following them; the top-level
+are counted as metadata and copied as links without following them. The top-level
 source remains an ordinary file or directory. The byte budget covers regular-file
 data, separately from native macOS extended attributes/resource forks and ACLs.
 Metadata copying retains the platform's existing behavior.
@@ -723,7 +723,7 @@ a current foreground grant, and returns `busy` while another input surface owns
 the frontend. The plugin has no API that supplies the user's confirmation.
 Accepting the confirmation starts a host-owned job and emits `job.changed` followed
 by `filesystem.started {plan, job}`. Filesystem application requires `jobs` as well
-as `filesystem`. Capacity is checked at acceptance; when no worker or payload
+as `filesystem`. Capacity is checked at acceptance. When no worker or payload
 budget is available, the confirmation stays visible for retry. Human waiting has
 no job deadline. The worker uses the existing `FsPlan` collision, trash and recovery
 logic, then prepares moved-file baselines and bounded directory refreshes off the
@@ -735,7 +735,7 @@ additional 16 MiB through completion, including owner stop. Reconciliation admit
 at most 128 live filesystem buffers, 1,024 rows per refreshed directory and 4 MiB
 of retained directory refresh payload. Oversized refreshes retain the explorer and
 report that it needs manual refresh. New document opens/publication and all saves
-are refused during apply; existing `--wait` paths may be reused without reload.
+are refused during apply. Existing `--wait` paths may be reused without reload.
 Filesystem-buffer close/reload/discard and ordinary/force quit wait for completion.
 Scratch and generated-view retirement, text editing and detach remain available.
 
@@ -749,7 +749,7 @@ even while detached or after the owner stops.
 `job.cancel` accepts cancellation only while this host operation is queued. Its
 atomic transition races safely with worker startup; once disk mutation begins it
 returns `conflict` and the eventual report states what happened. The 60-second
-control deadline can cancel queued work; it cannot interrupt a running OS mutation.
+control deadline can cancel queued work. It cannot interrupt a running OS mutation.
 Running work remains protected until its result arrives and never requires a
 plugin acknowledgement. Worker failure without a report is an unknown outcome:
 inspect the workspace before retrying, and reconcile preserved dirty buffers.
@@ -771,7 +771,7 @@ appear only when applicable. Plugins do not supply terminal dimensions.
 
 The `interaction` capability admits `ui.prompt`, `ui.pick`, `ui.form`,
 `ui.confirm` and `ui.dismiss`. Every opening request names a current foreground
-`invocation`. A second surface returns `busy`; macro recording/replay also refuses
+`invocation`. A second surface returns `busy`. Macro recording/replay also refuses
 input acquisition. Each retained surface reserves 512 KiB in the shared payload
 ledger until completion or cancellation. Forms have at most sixteen uniquely named fields: `text`,
 `secret`, `boolean` or `choice`. Text fields support `required`, `minimum_length`
@@ -786,13 +786,13 @@ Choices contain at most 64 distinct bounded labels. Titles/labels are plain text
 without controls. Values start empty, false, or at the first choice.
 
 Opening returns `{ "surface": "opaque handle" }` promptly. The calling command
-can finish; human input does not extend a control deadline. Completion delivers a
+can finish. Human input does not extend a control deadline. Completion delivers a
 new host request, `ui.submit`, with `{surface, accepted, values}`. The Python SDK
 routes this to `app.on_input(context)`, adding `invocation` for the new request.
 Acknowledge it with the ordinary command response (the SDK does this). Accepted
 input carries a fresh foreground grant valid for that callback. Cancellation
 returns empty values and grants no authority to reopen UI. Dismissal is owner-only
-and idempotent; detach, source closure, competing native input and owner failure
+and idempotent. Detach, source closure, competing native input and owner failure
 cancel the surface. A dead owner receives no callback. The callback has the same
 ten-second deadline as other control handlers.
 
@@ -825,8 +825,8 @@ workspace root. Values are literal: spaces and quotes need no escaping, and `~`,
 environment variables and web URLs are not expanded. Hidden-file visibility
 follows the editor setting, with a leading dot revealing matching hidden names.
 
-While candidates are visible, Up/Down selects and Tab inserts the complete path;
-directory candidates retain a trailing separator for continued completion.
+While candidates are visible, Up/Down selects and Tab inserts the complete path.
+Directory candidates retain a trailing separator for continued completion.
 Shift-Tab returns to the previous form field. With no candidates, normal field
 navigation applies. Enter submits the entered value, preserving existing local
 checks and asynchronous validation; Escape cancels. Completing a path never
@@ -858,21 +858,21 @@ One validation runs at a time per application, with one latest explicit Enter
 intent waiting behind it. Validation shares the sixteen control-request slots;
 a queued intent is admitted when capacity returns. The editor remains editable.
 Cancellation or value changes emit reliable `ui.validation_cancelled` with the
-request, surface and revision; cooperative validators should abandon work and
+request, surface and revision. Cooperative validators should abandon work and
 still settle their callback. No value appears in that event. A ten-second timeout
 marks validation unavailable and leaves the form open for retry. Up to sixteen
-known late request IDs are retained without values; reaching that limit refuses
+known late request IDs are retained without values. Reaching that limit refuses
 further validation until a reply retires an ID or the owner restarts. Waiting for
 human input has no deadline and no polling timer.
 
 Invalid fields use their predeclared message or generic text. Unavailable checks
-and callback failures use fixed retry feedback; remote exception strings never
+and callback failures use fixed retry feedback. Remote exception strings never
 enter the form or diagnostic snapshots. A malformed result is a protocol error.
 Cancellation, detach, input takeover, source closure and owner stop prevent late
 results from reopening or submitting a surface.
 
 The Python SDK dispatches `app.on_validate(context)` on its own bounded worker.
-Return a mapping from requested field ID to status; the SDK constructs the typed
+Return a mapping from requested field ID to status. The SDK constructs the typed
 response and preserves correlation. It keeps validation cancellation on the
 reserved control worker, so a validator waiting on IO cannot block cancellation.
 Use bounded IO and keep secrets out of plugin logs.
@@ -927,7 +927,7 @@ user changes.
 buffer-context `save`/`close` commands. Configure it like `files.py`, using
 `id: documents`, `args: [docs/plugins/documents.py]` and
 `capabilities: [documents, jobs]`. For example,
-`::documents-create notes.txt "first note"` opens the new unsaved document;
+`::documents-create notes.txt "first note"` opens the new unsaved document.
 `::documents-save` returns its save job. Normal `:write`, movement, editing
 and buffer management remain available.
 
@@ -962,19 +962,19 @@ does not yet carry foreground overwrite approval.
 An instance grants `providers` before `provider.register {name, conditional_write,
 atomic_replace}` can register up to eight unique names. Declarations describe
 transport capabilities independently. Plugin-facing saves require conditional
-writes; native saves can request explicit confirmation for weaker providers.
+writes. Native saves can request explicit confirmation for weaker providers.
 Atomic replacement is a separate guarantee. `resource.open {plugin, provider, key, invocation?}` requires
 `documents` and `jobs` on the requesting application. The provider can be another
 configured application. Its generation, provider name and canonical key are
 correlated independently from the requesting application's job and buffer handle.
 A resource key is opaque: it never becomes a local path, Git target or LSP URI.
-Labels must be safe display text without credentials; resource keys are not
+Labels must be safe display text without credentials. Resource keys are not
 included in titles. An optional syntax hint names a Runyte language.
 
 Opening accepts a finite 60-second host-owned job. The host sends the provider
 `resource.stat {job, provider, key}` and then serial `resource.read {job, provider,
 key, version, offset, limit}` calls, each with a ten-second control deadline.
-Provider calls may arrive before the open request's response; the authoring client
+Provider calls may arrive before the open request's response. The authoring client
 keeps reading continuously and dispatches resource handlers separately from
 waiting command handlers. Responses use the ordinary `response` envelope, with
 `result: {kind: "stat", value: metadata}` or `{kind: "read", value: chunk}`;
@@ -984,12 +984,12 @@ Each chunk contains `version`, byte `offset`, UTF-8 `text` and `eof`.
 
 A document is at most 8 MiB. Each decoded chunk is at most 128 KiB, with the
 independent 1 MiB encoded-frame limit. Offsets and sizes count UTF-8 bytes, not
-Unicode scalar positions; editor text methods continue to count scalars. Chunks
+Unicode scalar positions. Editor text methods continue to count scalars. Chunks
 must preserve the advertised version, begin at the requested byte offset, make
 positive progress before EOF, and finish at exactly the advertised size. NUL and
 unsupported encodings reject publication. Resource keys/versions/labels are bounded
-at 4,096/256/160 bytes. At most two opens per requester and per provider are pending;
-each reserves 16 MiB of retained payload for read and publication. Provider calls
+at 4,096/256/160 bytes. At most two opens per requester and per provider are pending.
+Each reserves 16 MiB of retained payload for read and publication. Provider calls
 share the existing sixteen host control-request slots with commands and input.
 
 An already live canonical identity reuses its buffer without replacing edits or
@@ -998,13 +998,13 @@ alias discovered by stat. The host rechecks handle capacity before publishing.
 Completion reliably emits `resource.opened {job, buffer, revision, error}` with
 null buffer/revision on failure, then terminal `job.changed`. A captured foreground
 grant can present the result only while its pane, attachment and input context
-remain valid; otherwise the document stays available in the buffer list. Job
+remain valid. Otherwise the document stays available in the buffer list. Job
 acceptance does not extend that grant.
 
 The requester may cancel an open, but cannot finish or update a host-owned read
-job. Cancellation immediately prevents publication and releases read state;
-there is no remote mutation to reconcile. Up to 64 retired in-flight request IDs
-are remembered for late replies; other duplicate, foreign or out-of-order replies
+job. Cancellation immediately prevents publication and releases read state.
+There is no remote mutation to reconcile. Up to 64 retired in-flight request IDs
+are remembered for late replies. Other duplicate, foreign or out-of-order replies
 are protocol failures. Provider failure, timeout or stop settles the open without
 publishing partial text. No read creates a polling timer after completion.
 
@@ -1019,7 +1019,7 @@ that text directly. Dirty or uncertain documents offer three native choices:
 - Cancel, preserving local text and the previously accepted baseline.
 
 Cancel is selected initially. Use the native choice keys and physical Enter to
-accept a different decision; macros cannot authorize a remote reload.
+accept a different decision. Macros cannot authorize a remote reload.
 
 Both adoption choices preserve earlier undo history. Undoing a replacement
 restores the prior local text against the newly accepted remote baseline; undo
@@ -1027,21 +1027,21 @@ does not rewind the remote version. Keeping local edits adds no undo entry and
 leaves the document dirty unless those edits equal the remote text.
 
 The host prepares replacement text, history and display measurements before
-offering the choice. Local and remote text must each fit 8 MiB; this operation
+offering the choice. Local and remote text must each fit 8 MiB. This operation
 is independent of the 4 MiB side-by-side comparison limit. Changed document
 revisions, provider generations or foreground context invalidate the captured
 decision. Detach, cancellation and plugin stop preserve the original document.
 Preparation reserves 16 MiB plus twice the local byte length, in addition to the
 existing 16 MiB read or uncertain-write reservation. Capacity is checked before
-preparation; canceled workers retain their charge until they actually finish.
+preparation. Canceled workers retain their charge until they actually finish.
 
 An unknown prior write must be proven settled through the provider's reconciliation
 contract before a new baseline can be accepted. An inspection snapshot alone
 cannot provide that proof. Public `resource.rebind` remains conservative and
-accepts only a known baseline; native reload makes divergent recovery an explicit
+accepts only a known baseline. Native reload makes divergent recovery an explicit
 user decision. After restart, the provider must register the same identity again.
 For the memory example, `::memory-rebind` performs that registration even
-when its conservative reconciliation reports a conflict; `:reload` then offers
+when its conservative reconciliation reports a conflict. `:reload` then offers
 the native recovery choices.
 
 
@@ -1075,8 +1075,8 @@ mutation has settled. Rebind still requires the settlement proof described below
 The provider receives reliable `resource.released {job}` on every read terminal
 path, including cancellation, timeout, identity reuse and requester stop. This
 notification belongs to the provider even when another application owns the job.
-Release immutable cached data and cancel any still-running read for that job;
-a release can overtake a queued resource handler or arrive before its response.
+Release immutable cached data and cancel any still-running read for that job.
+A release can overtake a queued resource handler or arrive before its response.
 It does not establish settlement of a remote write. Failure to deliver the
 notification stops the provider. The Python SDK dispatches these events through
 its control worker so waiting command handlers cannot starve cache cleanup.
@@ -1084,18 +1084,18 @@ its control worker so waiting command handlers cannot starve cache cleanup.
 ### Uploads and recovery
 
 `buffer.save` uses the same host coordinator as native saves. It requires the
-captured buffer revision, `documents` and `jobs`; native saves use host-owned jobs
+captured buffer revision, `documents` and `jobs`. Native saves use host-owned jobs
 even when the provider did not request the plugin-facing `jobs` capability.
 Only one save or rebind per document is admitted. Native queued intents protect
 close, discard, reload, quit and wait completion immediately. A text change before
-host admission rejects that intent before trimming; after admission, the captured
+host admission rejects that intent before trimming. After admission, the captured
 snapshot is immutable and editing can continue.
 
 The host sends `resource.write.begin {job, provider, key, expected_version, mode, bytes,
 encoding}`, which returns `{kind: "write_started", value: {upload}}`. Begin and
 all `resource.write.chunk {job, upload, offset, text}` calls must affect staging
 only. Chunk replies are `{kind: "write_chunk", value: {offset}}`, acknowledging
-the exact next UTF-8 byte offset. Document/chunk/encoded-frame limits match reads;
+the exact next UTF-8 byte offset. Document/chunk/encoded-frame limits match reads.
 NUL text is refused before transport. Empty text still needs a final commit.
 
 `resource.write.commit {job, upload, expected_version, mode}` carries the same
@@ -1109,14 +1109,14 @@ Providers must reject an unsupported mode or a mode change between Begin and Com
 Success is
 `{kind: "write_committed", value: {version}}`. A confirmed non-commit is
 `{kind: "write_rejected", value: {error}}`. `atomic_replace` independently declares
-whether replacement is all-or-nothing for remote readers; neither declaration may
+whether replacement is all-or-nothing for remote readers. Neither declaration may
 be inferred from a preflight stat followed by an unguarded upload. A failed
 non-atomic replacement can leave partial content: return `outcome_unknown` unless
 `write_rejected` can explicitly establish that the destination did not change.
 Cancellation or a lost acknowledgement cannot establish non-commit.
 
 For a provider without conditional writes, native save commands present a native
-foreground overwrite confirmation. Only a physical Enter accepts it; generated
+foreground overwrite confirmation. Only a physical Enter accepts it. Generated
 input cannot approve the overwrite. The host checks the captured document revision,
 provider binding and foreground context again before admission. No provider call
 is sent before approval, and cancelling leaves text, undo history and save hooks
@@ -1124,7 +1124,7 @@ untouched. Accepted approval permits one captured save, including its normal
 trimming hooks; it does not authorize future saves or automatic retries. The prompt
 describes the remaining external-edit race and whether replacement is atomic.
 The captured preview reserves 16 MiB plus 512 KiB for bounded hook metadata.
-Whitespace trimming is limited to 4,096 changes in a preview; a larger preview is
+Whitespace trimming is limited to 4,096 changes in a preview. A larger preview is
 refused without editing the document. Trim it explicitly before retrying the save.
 `:write!` does not bypass confirmation. Plugin-facing `buffer.save` continues to
 refuse weak providers in this slice because it has no foreground approval field.
@@ -1141,7 +1141,7 @@ pending durability. Remote resource keys never enter local write, Git or LSP pat
 
 Before Commit is queued, cancellation or deadline requests
 `resource.write.abort {job, upload?}` and keeps protection until
-`{kind: "write_aborted", value: {}}`. Abort has a two-second deadline; unresponsive
+`{kind: "write_aborted", value: {}}`. Abort has a two-second deadline. Unresponsive
 providers are stopped. Providers must remember aborted job identities sufficiently
 to prevent a late Begin from reviving staging, including when `upload` is null.
 Abort is staging cleanup and cannot undo an already committed write. Ordinary
@@ -1167,7 +1167,7 @@ be in flight. The host sends `resource.reconcile {job, provider, key, previous_w
 The provider must return `{kind: "reconciled", value: {metadata, previous_write}}`
 only after proving that exact previous mutation has settled and cannot commit later.
 The following read chunks pin that metadata version. If the transport cannot
-establish settlement, it must return `outcome_unknown`; reconnecting and reading old
+establish settlement, it must return `outcome_unknown`. Reconnecting and reading old
 bytes is not proof. The memory example serializes commit and reconciliation under
 one lock and has no mutation that can outlive its process. A network provider must
 supply its own honest settlement mechanism.
@@ -1217,7 +1217,7 @@ it, and paths outside it are refused. These canonical path checks assume a
 trusted server namespace; SFTP cannot hold a directory-relative identity across
 all operations. Use a server-side chroot when confinement is required. The
 profile accepts only the documented
-fields; `port` defaults to 22, `identity_files` to an empty list and `allow_agent`
+fields. `port` defaults to 22, `identity_files` to an empty list and `allow_agent`
 to false. Supply an explicit identity file or enable the existing SSH agent.
 There is no password field, interactive password prompt, automatic credential
 search, or plaintext credential persistence. To use an encrypted identity, load
@@ -1225,7 +1225,7 @@ it into the SSH agent and set `allow_agent` to true. Connection errors never
 include library exception details or credential paths in application messages.
 
 Populate `known_hosts` through a trusted host-key verification process before
-starting the application. Unknown or changed host keys are refused; the example
+starting the application. Unknown or changed host keys are refused. The example
 does not accept keys automatically. It does not invoke a shell or interpret
 `~/.ssh/config`. Use absolute local paths in the profile.
 
@@ -1245,8 +1245,8 @@ plugins:
 
 For another configured plugin ID, also pass `--plugin-id` with that ID. Each
 process has one profile and registers provider `remote`. The connection identity
-includes the endpoint and remote root, while labels use the profile alias;
-credential paths are not resource keys.
+includes the endpoint and remote root, while labels use the profile alias.
+Credential paths are not resource keys.
 
 Run `::sftp .`. Enter browses the selected directory or opens a
 regular UTF-8 file as a normal editable provider document. `Tab` exposes the same
@@ -1254,7 +1254,7 @@ registered actions as the palette: `::sftp-parent` and
 `::sftp-refresh`. Row identities survive reorder and refresh, while actions
 from stale view revisions are refused. Symbolic links are displayed but not
 followed. `::sftp-open "notes/猫 notes.md"` opens a path directly. The browser
-is bounded to 1,024 entries and a 900 KiB encoded model; larger directories are
+is bounded to 1,024 entries and a 900 KiB encoded model. Larger directories are
 refused without replacing the previous view. Network work runs outside the SDK
 reader, has a finite transport deadline, and does not poll while idle. Overlapping
 browser commands return `busy` instead of waiting behind a network operation.
@@ -1265,7 +1265,7 @@ content version before promoting a temporary upload with the server's atomic
 POSIX-rename extension. This detects observed conflicts but is **not an atomic
 compare-and-swap**: a remote writer can still change the file between comparison
 and replacement. The confirmation describes that remaining race. A server
-without the required replacement extension cannot complete the save; the adapter
+without the required replacement extension cannot complete the save. The adapter
 does not fall back to deleting the destination first. There is no plugin-facing
 save command that bypasses native approval, and `:write!` does not bypass it.
 
@@ -1275,10 +1275,10 @@ in the original foreground context. Edits made during an upload remain dirty.
 changing local text or its saved baseline; each side is limited to 4 MiB.
 `::sftp-rebind` explicitly reconciles a document after provider restart or
 an uncertain upload. An uncertain remote write keeps local data dirty and cannot
-be retried blindly; if settlement cannot be proved, rebind remains refused.
+be retried blindly. If settlement cannot be proved, rebind remains refused.
 Remote documents are limited to 8 MiB of UTF-8 and never acquire a local file path.
-Binary downloads and disk-file uploads use the confirmed workflows below;
-remote mkdir/rename/delete commands have a separate confirmation workflow.
+Binary downloads and disk-file uploads use the confirmed workflows below.
+Remote mkdir/rename/delete commands have a separate confirmation workflow.
 The automated SFTP fixture uses temporary local credentials and a loopback server,
 and never contacts a live account.
 
@@ -1287,7 +1287,7 @@ and never contacts a live account.
 
 The runnable `ftp.py` application reuses the same `remote_application.py` browser,
 `remote_provider.py` engine, `application.py` client and `transport.py` worker
-as SFTP. Its `ftp_transport.py` adapter uses Python 3.10+ standard-library `ftplib` and `ssl`;
+as SFTP. Its `ftp_transport.py` adapter uses Python 3.10+ standard-library `ftplib` and `ssl`.
 Paramiko is not imported or required. Configure explicit TLS with a JSON profile
 outside the repository, for example `/path/to/ftps-profile.json`:
 
@@ -1306,7 +1306,7 @@ outside the repository, for example `/path/to/ftps-profile.json`:
 
 `transport` defaults to `ftps` and `port` to 21. FTPS uses explicit TLS on the
 control connection and requires encrypted data connections (`PROT P`).
-Certificate chains and hostnames are verified; omit `ca_file` to use the system
+Certificate chains and hostnames are verified. Omit `ca_file` to use the system
 trust store or provide an absolute path to your trusted CA file. TLS failures
 never fall back to FTP. Implicit FTPS is not implemented.
 
@@ -1323,7 +1323,7 @@ credential cache. Keep this file outside tracked workspace content.
 To use plain FTP, explicitly set `"transport": "ftp"` and remove `ca_file`,
 which is only valid for FTPS. The application name,
 command descriptions and browser title display **FTP (unencrypted)**. FTP sends
-credentials and document data without transport encryption; it is a separate
+credentials and document data without transport encryption. It is a separate
 connection choice, never a compatibility fallback. The opaque connection identity
 includes the transport, so changing FTP to FTPS does not silently reuse a document
 binding from the other connection.
@@ -1348,7 +1348,7 @@ Pass `--plugin-id` as well when the configured ID differs from `ftp`. Run
 `::ftp-inspect` and `::ftp-rebind` have the same captured-context and
 revision behavior as SFTP. The browser requires structured server metadata and
 does not parse presentation-oriented `LIST` output. Directory listing is bounded
-to 1,024 entries and a 900 KiB encoded view; documents are bounded to 8 MiB of
+to 1,024 entries and a 900 KiB encoded view. Documents are bounded to 8 MiB of
 UTF-8. Remote path checks assume a trusted server namespace; enforce confinement
 with the server account's root or jail.
 
@@ -1356,16 +1356,16 @@ Use native `:write` to save. Every FTP/FTPS save requires foreground confirmatio
 this adapter advertises **neither conditional writes nor atomic replacement**.
 It compares the observed content version before remote promotion, detecting
 observed changes while retaining the race with a concurrent remote writer. An
-upload or rename failure may leave partial remote state; the confirmation names
+upload or rename failure may leave partial remote state. The confirmation names
 that limitation. The adapter never deletes the destination as a rename fallback
 and does not automatically retry failed mutations. Remote staging permissions
-follow server policy; the adapter does not promise private staging files.
+follow server policy. The adapter does not promise private staging files.
 
 Save-and-close waits for confirmed clean success, and edits during upload remain
 dirty. `:diff-remote` inspects remote changes without altering the local saved
 baseline. After a disconnect during promotion, local text remains protected with
 an unknown write outcome. Explicit rebind succeeds only when the provider can
-prove the previous write has settled; reconnecting alone is not proof. If a
+prove the previous write has settled. Reconnecting alone is not proof. If a
 server's rename behavior cannot complete replacement, the save is refused without
 weakening these guarantees. Binary downloads, disk-file uploads and remote
 mutation commands use the confirmed workflows below. Automated fixtures use isolated loopback FTP/FTPS servers and
@@ -1374,7 +1374,7 @@ temporary credentials and certificates, never a live account.
 
 ## Binary downloads and confirmed publication
 
-Binary bytes stay in the application process and local staging files; they are
+Binary bytes stay in the application process and local staging files. They are
 not encoded into extension messages or inserted into provider text buffers. The
 host issues a private destination, verifies and freezes the completed download,
 and uses the existing native filesystem confirmation to publish a new local file.
@@ -1388,23 +1388,23 @@ application returns a finite transfer job immediately, then streams the file and
 prepares a plan outside the command handler. A browser status row reads
 `Download ready` and names the next command. Run `::sftp-confirm-download`
 or `::ftp-confirm-download` to present native filesystem confirmation using
-a fresh invocation; publication always requires this separate review step. `cancel-download` cancels the pending
+a fresh invocation. Publication always requires this separate review step. `cancel-download` cancels the pending
 prompt, transfer or unpresented plan. Each application retains one download flow
-at a time; the transfer job stays running until confirmation is presented and
+at a time. The transfer job stays running until confirmation is presented and
 expires after 60 seconds if the flow is not completed. Both examples require
 `filesystem` and `interaction` alongside their existing capabilities.
 
 The shared `remote_download.py` workflow reports only phase changes to
 `remote_status.py`. Status publication preserves file row identities, coalesces
 updates in one bounded worker, and rechecks the captured browser view and phase
-generation. A busy view gets at most two short retries during that pending update;
-there is no status polling or idle timer. Closing a browser never recreates it in
+generation. A busy view gets at most two short retries during that pending update.
+There is no status polling or idle timer. Closing a browser never recreates it in
 the background.
 
 `staging.create {job, bytes}` requires an owned running transfer job and an exact
 byte count from 0 through 8,388,608. It returns `{staging, path}`: an opaque handle
-and the path of an exclusively created private file. Write only that issued path;
-it is temporary runtime state, not a document identity or a durable destination.
+and the path of an exclusively created private file. Write only that issued path.
+It is temporary runtime state, not a document identity or a durable destination.
 The application must stream within the declared limit, close its writer, and
 compute the SHA-256 digest of the completed bytes. The host validates its limits
 when sealing; an enabled unsandboxed process still has its ordinary filesystem
@@ -1453,7 +1453,7 @@ or accepted native-input invocation when presenting the plan.
 
 Once `filesystem.apply` presents confirmation, ownership moves to that native
 surface and the original transfer job can finish. Pressing Enter starts the
-existing asynchronous filesystem apply job; acceptance is not completion. Escape
+existing asynchronous filesystem apply job. Acceptance is not completion. Escape
 cancels without publishing the file. Destination changes are revalidated before
 application. Pending publication uses the same document mutation barrier,
 owner-stop reconciliation and failure reporting as other application filesystem
@@ -1491,7 +1491,7 @@ does not alter the frozen bytes that confirmation authorizes.
 Only an accepted confirmation starts the remote upload. The transport rechecks
 the prepared destination, writes a temporary remote staging file, then promotes
 it once. An observed remote content change or newly occupied destination refuses
-the operation. SFTP new-file promotion uses ordinary rename; existing-file
+the operation. SFTP new-file promotion uses ordinary rename. Existing-file
 replacement requires the server's POSIX-rename extension. FTP/FTPS rename may
 overwrite a destination created after its final check and is not guaranteed atomic.
 FTP staging permissions follow server policy. Neither transport claims atomic
@@ -1502,22 +1502,22 @@ application admits one upload flow; its finite job includes preparation and huma
 review, with a 60-second deadline. Workers retain their admission until they
 actually finish. Progress reports bounded increments and reaches completion only
 after an acknowledged promotion. Phase changes update the existing browser without
-an idle poll; accepted work can finish while detached.
+an idle poll. Accepted work can finish while detached.
 
 A failure after promotion may have an unknown outcome. That flow retains its
-source snapshot and destination report in the current plugin process, blocks another upload, and cannot be
-cleared by cancellation. Inspect the remote destination and explicitly restart
-the plugin before preparing a new attempt; reconnecting or observing matching
-bytes alone is not proof that the original operation has settled. There is no
-automatic retry. Uploads do not modify an open provider document, its local text,
-or its saved baseline; use ordinary provider reload or save conflict handling
-when the uploaded destination is also open in the editor.
+source snapshot and destination report in the current plugin process, blocks
+another upload, and cannot be cleared by cancellation. Inspect the remote
+destination and restart the plugin before preparing a new attempt. Reconnecting
+or seeing matching bytes does not prove the original operation has finished.
+There is no automatic retry. Uploads do not modify an open provider document,
+its local text, or its saved baseline. Use ordinary provider reload or save
+conflict handling when the uploaded destination is also open in the editor.
 
 ## Confirmed remote directory operations
 
 Both reference browsers use the existing `ui.prompt`, `ui.confirm` and finite-job
 APIs for remote mkdir, rename and permanent delete. No additional editor method
-or transport library is needed. The application owns remote IO and preconditions;
+or transport library is needed. The application owns remote IO and preconditions.
 Runyte owns the input surface and sends the accepted callback only after native
 confirmation. A trusted application already has ordinary OS/network permissions:
 this is an application workflow, not a sandbox for its network traffic.
@@ -1537,7 +1537,7 @@ the confirmation command. Run it with a fresh invocation, review the quoted exac
 paths and transport warning, then press Enter to apply or Escape to cancel.
 Neither preparing an operation nor invoking the confirmation command performs
 the mutation. Confirmation cancellation changes no remote entry. Completion
-leaves a visible result and a refresh action; a closed browser is never reopened
+leaves a visible result and a refresh action. A closed browser is never reopened
 by background work. Download and operation status rows preserve one another.
 
 Each application retains one operation and one worker. Its job lasts at most
@@ -1545,16 +1545,16 @@ Each application retains one operation and one worker. Its job lasts at most
 the adapter's eight-second caller deadline. Namespace mutations and document
 replacements share one mutation slot, retained until the actual worker exits,
 even if its caller has already timed out. Reads remain independently bounded.
-Cancellation before the mutation gate prevents the mutation; a remote command
+Cancellation before the mutation gate prevents the mutation. A remote command
 already sent may finish despite cancellation.
 
 The initial operations handle one regular file or empty directory as reported by
-the server. File inspection is limited to 8 MiB; directory metadata keeps the
+the server. File inspection is limited to 8 MiB. Directory metadata keeps the
 existing 1,024-entry/4 MiB bounds. Nonempty directories, recursive deletion,
 configured-root mutation, parent traversal and existing destinations are refused.
 The native confirmation currently accepts 160 UTF-8 bytes each for title and
 message. If exact quoted paths, the connection label and mandatory warnings do
-not fit, preparation is refused; they are never truncated to obtain approval.
+not fit, preparation is refused. They are never truncated to obtain approval.
 
 Prepared values are immutable and bound to the connection identity. Apply resolves
 the paths again, compares source metadata and content hash, and rechecks destination
@@ -1562,8 +1562,8 @@ absence before sending the mutation. These are best-effort checks, not
 compare-and-swap. SFTP uses ordinary rename and never the overwrite extension for
 a namespace rename. FTP/FTPS has no portable no-replace rename guarantee: a target
 created after the check may be overwritten, and the native warning says so.
-The adapter never deletes a target as a rename fallback. Deletion is permanent;
-there is no filesystem undo. SFTP rejects source symbolic links; FTP relies on
+The adapter never deletes a target as a rename fallback. Deletion is permanent.
+There is no filesystem undo. SFTP rejects source symbolic links; FTP relies on
 server-reported types and cannot identify a link reported as an ordinary file.
 Use the server account's root/jail for confinement against namespace races.
 
@@ -1575,16 +1575,16 @@ finish. If cancellation reaches the host before a successful acknowledgement can
 finish its job, the application records a conservative unknown terminal outcome
 instead of leaving the job stuck cancelling.
 
-Remote namespace changes never retarget, close or replace editor buffers. An open
-provider document keeps its original resource identity, saved baseline, undo and
-local edits after remote rename or deletion. A later save to a missing or changed
-source fails its existing preconditions, preserving unsaved text; it does not
-recreate the removed path. Open the new resource explicitly after a rename.
-Document versions use content hashes: replacing a path with identical bytes is
-indistinguishable from unchanged content, so these checks do not prove that the
-server retained the same filesystem object.
-The isolated server fixtures cover cancellation, changed sources, collisions,
-empty-directory limits, uncertain replies and serialization with document saves.
+Remote namespace changes never retarget, close or replace editor buffers. An
+open provider document keeps its original resource identity, saved baseline,
+undo and local edits after remote rename or deletion. A later save to a missing
+or changed source fails its existing preconditions, preserving unsaved text. It
+does not recreate the removed path. Open the new resource explicitly after a
+rename. Document versions use content hashes. Replacing a path with identical
+bytes looks like unchanged content, so these checks don't prove the server kept
+the same filesystem object. The isolated server fixtures cover cancellation,
+changed sources, collisions, empty-directory limits, uncertain replies and
+serialization with document saves.
 
 ## Source subscriptions
 
@@ -1608,7 +1608,7 @@ optional query metadata;
 job metadata contains state/progress; attachment metadata contains attached state
 and generation. Read text, selections and models through their existing explicit
 APIs when needed. An accepted save of an unchanged baseline need not emit a new
-state; the saved revision describes the baseline, not a count of save commands.
+state. The saved revision describes the baseline, not a count of save commands.
 
 `event.changed` carries `data: {subscription, sources, coalesced}`. Buffer-open,
 saved-baseline, job-state and attachment transitions use reliable delivery.
@@ -1625,8 +1625,8 @@ most 64 pending changed sources. Exceeding the pending table or discovery limit
 emits reliable `event.resync_required` and suspends that subscription. Call
 `event.resync` with its handle to obtain a fresh baseline; an oversized baseline
 is refused without replacing the old subscription. There is no replay. A bounded
-reliable queue preserves lifecycle transitions, responses and accepted actions;
-an owner that cannot accept them is stopped. Eight outgoing message slots and
+reliable queue preserves lifecycle transitions, responses and accepted actions.
+An owner that cannot accept them is stopped. Eight outgoing message slots and
 512 KiB remain reserved for reliable control. A drain notification flushes the
 last coalesced state without waiting for input or starting a timer.
 
@@ -1670,8 +1670,8 @@ processing must run through the same ordered callback lane.
 then run `::helper`. Tab offers Send, Flood, EOF and Close. Its
 checked-in `echo_helper.py` backend demonstrates binary pipe separation, retained
 output eviction, natural EOF exit and explicit stop. The native view renders only
-a bounded output tail and groups pending output observations; it has no idle
-refresh timer. Closing its view retains the helper; Close stops and releases it,
+a bounded output tail and groups pending output observations. It has no idle
+refresh timer. Closing its view retains the helper. Close stops and releases it,
 and stopping the plugin always cleans up its managed helper group.
 
 `process.start {label,executable,args?,cwd?,capture_stderr?}` runs an argument
@@ -1680,10 +1680,10 @@ spawn and returns an opaque `process` handle plus the metadata described below.
 The safe display label is 1–160 UTF-8 bytes. Executable and optional working
 directory are at most 4,096 bytes, and at most 64 arguments each contain at most
 4,096 bytes and 64 KiB in aggregate. Null bytes are refused. The default working
-directory is the workspace root; an explicit directory must resolve to an
+directory is the workspace root. An explicit directory must resolve to an
 existing directory inside it. Path resolution and spawn run off the editor loop.
 Startup has a five-second deadline. A late spawn cannot issue a successful
-handle; it is immediately cleaned up, while its reserved ownership and quota
+handle. It is immediately cleaned up, while its reserved ownership and quota
 remain until actual completion. The helper inherits ordinary user permissions
 and environment. This API provides
 ownership and data bounds, not an OS security sandbox.
@@ -1696,13 +1696,13 @@ handle retains readable output and continues to count against quotas until
 explicitly closed. Nothing silently evicts another helper to make room.
 
 `process.read {process,stream,offset,limit}` returns
-`{process,stream,offset,data,next,eof}`. Streams are `stdout` and `stderr`; `data`
+`{process,stream,offset,data,next,eof}`. Streams are `stdout` and `stderr`. `data`
 is standard base64, and `limit` is 1–65,536 decoded bytes. Reading before retained
-`start` returns `stale`; reading beyond `end` returns `invalid_argument`. An empty
+`start` returns `stale`. Reading beyond `end` returns `invalid_argument`. An empty
 chunk with `eof:false` is valid. `eof` means this captured stream has ended and the
 cursor reached its retained end; inspect `output_truncated` before assuming it
 contains every byte the helper produced. Subscribe to process metadata instead
-of repeatedly polling an empty stream. Stderr defaults to a null sink; reading
+of repeatedly polling an empty stream. Stderr defaults to a null sink. Reading
 it returns `unsupported` unless capture was explicitly enabled. The host never
 copies raw helper output, arguments or stdin into diagnostic logs.
 
@@ -1711,22 +1711,22 @@ and one outstanding write per helper. The deferred result
 `{process,written,stdin_closed}` acknowledges bytes written to the OS pipe; it
 does not claim the child consumed them or performed an action. `eof:true` closes
 stdin after those bytes. A write that cannot finish within five seconds stops
-the helper and reports `outcome_unknown`; partial delivery is never retried.
+the helper and reports `outcome_unknown`. Partial delivery is never retried.
 
 `process.close {process}` requests group cleanup and returns `{}` only after
-actual reap and handle removal. Repeated closes join the cleanup; closing an
+actual reap and handle removal. Repeated closes join the cleanup. Closing an
 unknown handle is idempotent. Running/closing state and stdin closure are reliable
-observations through source `{kind:"process",process}`; stdout/stderr bounds are
+observations through source `{kind:"process",process}`. Stdout/stderr bounds are
 coalescible invalidations, without raw bytes. Close acknowledgements precede the
 resulting source-closed observation. `get` can report `closing` while a deferred
 close waits. The final drain is at most 64 KiB across both pipes and waits only a
-bounded time for escaped pipe holders; `output_truncated` reports an incomplete
+bounded time for escaped pipe holders. `output_truncated` reports an incomplete
 drain. This final output travels in the reserved terminal event, so filling the
 ordinary output queue cannot prevent reap or terminal-result delivery.
 On Windows, a cleanup attempt that cannot confirm an empty private job returns
 `unavailable` for pending close requests and keeps the process handle in
 `closing` state. The host retains the job and quota while a background reaper
-retries; a later close may be retried after settlement.
+retries. A later close may be retried after settlement.
 
 The handshake advertises `process_handles`, `process_io_bytes`,
 `process_output_bytes` and `process_write_seconds`.
@@ -1746,7 +1746,7 @@ the group are outside this guarantee. Exit handling uses child-exit notification
 with no per-helper polling timer. Windows uses a private kill-on-close job and
 confirms that the leader and descendants have settled before a successful close
 reply. Windows exit reports an exit code and a null signal. The Python SDK's `start_process`, `read_process`
-and `write_process` helpers preserve these bounds; reads return decoded bytes,
+and `write_process` helpers preserve these bounds. Reads return decoded bytes,
 and invalid write acknowledgements produce `outcome_unknown` without replay.
 
 ## Notifications and native handoffs
@@ -1757,12 +1757,12 @@ Run `::handoffs-notify`, then `:notifications` to read the retained message.
 `::handoffs-terminal` opens the configured environment's interactive shell
 in a native terminal session. `::handoffs-browser https://example.org/`
 requests a system-browser handoff, and `::handoffs-file report.pdf` requests
-the system handler for an existing workspace file. These are explicit actions;
-the example never opens a browser during registration or in its conformance tests.
+the system handler for an existing workspace file. These are explicit actions.
+The example never opens a browser during registration or in its conformance tests.
 
 `notification.publish {severity,title,body}` needs capability `notifications`.
 Severity is `info`, `warning` or `error`. The title is 1–160 UTF-8 bytes without
-controls; body is at most 4,096 UTF-8 bytes and 64 lines, with only newline and tab
+controls. Body is at most 4,096 UTF-8 bytes and 64 lines, with only newline and tab
 allowed as controls. Empty body is valid. The host labels the source with the
 configured plugin identity; the plugin cannot choose another source. Publication
 works while detached and does not replace action feedback, move focus or open a
@@ -1770,7 +1770,7 @@ buffer. It wakes presentation once so an idle attached frontend sees its unread
 indicator; multiple accepted messages rebuild retained notification documents
 once at the next presentation checkpoint. There is no notification refresh timer.
 
-Publication accepts at most one message per 500 milliseconds per plugin; a faster
+Publication accepts at most one message per 500 milliseconds per plugin. A faster
 call returns `busy`, without extending the interval. Consecutive identical messages
 use the native occurrence counter. Native notification-history count and byte
 limits apply, and records remain available after the plugin stops. Notifications
@@ -1778,7 +1778,7 @@ alone do not protect idle retirement. The SDK helper is `publish_notification`.
 
 `terminal.open {invocation,label,executable,args?,cwd?}` needs capability
 `terminals` and a current foreground invocation. Argument, label and cwd bounds
-match `process.start`; stdin/stdout use a PTY instead of the helper pipe API.
+match `process.start`. Stdin/stdout use a PTY instead of the helper pipe API.
 Arguments retain their exact boundaries and are never joined into a shell command.
 Cwd must resolve to an existing workspace-contained directory. Preparation and
 spawn run on a bounded worker. The host rechecks foreground context before
@@ -1792,7 +1792,7 @@ installation transfers ownership to the editor: the terminal session survives
 plugin stop and follows normal terminal navigation, close and persistent-session
 retention rules. Eight unpublished terminals globally reserve 4 MiB each; stale
 cleanup continues to occupy its reservation until settled. The SDK helper is
-`open_terminal`; the example passes an executable and argument list directly.
+`open_terminal`. The example passes an executable and argument list directly.
 
 `external.open {invocation,target}` needs capability `external` and consumes one
 foreground invocation when launch is admitted. Target is either
@@ -1808,20 +1808,20 @@ Validation runs off the editor loop and is followed by a fresh foreground check.
 Successful `{}` means the OS accepted the handler spawn, not that a browser opened,
 a login succeeded or playback started. Handler exit status cannot retroactively
 turn this receipt into a delivery guarantee. Handler startup waits at most five
-seconds; the host also applies an eight-second overall handoff deadline. After
+seconds. The host also applies an eight-second overall handoff deadline. After
 irreversible launch admission, a timeout is `outcome_unknown`, and the bounded
 system-opener owner still handles late spawn/reap. Never automatically retry it.
 At most sixteen system-opener records exist across the process; handlers have
 independent stdio/process groups and continue independently of plugin stop.
 Targets and URL query data never appear in host diagnostic messages.
 
-Each active plugin generation has at most one pending handoff; retired
+Each active plugin generation has at most one pending handoff. Retired
 generations may retain separate cleanup within the shared worker and terminal
 limits. Preparation has a five-second
-response deadline; actual worker and unpublished-terminal cleanup retain shared
+response deadline. Actual worker and unpublished-terminal cleanup retain shared
 local-work permits and payload charges after a timeout or owner stop. External
 preparation reserves 128 KiB. Foreground context is checked at admission and at
-the asynchronous handoff boundary; missing attachment, changed focus, stale
+the asynchronous handoff boundary. Missing attachment, changed focus, stale
 invocations and cross-owner tokens cannot take presentation. An external launch
 consumes its invocation, preventing repeated windows from the same action.
 The SDK's `open_url` and `open_file_externally` preserve explicit target kinds and
@@ -1834,8 +1834,8 @@ Capability `activity` lets a deliberately continuing service protect its workspa
 while it works. Registration, an idle helper and a retained view alone do not
 protect idle retirement. Each owner may retain two activity leases, counting
 both active work and cancellation awaiting cleanup. Each lease costs 1 KiB of
-the existing retained-payload allowance. Leases are connection-generation handles;
-never save one in configuration or workspace state.
+the existing retained-payload allowance. Leases are connection-generation handles.
+Never save one in configuration or workspace state.
 
 `activity.acquire {title,duration_seconds?}` returns
 `{lease,title,state:"active",duration_seconds}`. The immutable title is 1–160 UTF-8
@@ -1853,8 +1853,8 @@ Renewal cannot beat an already-passed deadline merely because its timer event is
 still queued. Repeated cancellation does not extend the cleanup grace period.
 
 The owner must stop its continuing work and acknowledge completed cleanup with
-`activity.release {lease}` within two seconds. Release returns an empty result;
-it is also the ordinary completion operation when work stops voluntarily.
+`activity.release {lease}` within two seconds. Release returns an empty result.
+It is also the ordinary completion operation when work stops voluntarily.
 Repeated release of an issued handle in the same generation is harmless.
 Do not release before cleanup has actually finished. A missed acknowledgement
 stops the owner through ordinary plugin teardown, including managed helper
@@ -1863,9 +1863,9 @@ independent ownership. One cancelled lease can therefore stop other work owned
 by an unresponsive plugin.
 
 Both active leases and the bounded cancellation grace protect normal shutdown
-and idle retirement. Persistent-session health reports owner, title and state;
+and idle retirement. Persistent-session health reports owner, title and state.
 `:service-health` shows the same continuing work. Detach retains it. Explicit
-forced persistent-session stop remains available; `:q!` only overrides the
+forced persistent-session stop remains available. `:q!` only overrides the
 ordinary unsaved-document guard and does not silently abandon plugin activity.
 Use `:plugins` to stop the owner before quitting in either deployment mode.
 Plugin stop or host restart invalidates every lease.
@@ -1876,7 +1876,7 @@ replays a failed renewal. Decide explicitly whether playback or service work is
 still wanted before renewing. `activity.cancel_requested` uses the separate
 bounded cancellation worker, so ordinary command handlers waiting for replies
 cannot starve cleanup. Keep that callback independent of locks held by command
-handlers; signal cancellation promptly and acknowledge only after the work stops.
+handlers. Signal cancellation promptly and acknowledge only after the work stops.
 The host uses its existing one-shot deadline scheduler, with no activity timer
 when no lease or cleanup grace is present.
 
@@ -1886,7 +1886,7 @@ when no lease or cleanup grace is present.
 (0.37 or later). Runyte presents the playlist and current-item dashboard; mpv
 owns decoding, audio output and its external video window. The example accepts
 ordinary audio/video files inside the workspace. It refuses URLs and authored
-playlist files; Spotify and YouTube use separate service adapters described in
+playlist files. Spotify and YouTube use separate service adapters described in
 the [media service guide](media-services.md).
 
 ```yaml
@@ -1915,23 +1915,23 @@ Playback acquires an activity lease before starting or resuming the player. It
 renews only while playback is wanted, releases after an acknowledged pause/end,
 and retains ownership through uncertain control or cleanup. Cancellation closes
 the managed helper before acknowledging the lease. Detach retains the same
-player; reattachment does not start another one. `stop-playback` closes the helper, and
+player. Reattachment does not start another one. `stop-playback` closes the helper, and
 `:plugin-stop media` cleans up the plugin's managed process group. A paused
 helper alone does not protect persistent-session retirement.
 
 The host-managed `mpv_backend.py` bridge starts one mpv child in its inherited
-process group, communicates through an inherited local socket, and bounds JSON
-lines at 64 KiB and its output queue at 256 KiB. Progress is coalesced to at most
-two updates per second during playback. Paused settlement creates no polling or
-redraw loop. Invalid state, a lost command acknowledgement or truncated output
-causes helper cleanup rather than automatic control replay.
+process group and communicates through an inherited local socket. It limits
+JSON lines to 64 KiB and its output queue to 256 KiB. Progress is coalesced to
+at most two updates per second during playback. Paused settlement creates no
+polling or redraw loop. Invalid state, a lost command acknowledgement or
+truncated output causes helper cleanup rather than automatic control replay.
 
 The bridge disables user configuration, script loading, automatic sidecars,
 playlist-reference loading and the network extractor. Its external window only
 displays video: default input bindings, on-screen controls and drag/drop are
 disabled so playback mutations pass through the native controller's lease checks.
 These settings are not a
-decoder or filesystem sandbox; the enabled plugin and installed player run with
+decoder or filesystem sandbox. The enabled plugin and installed player run with
 the user's ordinary permissions. Codecs and output devices remain mpv concerns.
 Pass `--mpv /absolute/path/to/mpv` in the example's `args` to select its executable.
 `--headless` selects null audio/video output for deterministic tests and does not
@@ -1970,7 +1970,7 @@ A supplied schema rejects unknown configured keys, missing required fields and
 values of the wrong type. There are no defaults, coercion, regular expressions,
 references or automatic migrations. Schema text is bounded at 64 KiB with the
 same eight-level/4,096-node limits. Optional schema/constraint fields may be null
-to mean absent; `required` must be a boolean when provided. Validation happens
+to mean absent. `required` must be a boolean when provided. Validation happens
 before any commands or capabilities are installed. Diagnostics do not echo
 configured values or unrecognized keys.
 
@@ -1981,12 +1981,12 @@ State is one whole document per exact configured plugin ID:
 ```
 
 `version` is the plugin's unsigned 32-bit migration version. `data` is bounded
-JSON. `state.get {}` returns `{revision,document}`; an absent document returns
+JSON. `state.get {}` returns `{revision,document}`. An absent document returns
 `{"revision":"s:missing","document":null}`. Otherwise the opaque revision is a
 hash of canonical document content. The host does not interpret migration
 versions, restore live handles, or migrate state automatically.
 
-`state.set {expected_revision,document}` atomically replaces the observed document;
+`state.set {expected_revision,document}` atomically replaces the observed document.
 `state.delete {expected_revision}` deletes it. Both return the resulting state
 metadata. A different current revision yields `conflict`, preserving the current
 file. This compares content: changing away and back to identical canonical JSON
@@ -1996,19 +1996,19 @@ Do not retry a mutation merely because a response was lost.
 
 Canonical documents contain at most 1,044,480 bytes (1 MiB minus 4 KiB of wire
 headroom), 16 levels, 16,384 value nodes and 1,024 entries per object or array.
-Arbitrary maps are permitted inside `data`; the document and request envelopes
+Arbitrary maps are permitted inside `data`. The document and request envelopes
 remain strict. Structural checks run before materializing unbounded JSON trees.
 The committed state quota remains below 1 MiB per owner.
 
 Integer literals must fit the range from signed 64-bit minimum through unsigned
-64-bit maximum; larger integer literals are rejected before parsing can round
+64-bit maximum. Larger integer literals are rejected before parsing can round
 them. Decimal or exponent numbers use finite IEEE 754 double precision. Store
 larger exact identifiers as strings. These semantic checks supplement the schema.
 
 Storage lives under the configured workspace state root, normally
 `.runyte/plugins/<configured-id>/state.json`, separate from tracked `context/`. Private directories and files use descriptor-relative access
 without following links. A stable nonblocking lock serializes cooperating hosts'
-content checks and writes; contention returns `busy`. Atomic replacement and
+content checks and writes. Contention returns `busy`. Atomic replacement and
 file/directory synchronization preserve the old document before promotion. A
 fixed temporary leaf bounds interrupted-write leftovers and is recovered only
 on an explicit state operation. Corrupt or unsafe existing storage is refused,
@@ -2018,7 +2018,7 @@ On Windows, durable plugin state can use the optional
 `workspace.state_anchor: profile` or `workspace.state_anchor: local-app-data`
 policy. The anchor is resolved from the current account's OS known-folder
 record, and `workspace.state` must be a proper descendant of it. Existing
-ordinary parents are traversed without changing their permissions; Runyte
+ordinary parents are traversed without changing their permissions. Runyte
 creates or admits only the final state directory as private storage. It does
 not accept an arbitrary anchor, choose another ancestor after a refusal, or
 move existing state. Omitting the setting retains the full-ancestry durability
@@ -2029,7 +2029,7 @@ Only one state operation per configured owner may run, including unfinished
 workers from a stopped generation. Work runs off the editor loop, reserving a
 shared local-worker slot and 16 MiB of the existing payload budget until actual
 completion. The host deadline is ten seconds. Before mutation admission,
-cancellation prevents promotion; after an attempted mutation, timeout or failure
+cancellation prevents promotion. After an attempted mutation, timeout or failure
 can yield `outcome_unknown`. Stopping a plugin discards its late reply while
 retaining accounting and the owner gate until the worker finishes. Pending work
 protects ordinary quit/retirement. State operations start no periodic timer.
@@ -2039,7 +2039,7 @@ The SDK exposes `get_settings()`, `get_state()`,
 State replies get two seconds of delivery headroom beyond the host deadline. A
 lost mutation acknowledgement is `outcome_unknown`; the SDK neither retries nor
 migrates. This delivery margin does not extend an enclosing command’s ten-second
-lifetime; longer workflows should run behind an explicit finite job. Plugin
+lifetime. Longer workflows should run behind an explicit finite job. Plugin
 authors must decide which versions they can read and perform
 any migration as an explicit conditional replacement.
 
@@ -2061,8 +2061,8 @@ plugins:
 
 `::preferences` inspects the current preference.
 `::preferences-remember "sample directory"` saves it and
-`::preferences-forget` conditionally deletes it; open the view again to
+`::preferences-forget` conditionally deletes it. Open the view again to
 inspect the result. Restarting the editor preserves the document. Opening or remembering refuses unknown stored versions and leaves migration
-to an explicit future implementation; forget remains an explicit conditional
+to an explicit future implementation. Forget remains an explicit conditional
 deletion. It performs no startup state read and does not automatically
 recreate an old view or replay an old command.

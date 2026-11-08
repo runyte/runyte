@@ -56,15 +56,16 @@ under [Directory tree sidebar](files-and-buffers.md#directory-tree-sidebar).
 - A bare caret anywhere on a web link follows the whole URL across rows joined
   by the terminal's automatic wrapping.
 - An explicit newline ends a link, unless a program such as Codex or Claude
-  Code broke the link inside indented text. The link then continues onto the
-  next row when that row is indented to the same text column and the link's
-  row reaches the right edge its block wraps at. A link ending before that
-  edge, or a row starting at the left edge, is never joined.
+  Code broke the link inside indented text. The link continues onto the next
+  row if that row is indented to the same text column and the link's row
+  reaches the right edge of its block. A link ending before that edge, or a row
+  starting at the left edge, is never joined.
 - Resizing the live terminal clears wrap information. An already captured
   review keeps its original links.
 
 **Opening by command:** `:open <path>` (aliases `:e`, `:edit`) opens a file or
-directory in the active pane; see [Commands](commands.md#commands) for path completion.
+directory in the active pane. See [Commands](commands.md#commands) for path
+completion.
 
 ### Desktop edition
 
@@ -79,7 +80,7 @@ leaving all editor state and terminal sessions in the host.
 
 If the host cannot keep up and the bounded input queue fills, the window shows
 “Some input was lost. Click to dismiss.” The notice remains until clicked.
-Consecutive queued drags coalesce to their latest position; keys, clicks and
+Consecutive queued drags are merged into the latest position. Keys, clicks and
 paste keep their order.
 
 For the Runyte application icon on Wayland, register the desktop entry with
@@ -88,22 +89,22 @@ opening a new window. X11 also receives an icon directly. A macOS `.app`
 packaging helper and the platform limitations are described in the
 [native desktop integration guide](../../contrib/packaging/README.md).
 
-PNG, JPEG, GIF, WebP, BMP, and PDF paths open as read-only media projections in
-the destination pane, including from `:open`, the explorer, the directory tree,
-and startup filenames. Other binary types retain the external-program prompt.
+PNG, JPEG, GIF, WebP, BMP, and PDF files open as read-only media in the
+destination pane. This works from `:open`, the explorer, the directory tree,
+and startup filenames. Other binary types keep the external-program prompt.
 Media never becomes an editable source file or a save target. Ordinary pane,
 buffer, jump, and close commands remain available. Titles identify PDFs with
-`[pdf]` and images with `[image]`. Images initially fit the pane while preserving
-aspect ratio. Zoom, pan, and selection belong to each pane, so split views of
-the same file can differ.
+`[pdf]` and images with `[image]`. Images initially fit the pane while
+preserving aspect ratio. Zoom, pan, and selection belong to each pane, so split
+views of the same file can differ.
 
-Animated GIF and WebP images play automatically while visible, using their frame
-delays and loop counts. A finite animation stops on its last frame. Selecting a
-region pauses that pane on the displayed frame; `y` / `Ctrl-c` copies from that
-frame. Clearing the selection resumes playback. Split panes have independent
-playback and selection state. Hidden previews and minimized windows do not keep
-an animation timer running; restoring a preview resumes without replaying missed
-frames. There are no separate pause, step, or restart bindings.
+Animated GIF and WebP images play automatically while visible, using their
+frame delays and loop counts. A finite animation stops on its last frame.
+Selecting a region pauses that pane on the displayed frame. `y` / `Ctrl-c`
+copies from that frame. Clearing the selection resumes playback. Split panes
+have independent playback and selection state. Hidden previews and minimized
+windows don't run animations. Restoring a preview continues without replaying
+missed frames. There are no separate pause, step, or restart bindings.
 
 Frame delays below 20 ms use 100 ms to prevent continuous redraws. Decoding is
 limited to 1024 frames and 32 MiB of retained raster data per animation, after
@@ -114,25 +115,24 @@ remain still images.
 
 PDFs have a read-only **page buffer** with one row per page. Once the displayed
 page is at fit size and has no selection, Escape reveals this buffer at the
-current page. Use normal editor motions,
-counts, or buffer search (`s` or `/`) to choose a row, then Enter displays that
-page. Moving the cursor in the page buffer does not display pages until Enter.
-`42gg` goes to page 42; `gg` and `ge`/`G` go to the first and last pages. Escape
-or `q` from the page buffer opens the source directory with the PDF selected.
-In Select mode, either key first clears the selection and returns to Normal mode.
+current page. Use normal editor motions, counts, or buffer search (`s` or `/`)
+to choose a row, then Enter displays that page. Moving the cursor in the page
+buffer does not display pages until Enter. `42gg` goes to page 42. `gg` and
+`ge`/`G` go to the first and last pages. Escape or `q` from the page buffer
+opens the source directory with the PDF selected. In Select mode, either key
+first clears the selection and returns to Normal mode.
 
 Images have no page buffer: leaving their preview opens the source directory.
 Escape first dismisses a pending overlay or key sequence. On zoomed-in media,
-the next press returns to fit size in one step, preserving its selection;
-subsequent presses clear the selection and then leave the media surface.
-This fit-then-clear order applies to images and PDFs alike. `Space e` goes directly to
-the source directory from either media type and selects the source file, just
-as it does from a rendered Markdown document. `Space E` still opens the editor's
-working directory.
+the next press returns to fit size and keeps the selection. Later presses clear
+the selection and then leave the media view. This fit-then-clear order applies
+to images and PDFs alike. `Space e` goes to the source directory from either
+media type and selects the source file, as it does from a rendered Markdown
+document. `Space E` still opens the editor's working directory.
 
 In a PDF or image preview, `q` performs the same fit, clear-selection, and
 leave-preview action as Escape, in both Normal and Select mode. Overlays
-and pending key sequences retain their own bindings.
+and pending key sequences keep their own bindings.
 
 | Input in a media pane | Action |
 | --- | --- |
@@ -158,114 +158,125 @@ and pending key sequences retain their own bindings.
 | Left-drag on an image | Pan; double-click toggles fit / 2× fit |
 | Shift-left-drag | Select a rectangular image region, including on PDFs |
 
-Other keys that act on text are refused in a media pane with a message:
-word and character motions, search, registers, selection and text-object
+Other keys that act on text are refused in a media pane with a message. That
+covers word and character motions, search, registers, selection and text-object
 commands, and editing. Pane, file, picker, session and jump-list keys keep
-working. `Space ?` and the key-hint popup list only the keys the pane answers
-to; the same holds in the focused directory tree and in a terminal pane.
+working. `Space ?` and the key-hint popup list only the keys that work in the
+pane. The same is true in the focused directory tree and in a terminal pane.
 
 There is no separate PDF page picker or `g p` binding. The paragraph commands
-`goto-next-paragraph` and `goto-previous-paragraph` remain available for configured
-keys without default bindings; `g p` and `g P` do not move between text paragraphs.
+`goto-next-paragraph` and `goto-previous-paragraph` have no default keys, but
+you can bind them. `g p` and `g P` do not move between text paragraphs.
 
-Scanned PDFs without embedded text use rectangular selection; the desktop edition
-does not perform OCR. Copying a region exports the base page/image raster,
-including alpha, without modifying the source file; PDF zoom refinement does
-not increase the resolution of copied regions. PDF text selection uses Hayro glyph geometry and content-stream order.
-If glyphs lack Unicode mappings or usable geometry, extraction independently
-falls back to Poppler's `pdftotext`. If both fail, the page remains viewable and
-region selection stays available. Complex layout reading order is heuristic;
-this is not a full document-layout analysis.
+Scanned PDFs without embedded text use rectangular selection. The desktop
+edition does not do OCR. Copying a region exports the base page or image,
+including alpha, and leaves the source file alone. PDF zoom does not increase
+the resolution of copied regions. PDF text selection uses Hayro glyph geometry
+and content-stream order. If glyphs lack Unicode mappings or usable geometry,
+extraction independently falls back to Poppler's `pdftotext`. If both fail, the
+page remains viewable and region selection stays available. Complex layout
+reading order is heuristic. This is not a full document-layout analysis.
 
-Prompts and key hints remain readable above the media surface. Opening them
+Prompts and key hints stay readable on top of the image or PDF. Opening them
 does not expose internal image placeholder rows or enter the PDF page buffer.
 
-PDF support includes Hayro 0.8, run in a disposable helper process of the
-same executable. Each page or refinement request automatically falls back to
+PDF support includes Hayro 0.8, run in a disposable helper process of the same
+executable. Each page or refinement request automatically falls back to
 separately installed Poppler tools when Hayro fails or reports unsupported
 content. If both fail, the pane reports both errors. Hayro supports embedded
-fonts and its standard Latin substitutes (including recognized nonstandard
-font names); it does not consult system fonts. Substitution can change glyph
-shapes and spacing. Other unavailable fonts require Poppler. Encrypted PDFs
-with an empty user password can open; entering a PDF password is not supported.
-Rendering runs on one background worker and reports failures inside the pane. Input is
-limited to regular files up to 128 MiB, decoded images to 8192 pixels per axis
-and 64 MiB allocation, and PDFs to 10,000 pages. Images are reduced to at most
-2048 pixels per axis. PDF pages initially render at 1600 pixels on their longest
-axis. When that is insufficient for the current zoom or display pixel density,
-the visible region is rendered again in the background. The base page remains
-visible while sharper text and vector graphics load. Each refinement is bounded
-to 4096 pixels per axis and approximately eight million pixels; unusually large
-or dense displays may still exceed that detail budget. Eight base page/image
-results and eight visible-region refinements are cached separately using
-least-recently-used eviction. The base cache is also bounded to 256 MiB, enough
-for eight animations at their individual limit. GPU images no longer displayed
-by any pane are released. Zooming, panning, resizing, or leaving a pane
-cancels refinements that are no longer needed by any visible pane.
-After a PDF page loads, up to two pages on either side are loaded in the
+fonts and its standard Latin substitutes, including recognized nonstandard font
+names. It does not use system fonts. Substitution can change glyph shapes and
+spacing. Other unavailable fonts require Poppler.
+
+Encrypted PDFs with an empty user password can open. Entering a PDF password is
+not supported. Rendering runs on one background worker and reports failures
+inside the pane.
+
+Only regular files open, up to 128 MiB. Decoded images can be up to 8192 pixels
+per axis and 64 MiB. PDFs can have up to 10,000 pages. Images are reduced to at
+most 2048 pixels per axis.
+
+PDF pages initially render at 1600 pixels on their longest axis. When that is
+insufficient for the current zoom or display pixel density, the visible region
+is rendered again in the background. The base page remains visible while
+sharper text and vector graphics load. Each refinement is limited to 4096
+pixels per axis and about eight million pixels. Very large or dense displays
+may need more detail than that.
+
+Eight base page/image results and eight visible-region refinements are cached
+separately using least-recently-used eviction. The base cache is also bounded
+to 256 MiB, enough for eight animations at their individual limit. GPU images
+no longer displayed by any pane are released. Zooming, panning, resizing, or
+leaving a pane cancels refinements that are no longer needed by any visible
+pane. After a PDF page loads, up to two pages on either side are loaded in the
 background. Requested pages take priority and interrupt speculative rendering.
 First loads and jumps beyond the warmed pages can still show a loading message.
-PDF subprocesses have a 15-second limit per invocation and are killed and reaped
-during cancellation. Hayro additionally has a 1 GiB address-space budget
-(on macOS, above the executable's initial mappings), a 15-second CPU limit,
-and bounded RGBA output. Its normal path uses no raster temporary files.
-Poppler fallback retains its temporary PNG/XHTML files and existing limits.
+PDF subprocesses have a 15-second limit per invocation and are killed and
+reaped during cancellation. Hayro additionally has a 1 GiB address-space budget
+(on macOS, above the executable's initial mappings), a 15-second CPU limit, and
+bounded RGBA output. Its normal path uses no raster temporary files. Poppler
+fallback keeps its temporary PNG/XHTML files and existing limits.
 
 On Linux/macOS, `runyte --window --mux` creates or attaches to the same
 persistent sessions as `runyte --mux`. Only one interactive frontend attaches
-at a time. `:detach` closes the window and preserves the session; `:quit` from
-the last pane and `:quit-all` stop a clean session and reuse the window for the
-previously visited available running session, closing it when none is available.
-Unsaved edits and live terminal children still refuse a stop. Session navigation
-uses the same `Space Space`, `Space 1`–`Space 9`, `Shift-Left` / `Shift-Right`,
-and `Ctrl-w a` bindings in either frontend.
+at a time. `:detach` closes the window and keeps the session. `:quit` from the
+last pane and `:quit-all` stop a clean session and reuse the window for the
+previously visited running session. If none is available, the window closes.
+Unsaved edits and live terminal children still refuse a stop. Session
+navigation uses the same `Space Space`, `Space 1`–`Space 9`, `Shift-Left` /
+`Shift-Right`, and `Ctrl-w a` bindings in either frontend.
 
-Media panes survive frontend handoff. A terminal client retains their `[pdf]`
-or `[image]` title and displays `Media viewing needs the Runyte window: use the desktop edition with --window` in the
-body; Escape and `Space e` still reach the source directory. Opening a binary
-while the terminal client is attached uses the external-program prompt. A
-window attachment opens supported media in panes, with decoding and PDF
+Media panes survive frontend handoff. A terminal client keeps their `[pdf]` or
+`[image]` title and shows
+`Media viewing needs the Runyte window: use the desktop edition with --window`
+in the body. Escape and `Space e` still reach the source directory. Opening a
+binary while the terminal client is attached uses the external-program prompt.
+A window attachment opens supported media in panes, with decoding and PDF
 rasterization performed by the window process.
 
-The window client needs the desktop edition; either edition can serve the
+The window client needs the desktop edition. Either edition can serve the
 persistent host or attach as a terminal client. Every client, host, and
-integrated `runyte --wait` must use the same Runyte version; a private protocol
-mismatch is refused at the handshake. Integrated Claude Code and Codex `Ctrl-g` edits work through
-this persistent host and survive detach and frontend handoff.
+integrated `runyte --wait` must use the same Runyte version. A protocol
+mismatch is refused at the handshake. Integrated Claude Code and Codex `Ctrl-g`
+edits work through this persistent host and survive detach and frontend
+handoff.
 
-The native window supports `ide`, `editor`, and `mux` modes; host and lifecycle
-modes are CLI operations. The desktop window is not available on Windows.
-The window embeds JetBrainsMono Nerd Font in Medium, Medium Italic,
-Bold, and Bold Italic. Set `editor.font_size` in `Space o o` (8–48 logical
-pixels, default 15); the saved size is read when each window opens, including
-reattachment to an existing persistent session. Reopen the window after saving
-the setting. Ctrl-plus (also Ctrl-equals) and Ctrl-minus adjust the current
-window by one pixel without writing the configuration. Text, pointer targeting,
-panes and terminal dimensions scale together. No system font installation is required.
+The native window supports `ide`, `editor`, and `mux` modes. Host and lifecycle
+modes are CLI operations. The desktop window is not available on Windows. The
+window embeds JetBrainsMono Nerd Font in Medium, Medium Italic, Bold, and Bold
+Italic. Set `editor.font_size` in `Space o o` (8–48 logical pixels, default
+15). Each window reads the saved size when it opens, including when reattaching
+to a persistent session. Reopen the window after saving the setting. Ctrl-plus
+(also Ctrl-equals) and Ctrl-minus adjust the current window by one pixel
+without writing the configuration. Text, pointer targeting, panes and terminal
+dimensions scale together. No system font installation is required.
 
-Ctrl-Shift-c copies the editor selection, terminal review selection, or selected
-media to the system clipboard. Ctrl-Shift-v pastes clipboard text as literal input
-into Insert/Replace mode, a prompt, or an integrated terminal, like a terminal
-emulator's paste shortcut. Normal mode retains ordinary modal paste commands
-(`Space c p` or Ctrl-v). Ctrl-c remains terminal child input. Native-feature
-builds use an in-process clipboard owner for `Space c y`, Ctrl-v and the other
-system clipboard commands; external clipboard helpers are not required.
-Window-local font and literal-paste shortcuts are reserved frontend controls,
-listed in contextual help; they do not participate in editor key remapping.
-On macOS, Cmd-c also copies, and Cmd-v also pastes literal
-clipboard text. Ctrl-Shift-c/v remain available. The Command modifier is
-displayed as `Cmd` in macOS help and key hints. Configuration accepts both
-`Cmd-c` and `Super-c` for the same key (and likewise for other Command keys),
-on every platform. Other Command shortcuts are left unchanged.
-Search within PDF page contents is not implemented.
-Image zoom and scanned PDF content remain limited by their
-source resolution. PDF text and vector graphics are rendered at the view
-resolution within the visible-region budget described above. PDF rendering uses
-a bundled Rust helper, with separately installed Poppler as fallback. Source changes
-are checked when another frame is presented; there is no automatic media reload
-watcher. macOS, Wayland, IME composition, and touchpad pinch gestures still need hands-on
-platform verification. Ctrl-wheel zoom is supported; native pinch gestures are
-not exposed by this GPUI release.
+Ctrl-Shift-c copies the editor selection, terminal review selection, or
+selected media to the system clipboard. Ctrl-Shift-v pastes clipboard text as
+literal input into Insert/Replace mode, a prompt, or an integrated terminal,
+like a terminal emulator's paste shortcut. Normal mode keeps ordinary modal
+paste commands (`Space c p` or Ctrl-v). Ctrl-c remains terminal child input.
+Native builds handle `Space c y`, Ctrl-v and the other system clipboard
+commands themselves. You don't need external clipboard helpers. The window's
+font and literal-paste shortcuts are listed in contextual help. You can't remap
+them with editor key bindings.
+
+On macOS, Cmd-c also copies, and Cmd-v also pastes literal clipboard text.
+Ctrl-Shift-c/v remain available. The Command modifier is displayed as `Cmd` in
+macOS help and key hints. Configuration accepts both `Cmd-c` and `Super-c` for
+the same key (and likewise for other Command keys), on every platform. Other
+Command shortcuts are left unchanged.
+
+Search within PDF page contents is not implemented. Image zoom and scanned PDF
+content remain limited by their source resolution. PDF text and vector graphics
+are rendered at the view resolution within the visible-region budget described
+above. PDF rendering uses a bundled Rust helper, with separately installed
+Poppler as fallback. There is no file watcher, so a change appears the next
+time a frame is drawn.
+
+macOS, Wayland, IME composition, and touchpad pinch gestures still need
+hands-on testing. Ctrl-wheel zoom is supported. Native pinch gestures are not
+available in this GPUI release.
 
 ### Opening binary files
 
@@ -285,17 +296,16 @@ Opening one asks which program should have it instead of loading it as text.
   recent seeds the prompt.
 - **Typing a program.** Type a name on `PATH` or an absolute path. Explicit
   choices are remembered.
-- **How it runs.** The program starts detached with no terminal of its own:
-  viewers and GUI applications work, but a terminal program cannot take over
-  the screen.
+- **How it runs.** The program starts detached, with no terminal of its own.
+  Viewers and GUI applications work, but a terminal program can't take over the
+  screen.
 - **Detection.** An initial 8 KB probe avoids reading an obvious binary twice.
   The final read still validates the whole file before it becomes a buffer.
 - **Where choices are kept.** Runyte's platform cache directory:
   `$XDG_CACHE_HOME/runyte`, else `~/.cache/runyte` on Linux or
   `~/Library/Caches/runyte` on macOS. Without an explicit `XDG_CACHE_HOME` on
-  Unix, `~` comes from the effective operating-system account, not the
-  inherited `$HOME`, so a privileged launcher cannot put cache files in another
-  account's home.
+  Unix, `~` comes from the operating-system account, not `$HOME`. A privileged
+  launcher can't put cache files in another account's home.
 
 #### Opening binary files on Windows
 
@@ -310,9 +320,8 @@ Opening one asks which program should have it instead of loading it as text.
   file is passed as one final argument.
 - Shell operators are literal arguments, and script wrappers are not found as
   native programs.
-- The system-default handler needs an equivalent ordinary path shorter than
-  260 UTF-16 units; an explicitly chosen viewer may support longer extended
-  paths.
+- The system-default handler needs an ordinary path shorter than 260 UTF-16
+  units. A viewer you choose yourself may support longer paths.
 - Opening from network shares is not part of the validated support.
 
 ### Saving and closing
@@ -335,7 +344,7 @@ Opening one asks which program should have it instead of loading it as text.
   own most recently used live buffer, or a scratch buffer when none remains.
 - Quitting in mux mode is described under
   [Quitting and detaching](workspaces-and-persistent-sessions.md#quitting-and-detaching).
-- Only `:quit-all!!` (`:qa!!`) ends terminals as part of quitting; see
+- Only `:quit-all!!` (`:qa!!`) ends terminals as part of quitting. See
   [Managing terminal sessions](terminals.md#managing-terminal-sessions).
 
 ### The Finder
@@ -370,7 +379,7 @@ rooted at the active file's or explorer's directory.
 
 - `q`, `j`, `k`, and other printable letters are query text, not commands.
 - After a query has begun, `Space` separates terms. Every filterable list
-  follows this rule; a report, which has no filter, always closes on `Space`.
+  follows this rule. A report has no filter, so it always closes on `Space`.
 - In other pickers (directory-scoped and fuzzy-content), `Tab` keeps moving to
   the next row and `Shift-Tab` selects the previous one.
 - `Space b b` and `Space t t` remain the place for Save, Discard, Close,
@@ -395,9 +404,8 @@ rooted at the active file's or explorer's directory.
   does. What changes is ranking: distance between terms is free, while the
   same distance inside one term is a gap that lowers the score. Typing words
   apart says you expect them apart.
-- **Highlighting.** Terms landing on contiguous spans are emphasized as a
-  direct match; a term that had to spread out is shown in the secondary
-  colour.
+- **Highlighting.** Terms that match a contiguous span are emphasized as a
+  direct match. A term that had to spread out is shown in the secondary colour.
 - **Smart case.** One capital anywhere makes every term case-sensitive. Both
   pickers and fuzzy grep use this rule.
 - **Type hints.** `file`, `terminal`, `term`, and `buffer` move that kind
@@ -407,8 +415,8 @@ rooted at the active file's or explorer's directory.
 
 - Files: absolute, project-relative, `~/`-relative, and basename spellings of
   their paths.
-- Buffers: their structural name and path. A file that is open appears once,
-  as the live buffer, so unsaved text and naming win over disk.
+- Buffers: their structural name and path. A file that is open appears once, as
+  the live buffer. Unsaved text and names win over disk.
 - Terminals: assigned name, child title, launch program, number, current
   reported directory, and initial directory.
 
@@ -419,15 +427,15 @@ rooted at the active file's or explorer's directory.
 - A text file: its first 64 KiB, even when the file is larger.
 - A directory: a one-level listing of its files and subdirectories.
 - A buffer: its in-memory text.
-- A terminal: the live screen in name mode; in content mode, a static numbered
-  snippet around the matching row.
+- A terminal: the live screen in name mode, or a static numbered snippet around
+  the matching row in content mode.
 - A content match: surrounding lines filling the preview's height, resized
   with the overlay, keeping the matching line visible. Up to 512 context lines
   are kept, and the matching line shows its real line number.
-- A direct content match (a single word on a contiguous span, or every term of
-  a multi-word query on a span of its own) is filled with the primary match
-  colour. A match with a gap inside a term fills its individual characters
-  with the secondary colour.
+- A direct content match uses the primary match colour. That means a single
+  word on a contiguous span, or every term of a multi-word query on its own
+  span. A match with a gap inside a term fills its individual characters with
+  the secondary colour.
 
 #### What is scanned
 
@@ -439,25 +447,25 @@ rooted at the active file's or explorer's directory.
   state directory are never scanned.
 - `editor.show_hidden_files` applies.
 - Content mode reads non-empty UTF-8 lines of ignore-aware files, shows
-  `path:line`, and skips files larger than 4 MiB. Unsaved buffers replace
-  their disk contents; pathless buffers and terminal output are searched
+  `path:line`, and skips files larger than 4 MiB. Unsaved buffers replace their
+  disk contents. Buffers with no path and terminal output are searched
   directly.
 
 **Content search runs inside the scan.** Editing the query restarts the walk,
 which keeps only matching lines.
 
-- The 50,000-candidate bound that keeps ranking fast limits matches, not how
+- The 50,000-candidate limit keeps ranking fast. It limits matches, not how
   much of the project is read, so a match is found wherever it is.
 - Typing more after a complete scan narrows what is already loaded.
-- `result limit reached` in the title means more than 50,000 matches; a
-  longer query resolves it. On a 150,000-line project only a single-character
-  query reaches it.
+- `result limit reached` in the title means more than 50,000 matches. Type a
+  longer query. On a 150,000-line project only a single-character query reaches
+  it.
 
 **Responsiveness.** Typing never waits for discovery, ranking, sorting,
 resource matching, or previews. The prompt updates on the next frame and a
 progress label stays until the rows match the query. Rows from the previous
-query may stay visible briefly, so the overlay does not flash empty, but they
-cannot be opened until the new ranking arrives. Results for older queries are
+query may stay visible briefly so the overlay doesn't flash empty. You can't
+open them until the new ranking arrives. Results for older queries are
 discarded.
 
 #### Wider scopes
@@ -516,8 +524,8 @@ one.
 - This keeps `Ctrl-o`/`Ctrl-i` and `Alt-o`/`Alt-i` useful without letting
   `Space b b` or the Finder accumulate stale views.
 - A dirty special buffer stays open until saved or discarded.
-- A rendered Markdown page is not counted and stays while its document is
-  open; it closes with the document.
+- A rendered Markdown page is not counted and stays while its document is open.
+  It closes with the document.
 - An empty, clean scratch buffer retires as soon as its last pane leaves,
   unless a pane is reading its rendered page. Written scratch text is an
   ordinary buffer.
@@ -562,10 +570,10 @@ Edit the listing with ordinary modal editing and multiple selections:
 
 - Trailing whitespace and whitespace-only rows are ignored. Writing a listing
   with only those edits refreshes it to the canonical view.
-- A name ending in whitespace, containing a control character, or not valid
-  UTF-8 cannot be told apart from the row syntax, so such a directory refuses
-  to open as a listing. New rows are held to the same rule before a
-  confirmation opens.
+- Some names can't be told apart from the row syntax: names ending in
+  whitespace, containing a control character, or not valid UTF-8. A directory
+  holding one refuses to open as a listing. New rows are held to the same rule
+  before a confirmation opens.
 - A directory cannot be moved below itself: editing `dir/` into `dir/child`
   is rejected by `:w` before any confirmation.
 
@@ -598,8 +606,8 @@ Activity inside an unaffected child directory does not stale the explorer.
   an entry that appeared after the plan was checked.
 - Creation and rollback need an empty destination name, even when the
   competing entry is a dangling symlink.
-- A filesystem without exclusive rename is refused for operations that need
-  it; Runyte never falls back to an overwriting rename.
+- A filesystem without exclusive rename is refused for operations that need it.
+  Runyte never falls back to an overwriting rename.
 - If an operation fails midway, an ERROR notification names it and every
   operation already applied.
 
@@ -613,7 +621,7 @@ Activity inside an unaffected child directory does not stale the explorer.
   or new entry stays where you wrote it. Entering it again later restores the
   sorted listing.
 
-**What is not guaranteed.** These checks prevent destination collisions; they
+**What is not guaranteed.** These checks prevent destination collisions. They
 do not make a plan atomic.
 
 - Earlier operations, including confirmed deletions, may already have
@@ -660,7 +668,7 @@ under the cursor.
 
 - **`Tab t`** keeps the explorer behind the terminal, with any unsaved edits.
 - **`Tab e`** uses `xdg-open` on Linux and `open` on macOS. Unapplied edits
-  stay in Runyte; the file manager sees the directory as it is on disk.
+  stay in Runyte. The file manager sees the directory as it is on disk.
 
 #### Display settings
 
@@ -670,13 +678,13 @@ under the cursor.
 | `editor.explorer_details` | `?` | Show detail columns before each entry |
 | `editor.explorer_sort` | (`Tab`) | The order rows appear in |
 
-- `Tab` offers all three. They are ordinary settings, so `Space o o` reaches
-  them too, and a choice here is written to `config.yaml`: a listing you set
-  up once stays that way next session.
+- `Tab` offers all three. They are ordinary settings, so you can also find them
+  in `Space o o`. A choice here is written to `config.yaml`, so a listing stays
+  the way you set it next session.
 - A change re-reads every clean explorer, not only the active pane.
-- If the value cannot be saved (no configuration file was loaded, or it uses a
-  construct Runyte will not patch), it still applies to this session and the
-  status line says it was not written.
+- If the value can't be saved, it still applies to this session and the status
+  line says so. This happens when no configuration file was loaded, or when it
+  uses a construct Runyte won't patch.
 - An explorer with unsaved edits refuses a change to dotfiles or order,
   because re-reading would discard them. Details only prefix existing rows, so
   `?` keeps working.
@@ -684,7 +692,7 @@ under the cursor.
 **Details columns** show permissions, owner, group, human-readable size, and
 modification time.
 
-- They are presentation only; the file name stays the only editable text.
+- They are presentation only. The file name stays the only editable text.
 - Entries from other years show the year instead of the time.
 - In a narrow pane, horizontal scrolling moves through the details first, then
   the file name, so no column is permanently clipped.
@@ -701,10 +709,10 @@ A directory's own size describes how its entries are stored, not how much it
 holds, so a size order leaves directories in name order. Entries with equal
 keys keep name order, so nothing shifts between redraws.
 
-**Hidden entries and plans.** A listing without its dotfiles is planned
-without them: an entry it never showed is not deleted for being absent, nor
-reported when it appears. A new name colliding with a hidden one still stops
-the plan instead of overwriting it.
+**Hidden entries and plans.** A listing without its dotfiles is planned without
+them. An entry it never showed isn't deleted for being absent, and isn't
+reported when it appears. A new name that collides with a hidden one still
+stops the plan.
 
 **Symlinks** are listed under their own name, followed by a muted
 `→ target` hint showing exactly what the link stores.
@@ -800,9 +808,8 @@ pane or a buffer.
 | Double-click | Act as Enter: toggle a directory or open a file |
 | Wheel | Move the selection three rows |
 
-Digits choose destination panes (below), not counts. A double-click is two
-left presses on the same row within half a second; a third press starts a new
-pair rather than toggling the directory straight back.
+Digits choose destination panes (below), not counts. A double-click is two left
+presses on the same row within half a second. A third press starts a new pair.
 
 #### Tree actions
 
@@ -828,18 +835,18 @@ several:
 1. Pane titles are replaced by numbers from 1, top to bottom and left to
    right. The tree is not numbered.
 2. Type a digit to open in that pane, or split it. With more than nine panes,
-   type a longer number; Enter accepts a number that is also a prefix of
+   type a longer number. Enter accepts a number that is also a prefix of
    another.
 3. Escape cancels and restores the titles.
 
 Numbers are recalculated for each request.
 
-**Changing files.** Create, move, and rename apply as soon as the prompt is
-submitted; Escape cancels the prompt, and there is no review stage. Delete
-needs `y`; Enter, `n`, or Escape cancels. Deletion goes to the trash first.
-Every operation rechecks filesystem identities and destination collisions,
-refuses to overwrite, and updates affected open buffers. The safety and
-non-atomicity limits of [Applying changes](files-and-buffers.md#applying-changes) apply.
+**Changing files.** Create, move, and rename apply as soon as you submit the
+prompt. Escape cancels the prompt. There is no review stage. Delete needs `y`.
+Enter, `n`, or Escape cancels. Deletion goes to the trash first. Every
+operation rechecks filesystem identities and destination collisions, refuses to
+overwrite, and updates affected open buffers. The safety and non-atomicity
+limits of [Applying changes](files-and-buffers.md#applying-changes) apply.
 
 **Jump labels** replace the markers before names: one key for nearby entries,
 two for farther ones. Only rows visible above the legend are labelled. Escape
@@ -855,8 +862,8 @@ override belongs to this workspace's tree and survives hiding it.
 
 - Hiding a selected dotfile, or a hidden ancestor, selects the nearest visible
   ancestor.
-- Revealing a file explicitly can still show a hidden path; toggling
-  visibility clears that exception.
+- Revealing a file can still show a hidden path. Toggling visibility clears
+  that exception.
 
 **Tree search.** `/` opens `tree search (regex):`.
 
@@ -870,7 +877,7 @@ override belongs to this workspace's tree and survives hiding it.
 
 **Quitting from the tree.** While the tree is focused, `:q`, `:wc`, and
 `:close` (and their long and `!` forms) hide it and return focus to the
-previous pane, keeping buffers, panes, and terminal sessions. `:qa` quits the
+previous pane. Buffers, panes and terminal sessions stay. `:qa` quits the
 workspace as usual.
 
 #### Width
@@ -894,8 +901,8 @@ columns for the pane layout.
 - While the tree is shown, expanded directories are checked every two seconds.
   Entries created, renamed, moved, or deleted outside Runyte appear
   automatically.
-- The selected path stays selected while it exists; otherwise the nearest
-  visible ancestor is selected.
+- The selected path stays selected while it exists. Otherwise the nearest
+  visible parent is selected.
 - Collapsed branches and a hidden sidebar are not scanned. Expanding a branch
   refreshes it, and showing the sidebar resumes checking.
 
@@ -915,12 +922,11 @@ reload, or refresh:**
 - The first observation of each disk revision creates one WARNING
   notification.
 
-When a stale file or explorer is attached to no pane, bringing it back into a
-pane automatically refreshes it from disk if it has no unsaved edits. A buffer
-shown in any pane keeps the behavior above, including when another pane is
-maximized. A terminal covering a buffer puts that buffer in the background.
-Deleted, unreadable, or binary replacements leave the retained contents and
-stale marker intact.
+A stale file or explorer in no pane refreshes from disk when you bring it back,
+if it has no unsaved edits. A buffer shown in any pane keeps the behavior
+above, including when another pane is maximized. A terminal covering a buffer
+puts that buffer in the background. Deleted, unreadable, or binary replacements
+leave the retained contents and stale marker intact.
 
 **What you can do:**
 
@@ -931,13 +937,13 @@ stale marker intact.
 | `:write!` | Save over the changed file |
 
 - **`:diff-disk`** reads the path again. The disk version is on the left and
-  your editable buffer on the right; the comparison follows later edits.
+  your editable buffer on the right. The comparison follows later edits.
   Deleted, unreadable, and binary versions, and versions over the comparison
   size limit, are refused without changing panes.
 - **`:reload` on a dirty buffer** names the path and the undo history that will
   be discarded. Escape or `Ctrl-c` keeps the buffer. Enter applies only the
-  exact disk revision reviewed; if the file changes again, the buffer is kept
-  and the new revision must be reviewed.
+  disk revision you reviewed. If the file changes again, the buffer is kept and
+  you need to review the new revision.
 - **`:write!`** is the explicit way to replace a changed file. An ordinary save
   refuses a known conflicting revision before save hooks can edit the buffer.
   `[STALE]` clears only after the written file is verified.
@@ -975,9 +981,9 @@ panes are used.
   other side shows a hatched filler row. It belongs to no line: it cannot be
   clicked, labelled by `goto-word`, or moved onto, like the blank area past
   the last line.
-- The two sides scroll together. The pane you are in leads and the other
-  follows the line facing it, which is not the same line number once the
-  files have drifted apart.
+- The two sides scroll together. The pane you are in leads, and the other
+  follows the matching line. That may be a different line number once the files
+  have drifted apart.
 
 **Live changes.** Both files stay editable, and the comparison follows what you
 type.
@@ -988,8 +994,8 @@ type.
 | Removed | Lines only the left side has |
 | Changed | Lines that answer to different lines on the other side |
 
-- Lines replaced by an unequal number of lines are one change, not a deletion
-  plus an addition — the same folding the Git gutter does.
+- Lines replaced by a different number of lines count as one change, not a
+  deletion plus an addition. The Git gutter does the same.
 - The gutter shows the comparison instead of Git marks while the comparison is
   open.
 - Large buffers are compared in the background after an edit. Until it
@@ -1000,14 +1006,14 @@ type.
 **Display:**
 
 - Soft wrap is off while a comparison is open, whatever `editor.soft_wrap`
-  says, and returns afterwards: a wrapped line would take different numbers of
-  rows on each side.
+  says. It comes back afterwards. A wrapped line would take different numbers
+  of rows on each side.
 - Folded regions are expanded for the same reason.
 
 **Ending it.** A comparison needs both panes and both buffers. Closing either
 pane, or showing a different buffer in one, ends it. The Git comparison from
-`Space g D` also owns the split it created, so closing either side or
-`:diff-off` collapses it and restores the previous buffer or the explorer.
+`Space g D` also owns the split it created. Closing either side or `:diff-off`
+collapses it and restores the previous buffer or the explorer.
 
 ### Shell pipes
 
@@ -1048,7 +1054,7 @@ On Unix:
 - That example uppercases each selection.
 - Console input, output, and native pipeline output are UTF-8 without a BOM.
 - Use `[Console]::In.ReadToEnd()` and `[Console]::Write(...)` when exact
-  newlines matter; PowerShell object pipelines format text their own way.
+  newlines matter. PowerShell object pipelines format text their own way.
 - The workspace directory needs an ordinary Windows spelling shorter than 260
   UTF-16 units.
 
@@ -1084,7 +1090,7 @@ process tree.
 - Windows uses a job that forbids breakaway. Inherited output pipes cannot keep
   a finished shell's job alive indefinitely.
 
-There is no default key; the bare `|` key is reserved.
+There is no default key. The bare `|` key is reserved.
 
 ### System clipboard
 

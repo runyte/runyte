@@ -1,10 +1,10 @@
 ## MCP server
 
-Runyte includes an MCP server for agents to find and read integrated terminals
-and unsaved buffers and, when you allow it, to edit buffers and type into
-terminals. Start
-it with `runyte mcp --identity agent`. It uses stdio and private local workspace
-connections, with no Python installation. See the [MCP setup guide](../mcp.md).
+Runyte includes an MCP server for AI agents. Agents can find and read
+integrated terminals and unsaved buffers. When you allow it, they can also edit
+buffers and type into terminals. Start it with `runyte mcp --identity agent`.
+It uses stdio and private local workspace connections, with no Python
+installation. See the [MCP setup guide](../mcp.md).
 
 ### Setting it up
 
@@ -12,7 +12,7 @@ connections, with no Python installation. See the [MCP setup guide](../mcp.md).
    guide](../mcp.md#codex-and-claude-code). It covers the client
    configurations, the environment the server needs, and the bundled skill.
    In short, give the absolute path to your Runyte binary, which
-   `command -v runyte` prints; the desktop edition's `runyte-desktop` takes the
+   `command -v runyte` prints. The desktop edition's `runyte-desktop` takes the
    same arguments. For Claude Code and Codex:
 
    ```sh
@@ -29,7 +29,7 @@ connections, with no Python installation. See the [MCP setup guide](../mcp.md).
    ```
 
    Any other MCP client runs the same binary with the arguments
-   `["mcp", "--identity", "agent"]` over stdio; the setup guide has the JSON
+   `["mcp", "--identity", "agent"]` over stdio. The setup guide has the JSON
    and TOML forms. Restart an agent that was already running so it starts the
    server.
 2. In each workspace to share, run `:mcp agent` using that same identity.
@@ -37,7 +37,7 @@ connections, with no Python installation. See the [MCP setup guide](../mcp.md).
    then select **Apply permissions** with Tab then Enter.
 4. Ask the agent to call `list_workspaces`. The workspace should be listed with
    Read. If it is missing and the reply counts `hidden_workspaces`, the client
-   is not passing the environment variables above to the server; its
+   is not passing the environment variables above to the server. Its
    `discovery_help` names them.
 
 You may grant permissions before **or after** starting the agent. The built-in
@@ -50,10 +50,10 @@ upgrading from the Python bridge; permission changes do not require a restart.
 
 `:mcp` opens **MCP permissions**, selecting an existing granted identity when
 available. An explicit `:mcp codex` always selects that identity. The overlay
-shows the exact workspace, identity, whether access is enabled or not yet
-granted, whether it is remembered, and how many readers are connected. A
-connected reader identifies a local connection, not a verified agent process.
-`:context-access` remains an alias for existing configurations.
+shows the workspace, the identity, whether access is enabled, whether it is
+remembered, and how many readers are connected. A connected reader identifies a
+local connection, not a verified agent process. `:context-access` remains an
+alias for existing configurations.
 
 | Key | Permission or action |
 | --- | --- |
@@ -70,8 +70,8 @@ Both permissions start off for an identity this workspace has not decided
 about. Turning Read off also turns Write off. The remembered checkbox reflects
 the current grant when reopened. Without it, the grant lasts until the owning
 editor or persistent host exits. Applying a change renews the connections of
-agents already running under that identity, so they rediscover their targets;
-they do not need restarting, and the workspace keeps its address.
+agents already running under that identity, so they find their targets again.
+You don't need to restart them.
 
 Granting, changing, and revoking need physical input from the active Runyte
 frontend, apart from the defaults in your configuration described under [Default
@@ -79,24 +79,23 @@ grants](agent-access-to-workspace-context.md#default-grants). Repeated input,
 pasted text, macros, and MCP clients cannot change access.
 
 **Write is for a job, not for good.** With Write, an agent can type into every
-terminal in the workspace, including shells and other agents' prompts, and
-press Enter there, which can run a command or answer another agent's approval
-dialog. Runyte makes this visible and guards the Enter (see [Terminal
+terminal in the workspace, including shells and other agents' prompts. It can
+press Enter there too, which can run a command or answer another agent's
+approval dialog. Runyte makes this visible and guards the Enter (see [Terminal
 writes](agent-access-to-workspace-context.md#terminal-writes)), but it does not
 second-guess what the agent decides to type. Turn Write on for the work that
-needs it and off again when that is done; `:mcp`, `2`, Tab and Enter take it
+needs it and off again when that is done. `:mcp`, `2`, Tab and Enter take it
 away without touching Read. Text an agent reads elsewhere is untrusted, and
 could try to steer what it types.
 
-A grant remembered by an earlier release, under the old numbered permissions,
-is read as Read only if it included both terminal reads and editor reads, and as
-a revocation otherwise, so it never grants more than it did; it is never read
-as Write. An earlier release cannot read a grant remembered by this one and then
-ignores every remembered grant in that workspace until it is applied again or
-revoked there.
+A grant remembered by an earlier release uses the old numbered permissions. It
+counts as Read only if it included both terminal reads and editor reads.
+Otherwise it counts as a revocation. It never counts as Write. An earlier
+release can't read a grant remembered by this one. It then ignores every
+remembered grant in that workspace until you apply or revoke one there.
 
 The server works with ide-mode and mux-mode workspaces on Linux, macOS,
-and Windows. Detached hosts support reads and buffer edits; terminal writes and
+and Windows. Detached hosts support reads and buffer edits. Terminal writes and
 Enter need an attached native frontend.
 
 ### Default grants
@@ -111,30 +110,29 @@ mcp:
 ```
 
 A workspace that starts with no grant record for `agent` grants it Read for as
-long as it runs. Its own decisions take precedence: a grant
-applied with Remember replaces the default there, and revoking with `x`, or
-applying with nothing selected, records a revocation that keeps the default off
-in that workspace until you apply a grant again. A grant applied without
-Remember lasts for the session and leaves the default in place for next time.
-`:mcp` says when a grant comes from the default. Revocations made before this
-release removed the record instead of keeping one, so revoke again where a new
-default should stay off. Revocation records stay in the private store until a
-grant replaces them.
+long as it runs. A workspace's own decisions come first. A grant applied with
+Remember replaces the default there. Revoking with `x`, or applying with
+nothing selected, keeps the default off in that workspace until you apply a
+grant again. A grant applied without Remember lasts for the session and leaves
+the default in place for next time. `:mcp` says when a grant comes from the
+default. Revocations made before this release removed the record instead of
+keeping one, so revoke again where a new default should stay off. Revocation
+records stay in the private store until a grant replaces them.
 
 Read is the only default. Write cannot be one: it is decided per workspace, and
 naming `write` is a configuration error. The capability names earlier releases
 used here (`terminal_read`, `editor_context_read`, `buffer_edit`,
 `terminal_propose`, `agent_channel`) are still accepted. A list naming both
-`terminal_read` and `editor_context_read` means Read; any other grants nothing,
-since Read covers more than it named, and Runyte reports it when the workspace
-starts. Runyte reads the setting when a workspace host starts, so a
-change applies to workspaces started afterwards; a persistent session keeps the
-value it started with until `runyte --session-restart`. It creates the private
-store and the named identity if they do not exist yet; a default that cannot be
-applied is reported and leaves the workspace's own grants in place. A grant
-covers the same content and has the same limits whether it came from a default
-or from `:mcp`. The configuration file is the one way to grant access without
-physical input, so it deserves the same care as the rest of your configuration.
+`terminal_read` and `editor_context_read` means Read. Any other list grants
+nothing, and Runyte reports it when the workspace starts. Runyte reads the
+setting when a workspace host starts, so a change applies to workspaces started
+afterwards. A persistent session keeps its value until
+`runyte --session-restart`. It creates the private store and the named identity
+if needed. A default that can't be applied is reported, and the workspace's own
+grants stay. A grant covers the same content and has the same limits whether it
+came from a default or from `:mcp`. The configuration file is the one way to
+grant access without physical input, so it deserves the same care as the rest
+of your configuration.
 
 ### What a grant covers
 
@@ -157,7 +155,7 @@ still require the store to be outside the workspace.
 - `RUNYTE_CONTEXT_HOME` can select an absolute, owner-private directory
   outside the workspace. Setting it explicitly, even to the standard location,
   does not grant the home-workspace exception. On Windows its parent must exist and the storage must
-  be local NTFS; Runyte applies an owner-only ACL and refuses reparse or
+  be local NTFS. Runyte applies an owner-only ACL and refuses reparse or
   hardlink traversal. On Unix it can also shorten a path to fit the local
   socket limit.
 - No credentials or terminal content are written into tracked project
@@ -168,35 +166,34 @@ still require the store to be outside the workspace.
 ### Agent channel
 
 With Read, agents of any provider share a conversation through the workspace
-host: a public channel and direct messages between two agents. An
-agent joins by stating its provider and main task; Runyte adds a stable id, a
-nickname such as `codex-1`, its MCP client, where it works (repository, worktree
-and branch), and, inside a persistent session's integrated terminal, the
-terminal it runs in, checked rather than taken on its word. When the branch it
-works on changes, or it reports another directory, the channel says where it
-moved from.
+host: a public channel and direct messages between two agents. An agent joins
+by stating its provider and main task. Runyte adds a stable id, a nickname such
+as `codex-1`, its MCP client, and where it works (repository, worktree and
+branch). Inside a persistent session's integrated terminal, Runyte also adds
+the verified terminal it runs in. When the branch it works on changes, or it
+reports another directory, the channel says where it moved from.
 
 A terminal whose agent has unread messages shows `[N unread]` in its title.
-Runyte marks only terminals it verified; an agent started some other way, such as
-an MCP server launched by a Codex daemon, has no marker, and can still read and
-post.
+Runyte marks only terminals it verified. An agent started some other way, such
+as an MCP server launched by a Codex daemon, has no marker but can still read
+and post.
 
 `:agent-channel` opens `[agent channel]`, a read-only page listing the
 participants and the recent messages, direct ones included, which refreshes as
 messages arrive. Messages last as long as the workspace host. The [MCP
 guide](../mcp.md#agent-channel) describes the tools and limits.
 
-**Waking an agent.** Posting wakes nobody: an agent waiting at its prompt
-reads the channel when it next checks or when you ask it to. An agent with Write
-can also tell it in its own terminal: read the terminals to find it (each title
-shows `[terminal #N]`), check that its prompt is waiting for input rather than
-showing a dialog, write a short line such as "Read the Runyte agent channel",
-and press Enter. That Enter is guarded like any other agent Enter; see
-[Terminal writes](agent-access-to-workspace-context.md#terminal-writes).
+**Waking an agent.** Posting wakes nobody: an agent waiting at its prompt reads
+the channel when it next checks or when you ask it to. An agent with Write can
+also tell it in its own terminal. It reads the terminals to find it (each title
+shows `[terminal #N]`) and checks that its prompt is waiting for input and not
+showing a dialog. Then it writes a short line such as "Read the Runyte agent
+channel" and presses Enter. That Enter is guarded like any other agent Enter.
+See [Terminal writes](agent-access-to-workspace-context.md#terminal-writes).
 
 An opt-in [SQLite channel trial](../mcp.md#experimental-sqlite-channel-trial)
 adds durable public and fixed-group conversations through a separate MCP tool.
-It requires explicit storage and private profiles; this page and terminal unread
+It requires explicit storage and private profiles. This page and terminal unread
 indicators continue to show the in-memory channel.
 
 ### How agents use it
@@ -205,10 +202,10 @@ Install the optional Runyte MCP skill with `runyte skills install --all --user`
 for Claude Code and Codex, or select one with `--claude` or `--codex`. Use
 `--project` for a project-local installation. Then ask the agent once to use
 the skill and coordinate through the channel for its task. It chooses when to
-check according to the work; an idle agent learns of a message when it next
-checks, when you tell it, or when an agent with Write
-[tells it in its terminal](agent-access-to-workspace-context.md#agent-channel).
-See [skill installation and safe updates](../mcp.md#runyte-mcp-skill).
+check. An idle agent learns of a message when it next checks, when you tell it,
+or when an agent with Write [tells it in its
+terminal](agent-access-to-workspace-context.md#agent-channel). See [skill
+installation and safe updates](../mcp.md#runyte-mcp-skill).
 
 - Start with `find_resources`, optionally selecting a workspace and searching
   buffer or terminal names and contents. Use the returned exact handle with
@@ -216,7 +213,7 @@ See [skill installation and safe updates](../mcp.md#runyte-mcp-skill).
   `write_terminal`, or `press_enter`. Repeated names remain separate
   candidates.
 - `list_workspaces` checks permissions without reading source text.
-  `find_resources` can read content to match a query; `match_in="name"`
+  `find_resources` can read content to match a query. `match_in="name"`
   restricts matching to names. Search is bounded and may return partial results.
 - `join_channel`, `post_message`, `read_messages` and `list_participants`
   use the [agent channel](agent-access-to-workspace-context.md#agent-channel).
@@ -235,7 +232,7 @@ See the [MCP guide](../mcp.md#tools) for the complete catalog and discovery boun
 
 **Discovery for tools.** `runyte --context-list --json` gives bounded,
 versioned endpoint metadata for live enabled endpoints in the current
-environment; `--include-hidden` adds other environments. Listing does not
+environment. `--include-hidden` adds other environments. Listing does not
 grant content access: the adapter authenticates each target separately. A slow
 or unavailable host does not block discovery of the others. On Windows, use
 the absolute `runyte.exe` path in client configuration; let the adapter discover
@@ -270,41 +267,41 @@ one shared buffer without refusing each other.
 
 - Appends apply one at a time, each kept whole.
 - An agent may pass the ending it last read as `expected_tail`. If the buffer
-  no longer ends that way — say someone cleared it — the append writes nothing
-  and fails as stale.
+  no longer ends that way, for example because someone cleared it, the append
+  writes nothing and fails as stale.
 - Each append is one undoable transaction and never saves.
 
 ### Terminal writes
 
 With Write, an agent can type one line into a terminal and, separately, press
-Enter there. Nothing asks you first; instead you see both happen.
+Enter there. Nothing asks you first. Instead you see both happen.
 
 **Typing.** A line holds at most 4 KiB, with no line breaks, control
 characters, escape sequences, or Unicode line or paragraph separators. It lands
-at the child's current input position, as a paste when the program asked for
-pastes, as shells and agent prompts do, and as typed characters otherwise. It
-never brings Enter with it, it queues behind other text still being written,
-and your own typing cancels text that has not started arriving. Some programs
-act on printable input at once, so text alone can still do something.
+at the program's current input position, as a paste if the program asked for
+pastes (shells and agent prompts do), and as typed characters otherwise. Enter
+is never included. The line queues behind other text still being written. Your
+own typing cancels text that has not started arriving. Some programs act on
+printable input at once, so text alone can still do something.
 
 **Enter.** An agent asks for Enter after reading the terminal, naming what it
-read. The pane title then shows `[Enter pending]` for five seconds, and Runyte
-presses Enter only if, by then, nothing new has appeared in the terminal and
-nothing has been typed or pasted there. A dialog that pops up, a line of
-output, a key you press, or another agent's text each drop the Enter, and the
-agent is told it was not sent. So do your window detaching and the terminal
-exiting. Changing or revoking Write, or the agent disconnecting, discards a
-waiting Enter along with the agent's connection, and nothing is sent. One Enter can
-wait per terminal; each agent can have four waiting. A program that redraws
+read. The pane title then shows `[Enter pending]` for five seconds. Runyte
+presses Enter only if, after those five seconds, nothing new has appeared in
+the terminal and nothing has been typed or pasted there. A dialog, a line of
+output, a key you press, or another agent's text all cancel the Enter. So do
+your window detaching and the terminal exiting. The agent is told it was not
+sent. Changing or revoking Write, or the agent disconnecting, discards a
+waiting Enter along with the agent's connection, and nothing is sent. One Enter
+can wait per terminal. Each agent can have four waiting. A program that redraws
 constantly, such as a spinner, never receives one.
 
 **Limits.**
 
-- Terminal writes and Enter need your window attached; a detached workspace
+- Terminal writes and Enter need your window attached. A detached workspace
   refuses them. They also reach terminals that no pane shows, where you cannot
   see `[Enter pending]`.
 - A program that has not asked for pastes, such as a pager or a single-key
-  `[y/n]` prompt, receives the line as keystrokes and may act on its first
+  `[y/n]` prompt, gets the line as keystrokes. It may act on the first
   character without any Enter.
 - Inside tmux, zellij or screen Runyte sees the multiplexer, not the program in
   its selected pane, so the paste and change checks describe the multiplexer.

@@ -10,8 +10,8 @@ fixtures retain their existing contract.
 The [context schema](runyte-context-1.schema.json) describes this separate
 profile. The current base schema links it without admitting context requests on
 ordinary plugin process connections. The independently vendorable
-[Python client](context_client.py) uses Python 3.10+ and the standard library;
-it does not import the process-plugin SDK. This Python client supports Unix
+[Python client](context_client.py) uses Python 3.10+ and the standard library.
+It does not import the process-plugin SDK. This Python client supports Unix
 sockets only. The built-in [MCP adapter](../mcp.md) supports both Unix and Windows
 through the Rust context transport.
 
@@ -30,7 +30,7 @@ the admitted host. Supply `required_scopes` and `optional_scopes` explicitly to
 request editing or terminal writes, with the corresponding read scope. A
 `ContextError` exposes its structured `code`. An explicit host refusal preserves
 that code and may leave the connection usable. A lost mutation acknowledgement
-closes the connection and returns `outcome_unknown`; the client never reconnects
+closes the connection and returns `outcome_unknown`. The client never reconnects
 or retries the operation. A caller must not retry an uncertain terminal write
 or Enter on a new connection.
 
@@ -83,14 +83,14 @@ of it, Write. A reader negotiates capabilities within them:
 | `terminal_write` | Write | `terminal.input.write`, `terminal.input.enter`, `terminal.input.enter.status`; requires `terminal_read`; with feature `runyte.context.terminal.write.v1` |
 
 A host that offers terminal writes lists `runyte.context.terminal.write.v1` in
-its `hello` features and `terminal_write` among its capabilities; a client asks
+its `hello` features and `terminal_write` among its capabilities. A client asks
 for the capability only when the `hello` names the feature. A registration may
-still name `terminal_propose` as an optional capability, as earlier clients did:
-it is accepted and never granted, so such a client keeps the rest of its
-access. A registration that requires it is refused with `capability_denied`. The terminal
-proposal methods it named no longer exist. `terminal_insert`, `channel_nudge`,
-`read` and `write` are not capabilities, and registration rejects them like any
-unknown name.
+still name `terminal_propose` as an optional capability, as earlier clients
+did. It is accepted but never granted, and the client keeps the rest of its
+access. A registration that requires it is refused with `capability_denied`.
+The terminal proposal methods it named no longer exist. `terminal_insert`,
+`channel_nudge`, `read` and `write` are not capabilities, and registration
+rejects them like any unknown name.
 
 `pane.viewport.read` additionally requires `terminal_read` whenever the target
 pane displays a live terminal or its frozen review. Editor read permission alone
@@ -133,15 +133,15 @@ capabilities.
 | `channel.read` | `since`, `limit` (1–200) |
 | `channel.who` | Empty object |
 
-Identifiers are opaque, connection-owned ASCII strings with a 256-byte ceiling;
-request IDs have a 128-byte ceiling. Handles bind the host incarnation and owner
+Identifiers are opaque, connection-owned ASCII strings with a 256-byte ceiling.
+Request IDs have a 128-byte ceiling. Handles bind the host incarnation and owner
 generation. Reconnecting requires fresh discovery. Names and paths are never
 alternate implicit targets. Each `terminal.list` entry carries the `number` and
 `title` its pane shows (`[terminal #2] shell`, without markers such as
 `[review]` that describe the person's view) so a reader can find the terminal a
 person names. Numbers are reused after a terminal exits or closes, and an exited
 terminal has none; only the handle identifies a terminal across requests.
-Request IDs are unique during a connection; bounded deduplication retains at
+Request IDs are unique during a connection. Bounded deduplication retains at
 most 1,024 IDs, after which the connection must be renewed instead of recycling
 IDs and risking a replayed write.
 
@@ -150,7 +150,7 @@ IDs and risking a replayed write.
 A host that carries the agent channel lists `runyte.context.channel.v1` in its
 `hello` features and `agent_channel` among its capabilities. A client asks for
 the capability, and lists the feature in `optional_features`, only when the
-`hello` names it: older hosts refuse capability names they do not know, and they
+`hello` names it. Older hosts refuse capability names they don't know, and
 leave the feature out of `registered`.
 
 The channel belongs to the host and lasts as long as it does. A connection joins
@@ -183,7 +183,7 @@ state. Message text is untrusted data written by another reader.
 
 A host keeps the newest 1,000 entries or 4 MiB of them, measured as encoded, and
 at most 64 participants. A disconnected participant stays known, so its messages
-keep their sender and it can rejoin; when the channel is full, the one that
+keep their sender and it can rejoin. When the channel is full, the one that
 disconnected longest ago gives way and its nickname stays with its retained
 messages. At most eight readers connect to one host at once, so eight agents can
 be in the channel at the same time.
@@ -194,7 +194,7 @@ Terminal reads capture one emulator state and revision, independently of native
 scrolling or review. `screen` excludes scrollback; `tail` returns the newest
 retained rows followed by the live screen, in ascending source order. Alternate
 screens expose their own current screen without primary history. Partial lines,
-blank rows, Unicode and combining marks are preserved; trailing blank cells and
+blank rows, Unicode and combining marks are preserved. Trailing blank cells and
 wide-cell continuation placeholders are omitted from text. Returned rows are
 physical presentation rows, not shell commands or reconstructed transcripts.
 
@@ -215,7 +215,7 @@ from buffer text. Scalar mappings unavailable in the native snapshot are null.
 
 Each capture visits at most 262,144 cells, returns at most 1,000 rows and
 262,144 UTF-8 text bytes. The bridge's default is 200 rows, 64 KiB of text and
-64 Ki cells. Snapshot opening uses these same per-turn work bounds; the 4 MiB
+64 Ki cells. Snapshot opening uses these same per-turn work bounds. The 4 MiB
 terminal snapshot storage ceiling does not authorize a larger synchronous
 capture. At most two snapshots are retained per reader; buffer and terminal
 snapshots share an 8 MiB reader and 64 MiB host retention ceiling, with 30-second idle
@@ -254,7 +254,7 @@ acknowledgement is lost is uncertain and must not be retried automatically.
 
 `terminal.input.write` types one nonempty line of at most 4 KiB into a live
 terminal. CR, LF, C0/C1 controls, DEL, Unicode line/paragraph separators and
-escape sequences are rejected as a whole; literal backslash-n is ordinary text.
+escape sequences are rejected as a whole. Literal backslash-n is ordinary text.
 The host validates decoded text again immediately before queue admission; only
 host-generated bracketed-paste framing is permitted. It is sent as a bracketed
 paste when the terminal's program enabled bracketed paste, and as typed
@@ -262,12 +262,11 @@ characters otherwise. A multiplexer such as tmux enables bracketed paste for
 itself, so that mode describes the multiplexer rather than its selected pane.
 Ordinary characters may trigger actions in arbitrary terminal applications, so
 writing is not an execution sandbox. The text is never followed by Enter. It
-queues behind any other pending text rather than cancelling it. Text whose
-writing has not started is cancelled when the person types there, when its
-reader disconnects (including for a malformed request), and when the frontend
-it was typed under detaches or changes. The reply is
-`{state:"queued", chars}`; partial delivery or a lost acknowledgement is
-uncertain and is never retried automatically.
+queues behind any other pending text rather than cancelling it. Text that has
+not started writing is cancelled in three cases: the person types there, its
+reader disconnects (including for a malformed request), or the frontend
+detaches or changes. The reply is `{state:"queued", chars}`. Partial delivery
+or a lost acknowledgement is uncertain and is never retried automatically.
 
 `terminal.input.enter` asks for one Enter. `expected_revision` is the revision
 of a `terminal.read` of that terminal, taken after the text the Enter submits
@@ -283,7 +282,7 @@ frontend or an exited terminal drop it as `cancelled`. A grant change,
 revocation or disconnect closes the reader, which cancels its waiting Enters
 and discards their records.
 `terminal.input.enter.status` reports `waiting`, `sent`, `stale` or `cancelled`
-for the reader that asked. One Enter may wait per terminal; a second is refused
+for the reader that asked. One Enter may wait per terminal. A second is refused
 as `conflict`. At most four wait per reader and sixteen per host
 (`context.enters`, `context.host_enters`). Finished outcomes stay readable for
 two minutes, at most 64 of them.
@@ -292,7 +291,7 @@ Writes and Enter require an attached frontend (`no_frontend` otherwise), so the
 person can see them happen. They need no native approval: the Write permission
 is the person's approval, granted for as long as they choose.
 
-Session-only grants are the default; remembering a grant is an explicit native
+Session-only grants are the default. Remembering a grant is an explicit native
 choice. Every workspace has its own grant. Applying a changed grant disconnects
 that identity's readers, which reconnect under the new grant; the endpoint and
 host incarnation stay the same while any identity is granted. Revocation
@@ -302,7 +301,7 @@ request admission, before response publication and before mutations. Bytes
 already delivered cannot be recalled. This boundary controls Runyte's API and
 is not an operating-system sandbox for same-user processes. A per-user
 configuration may also name default grants (`mcp.default_grants`), applied when
-a workspace host starts and the workspace has no grant record of its own; a
+a workspace host starts and the workspace has no grant record of its own. A
 revocation record in that workspace overrides them, and they grant Read only.
 
 ### Experimental durable channel feature
@@ -318,7 +317,7 @@ reads or their in-memory retention.
 
 Admission checks the live reader, feature, scope, store binding and request ID
 before trying a 16-job queue. Typed commands are bounded below 40 KiB each.
-SQLite access and serialization run on one worker; no editor-loop wait occurs.
+SQLite access and serialization run on one worker. No editor-loop wait occurs.
 The worker checks the cancellation lease before execution and before replying;
 transport uses the same lease. A transaction admitted before revocation may
 commit, but its reply is suppressed, leaving a retryable uncertain outcome.

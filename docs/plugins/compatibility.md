@@ -10,13 +10,13 @@ The separately authenticated [workspace context profile](context.md) negotiates
 not broaden the meanings of ordinary process-plugin capabilities. The current
 schema references a separate context schema, and its standalone Python client
 has independent conformance tests. The retained `compatibility/v1/` schema,
-client and fixtures are unchanged; context messages are never sent to clients
+client and fixtures are unchanged. Context messages are never sent to clients
 that did not enter and negotiate this transport.
 
 ## The promise
 
-Before 1.0, later patches in `0.X.Y` preserve the stable plugin contract;
-a new `X` may break it after an explicit compatibility decision. After 1.0,
+Before 1.0, later patches in `0.X.Y` preserve the stable plugin contract.
+A new `X` may break it after an explicit compatibility decision. After 1.0,
 compatible features and deprecations use minor releases, compatible fixes use
 patch releases, and incompatible changes require a major release.
 
@@ -87,15 +87,15 @@ bare versions, `^`, `~`, unions and unbounded intervals are rejected. For exampl
 `>0.5.2, <0.5.3` contains no final release and is invalid.
 
 Intervals exclude every prerelease. Prereleases are supported only as exact
-declarations; prerelease interval endpoints are rejected. An exact prerelease
+declarations. Prerelease interval endpoints are rejected. An exact prerelease
 does not include the eventual final release. Build metadata in host versions
-is validated but ignored for matching; authored ranges reject `+build` suffixes
+is validated but ignored for matching. Authored ranges reject `+build` suffixes
 because they cannot pin an artifact. Use full source SHAs and checksums for
-artifact identity. Development builds report their actual package version;
-there is no runtime version override or range bypass.
+artifact identity. Development builds report their actual package version.
+There is no runtime version override or range bypass.
 
 Crossing 1.0 requires an explicitly widened authored interval and acceptance on
-both sides. Range grammar does not change at 1.0; recommended upper bounds do.
+both sides. Range grammar does not change at 1.0. Recommended upper bounds do.
 
 ## Protocol, capabilities and features
 
@@ -103,22 +103,22 @@ Hello advertises `version` (wire protocol), `host_version` (Runyte release),
 supported `capabilities`, `features`, and `limits`. Registration supplies
 `runyte`, commands, `required_capabilities`, `optional_capabilities`,
 `required_features` and `optional_features`. The acknowledged capability set
-is the intersection with host support and user grants; all required grants must
+is the intersection with host support and user grants. All required grants must
 be present. Features select understood wire behavior and cannot grant authority.
 
-The host supports `view-row-actions` for row-specific action lists,
-`view-action-presentation` for readable labels and grouped discovery,
-`view-default-bindings` for configurable view-scoped default keys,
-`view-help` for plugin-authored contextual help topics,
-`view-metadata` for labelled values above content, and `view-document` for
-complete bounded read-only documents. `job-feedback` adds bounded completion
-messages for owned jobs without another capability. See the [application contract](applications.md#row-dependent-actions).
-These remain additive features under `runyte-1`; the bundled frontend DTO
-version 54 separately carries non-selectable heading rows. Supported features are selected
-from the plugin's required/optional declarations; unavailable optional features
+The host supports these view features: `view-row-actions` for row-specific
+action lists, `view-action-presentation` for readable labels and grouped
+discovery, `view-default-bindings` for configurable default keys, `view-help`
+for contextual help topics, `view-metadata` for labelled values above content,
+and `view-document` for bounded read-only documents. `job-feedback` adds
+bounded completion messages for owned jobs without another capability. See the
+[application contract](applications.md#row-dependent-actions). These remain
+additive features under `runyte-1`; the bundled frontend DTO version 54
+separately carries non-selectable heading rows. Supported features are selected
+from the plugin's required/optional declarations. Unavailable optional features
 are omitted, unavailable required features fail. Each negotiation family is
 bounded at 32 entries with no duplicates or overlap between required/optional
-sets. Capability names use the command-ID spelling rules (48 bytes); feature
+sets. Capability names use the command-ID spelling rules (48 bytes). Feature
 names use ASCII letters, digits, dots, underscores and hyphens (64 bytes).
 
 The Python SDK exposes `host_version`, `granted_capabilities`, `features` and
@@ -163,14 +163,14 @@ require client updates. Newer SDK source revisions can support older stable
 hosts, so vendor provenance and minimum host release are separate values.
 
 Node, Rust and C have maintained independent examples and conformance checks.
-They are not full packaged SDKs. Any language can implement the public protocol;
-additional SDKs follow concrete plugin needs rather than being a prerequisite
+They are not full packaged SDKs. Any language can implement the public protocol.
+Additional SDKs follow concrete plugin needs rather than being a prerequisite
 for stable support.
 
 ## Release evidence
 
 The [conformance guide](conformance.md) describes required checks. Runyte owns
-within-range host regressions against frozen clients/plugins; plugin authors own
+within-range host regressions against frozen clients/plugins. Plugin authors own
 their minimum host declarations and plugin changes. A gate is not repaired by
 widening an old fixture, replacing its client or making a required lane advisory.
 Moving development branches supply separate advisory coverage.
@@ -178,5 +178,5 @@ Moving development branches supply separate advisory coverage.
 During the initial transition, 0.3.0 candidate builds may be constructed from a
 temporary source tree while the development package still says 0.2.4. Record
 that construction explicitly. The actual release still requires green CI for
-its exact version-only commit before publishing; candidate results cannot
+its exact version-only commit before publishing. Candidate results cannot
 substitute for that final check.

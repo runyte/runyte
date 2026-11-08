@@ -8,7 +8,9 @@ Scope: Runyte in this repository and Neovim’s published documentation checked 
 
 Neovim and Runyte both combine modal editing, language tooling, terminal emulation, and programmable extensions. Neovim builds on Vim’s editing language and offers extensive customization through Lua, Vimscript, and APIs. [Neovim overview](https://neovim.io/).
 
-Runyte supplies a selection-first project workflow with its own Finder, Git views, and session manager. The useful distinction is how you want to assemble and control that workspace, rather than whether an editor can host a terminal.
+Runyte supplies a selection-first project workflow with its own Finder, Git
+views, and session manager. The real difference is how you want to build and
+control that workspace, not whether an editor can host a terminal.
 
 ## Feature comparison
 

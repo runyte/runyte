@@ -2,9 +2,9 @@
 
 The spellings in this guide are Runyte's defaults. The `keys` configuration
 section can move the application and window prefixes, their descendants, and
-advertised aliases; see [Custom key bindings](custom-key-bindings.md#custom-key-bindings). Live help,
-hints, About, tutorials, and action messages always show the effective
-spelling.
+advertised aliases. See [Custom key
+bindings](custom-key-bindings.md#custom-key-bindings). Live help, hints, About,
+tutorials, and action messages always show the effective spelling.
 
 Other sections document the keys of their own views: [Files and
 buffers](files-and-buffers.md#files-and-buffers), [Panes](panes.md#panes), [Terminals](terminals.md#terminals),
@@ -129,7 +129,7 @@ text they cross, as in Helix:
 - Anything that reads a selection reads this one: `p` replaces it, `s` and `/`
   search inside it, and `*` searches for it.
 - Other motions still move a caret, and Select mode still extends. Its word
-  motions extend to where these selections end, so `v w` takes `one ` from
+  motions extend to where these selections end. `v w` takes `one ` from
   `one two`, as in Helix, whether or not `editor.selecting_motions` is on.
 
 Set `editor.selecting_motions: false` to make these motions move a caret too.
@@ -174,24 +174,23 @@ Insert, and Replace modes. When the clipboard holds an image:
    `[Image 1](.runyte/cache/images/1f0a2b3c4d5e6f70.png)`.
 
 - Pasting the same screenshot twice stores one file.
-- The number continues past the highest `[Image N]` already in the document,
-  rather than counting links.
+- The number continues past the highest `[Image N]` already in the document.
 - `?` renders the link as **Image 1**, without the path.
 - A path with a space or a parenthesis is written in angle brackets,
   `[Image 1](<My Notes/a (copy).png>)`, the only spelling that survives being
   read back.
 
-**When text is pasted instead.** A clipboard with no image, a machine with no
-helper that can supply one, or an unresponsive display server all paste text,
-exactly like `Space c p`.
+**When text is pasted instead.** Text is pasted, exactly like `Space c p`, if
+the clipboard has no image, no helper can supply one, or the display server
+doesn't respond.
 
 A clipboard offering text *as well as* a picture counts as text. Copying
 spreadsheet cells or formatted text attaches a rendered bitmap for "paste as
 picture" commands, and taking it would lose the text you selected. A copied
 picture has no text beside it, which is what screenshot tools and a browser's
 "Copy Image" produce. If `Ctrl-v` pastes text where you expected an image, the
-source is offering text. Once the clipboard has said it holds an image, failing
-to fetch it is reported rather than silently pasting text.
+source is offering text. If the clipboard says it holds an image and fetching
+it fails, you get an error. Text is not pasted instead.
 
 Both keys are unbound in Terminal Insert, where they reach the program if the
 outer terminal passes them through.
@@ -214,14 +213,14 @@ travels with the working copy, not the commit.
 
 **On Windows:**
 
-- Registered PNG data is read directly; supported native bitmap data is
+- Registered PNG data is read directly. Supported native bitmap data is
   converted to PNG. Plain text still takes precedence.
 - Clipboard data and converted images are limited to 64 MiB, and bitmap
   dimensions must fit in 64 MiB of RGBA pixels.
 - Unsupported compressed bitmap layouts and custom colour profiles report an
   error.
 - The editor waits at most one second for the clipboard. If Windows takes
-  longer, another request reports the clipboard as busy; retry after the
+  longer, another request reports the clipboard as busy. Try again after the
   worker finishes.
 
 <a id="insert-mode"></a>
@@ -234,10 +233,10 @@ travels with the working copy, not the commit.
 | Replace | `R` | Overwrites the character ahead of each caret |
 
 Escape returns to Normal mode. After `a` the caret rests on the last character
-typed, and after `i`, `I`, or `c` on the character the text went in front of,
-as in Helix. After `A`, `o`, or `O` it rests on the last character typed, where
-Helix rests on the line terminator a Runyte caret never occupies. Moving the
-caret in Insert mode, by key or pointer, leaves it where it was put.
+typed. After `i`, `I`, or `c` it rests on the character the text went in front
+of, as in Helix. After `A`, `o`, or `O` it rests on the last character typed,
+where Helix rests on the line terminator a Runyte caret never occupies. Moving
+the caret in Insert mode, by key or pointer, leaves it where it was put.
 
 **Replace mode details:**
 
@@ -272,7 +271,7 @@ The keys shared by Insert and Replace modes:
 | `Ctrl-w` then a pane suffix | Move to another pane without first leaving Insert or Replace mode |
 
 In Insert mode, `Alt-Backspace` (Option-Backspace on macOS) removes all leading
-indentation before the caret in one press and stops at the start of the current
+indentation before the caret in one press. It stops at the start of the current
 line. Pressing it at column zero can delete across the preceding line break.
 
 **Deleting in Replace mode.** Backspace or Shift-Backspace retraces the current
@@ -329,13 +328,14 @@ buffer language's line comment.
 
 #### New lines and indentation
 
-In Insert mode, Tab normally advances to the next visual tab stop. Backspace within
-leading spaces and tabs removes indentation to the previous stop. With width 4,
-Backspace moves columns 8 → 4, 6 → 4, and 4 → 0 (columns counted from zero).
-Mixed spaces and tabs use their displayed columns. After text, Backspace deletes
-one character; at the start of a line it keeps ordinary newline joining.
-Selections, paired characters, and Markdown list handling retain their existing
-behavior. Replace-mode Backspace still restores overwritten text.
+In Insert mode, Tab normally advances to the next visual tab stop. Backspace
+within leading spaces and tabs removes indentation to the previous stop. With
+width 4, Backspace moves columns 8 → 4, 6 → 4, and 4 → 0 (columns counted from
+zero). Mixed spaces and tabs use their displayed columns. After text, Backspace
+deletes one character. At the start of a line it joins the line to the previous
+one as usual. Selections, paired characters, and Markdown list handling retain
+their existing behavior. Replace-mode Backspace still restores overwritten
+text.
 
 `editor.tab_width` and `editor.indent` supply defaults. Language and file-pattern
 exceptions apply to individual buffers, including their display, wrapping,
@@ -360,10 +360,10 @@ default):
   content, including through continuation lines and nested lists. It fills the
   remaining distance with spaces even when the configured indent style is tabs.
   Once aligned, further Tab presses use the configured style and tab stops.
-  This also applies to scratchpads with `editor.scratch_markdown` enabled;
+  This also applies to scratchpads with `editor.scratch_markdown` enabled.
   Shift-Tab keeps its ordinary other-style behavior;
 - Backspace right after a marker turns it into a continuation indent, whether
-  or not text follows; another Backspace removes that alignment in one press;
+  or not text follows. Another Backspace removes that alignment in one press;
 - Enter and Backspace renumber the following numbered or lettered items that
   were in sequence, skipping nested items, continuation lines, and blank
   lines. A list numbered `1.` throughout, or one with a gap, keeps its numbers
@@ -372,11 +372,10 @@ default):
   establishes Roman numbering.
 
 In other file types, smart newline keeps the alignment under a list item's
-content. With `editor.smart_newline: false`, Enter keeps only the row's
-leading indentation and Tab uses ordinary indentation stops. List alignment
-looks back through at most 256 rows of at most 4096 characters each, stopping
-at a blank line or unrelated text; beyond those bounds Tab uses ordinary
-indentation.
+content. With `editor.smart_newline: false`, Enter keeps only the row's leading
+indentation and Tab uses ordinary indentation stops. List alignment looks back
+through at most 256 rows of at most 4096 characters each. It stops at a blank
+line or unrelated text. Beyond those limits, Tab uses ordinary indentation.
 
 Unsupported, malformed, oversized, and unterminated-final-line cases keep the
 exact prefix and never block the newline.
@@ -390,8 +389,8 @@ Search has two flavours and one behavior:
 | `s` | Literal text, ignoring case. The pattern is escaped, so `foo(` and `a.b` find themselves. No wildcards. |
 | `/` | A regular expression, matching case unless the pattern says otherwise. Use it for wildcards or case-sensitive search. |
 
-There is no separate case-sensitive literal key: use `/`, escaping any regex
-syntax, when case matters, and `(?i)` in a `/` pattern to ignore case.
+There is no separate case-sensitive literal key. When case matters, use `/` and
+escape any regex syntax. To ignore case in a `/` pattern, use `(?i)`.
 
 #### How a search selects
 
@@ -428,9 +427,9 @@ all of them.
 
 #### Searching inside a selection
 
-When at least two characters are selected — from `v` and a motion, `x`, `%`,
-or a previous search — the search looks only inside that text, and `n`/`N`
-wrap within it.
+When at least two characters are selected (from `v` and a motion, `x`, `%`, or
+a previous search), the search looks only inside that text. `n`/`N` wrap within
+it.
 
 Searches therefore narrow step by step:
 
@@ -442,8 +441,8 @@ Press `;` to collapse to a caret and search the whole buffer again.
 
 #### Regular expressions
 
-`/` passes the pattern directly to Rust's `regex` engine. The `/` key opens
-the prompt; it is not a delimiter in a JavaScript-style `/pattern/flags`.
+`/` passes the pattern directly to Rust's `regex` engine. The `/` key opens the
+prompt. It is not a delimiter in a JavaScript-style `/pattern/flags`.
 
 | Want | Write | Not |
 | --- | --- | --- |
@@ -476,10 +475,10 @@ the prompt; it is not a delimiter in a JavaScript-style `/pattern/flags`.
 #### Search keys
 
 `s` and `/` search this buffer. `Space /` widens the same two to the whole
-project: `Space / s` mirrors `s` and `Space / /` mirrors `/`. The Finder is
-`f` rather than a sigil — `Space f`, its namespace spelling `Space / f`, and
-`Space g f` over commits — and `Space / a` and `Space / p` open that Finder
-over a wider scope. `Space s` holds selection commands only.
+project: `Space / s` mirrors `s` and `Space / /` mirrors `/`. The Finder uses
+`f`: `Space f`, its namespace spelling `Space / f`, and `Space g f` over
+commits. `Space / a` and `Space / p` open that Finder over a wider scope.
+`Space s` holds selection commands only.
 
 | Key | Action |
 | --- | --- |
@@ -531,8 +530,8 @@ each new search.
 - Rows are `path:line:column`, a snapshot taken at query time.
 - Enter opens the result under the cursor. Movement, selection, copying, `s`,
   `/`, splits, help, buffer switching, and jump history work as usual.
-- Visit as many results as you like without rerunning the query; rerun it to
-  refresh.
+- Visit as many results as you like without running the query again. Run it
+  again to refresh.
 
 This differs from the Finder's content mode, whose fuzzy query stays live and
 so remains a choose-one picker.
@@ -552,15 +551,15 @@ lines.
 | `J` | Join selected lines with a space |
 | `Space p t` | Align the columns of the selected table |
 
-After an edit that inserts or removes line breaks—such as Enter, hard wrap,
-reflow, opening a line, multiline paste, or joining lines—the editing pane
-returns to column zero when the caret fits. Otherwise it scrolls right only
-far enough to keep the caret visible, accounting for tabs, wide characters,
-and the space occupied by the gutter. Rejected edits and unchanged wraps keep
-the view. Changing soft wrap through `Space p s` or configuration also resets
-each affected pane; diff panes remain unwrapped. The caret keeps its editing
-position. Exceptionally long runs of invisible characters use a bounded view
-near the caret to keep scrolling responsive.
+After an edit that inserts or removes line breaks, the editing pane returns to
+column zero if the caret fits. Examples are Enter, hard wrap, reflow, opening a
+line, multiline paste, or joining lines. If it doesn't fit, the pane scrolls
+right only far enough to keep the caret visible, accounting for tabs, wide
+characters, and the space occupied by the gutter. Rejected edits and unchanged
+wraps keep the view. Changing soft wrap through `Space p s` or configuration
+also resets each affected pane. Diff panes stay unwrapped. The caret keeps its
+editing position. Exceptionally long runs of invisible characters use a bounded
+view near the caret to keep scrolling responsive.
 
 #### Whitespace markers
 
@@ -578,11 +577,11 @@ offsets, selections, wrapping, and saved files are unchanged. The setting is
 
 #### Soft wrap
 
-`Space p s` toggles `editor.soft_wrap` for this session.
-When enabled, the global status line shows `↪` before the cursor position.
-The arrow reports this general setting, even when a rendered Markdown page
-wraps independently. `editor.always_wrap_rendered_markdown` defaults to `true`;
-set it to `false` to make rendered pages follow `Space p s` too.
+`Space p s` toggles `editor.soft_wrap` for this session. When enabled, the
+global status line shows `↪` before the cursor position. The arrow reports this
+general setting, even when a rendered Markdown page wraps independently.
+`editor.always_wrap_rendered_markdown` defaults to `true`. Set it to `false` to
+make rendered pages follow `Space p s` too.
 
 - Wrapping follows the live pane width, including after a resize. It does not
   use the hard-wrap width and never changes the text.
@@ -590,12 +589,11 @@ set it to `false` to make rendered pages follow `Space p s` too.
   than the pane.
 - A document whose longest line exceeds 64,000,000 bytes is never wrapped. The
   length is measured once, when the file is read, before anything is drawn.
-- Layouts are reused while the text, pane width, and tab width stay the same,
-  so moving through a minified file of a few megabytes does not recalculate
-  its whole line each keypress. Drawing seeks straight to the visible text,
-  even near the end of the line. An edit or a new width recalculates the
-  affected layout; the line-length limit above protects against extremely
-  costly layouts.
+- Layouts are reused while the text, pane width and tab width stay the same.
+  Moving through a minified file of a few megabytes stays fast. Drawing seeks
+  straight to the visible text, even near the end of the line. An edit or a new
+  width recalculates the affected layout. The line-length limit above protects
+  against very slow layouts.
 
 #### Hard wrap and reflow
 
@@ -609,10 +607,9 @@ set it to `false` to make rendered pages follow `Space p s` too.
 tables, thematic breaks, and separate bullet or numbered items. Wrapped list
 continuations get a hanging indent.
 
-**Reflow in source files** changes only `#` and `//` line-comment paragraphs,
-repeating the indentation and comment leader on every line, so selecting
-nearby code can never join statements. Lists inside comments get the same
-hanging indent.
+**Reflow in source files** changes only `#` and `//` line-comment paragraphs.
+It repeats the indentation and comment leader on every line, so nearby code
+can't be joined by accident. Lists inside comments get the same hanging indent.
 
 **The scratch buffer** has no path to name a language, so
 `editor.scratch_markdown` (on by default) makes `Space p r` refill it as
@@ -627,7 +624,7 @@ Markdown.
 
 #### Joining lines
 
-`Space p j` is the inverse of `Space p w`: it removes every line break inside
+`Space p j` is the opposite of `Space p w`. It removes every line break inside
 the selection and asks what to put in their place.
 
 | Typed | Result |
@@ -640,8 +637,8 @@ the selection and asks what to put in their place.
 - Whitespace against each removed break goes with it, so joining indented
   lines leaves no runs of spaces. The first line keeps its indentation.
 - Only the selection is joined. A single-line selection reports that it holds
-  no line break, and the line after the selection is never drawn in, even
-  when a pointer drag ends on it.
+  no line break. The line after the selection is never joined in, even when a
+  pointer drag ends on it.
 - A selected blank line joins as an empty piece and leaves its own delimiter.
 - All selections are joined in one transaction, so one undo reverts them.
 
@@ -696,7 +693,7 @@ selection may start on it or end below a footer rule.
 - Blank lines inside the selection are allowed and left alone, so selecting a
   little more than the table is fine. Rows below the selection are never
   drawn in.
-- Rows with different cell counts are squared up with empty cells; no cell is
+- Rows with different cell counts are filled out with empty cells. No cell is
   dropped.
 - All rows take the indentation of the first.
 - If any line is neither blank nor a row, or there is no separator, nothing
@@ -732,7 +729,7 @@ object works at every cursor. The result is left in Select mode, so `d`, `c`,
 **Words and paragraphs** are read from the text alone, so they work in every
 buffer.
 
-- A word is a run of letters, digits, and `_`; a run of punctuation; or a run
+- A word is a run of letters, digits, and `_`, a run of punctuation, or a run
   of whitespace. A WORD is everything between whitespace.
 - Around adds the whitespace after the word, or before it when nothing follows
   on the line.
@@ -746,9 +743,10 @@ buffer.
   lines and `x` extends the selection.
 
 **Delimiter pairs** resolve through the syntax tree when there is one, which
-tells a bracket in code from one in a string. Otherwise a balanced text scan
-answers: in plain text, in languages without a grammar, while a file is still
-parsing, or when the tree finds no pair (as inside a comment).
+tells a bracket in code from one in a string. Otherwise Runyte scans the text
+for a balanced pair. This happens in plain text, in languages without a
+grammar, while a file is still parsing, or when the tree finds no pair (as
+inside a comment).
 
 - Brackets nest and may span lines. The scan reaches 65,536 characters on each
   side of the selection.
@@ -788,11 +786,11 @@ pairs.
   `[`/`]`, `{`/`}`, and `<`/`>`. Any other character is used on both sides, so
   `m s *` and `m s |` work.
 - `m r` and `m d` find the pair as `m a` does, from the character under each
-  cursor: through the syntax tree first, then by a balanced scan of the text.
-  They know the seven pairs `m a` knows, `(`, `[`, `{`, `<`, `"`, `'`, and
-  `` ` ``, and `m` for the closest of any of them.
-- With a pair selected, as `m a (` leaves it, `m d (` deletes that pair rather
-  than the one outside it.
+  cursor. They try the syntax tree first, then a balanced scan of the text.
+  They know the seven pairs `m a` knows, `(`, `[`, `{`, `<`, `"`, `'`, and `` `
+  ``, and `m` for the closest of any of them.
+- With a pair selected, as `m a (` leaves it, `m d (` deletes that pair and not
+  the one outside it.
 - `m s` selects the result, delimiters included. `m r` and `m d` keep the
   selection on the text it covered.
 - If any cursor has no surrounding pair, nothing changes and the status line
@@ -823,7 +821,8 @@ pairs.
 - **Folded rows** show an accent-coloured `▸` between the line number and the
   gutter rule, and a muted `… N lines` suffix counting the hidden rows.
 - **While parsing.** `Space x` commands and `mm` are dimmed until the syntax
-  tree is ready; see [Syntax highlighting](language-support.md#syntax-highlighting).
+  tree is ready. See [Syntax
+  highlighting](language-support.md#syntax-highlighting).
 
 ### Macros
 
@@ -842,9 +841,9 @@ Macros live in the `Space m` namespace.
 - `Space m m` starts recording and the same keys stop it. The stopping keys
   are not recorded.
 - `Space m m` records into the default macro, register `@`. `Space m M` asks
-  for a register first; any printable key names one.
-- Only one recording runs at a time. Starting a second is refused rather than
-  replacing the first.
+  for a register first. Any printable key names one.
+- Only one recording runs at a time. Starting a second is refused. The first
+  keeps recording.
 - A recording captures raw input in arrival order and replays it through the
   same dispatch, so a replay does exactly what the typing did.
 

@@ -74,11 +74,11 @@ bind:
     F5: save
 ```
 
-- They are read after the configuration file, in file-name order. A later
-  file wins: a theme replaces one of the same name, including a built-in or
-  one defined inline under `themes:`. Key files merge one binding at a time,
-  so a later file can change one key in `bind` or `rebind` without repeating
-  the rest; `leader` and `window` are replaced.
+- They are read after the configuration file, in file-name order. A later file
+  wins: a theme replaces one of the same name, including a built-in or one
+  defined inline under `themes:`. Key files merge one binding at a time. A
+  later file can change one key in `bind` or `rebind` without repeating the
+  rest. `leader` and `window` are replaced.
 - Only files ending in `.yaml` are read. Hidden files, such as an editor's
   swap files, are skipped, and so is a directory that does not exist. At most
   256 files are read from each.
@@ -128,7 +128,7 @@ How the page looks:
   apart. Descriptions have no inserted line breaks or trailing padding.
 - Each setting is one line. It follows `editor.soft_wrap`: `Space p s` toggles
   wrapping, and horizontal scrolling reaches long lines when wrapping is off.
-  Wrapped lines use ordinary buffer layout; they do not align under the
+  Wrapped lines use ordinary buffer layout. They do not align under the
   description column.
 
 Most changes apply at once. A few only take effect after a restart; the page
@@ -150,17 +150,17 @@ Choose **Override for language…**, select a language, then enter the width or
 choose spaces/tabs. Or choose **Override for file pattern…**, enter a pattern,
 then set the value. Widths remain limited to 1–16.
 
-Only saved overrides appear beneath the setting. Enter edits an override; Tab
+Only saved overrides appear beneath the setting. Enter edits an override. Tab
 opens **Remove override**. Escape cancels, including any style preview. An
 explicit override equal to the global default stays explicit, so later changes
 to the default do not change it. Removal writes `null` for that field, preserving
-comments and rule order; the row disappears and the field inherits again.
+comments and rule order. The row disappears and the field inherits again.
 
 The value popup identifies the inherited value and source. A file pattern can
-cover several languages, so it has no single inherited value. When the document
-from which settings were opened matches the pattern, the popup shows that
-file's inherited value; otherwise it explains the varying inheritance and shows
-the global default.
+cover several languages, so it has no single inherited value. If the document
+you opened settings from matches the pattern, the popup shows that file's
+inherited value. Otherwise it explains that the value varies and shows the
+global default.
 
 The same rules can be authored in YAML:
 
@@ -183,12 +183,12 @@ indentation:
 
 Each field inherits independently: global default, language override, then
 matching file patterns in their YAML order. The last matching rule that sets a
-field wins. Editing an existing rule keeps its position; a new rule is appended.
+field wins. Editing an existing rule keeps its position. A new rule is appended.
 There are no built-in language overrides or content-based indentation detection.
 
 Patterns match paths relative to the workspace root, which does not change with
 `:cd`. A pattern without `/` matches a filename at any depth. `*` matches within
-a directory, `?` matches one character, and `**` spans directories; `**/` also
+a directory, `?` matches one character, and `**` spans directories. `**/` also
 matches zero directories. Use `/` on every platform. Absolute paths, `..`,
 backslashes, character classes and brace expansion are not supported. A pattern
 may contain at most 256 bytes, and each scope allows at most 128 entries.
@@ -197,7 +197,7 @@ match file rules. Pathless and provider documents can use their detected languag
 but have no local path for file rules.
 
 Overrides apply to existing open buffers immediately. Removing one changes how
-indentation is displayed and subsequently edited; it does not rewrite existing
+indentation is displayed and subsequently edited. It does not rewrite existing
 text. Editing the YAML manually takes effect through `:config-reload`.
 
 ### Writing configuration
@@ -213,14 +213,15 @@ language server, including the built-in ones. Themes and keys go into
 | `keybinds.d/00-prefixes.yaml` | `leader`, `window`, `rebind`, and `defaults`, when any are set. |
 | `keybinds.d/normal.yaml`, `select.yaml`, `insert.yaml`, `replace.yaml` | Explicit bindings under `bind`, with built-in defaults as commented examples. With `keys.defaults: false`, only the explicit bindings. |
 
-A theme whose name is not a portable file name, or differs from another only
-in letter case, stays inline under `themes:`. The built-in keys left out of
-the mode files are the ones `bind` cannot express, such as count keys, and
-`Ctrl-h`/`j`/`k`/`l`, so `editor.fast_pane_keys` keeps choosing those. Both
-still come from the built-in keymap. Commented defaults stay supplied by Runyte,
-so they can receive future default changes and do not consume the custom
-binding allowance. Explicit assignments stay active, including assignments
-that happen to match a current default, `null` removals, and action sequences.
+A theme whose name is not a portable file name, or differs from another only in
+letter case, stays inline under `themes:`. The mode files leave out the
+built-in keys that `bind` can't express, such as count keys. They also leave
+out `Ctrl-h`/`j`/`k`/`l`, so `editor.fast_pane_keys` keeps choosing those. Both
+still come from the built-in keymap. Commented defaults stay supplied by
+Runyte, so they can receive future default changes and do not consume the
+custom binding allowance. Explicit assignments stay active, including
+assignments that happen to match a current default, `null` removals, and action
+sequences.
 
 For a mode with custom bindings, uncomment an example entry to customize it.
 For a mode with no assignments, uncomment its `bind:` and mode headings too:
@@ -231,7 +232,7 @@ For a mode with no assignments, uncomment its `bind:` and mode headings too:
 #     w: move-word-forward
 ```
 
-An export with no custom keys leaves all four mode files as comments; loading
+An export with no custom keys leaves all four mode files as comments. Loading
 it does not activate custom-keymap compilation. Exporting is a way to inspect
 and edit configuration, not a startup optimization.
 
@@ -249,14 +250,14 @@ written atomically, with the configuration file last. Before writing, Runyte
 validates the generated documents together with retained destination fragments,
 in their load order. It checks both fast-pane-key variants and the 256-file
 limit in each directory. A validation failure leaves all files untouched.
-An I/O failure during writing can still leave a partial set of updated files;
-the multi-file export is not one filesystem transaction.
+An I/O failure during writing can still leave a partial set of updated files.
+The multi-file export is not one filesystem transaction.
 
 What is written is the saved configuration. A setting read at startup and
-changed since, such as `editor.mouse`, is written with its new value even
-though the running editor keeps its launch value until a restart. The written
-files contain generated keybinding examples, but do not preserve comments from
-the original files. Maps are written in name order for deterministic output.
+changed since, such as `editor.mouse`, is written with its new value. The
+running editor keeps the old value until a restart. The written files contain
+generated keybinding examples, but do not preserve comments from the original
+files. Maps are written in name order for deterministic output.
 
 ### Editing the file and reloading
 
@@ -274,7 +275,7 @@ was.
 - A file replaced atomically (written elsewhere, then renamed) is always read
   whole.
 - A file rewritten in place can be caught half-written. That fails as invalid
-  YAML; reload again once the write finishes.
+  YAML. Reload again once the write finishes.
 - A path that never had a file is not treated as deleted. The reload reads
   `themes.d` and `keybinds.d` beside it, so editing a key file there takes
   effect without a configuration file. Create the file and reload to start
@@ -313,10 +314,10 @@ nothing.
 - A changed entry restarts its plugin. A removed or disabled entry stops it.
 - An added entry starts. One that was disabled or refused at startup can be
   fixed and started the same way.
-- A plugin that is busy keeps running until its work is done. Busy means a
-  running job, an activity lease, a helper process, outstanding cleanup, an
-  unsaved remote document, an unanswered command, local filesystem work, or a
-  prompt you are part-way through.
+- A plugin that is busy keeps running until its work is done. Busy means any of
+  these: a running job, an activity lease, a helper process, unfinished
+  cleanup, an unsaved remote document, an unanswered command, local filesystem
+  work, or a half-finished prompt.
 - While a plugin waits, `:plugins` shows the pending state and a notification
   says so. The saved entry applies by itself when the work is gone.
   `:plugin-restart <id>` applies it sooner, or `:plugin-stop <id>` for an
@@ -496,9 +497,9 @@ the terminal repeats while the key is held, such as the arrow keys and
   key can be told apart from repeated presses.
 - On macOS it asks only for unambiguous key codes and detects repeats from
   their timing. Some terminals there have reported ordinary keys as repeats.
-- For terminals that report repeats as ordinary presses, Runyte recognises
-  the long initial delay followed by the steady repeat cadence, and applies
-  the same multiplier.
+- Some terminals report repeats as ordinary presses. For those, Runyte
+  recognises the long initial delay and steady repeat, and applies the same
+  multiplier.
 
 #### Automatic Git refresh
 
@@ -532,13 +533,14 @@ Runyte finds the workspace directory by walking up from the launch directory:
    (`.runyte/` by default).
 3. If neither exists and the launch directory is exactly home, ide and mux use
    the home workspace with out-of-tree state. Subdirectories never discover it.
-4. Elsewhere, an ide launch creates the state directory in the launch
-   directory and uses that as the workspace. It refuses instead in the
-   directories listed under [Finding the
-   workspace](workspaces-and-persistent-sessions.md#starting-a-workspace), for a
-   target outside the launch directory, and whenever `workspace.state` is
-   absolute, since discovery cannot find an absolute state directory again.
-   mux refuses too. Both suggest `runyte --init DIRECTORY`. [Editor
+4. Elsewhere, an ide launch creates the state directory in the launch directory
+   and uses that as the workspace. It refuses in the directories listed under
+   [Finding the
+   workspace](workspaces-and-persistent-sessions.md#starting-a-workspace) and
+   for a target outside the launch directory. It also refuses whenever
+   `workspace.state` is absolute, because discovery can't find an absolute
+   state directory again. mux refuses too. Both suggest
+   `runyte --init DIRECTORY`. [Editor
    mode](workspaces-and-persistent-sessions.md#editor-mode) needs no workspace.
 
 `runyte --init DIRECTORY` creates the state directory, so later launches find
@@ -551,15 +553,15 @@ discovery.
 
 Workspaces can also keep state outside their directory tree. The per-user
 Runyte state root is `$XDG_STATE_HOME/runyte` on Linux and other Unix systems,
-falling back to `~/.local/state/runyte`; on macOS it is
-`~/Library/Application Support/runyte`, and on Windows it is
-`%LOCALAPPDATA%\runyte`. Account defaults come from the operating system,
-not an inherited home-directory variable.
+or `~/.local/state/runyte` if that is not set. On macOS it is
+`~/Library/Application Support/runyte`. On Windows it is
+`%LOCALAPPDATA%\runyte`. Account defaults come from the operating system, not
+an inherited home-directory variable.
 
 Each workspace has its own private `workspaces/<workspace-id>/` subtree,
 containing the same logs, pasted images, plugin downloads and saved host names
 as in-tree state. Configuration and cache storage cannot overlap workspace
-state; Windows keeps `workspaces` and `cache` as separate siblings in its
+state. Windows keeps `workspaces` and `cache` as separate siblings in its
 Runyte application directory. Unix hosts prefer a private `XDG_RUNTIME_DIR`;
 out-of-tree workspaces otherwise use a short private directory beneath `/tmp`
 for sockets and endpoint metadata. The workspace ID stays unchanged.

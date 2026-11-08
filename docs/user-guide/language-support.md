@@ -40,7 +40,7 @@ Terraform's `.tf.json` files keep JSON highlighting.
 `toggle-comments` inserts `//`; in plain JSON it changes nothing.
 
 - Language servers see `jsonc` as the language, so configure one under
-  `lsp.jsonc`; a server under `lsp.json` does not attach to JSONC files.
+  `lsp.jsonc`. A server under `lsp.json` does not attach to JSONC files.
 - Only the exact file names in the table are JSONC. Detection sees the file
   name, not its directory, so `.vscode/settings.json`, `tsconfig.base.json`,
   and other `.json` files read as JSONC by their tools stay JSON.
@@ -56,11 +56,10 @@ fences.
   injection size limit. Shell highlighting assumes Bash, even when a file
   selects another interpreter with `SHELL`.
 
-**Kotlin** supports Kotlin 2 multi-dollar strings and guarded `when`
-branches. The pinned grammar does not yet model context receivers: it parses
+**Kotlin** supports Kotlin 2 multi-dollar strings and guarded `when` branches.
+The pinned grammar does not support context receivers yet. It parses
 `context(Logger)` as a separate call before the function, so a function text
-object starts at `fun` and deliberately leaves out the context-receiver
-prefix.
+object starts at `fun`.
 
 **XML** uses its own parser, not the HTML one, including XML declarations,
 entities, and CDATA.
@@ -77,8 +76,8 @@ whole method.
 **PHP** highlights code inside `<?php` or `<?=` tags and injects HTML into the
 surrounding template, including JavaScript and CSS in script/style elements.
 
-- Heredoc and nowdoc labels naming a bundled language, such as `SQL` or
-  `JSON`, highlight their body in that language; unknown labels keep string
+- Heredoc and nowdoc labels naming a bundled language, such as `SQL` or `JSON`,
+  highlight their body in that language. Unknown labels keep string
   highlighting. Inside an injected heredoc, the embedded language decides the
   colours, so interpolations such as `$id` may look like strings.
 - PHPDoc comments keep ordinary comment highlighting.
@@ -115,11 +114,10 @@ Parsing and reparsing run on a background worker.
   ordinary text colours until its first syntax tree arrives. Highlighting then
   appears without replacing text or moving the cursor or viewport.
 - Opening files, undo/redo, reload, and language changes all use this path.
-- If typing outruns the parser, one pending request per buffer is replaced
-  rather than queued.
-- After the first tree, the previous tree stays in use during updates and its
-  visible highlight spans are shifted through pending edits, so colours stay
-  visible.
+- If you type faster than the parser, each buffer keeps only its latest pending
+  request.
+- After the first parse, the previous tree stays in use during updates, so
+  colours stay visible.
 - Completed trees are applied between frames, and only when their parse
   generation, language, and text revision match the live document.
 - A parse failure leaves the document editable as plain text; see
@@ -129,7 +127,7 @@ Parsing and reparsing run on a background worker.
 brackets, text objects, and structural selection cannot use stale offsets.
 
 - `Space x` commands and `mm` are dimmed while syntax is pending. Invoking one
-  reports `Syntax is still parsing`; it is not queued.
+  reports `Syntax is still parsing`. It is not queued.
 - Smart newline falls back to ordinary indentation and list handling.
 - Language detection, comments, editing, search, saving, and language servers
   do not need a syntax tree.
@@ -143,43 +141,42 @@ are joined in document order with a newline. A selected SVG diagram is rendered
 graphically even inside a Markdown or source document.
 
 Desktop packages include preview in the editor executable, including inside
-local macOS app bundles. The Linux x86-64 and ARM64 desktop release archives require glibc
-2.39 or newer and the native runtime dependencies; the terminal archives and
-curl installer remain separate. See the [desktop packaging guide](../../contrib/packaging/README.md).
-For a checkout build, use the [preview instructions](../../crates/runyte-preview/README.md).
-Markdown uses proportional GitHub-like typography, with code blocks and inline
-code in the bundled JetBrainsMono Nerd Font; static HTML and SVG render
-graphically. JSON is pretty-printed when valid and retains its original text
-with a diagnostic otherwise. YAML retains its comments, structure and ordering.
-Source code uses available syntax highlighting; other text uses the same
-bundled monospace face.
+local macOS app bundles. The Linux x86-64 and ARM64 desktop release archives
+need glibc 2.39 or newer and the native runtime dependencies. The terminal
+archives and curl installer are separate. See the [desktop packaging
+guide](../../contrib/packaging/README.md). For a checkout build, use the
+[preview instructions](../../crates/runyte-preview/README.md). Markdown uses
+proportional GitHub-like typography, with code in the bundled JetBrainsMono
+Nerd Font. Static HTML and SVG render graphically. JSON is pretty-printed when
+valid and retains its original text with a diagnostic otherwise. YAML retains
+its comments, structure and ordering. Source code uses available syntax
+highlighting. Other text uses the same bundled monospace font.
 
-Generated pages — Markdown, JSON, YAML, source and plain text — take the active
-theme's colours: its background and text, its link and heading colours, and
-its syntax colours for highlighted code. Switching theme or the setting
-repaints an open preview. Set `editor.preview_theme_colors` to `false` to keep
-the original light page. Static HTML and valid SVG keep the appearance they
-were written with; HTML that styles itself through `prefers-color-scheme`
-follows whether the theme is dark or light.
+Generated pages (Markdown, JSON, YAML, source and plain text) use the active
+theme's colours. That includes its background, text, links, headings, and
+syntax colours for highlighted code. Switching theme or the setting repaints an
+open preview. Set `editor.preview_theme_colors` to `false` to keep the original
+light page. Static HTML and valid SVG keep their own appearance. HTML that uses
+`prefers-color-scheme` follows whether the theme is dark or light.
 
-Wheel/trackpad scrolling preserves fractional pixels; Shift-wheel pans horizontally,
-and Ctrl-wheel (Cmd-wheel on macOS) zooms within the same range as `+`/`-`.
-The preview also uses the built-in PDF navigation keys: `j`/`k` and arrows,
-`h`/`l`, page/half-page controls, `gg`/`ge`, and `+`/`-` zoom (`z1` resets).
-Left-drag selects text; `y` or Ctrl-Shift-c copies it. Escape dismisses an overlay
-first, then returns to source; `q` also returns to source. A dismissed preview
-stays closed when switching workspaces or reattaching to its persistent session.
-Invoke `:preview` again to refresh. Links expose their destination without
-navigating. Scripts and network fetching are disabled. Local raster images must
-be beneath the source document's directory. Captures are limited to 128 KiB;
-selecting a smaller section of a larger file is supported. The terminal frontend
-reports that this command needs `--window`. See the preview instructions for
-resource limits, lifecycle and tested static CSS/SVG support.
+Wheel and trackpad scrolling keep fractional pixels. Shift-wheel pans
+horizontally. Ctrl-wheel (Cmd-wheel on macOS) zooms within the same range as
+`+`/`-`. The preview also uses the built-in PDF navigation keys: `j`/`k` and
+arrows, `h`/`l`, page/half-page controls, `gg`/`ge`, and `+`/`-` zoom (`z1`
+resets). Left-drag selects text; `y` or Ctrl-Shift-c copies it. Escape
+dismisses an overlay first, then returns to source. `q` also returns to source.
+A dismissed preview stays closed when switching workspaces or reattaching to
+its persistent session. Invoke `:preview` again to refresh. Links expose their
+destination without navigating. Scripts and network fetching are disabled.
+Local raster images must be beneath the source document's directory. Captures
+are limited to 128 KiB. You can select a smaller section of a larger file. The
+terminal frontend reports that this command needs `--window`. See the preview
+instructions for resource limits, lifecycle and tested static CSS/SVG support.
 
 ### Rendered Markdown
 
-`?` in a Markdown document opens it as a page to read; `?` again returns to
-the source. `:render` (also `:markdown`) does the same.
+`?` in a Markdown document opens it as a page to read. `?` again returns to the
+source. `:render` (also `:markdown`) does the same.
 
 | Source | Rendered page |
 | --- | --- |
@@ -204,15 +201,14 @@ Anything Runyte does not recognize is passed through as written.
 - Both directions move the cursor to the corresponding text and bring it into
   view.
 - On markup removed by rendering, the page uses the nearest surviving text.
-  Toggling straight back restores the exact source position; moving around the
-  page first takes you to that new place in the source.
+  Toggling straight back restores the exact source position. If you moved
+  around the page first, you go to that new place in the source.
 - `g f` on a link or image label opens its destination, as in the source.
   Relative paths resolve beside the source document and at the project root.
 - `Space e` opens the source document's directory and selects its file.
 
 **The page is a buffer.** It is a generated read-only buffer beside the
-document, not a mode the document is in, so both stay open and the source
-keeps every editing key.
+document. Both stay open, and the source keeps every editing key.
 
 - Nothing is concealed. The markers are absent because they were never
   written into the page, so no offset moves and rows and columns mean what they
@@ -220,23 +216,22 @@ keeps every editing key.
 - Search, selections, splits, and yank work on the page, and find the text
   actually on screen.
 - It is rendered from the buffer, not the file, so it shows unsaved work.
-  Rendering the same document again reuses and regenerates its one page.
-  Returning to the page through `Ctrl-o`/`Alt-o`, the buffer list, or the
-  previous destination regenerates it too when the document has changed,
-  keeping the caret on the same text.
+  Rendering the same document again reuses and regenerates its one page. If the
+  document has changed, returning to the page through `Ctrl-o`/`Alt-o`, the
+  buffer list, or the previous destination regenerates it too. The caret stays
+  on the same text.
 
-**Each pane remembers which you left.** Opening a document by name shows it
-the way that pane last showed it: if you left it on its page, you come back to
-the page; if you left it in the source, you come back to the source.
+**Each pane remembers which you left.** Opening a document by name shows it the
+way that pane last showed it. If you left it on its page, you come back to the
+page. If you left it in the source, you come back to the source.
 
-- This applies to `:open`, `:split`/`:vsplit` with a path, choosing the
-  document by name in the Finder (`Space f`), the directory tree, explorer
-  entries, Git changed-file rows, `gf` on a file, and links to
-  `file.md#heading`, which land on the page's heading. Native launch targets
-  without a position follow this memory too. The page's own
-  `[rendered]` row in the Finder always opens the page.
-- A request for a place to edit still opens the source: a Finder content
-  match, a diagnostic, a definition or reference, a native launch target with
+- This applies to `:open`, `:split`/`:vsplit` with a path, the Finder by name
+  (`Space f`), the directory tree, explorer entries, Git changed-file rows,
+  `gf` on a file, and links to `file.md#heading`. Those links land on the
+  page's heading. Native launch targets without a position follow this memory
+  too. The page's own `[rendered]` row in the Finder always opens the page.
+- Anything that points to a place to edit still opens the source: a Finder
+  content match, a diagnostic, a definition or reference, a launch target with
   a position, and any host or `--wait` open request.
 - The buffer list keeps one row for the document and one for its page, and
   each row opens exactly that.
@@ -246,19 +241,19 @@ the page; if you left it in the source, you come back to the source.
   page, and the retention limit for hidden generated buffers never removes
   it. Closing the page itself means the document opens as source again.
 
-**The scratch buffer** renders too while `editor.scratch_markdown` is on — the
-same option that makes `Space p r` refill it as Markdown. Its page is named
-`[rendered scratch]`. With the option off, the scratchpad is plain text and
-`?` is unbound there.
+**The scratch buffer** renders too while `editor.scratch_markdown` is on. The
+same option makes `Space p r` refill it as Markdown. Its page is named
+`[rendered scratch]`. With the option off, the scratchpad is plain text and `?`
+is unbound there.
 
-**Tables and soft wrap.** Rendered pages, including rendered scratchpads,
-wrap by default independently of source buffers. Set
+**Tables and soft wrap.** Rendered pages, including rendered scratchpads, wrap
+by default independently of source buffers. Set
 `editor.always_wrap_rendered_markdown: false` to follow the general
 `editor.soft_wrap` setting controlled by `Space p s`. Opening or leaving a page
-does not change the general setting. When the override is active, toggling
-soft wrap still changes the general setting and the status-line arrow; the
-feedback explains why the page stays wrapped. Comparison panes and the
-large-line safety limit still prevent wrapping.
+does not change the general setting. When the override is active, toggling soft
+wrap still changes the general setting and the status-line arrow. The message
+explains why the page stays wrapped. Comparison panes and the large-line safety
+limit still prevent wrapping.
 
 Rendered tables use the same effective wrapping setting as the rest of the page.
 
@@ -269,11 +264,11 @@ Rendered tables use the same effective wrapping setting as the rest of the page.
 - Resizing changes only the visual layout. With soft wrap off, tables keep
   their natural widths.
 - Columns keep a small minimum width. If the pane is too narrow for them all,
-  the table scrolls horizontally; moving the caret into a hidden column
-  brings it into view. Other text still wraps normally.
+  the table scrolls horizontally. Moving the caret into a hidden column brings
+  it into view. Other text still wraps normally.
 - Up/down follows visual rows and skips added rules. In a shorter cell's blank
   continuation, it moves to the nearest cell with text on that row.
-- Clicks on padding place the caret at nearby text; added rules are not click
+- Clicks on padding place the caret at nearby text. Added rules are not click
   targets.
 - Search and yank use the logical text: wrap breaks, padding, and added rules
   are not copied. A selection across cells follows that order, so it need not
@@ -344,23 +339,22 @@ the host used a non-default one).
 
 **Failures cost only the language features.** A server that is missing,
 crashes, or answers slowly never makes the editor wait. Diagnostics from a
-stopped server are dropped rather than left as stale claims. A launch error
-appears in `:lsp-status` after the first start attempt and in the
-notification center.
+stopped server are removed. A launch error appears in `:lsp-status` after the
+first start attempt and in the notification center.
 
 #### Server roots
 
-A workspace can hold several projects for one language: a Rust crate in one
-directory and another beside it, or a Python package inside a repository
-whose root holds something else. Each document's server is started at the
-root of the project the file belongs to, so the server reads that project's
+A workspace can hold several projects for one language. For example, it can
+hold two Rust crates side by side, or a Python package inside a repository
+whose root holds something else. Each document's server is started at the root
+of the project the file belongs to, so the server reads that project's
 `Cargo.toml` or `pyproject.toml`. One server runs per language and root.
 
 The root is found the way Helix finds it. Runyte walks up from the document's
 directory to the workspace root and takes the **top-most** directory holding
-one of the language's marker files, so a member of a Cargo workspace is served
-from the Cargo workspace rather than from its own crate. A document with no
-marker above it, or one outside the workspace, uses the workspace root.
+one of the language's marker files. A member of a Cargo workspace is served
+from the Cargo workspace, not from its own crate. A document with no marker
+above it, or one outside the workspace, uses the workspace root.
 
 | Language | Built-in markers |
 | --- | --- |
@@ -379,9 +373,9 @@ marker above it, or one outside the workspace, uses the workspace root.
 | `php` | `composer.json`, `index.php` |
 | `elixir` | `mix.exs`, `mix.lock` |
 
-Other languages have none, and their servers run at the workspace root.
-`roots` in a server definition replaces the list; each entry is a single file
-or directory name.
+Other languages have none, and their servers run at the workspace root. `roots`
+in a server definition replaces the list. Each entry is a single file or
+directory name.
 
 - `:lsp-status` names a server rooted below the workspace with its directory,
   as in `rust (tools): rust-analyzer (ready)`.
@@ -404,8 +398,8 @@ language servers may run there.
 
 Editing, search, and highlighting work either way.
 
-**Why it asks.** Language servers can run project code — build scripts,
-plugins — with your permissions. Approval covers every configured server,
+**Why it asks.** Language servers can run project code, such as build scripts
+and plugins, with your permissions. Approval covers every configured server,
 custom ones included, and future code changes in the workspace. It is
 permission to run those tools, not a security review or a sandbox.
 
@@ -425,7 +419,7 @@ per-user platform cache, separate from `.runyte/`.
 
 - Clearing that cache makes Runyte ask again.
 - A workspace rooted at your home directory may use Runyte's standard cache
-  under it; other project-local cache overrides are rejected.
+  under it. Other project-local cache overrides are rejected.
 - Records use the canonical workspace root: symlinked aliases share a
   decision, but nested workspaces, other worktrees, and clones elsewhere do
   not.
@@ -440,8 +434,8 @@ per-user platform cache, separate from `.runyte/`.
 - **Keep LSP disabled for now** stops this editor's servers without changing
   any remembered decision.
 - **Allow LSP once** needs no new storage, but first removes an older
-  remembered decision; if that fails, the choice stays pending. The next
-  launch asks again.
+  remembered decision. If that fails, the choice stays pending. The next launch
+  asks again.
 - Reopening `:lsp-trust` retries the store once it is repaired.
 
 #### What a server is asked
@@ -452,9 +446,9 @@ type definition, implementation), references, document and workspace symbols,
 rename, code actions, and formatting are gated independently.
 
 - Asking for one the server never advertised reports it as unavailable on the
-  interaction line. It is not kept as a notification, since it is expected
-  rather than a fault. Typing near a trigger character a server does not
-  support costs no round trip.
+  interaction line. It is not kept as a notification, because it is expected.
+  Typing near a trigger character a server does not support costs no round
+  trip.
 - A `Method not found` from a server that *did* advertise the capability is a
   protocol violation, reported and kept as an ERROR.
 
@@ -470,10 +464,10 @@ rename, code actions, and formatting are gated independently.
 | A server advertising the capability but naming no characters | `.`, `:` | `(`, `,` |
 
 - The table names only the characters discussed here, not each server's full
-  list; a blank cell says nothing.
+  list. A blank cell means nothing is claimed.
 - Some servers name the closing `)`, so the inner `)` of `f(g(a), b)` asks
-  again instead of dismissing the popup; clangd and
-  typescript-language-server answer with the enclosing signature.
+  again and the popup stays. clangd and typescript-language-server answer with
+  the enclosing signature.
 - A server may name retrigger characters, active only while a popup shows.
   Runyte advertises the `contextSupport` that allows them and tells the server
   which character asked and whether a popup was open.
@@ -484,8 +478,8 @@ rename, code actions, and formatting are gated independently.
 #### Edits from a server
 
 - Servers may not create, rename, or delete files. Such operations in a
-  workspace edit are reported and skipped, and files a rename touches are
-  opened as buffers rather than written behind your back.
+  workspace edit are reported and skipped. Files that a rename touches are
+  opened as buffers, so nothing is written behind your back.
 - Text edits must name absolute local files inside the project and exact,
   forward-ordered character boundaries. A malformed, remote, out-of-range, or
   overlapping edit rejects the whole multi-file change.
@@ -505,9 +499,9 @@ tests/lsp/run.sh
 
 - The image pins every server toolchain. Each test uses Runyte's production
   stdio transport for the full handshake, in a disposable project.
-- After initial symbol and definition checks, each sends an unsaved
-  incremental change with non-ASCII text and resolves a definition that exists
-  only in the changed document.
+- After the first symbol and definition checks, each sends an unsaved change
+  with non-ASCII text and resolves a definition that exists only in the changed
+  document.
 - Fixtures then exercise completion, hover, signature help, references,
   rename, formatting, code actions, and diagnostics, as far as each pinned
   server meaningfully implements them. `tests/lsp_real_servers.rs` marks each
@@ -541,14 +535,14 @@ tests/lsp/run.sh
 - With more than twelve lines, the title says how much was left out, and Enter
   opens the full text in a retained read-only `[documentation]` buffer.
 
-**Goto and pickers.** One result moves the selection to it; several open a
+**Goto and pickers.** One result moves the selection to it. Several open a
 picker. Every picker filters as you type, moves with the arrows or
 `Ctrl-n`/`Ctrl-p`, opens with Enter, and closes with Escape.
 
 **Undo.** A completion that needs an import applies both edits as one undo
 step, and so does a rename across a file. Everything typed between entering
-Insert mode and returning to Normal is one undo step too; undo and redo map
-the caret through the inverse edit rather than leaving it at a stale offset.
+Insert mode and returning to Normal is one undo step too. Undo and redo keep
+the caret in the right place.
 
 #### Completion
 
@@ -567,34 +561,34 @@ Three sources share one popup:
 | Enter | Always inserts a newline and dismisses the popup |
 
 **Why Enter never accepts.** A popup can open on its own, after a trigger
-character or any three-character word prefix, so Enter always keeps its usual meaning
-rather than risking an unwanted candidate on a keystroke meant to end a line.
+character or any three-character word prefix. Enter keeps its usual meaning, so
+you never accept a candidate by accident at the end of a line.
 
 **Escape** dismisses the popup and returns to Normal mode in one press for
-automatic word completion, and in an editable explorer, where a row's `/` can
-open path completion unasked.
+automatic word completion. It does the same in an editable explorer, where a
+row's `/` can open path completion by itself.
 
 **Language-server completion:**
 
-- An explicit `Ctrl-x` includes the identifier already before the caret, uses
-  the server's `filterText` and `sortText` when present, and stays the active
-  source until space, newline, acceptance, or dismissal.
+- An explicit `Ctrl-x` includes the identifier already before the caret and
+  uses the server's `filterText` and `sortText` when present. It stays active
+  until space, newline, acceptance, or dismissal.
 - Typing punctuation does not hand the session to word or path completion. A
   trigger character refreshes the candidates for the new context.
-- If the prefix has no matches, the popup hides without ending the session,
-  so Backspace can bring matches back. Backspace and Delete keep the session;
-  moving the caret or another editing command ends it.
+- If the prefix has no matches, the popup hides without ending the session, so
+  Backspace can bring matches back. Backspace and Delete keep it going. Moving
+  the caret or another editing command ends it.
 - `Ctrl-x` replaces a word popup as soon as the request is sent.
 
 **Path completion:**
 
-- It opens on any keystroke that leaves a valid directory plus a name
-  fragment before the caret, not only on `/`, so editing an existing path
-  shows hints just like typing a new one.
-- Relative paths resolve against both the active file's parent and the
-  project root, so `dir/`, `files/`, `./files/`, and `../files/` work from
-  whichever makes them valid.
-- Directories keep a trailing `/`; accepting one offers its children.
+- It opens on any keystroke that leaves a valid directory plus part of a name
+  before the caret, not only on `/`. Editing an existing path shows hints just
+  like typing a new one.
+- Relative paths work from both the active file's parent and the project root.
+  `dir/`, `files/`, `./files/`, and `../files/` work from whichever makes them
+  valid.
+- Directories keep a trailing `/`. Accepting one offers its children.
 - A large directory shows its first few hundred names, but typing more narrows
   against the whole directory, so every existing name is reachable.
 - A path in progress takes over from word completion as soon as `/` is typed,

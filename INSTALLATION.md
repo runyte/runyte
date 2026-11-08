@@ -26,15 +26,15 @@ provides the terminal frontend, so you can use one desktop installation for both
 | Source-build toolchain | Rust 1.88 or newer and a C compiler | Current stable Rust, at least 1.92; platform dependencies below |
 | Approximate executable size | 56 MB | 107 MB |
 
-Sizes are stripped Linux x86-64 release measurements, not download sizes.
-Linux release archives target glibc; Alpine/musl is not supported. The desktop
+Sizes are stripped Linux x86-64 release measurements, not download sizes. Linux
+release archives target glibc. Alpine and musl are not supported. The desktop
 edition targets macOS 11 or later. Releases after v0.4.1 include a universal
-`Runyte.app`, signed with a Developer ID and notarized by Apple, as a disk image
-and as an archive. Windows requirements are [listed below](#windows).
+`Runyte.app`, signed with a Developer ID and notarized by Apple, as a disk
+image and as an archive. Windows requirements are [listed below](#windows).
 
 **Both distributions install an executable named `runyte`.** Run
 `runyte --version` to see its version and edition. `runyte --window` opens the
-desktop window; without `--window`, either edition runs in a terminal.
+desktop window. Without `--window`, either edition runs in a terminal.
 
 Cargo package names describe how the source is organized:
 
@@ -62,16 +62,17 @@ curl -fsSL https://raw.githubusercontent.com/runyte/runyte/main/install.sh | sh
 Run the same command again to update. The script selects the release for your
 machine, verifies its SHA-256 checksum, and installs `runyte` in `~/.local/bin`
 without sudo. It also creates `runed -> runyte` unless an unrelated `runed`
-already exists. It does not change configuration or shell startup files.
-A failed download, checksum or extraction leaves the existing editor intact.
-If the `runyte` it would replace is the desktop edition, the script updates the
-desktop edition instead; `--terminal` switches that installation to the terminal
-edition. `--desktop` installs the [desktop edition](#install-script-desktop-edition).
+already exists. It does not change configuration or shell startup files. A
+failed download, checksum or extraction leaves the existing editor intact. If
+the `runyte` it would replace is the desktop edition, the script updates the
+desktop edition instead. `--terminal` switches that installation to the
+terminal edition. `--desktop` installs the [desktop
+edition](#install-script-desktop-edition).
 
 You need `curl`, `tar` with xz support, `sha256sum` or `shasum`, and standard Unix
 utilities. Some distributions package xz separately as `xz-utils` or `xz`.
 Linux requires glibc 2.35 or newer. The macOS terminal binaries are unsigned
-and unnotarized; the script does not change Gatekeeper settings.
+and unnotarized. The script does not change Gatekeeper settings.
 
 To inspect the script and select a version or install directory:
 
@@ -81,11 +82,12 @@ less install.sh
 sh install.sh --version X.Y.Z --install-dir "$HOME/.local/bin"
 ```
 
-Replace `X.Y.Z` with a release version; omit `--version` for the latest release.
-Use an absolute install directory and keep that directory when updating.
-Historical archive names are supported. The installer refuses a symlink or
-directory at the destination `runyte` path, except an absolute link into a
-`Runyte.app`, such as the one it creates for the macOS desktop edition.
+Replace `X.Y.Z` with a release version. Leave out `--version` for the latest
+release. Use an absolute install directory and keep that directory when
+updating. Historical archive names are supported. The installer refuses a
+symlink or directory at the destination `runyte` path. The exception is an
+absolute link into a `Runyte.app`, such as the one it creates for the macOS
+desktop edition.
 
 ### Release archives
 
@@ -104,10 +106,10 @@ Replace `X.Y.Z` with the release version. Older releases use the `runyte-`
 prefix instead of `runyte-terminal-`.
 
 Compute the downloaded archive's digest with `sha256sum ARCHIVE` on Linux,
-`shasum -a 256 ARCHIVE` on macOS, or
-`Get-FileHash -Algorithm SHA256 ARCHIVE` in PowerShell. Compare the complete
-digest with that archive's entry in `SHA256SUMS`. These checks establish
-integrity against the release manifest; they are not independent signatures.
+`shasum -a 256 ARCHIVE` on macOS, or `Get-FileHash -Algorithm SHA256 ARCHIVE`
+in PowerShell. Compare the complete digest with that archive's entry in
+`SHA256SUMS`. These checks show the file matches the release manifest. They are
+not independent signatures.
 
 Extract the archive into a directory you intend to keep. It contains `runyte`,
 `runed`, configuration examples and licence material. Add that directory to
@@ -117,9 +119,9 @@ and unnotarized.
 
 ### Install with Cargo
 
-Install [Rust through rustup](https://rustup.rs/) and a C compiler. Rust 1.88
-or newer is required; the C compiler builds the bundled Tree-sitter grammars.
-On Windows, use the MSVC toolchain described [below](#windows).
+Install [Rust through rustup](https://rustup.rs/) and a C compiler. You need
+Rust 1.88 or newer. The C compiler builds the bundled Tree-sitter grammars. On
+Windows, use the MSVC toolchain described [below](#windows).
 
 ```sh
 cargo install runyte --locked
@@ -171,18 +173,19 @@ edition, because the script keeps the edition it finds installed. Pass
 `--terminal` to switch back.
 
 - **Linux:** the script checks for glibc 2.39 or newer and the window's XCB and
-  XKB libraries (in the loader cache or `LD_LIBRARY_PATH`) before downloading, then installs `runyte` and `runed` in
-  `~/.local/bin` as for the terminal edition. With Python 3 available it also
-  registers the launcher and icons for your desktop account, as described
-  below; without it, `runyte --window` still works.
-- **macOS 11 or later:** the script checks that the downloaded app carries the
-  Runyte release team's Developer ID signature and passes Gatekeeper, installs
-  `Runyte.app` in `~/Applications` (choose another directory with
-  `--app-dir /absolute/path`, for example `--app-dir /Applications`), and links
-  `~/.local/bin/runyte` to the app's executable. Updates replace the app in the
-  directory it was installed in; if the new app cannot be put in place, the
-  previous one is restored. Switching back with `--terminal` leaves the app in
-  place.
+  XKB libraries (in the loader cache or `LD_LIBRARY_PATH`) before downloading.
+  It then installs `runyte` and `runed` in `~/.local/bin`, as for the terminal
+  edition. With Python 3 it also registers the launcher and icons for your
+  desktop account, as described below. Without Python 3, `runyte --window`
+  still works.
+- **macOS 11 or later:** the script checks that the downloaded app has the
+  Runyte release team's Developer ID signature and passes Gatekeeper. It
+  installs `Runyte.app` in `~/Applications` and links `~/.local/bin/runyte` to
+  the app's executable. To choose another directory, use
+  `--app-dir /absolute/path`, for example `--app-dir /Applications`. Updates
+  replace the app in the directory it was installed in. If the new app cannot
+  be put in place, the previous one is restored. Switching back with
+  `--terminal` leaves the app in place.
 
 If the script cannot tell which edition an existing `runyte` is, because its
 `--version` fails, it asks you to choose with `--desktop` or `--terminal`.
@@ -207,8 +210,8 @@ Extract into a permanent directory, then run these commands from that directory:
 python3 contrib/packaging/package.py linux --binary ./runyte
 ```
 
-The last command registers the launcher and icons for your desktop account; it
-requires Python 3. Registration supplies the window icon on Wayland. It records
+The last command registers the launcher and icons for your desktop account. It
+needs Python 3. Registration supplies the window icon on Wayland. It records
 the executable's absolute path, so register again if you move the installation.
 The launcher opens your account home in the configured mode. IDE and mux use
 the home workspace with integrated terminals. In these modes, file arguments
@@ -218,30 +221,30 @@ ordinary file opening. To select persistent mode explicitly, launch
 
 Add the extracted directory to `PATH`, or link its `runyte` and `runed` into
 `~/.local/bin`. Keep the package's documentation, licences and registration
-files. PDF and document-preview helpers are included in the editor executable;
-there is no separate helper to install.
+files. PDF and document-preview helpers are included in the editor executable.
+There is no separate helper to install.
 
 ### macOS
 
-Download `Runyte-X.Y.Z.dmg` from
-[GitHub Releases](https://github.com/runyte/runyte/releases); it runs on Apple
-silicon and Intel Macs with macOS 11 or later. Open it, drag `Runyte` onto
+Download `Runyte-X.Y.Z.dmg` from [GitHub
+Releases](https://github.com/runyte/runyte/releases). It runs on Apple silicon
+and Intel Macs with macOS 11 or later. Open it, drag `Runyte` onto
 `Applications`, then eject the image. Launch Runyte from Finder, Launchpad or
-Spotlight; it opens your account home in the configured mode. IDE and mux use
-the home workspace with integrated terminals; `mode: editor` keeps editor mode.
-The app is signed with a Developer ID and
-notarized, so macOS asks only its usual first-launch confirmation. To update,
-replace `/Applications/Runyte.app` with the newer one the same way.
+Spotlight. It opens your home directory in the configured mode. IDE and mux use
+the home workspace with integrated terminals. `mode: editor` keeps editor mode.
+The app is signed with a Developer ID and notarized, so macOS asks only its
+usual first-launch confirmation. To update, replace `/Applications/Runyte.app`
+with the newer one the same way.
 
 The same app is published as
-`runyte-desktop-vX.Y.Z-universal-apple-darwin.tar.xz`, listed in `SHA256SUMS`;
-the [install script](#install-script-desktop-edition) installs it with
+`runyte-desktop-vX.Y.Z-universal-apple-darwin.tar.xz`, listed in `SHA256SUMS`.
+The [install script](#install-script-desktop-edition) installs it with
 `--desktop` and puts `runyte` on your `PATH`.
 
 To build the app yourself instead, use the [macOS build dependencies](#macos-desktop-dependencies) and
 [desktop build command](#build-from-source). The [packaging guide](contrib/packaging/README.md#macos)
 explains how to create a universal unsigned `Runyte.app` with its launcher and
-icons; an unsigned local bundle is not a signed release download.
+icons. An unsigned local bundle is not a signed release download.
 
 For an app installed in `/Applications`, optional command-line links are:
 
@@ -266,7 +269,7 @@ cd runyte
 To build a particular release, check out its `vX.Y.Z` tag before building.
 The checkout's `rust-toolchain.toml` pins the development toolchain, which rustup
 selects automatically. The terminal package's minimum supported Rust version is
-1.88; desktop builds require at least 1.92. Install the platform dependencies
+1.88. Desktop builds require at least 1.92. Install the platform dependencies
 below before building the desktop edition.
 
 Choose one build:
@@ -282,7 +285,7 @@ cargo build --release --locked -p runyte-desktop
 ```
 
 `./build.sh --release --locked` wraps `cargo build --bins` for the terminal
-edition; it forwards additional Cargo arguments. Omit `--release` for a debug
+edition. It forwards additional Cargo arguments. Omit `--release` for a debug
 build, whose executable is under `target/debug/`.
 
 The Cargo workspace shares one lockfile. Resolving it can fetch the pinned
@@ -365,9 +368,9 @@ mkdir -p "$HOME/.local/bin"
 install -m 0755 target/release/runyte-desktop "$HOME/.local/bin/runyte"
 ```
 
-This destination becomes your desktop installation; check for an existing copy
-before replacing it. The desktop edition also provides terminal operation.
-Add a `runed` link if wanted, as described below.
+This destination becomes your desktop installation. Check for an existing copy
+before replacing it. The desktop edition also provides terminal operation. Add
+a `runed` link if wanted, as described below.
 
 On Linux, register the installed executable and icons from the checkout:
 
@@ -375,7 +378,7 @@ On Linux, register the installed executable and icons from the checkout:
 python3 contrib/packaging/package.py linux --binary "$HOME/.local/bin/runyte"
 ```
 
-Registration adds a desktop launcher; it does not copy the executable. To build
+Registration adds a desktop launcher. It does not copy the executable. To build
 a complete directory package or macOS app instead, use the
 [packaging guide](contrib/packaging/README.md).
 
@@ -390,7 +393,7 @@ On Linux and macOS, add your install directory to `PATH` in `~/.bashrc` or
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Cargo normally uses `~/.cargo/bin`; rustup's shell setup makes it available.
+Cargo normally uses `~/.cargo/bin`. Rustup's shell setup makes it available.
 Check which copy your shell finds, especially if you have used more than one
 installation method:
 
@@ -447,7 +450,7 @@ export VISUAL="$EDITOR"
 Replace the example path. If it contains spaces, quote the executable path
 inside the variable too. Shell aliases are not a substitute for an executable
 on `PATH`. Start a new shell and restart already-running agents after changing
-these variables; existing processes retain their old environment.
+these variables. Existing processes retain their old environment.
 
 For Git specifically, you can also set:
 
@@ -480,7 +483,7 @@ in PowerShell. To let `:quit-here` change the calling shell's directory, use the
 wrappers in the [shell directory guide](docs/user-guide/workspaces-and-persistent-sessions.md#change-the-shell-directory-on-exit).
 On Windows, keep [runyte.ps1](contrib/runyte.ps1) at a stable location and
 dot-source it from `$PROFILE`. The wrapper is tested with Windows PowerShell
-5.1; PowerShell 7 has not been validated.
+5.1. PowerShell 7 has not been validated.
 
 ## Optional tools
 
@@ -490,28 +493,29 @@ dot-source it from `$PROFILE`. The wrapper is tested with Windows PowerShell
 - **Terminal clipboard on Linux:** install `wl-clipboard`, `xclip`, or `xsel`.
   The desktop edition also supplies a native clipboard integration.
 - **PDF fallback:** Hayro is built into the desktop executable. Poppler is
-  optional for documents it cannot handle; install `poppler-utils` on
-  Debian/Ubuntu or Fedora, or `poppler` on Arch or through Homebrew. Its
-  `pdfinfo`, `pdftoppm`, and `pdftotext` commands must all be on `PATH`.
+  optional, for documents the built-in renderer can't handle. Install
+  `poppler-utils` on Debian/Ubuntu or Fedora, or `poppler` on Arch or through
+  Homebrew. Its `pdfinfo`, `pdftoppm`, and `pdftotext` commands must all be on
+  `PATH`.
 - **Fonts:** the terminal edition uses your terminal emulator's font. The
-  desktop window and its document preview embed JetBrainsMono Nerd Font; no
-  font installation is needed.
-  See its [licences and attribution](licenses/jetbrains-mono/README.md).
+  desktop window and its document preview include JetBrainsMono Nerd Font. You
+  don't need to install a font. See its [licences and
+  attribution](licenses/jetbrains-mono/README.md).
 
 Window controls, media navigation and document preview are covered in the
 [desktop user guide](docs/user-guide/files-and-buffers.md#desktop-edition).
 
 ## Update or uninstall
 
-Update using the same method you used to install: rerun the terminal install
-script or `cargo install runyte --locked`, replace a manually downloaded
-package, or rebuild and install from source. The install script keeps the
-edition it finds, so it updates a desktop installation it made, or a desktop
-`runyte` executable in its install directory. A `runyte` link into a
-`Runyte.app`, including the disk-image link shown under
-[macOS](#macos), counts as a desktop installation, and the script updates that
-app where it is and makes `runed` a link to `runyte`; it refuses other
-symlinks, such as one to a manually extracted Linux archive.
+Update the same way you installed. Run the terminal install script or
+`cargo install runyte --locked` again, replace a manually downloaded package,
+or rebuild and install from source. The install script keeps the edition it
+finds, so it updates a desktop installation it made, or a desktop `runyte`
+executable in its install directory. A `runyte` link into a `Runyte.app`,
+including the disk-image link shown under [macOS](#macos), counts as a desktop
+installation. The script updates that app where it is and makes `runed` a link
+to `runyte`. It refuses other symlinks, such as one to a manually extracted
+Linux archive.
 
 Save your work and restart running editors and persistent hosts after an update
 so every process uses the same version. If you have multiple installations,
@@ -519,12 +523,13 @@ check `command -v runyte` and `runyte --version` again. Re-register a Linux desk
 launcher if its executable path changed.
 
 To uninstall a script installation, remove its `runyte` executable and `runed`
-link from the chosen install directory, and for the macOS desktop edition its
-`Runyte.app`. For Cargo, run `cargo uninstall runyte`
-and remove a manually created `runed` link. For a manual package or app, remove
-its directory and any command-line links you created. If you registered a Linux
-launcher, remove `com.runyte.Runyte.desktop` from
-`${XDG_DATA_HOME:-~/.local/share}/applications` and its `com.runyte.Runyte` icons
-from that data directory's `icons/hicolor` tree. Remove shell profile entries
-you added if you no longer need them. Configuration is kept separately; its
-locations are in the [configuration guide](docs/user-guide/configuration.md#configuration).
+link from the install directory. For the macOS desktop edition, also remove its
+`Runyte.app`. For Cargo, run `cargo uninstall runyte` and remove a manually
+created `runed` link. For a manual package or app, remove its directory and any
+command-line links you created. If you registered a Linux launcher, remove
+`com.runyte.Runyte.desktop` from
+`${XDG_DATA_HOME:-~/.local/share}/applications` and its `com.runyte.Runyte`
+icons from that data directory's `icons/hicolor` tree. Remove shell profile
+entries you added if you no longer need them. Configuration is kept separately.
+Its locations are in the [configuration
+guide](docs/user-guide/configuration.md#configuration).

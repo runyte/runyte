@@ -41,22 +41,22 @@ Describe the workflow you want to improve, what is difficult today, and how
 the proposed feature would help. Include a concrete example and check for an
 existing request before opening a new one.
 
-Runyte's selection-first model and its keymap are deliberate, so a request that
-works with them lands more easily than one that adds a second way to do
-something already bound. For integrations with separate services or
-applications, consider whether a plugin would fit the workflow.
+Runyte's selection-first model and its keymap are deliberate. A request that
+works with them is easier to accept than one that adds a second way to do
+something. For integrations with separate services or applications, consider
+whether a plugin would fit the workflow.
 
 ## Report a bug
 
 Open an issue on [GitHub Issues](https://github.com/runyte/runyte/issues).
-Check the latest release or `main` first; only the most recent release receives
+Check the latest release or `main` first. Only the most recent release gets
 fixes.
 
 A report is most useful when it includes:
 
 - The output of `runyte --version`, the operating system, and the terminal
   emulator, including any multiplexer such as tmux.
-- Which mode Runyte ran in: `editor`, `ide`, or `ide+mux`, as the status line
+- Which mode Runyte ran in: `editor`, `ide`, or `mux`, as the status line
   shows.
 - The exact keys pressed, what happened, and what you expected instead.
 - The smallest file, configuration, or project that reproduces it.
@@ -67,9 +67,9 @@ A report is most useful when it includes:
 Logs and screenshots can contain file paths, project names, and buffer text.
 Review them before attaching, and redact anything you would not publish.
 
-Behavior that differs from Helix is not necessarily a bug. The
-[keymap register](context/reference/helix-keymap-v1.md) records the deliberate
-differences; a report that one of them is a poor choice is still welcome.
+Behavior that differs from Helix is not necessarily a bug. The [keymap
+register](context/reference/helix-keymap-v1.md) records the deliberate
+differences. If you think one of them is a poor choice, please tell us.
 
 ## Write a plugin
 
@@ -86,8 +86,8 @@ is stable from Runyte 0.3.0.
 
 Publish a plugin from its own repository, under a license of your choice, and
 share it on [r/runyte](https://www.reddit.com/r/runyte/). If the contract is
-missing something a plugin needs, open an issue describing the plugin and the
-gap rather than working around it.
+missing something a plugin needs, open an issue describing the plugin and what
+is missing.
 
 ## Submit a pull request
 

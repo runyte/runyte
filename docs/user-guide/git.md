@@ -20,7 +20,7 @@ Otherwise there is simply no gutter and no branch in the status line, and the
 | `Space g t` | Open the bounded stash list |
 | `Space g r` | Re-read branch, changed files, and changed lines from Git |
 
-Every Git view uses `Tab` for its actions; see
+Every Git view uses `Tab` for its actions. See
 [Contextual actions](the-screen.md#contextual-actions-tab). The `:git-…` commands are listed
 under [Commands](commands.md#commands).
 
@@ -36,8 +36,8 @@ under [Commands](commands.md#commands).
 
 **Status line.** `main ↑1 +2 ~3 -1 ?4 !1` reads as: branch `main`, one commit
 ahead of upstream, two added, three modified, one deleted, four untracked, and
-one conflicted file. Each file is counted once, under the most consequential
-thing that happened to it.
+one conflicted file. Each file is counted once, under the most important thing
+that happened to it.
 
 **Gutter.** Tracked files get a change mark between the line number and its
 separator:
@@ -50,12 +50,12 @@ separator:
 
 - Marks compare against the **index**, not `HEAD`, so staging a change removes
   its marks.
-- A mark appears only on a logical line's first screen row; soft-wrap
-  continuations use the cell for their `↪` arrow.
+- A mark appears only on a line's first screen row. Soft-wrap continuations use
+  that cell for their `↪` arrow.
 - Fold triangles share the cell. Only when a folded line is itself changed
   does the gutter add a second cell so both `▸` and the mark show.
-- Files with no unconflicted index entry — untracked, mid-merge, or binary —
-  show no change column, rather than one claiming every line is new.
+- Files with no unconflicted index entry (untracked, mid-merge, or binary) show
+  no change column.
 
 **How marks stay current.** Git is asked for a file's staged text once, when
 it opens and after relevant Git changes while it is visible. Everything else
@@ -85,9 +85,9 @@ Nothing is dropped: the refresh runs as soon as you stop, the prompt closes,
 or the selection collapses. A selection in an ordinary file defers nothing,
 because a refresh changes its gutter, not its text.
 
-**The cursor keeps its place.** Its row is matched by identity — the commit,
-path, branch, or hunk it was on — and falls back to the nearest surviving
-row. The column is clamped to the end of whatever row it lands on.
+**The cursor keeps its place.** It stays on the same commit, path, branch, or
+hunk. If that row is gone, it moves to the nearest one. The column is clamped
+to the end of whatever row it lands on.
 
 ### Changed files, staging, and committing
 
@@ -124,32 +124,31 @@ Untracked
 
 #### Reading the changed-file list
 
-**The first row** names the branch, its drift from upstream, and how many
-files are in each section. It counts sections rather than per-file states, so
-it never calls a file "modified" above a heading that calls it staged. The
-status line's compact `~1` answers a different question: what changed, rather
-than where it sits.
+**The first row** names the branch, its drift from upstream, and how many files
+are in each section. It counts sections, not per-file states. It never calls a
+file "modified" above a heading that calls it staged. The status line's compact
+`~1` answers a different question: what changed, not where it sits.
 
-**Line counts** show what each change costs, added then removed, in one
-aligned column; the first row totals them.
+**Line counts** show the lines added and removed for each change, in one
+aligned column. The first row totals them.
 
 - They use the theme's `change_added` and `change_removed`, the same colours
-  as the gutter and diffs. Built-in themes use green and red; custom themes
+  as the gutter and diffs. Built-in themes use green and red. Custom themes
   can change either.
 - They are Git's own `--numstat` counts of the same two trees the row comes
   from. A file staged and then edited again is counted once on each of its
   rows, and the total is the sum of what is shown.
 - An untracked file counts every line as added.
-- A change that cannot be counted — a binary file, an untracked symlink, a
-  file over a megabyte, or a whole untracked directory Git collapsed into one
-  row — shows `·` in both columns and is left out of the total. A list with no
+- Some changes can't be counted: a binary file, an untracked symlink, a file
+  over a megabyte, or a whole untracked directory Git collapsed into one row.
+  These show `·` in both columns and are left out of the total. A list with no
   countable rows omits the columns.
 - Counts are read only while the list is open.
 
 **A file in two sections** (staged, then edited again) is not a duplicate:
 those are two changes, staged separately. `Enter` on a staged row shows what a
-commit would take; on an unstaged row, what it would not. A selection covering
-both acts on the file once.
+commit would include. On an unstaged row, it shows what a commit would leave
+out. A selection covering both acts on the file once.
 
 **After staging**, the caret follows the file into its new section, so `Tab u`
 undoes what you just did.
@@ -160,21 +159,20 @@ undoes what you just did.
   changes, an INFO notification says so.
 - Staging moves the gutter's base, so marks for staged lines disappear at
   once.
-- For a rename, the displayed destination is what you open or diff, while
-  staging and unstaging act on both paths, so a move is never split across the
-  index.
-- The changed-file list reads files on disk, not buffers — the one place the
-  gutter and the diff views can disagree. The diff header says so when a
+- For a rename, you open or diff the destination shown. Staging and unstaging
+  act on both paths, so a move is never split across the index.
+- The changed-file list reads files on disk, not buffers. This is the one place
+  the gutter and the diff views can disagree. The diff header says so when a
   buffer has unsaved changes.
 
 **Hunks.** In a per-file diff, `Tab s` stages the exact hunk under the cursor
-and `Tab u` unstages the exact staged hunk. The request carries the hunk bytes
-plus repository, HEAD, index, file, and live-buffer preconditions; Git checks
-the patch, and any stale precondition changes nothing.
+and `Tab u` unstages the exact staged hunk. Runyte first checks that the
+repository, HEAD, index, file and live buffer haven't changed. Git checks the
+patch. If anything is out of date, nothing changes.
 
-**Lines.** `:git-stage-lines` stages a deliberately narrow slice from a saved,
-clean source buffer: one contiguous selection containing every added or
-modified new line in one hunk.
+**Lines.** `:git-stage-lines` stages lines from a saved, clean source buffer.
+It needs one contiguous selection that covers every added or modified new line
+in one hunk.
 
 - Refused: dirty buffers, deletion-only choices, multiple or partial hunks,
   binary files, conflicts, renames, and untracked files.
@@ -184,9 +182,8 @@ modified new line in one hunk.
 
 #### Committing
 
-`Tab c` opens a commit message buffer with the template Git would give an
-external editor: an empty first line, then commented instructions and the
-files to be recorded.
+`Tab c` opens a commit message buffer with the usual Git template: an empty
+first line, then commented instructions and the files to be recorded.
 
 | To | Do |
 | --- | --- |
@@ -196,7 +193,7 @@ files to be recorded.
 
 - The index is refreshed first, so staging done outside the editor is
   included.
-- A commit takes **the index** — exactly what the Staged section shows.
+- A commit takes **the index**, which is exactly what the Staged section shows.
 - Comment lines are not part of the message, so a message line cannot start
   with `#`.
 - Cancelling commits nothing and leaves the index as it was.
@@ -204,8 +201,7 @@ files to be recorded.
   the buffer to fix and retry.
 - Afterwards the pane returns to where you started.
 - Hooks run in the background commit, so a slow `pre-commit` leaves the editor
-  responsive. A signing key that wants a terminal prompt fails rather than
-  asking.
+  responsive. A signing key that needs a terminal prompt fails. It can't ask.
 
 #### Discarding
 
@@ -219,9 +215,9 @@ unstaged changes.
   that exists only in the editor. Clean buffers reload afterwards.
 - Discarding a staged addition removes its clean open buffer with the file.
   Discarding a rename restores the original path and removes the destination.
-- Untracked files are refused. Discarding one could only mean deleting it,
-  which Git keeps behind `clean` and Runyte keeps in the explorer, where
-  deletion is a confirmed plan that goes to the trash.
+- Untracked files are refused. Discarding one would mean deleting it. Git keeps
+  that behind `clean`, and Runyte keeps it in the explorer, where a deletion is
+  confirmed and goes to the trash.
 
 ### Diffs
 
@@ -286,12 +282,12 @@ Remote
   | `[gone]` | The upstream ref no longer exists |
   | (nothing) | The branch tracks nothing |
 
-- **Remote rows** are remote-tracking refs Git has already cached; opening the
+- **Remote rows** are remote-tracking refs Git has already cached. Opening the
   list and `Space g r` do not fetch.
 - A symbolic default such as `origin/HEAD` is not a row. Remote names
   containing `/` are kept exact.
 - Each remote row names every local branch whose configured upstream is that
-  exact ref. Equal names or equal tips do not count as tracking; a remote row
+  exact ref. Equal names or equal tips do not count as tracking. A remote row
   with no tracker says `[not tracked locally]`.
 
 #### Checking out
@@ -299,20 +295,19 @@ Remote
 - **A local row:** Enter checks it out.
 - **A remote row:** Enter checks out its one local tracking branch. With
   several, a picker opens. With none, Runyte creates and checks out a tracking
-  branch named after the part after the remote: `origin/feature/auth`
-  suggests `feature/auth`. If that name already exists, an editable name
-  prompt opens instead of reusing the unrelated branch.
+  branch named after the part after the remote: `origin/feature/auth` suggests
+  `feature/auth`. If that name already exists, a name prompt opens so you can
+  choose another.
 
 **Refusals and confirmation:**
 
-- A checkout (and `Tab n`) is refused while the index or working tree has
-  staged, unstaged, or untracked changes, or an open file buffer in the
-  repository has unsaved edits.
-- If this workspace owns any live terminal session — visible, hidden, or in
-  another pane — Runyte asks you to type the exact target branch name. That
-  acknowledges the terminal job keeps its directory while Git replaces files
-  under it. Escape or `Ctrl-c` leaves the checkout unchanged. Exited terminals
-  need no confirmation.
+- A checkout (and `Tab n`) is refused if the index or working tree has staged,
+  unstaged, or untracked changes. It is also refused if an open file buffer in
+  the repository has unsaved edits.
+- If this workspace has any live terminal session, even a hidden one, Runyte
+  asks you to type the exact target branch name. That acknowledges the terminal
+  job keeps its directory while Git replaces files under it. Escape or `Ctrl-c`
+  leaves the checkout unchanged. Exited terminals need no confirmation.
 - After a checkout, open files that still exist are reloaded from the new
   branch, and the Git status and gutter bases are refreshed.
 - Opening another worktree with `Space g w` is an attachment switch, not a
@@ -350,8 +345,8 @@ Escape keeps it.
 
 - It runs bottom-up: the session stops, the worktree is removed, then the
   branch is deleted. A failure at any level stops there.
-- The checkout's own refusals — a dirty working tree, a lock, a session with
-  unsaved buffers — are reported before you are asked anything.
+- Refusals such as a dirty working tree, a lock, or a session with unsaved
+  buffers are reported before you are asked anything.
 - A branch checked out in more than one worktree, or at the current Runyte
   root, is still refused before review.
 
@@ -360,9 +355,8 @@ Escape keeps it.
 `Tab w` asks for a destination and creates a checkout of the selected local
 branch.
 
-- A branch already checked out here or in another worktree is refused without
-  forcing a duplicate; the message names the existing path and points to
-  `Space g w`.
+- A branch already checked out here or in another worktree is refused. The
+  message names the existing path and points to `Space g w`.
 - On an untracked remote row, it creates the suggested tracking branch
   directly in the new worktree. A remote with several trackers asks which to
   use.
@@ -426,22 +420,22 @@ Escape keeps it.
 
 1. Git status, worktree identity, upstream state, and session health are
    checked again.
-2. The session is stopped — the host owns the directory and its runtime state.
-   A failed stop leaves the worktree standing.
+2. The session is stopped, because the host owns the directory and its runtime
+   state. A failed stop leaves the worktree standing.
 3. Git removes the directory. If Git refuses, the branch and history record are
    left alone.
 4. The workspace's history record is forgotten, so nothing keeps a claim on
    the digit it used. This happens whether or not a host was running.
 
-Stopping the session is part of removal, not a `session` command, so it
-happens in ide mode too: an ide-mode editor cannot attach to a
-session, but it can still find and stop one running on the worktree.
+Stopping the session is part of removal, so it happens in ide mode too. An
+ide-mode editor can't attach to a session, but it can still find and stop one
+running on the worktree. No separate `session` command is needed.
 
 ### Committed comparisons
 
 `Tab d` in the branch or worktree list opens a read-only **committed
-comparison**: the current tip on the left, the selected local branch, cached
-remote branch, or worktree HEAD on the right.
+comparison**. The current tip is on the left. The selected local branch, cached
+remote branch, or worktree HEAD is on the right.
 
 - It compares the contents at the two tips directly. Uncommitted changes,
   staged changes, and unsaved buffers are excluded.
@@ -460,8 +454,8 @@ remote branch, or worktree HEAD on the right.
 - The heading names both sides and their captured commit IDs.
 - Each row shows the path on each side and added/removed line counts. The
   summary totals and per-file counts use `change_added` and `change_removed`
-  (green and red in built-in themes); only the signed counts are coloured.
-- Renames show both names; `—` marks an absent side. Narrow panes combine the
+  (green and red in built-in themes). Only the signed counts are coloured.
+- Renames show both names. `—` marks an absent side. Narrow panes combine the
   two paths into one column.
 - Binary and metadata-only changes are labelled. Empty added or deleted files
   stay visible.
@@ -499,50 +493,50 @@ Git's topological order.
   the commit's timezone, author, and subject. The full ID is kept behind it.
 - **Commit detail:** Enter displays `Author-time: YYYY-MM-DD HH:MM` in the
   commit's original timezone, matching the history row's date and time.
-- **Refs:** a commit's branches and tags are a muted hint one space past that
-  row's own text, not aligned to a shared column, so a long subject never
+- **Refs:** a commit's branches and tags appear as a muted hint right after
+  that row's text. They aren't aligned to a column, so a long subject never
   pushes a shorter row's hint off a narrow pane.
 - **Paging** is on Ctrl chords so `l` and every other motion keep working.
-  Pages use boundary objects instead of an unbounded result, so going back
-  re-requests the earlier page.
-- **Refresh** keeps the caret on the same commit when it is still on the page,
-  even if new commits appeared above; otherwise the nearest row. Only the
-  first page refreshes automatically; later pages sit behind a commit boundary
-  and cannot change.
+  Results come one page at a time, so going back requests the earlier page
+  again.
+- **Refresh** keeps the caret on the same commit if it is still on the page,
+  even if new commits appeared above. Otherwise it moves to the nearest row.
+  Only the first page refreshes automatically. Later pages can't change.
 
 #### Commit network
 
 `Space g n` opens `[git network]`, a read-only graph of commits reachable from
-local branches, cached remote branches, tags, and HEAD. Opening it never fetches.
-Each commit occupies one row: a six-character hash, Unicode author initials,
-ASCII graph, branch label, captured refs, and commit title. The branch label uses
-the same color as the commit's graph path. Paths retain their columns and colors
-until they end; empty columns can be reused without moving surviving paths.
-The graph does not wrap; horizontal scrolling reaches long names and titles.
+local branches, cached remote branches, tags, and HEAD. Opening it never
+fetches. Each commit occupies one row: a six-character hash, Unicode author
+initials, ASCII graph, branch label, captured refs, and commit title. The
+branch label uses the same color as the commit's graph path. Paths keep their
+columns and colors until they end. Empty columns can be reused without moving
+other paths. The graph does not wrap. Horizontal scrolling reaches long names
+and titles.
 
 `*` marks a commit, `+` marks a parent connection, and `-` and `|` draw the
 rectangular paths. A `-|-` crossing passes through an unrelated path without
-joining it; its vertical stroke keeps that path's color. Horizontal segments use
-the destination path's color. Where several parents share a horizontal segment,
-the nearest endpoint supplies its color. Four theme colors repeat as needed, so
-color alone does not identify a branch.
+joining it. Its vertical stroke keeps that path's color. Horizontal segments
+use the destination path's color. Where several parents share a horizontal
+segment, the nearest endpoint supplies its color. Four theme colors repeat as
+needed, so color alone does not identify a branch.
 
-Branch labels follow captured branch tips along first-parent paths. Git does not
-record the branch on which a commit was originally created; shared history keeps
-the surviving displayed path's label. The current symbolic HEAD name is preferred,
-then a local branch, then a cached remote branch. Paths without a known name
-fall back to local branch containment: `[in dev]` means the commit is reachable
-from exactly one local branch, and `[in dev, ...]` means it is reachable from
-several. The displayed containing branch is the current local branch when it
-contains the commit; otherwise it is the branch with the newest tip commit
-(committer timestamp, with branch name breaking ties). This is current
-membership, not historical branch ownership. Remote branches and tags do not
-count toward this fallback. `[?]` means neither a path name nor local containment
-is known. Captured names and membership remain fixed until explicit refresh.
+Branch labels follow captured branch tips along first-parent paths. Git does
+not record the branch a commit was created on. Shared history keeps the label
+of the path still shown. The current symbolic HEAD name is preferred, then a
+local branch, then a cached remote branch. Paths without a known name fall back
+to local branch containment: `[in dev]` means the commit is reachable from
+exactly one local branch, and `[in dev, ...]` means it is reachable from
+several. The branch shown is the current local branch if it contains the
+commit. Otherwise it is the branch with the newest tip commit (by committer
+timestamp, then branch name). This is current membership, not historical branch
+ownership. Remote branches and tags do not count toward this fallback. `[?]`
+means neither a path name nor local containment is known. Captured names and
+membership remain fixed until explicit refresh.
 
 Enter opens full commit detail, including the full object ID, all merge parents,
 and `Author-time: YYYY-MM-DD HH:MM` in the author's original timezone. Short hash
-collisions do not affect navigation: each row retains its full commit identity.
+collisions do not affect navigation: each row keeps its full commit identity.
 Closing detail returns to the same page, selection, and viewport. `Ctrl-n` and
 `Ctrl-p` move through cached 200-commit pages. The first line names the scope,
 page, continuation, and any limit. Tab opens these registered actions:
@@ -556,31 +550,30 @@ page, continuation, and any limit. Tab opens these registered actions:
 | Previous graph page | `Ctrl-p` | `:previous-git-network-page` |
 
 `:git-network-ref refs/heads/main` selects an exact full ref directly.
-`:git-network` or `Space r` captures new roots; refreshing keeps the selected
-commit while it remains within the bounded traversal. Continuation uses the
-original object IDs and labels even if refs move, marking that generation stale.
-No remote access or idle graph scan runs.
+`:git-network` or `Space r` captures new roots. Refreshing keeps the selected
+commit while it is still within the limits. Continuation uses the original
+object IDs and labels even if refs move, marking that generation stale. No
+remote access or idle graph scan runs.
 
 Containment is captured independently of the selected graph scope, from up to
-256 local branches and a topological walk of up to 10,000 commits. An incomplete
-branch inventory disables the fallback; commits beyond that ancestry walk also
-retain `[?]` when their paths have no name. These bounds, including the 2 MiB
-ancestry-output bound, display a separate `local containment limit` notice
-rather than guessing a name or claiming a single containing branch from
-incomplete evidence. This notice preserves the graph's continuation status;
-narrowing the graph scope does not change the containment bounds.
+256 local branches and a topological walk of up to 10,000 commits. An
+incomplete branch inventory disables the fallback. Commits beyond that ancestry
+walk also keep `[?]` when their paths have no name. When these limits are
+reached, including the 2 MiB ancestry-output limit, a separate
+`local containment limit` notice appears. Runyte doesn't guess a name from
+incomplete data. Narrowing the graph scope does not change these limits.
 
 If a parent needs a new lane beyond the 16-lane limit, an `overflow parents`
-note lists its abbreviated ID; existing parent lanes remain connected even at
-capacity. Enter exposes every full parent ID. Unplaced commits and shallow
-boundaries are labelled. Limits are 256 captured refs plus HEAD, 16 lanes,
-50 retained pages, and 10,000 commits per generation, with 200 commits per page
-and a 2 MiB subprocess-output bound per read. An atomic refresh temporarily
-retains at most two bounded generations while locating the selected commit.
-Traversal reads immutable ancestry without replacement refs; changing shallow
-boundaries requires a fresh generation. Narrow the scope when a graph limit is
-reached. Ordinary movement, search, copying, selections, and splits remain
-available throughout the network.
+note lists its short ID. Existing parent lanes stay connected even at the
+limit. Enter exposes every full parent ID. Unplaced commits and shallow
+boundaries are labelled. The limits are 256 captured refs plus HEAD, 16 lanes,
+50 retained pages, and 10,000 commits per generation. Each page has 200
+commits, and each read has a 2 MiB output limit. An atomic refresh temporarily
+keeps at most two bounded generations while locating the selected commit.
+Traversal ignores replacement refs. Changing shallow boundaries requires a
+fresh generation. Narrow the scope when a graph limit is reached. Ordinary
+movement, search, copying, selections, and splits remain available throughout
+the network.
 
 #### Searching commits
 
@@ -595,8 +588,8 @@ first.
 - Rows show the subject, author date, author, and abbreviated ID. The preview
   shows the full message.
 - Enter opens the same commit detail as the log and blame.
-- Discovery is asynchronous and capped at the newest 5,000 commits; the picker
-  says when the cap is reached.
+- Discovery runs in the background and covers the newest 5,000 commits. The
+  picker says when it reaches that limit.
 
 #### Blame
 
@@ -606,7 +599,7 @@ first.
 | `Space g B` (`:git-blame-file`) | A read-only view aligned to the source rows; Enter opens the row's commit |
 
 - Both send the current in-memory text to Git's porcelain blame, so an unsaved
-  line says `uncommitted` instead of borrowing an older attribution.
+  line says `uncommitted`.
 - A result is discarded if the buffer changes while Git works.
 - Inputs over 4 MiB, and whole-file views over 20,000 lines, are refused.
   Untracked or otherwise unblamable files report Git's refusal.
@@ -636,27 +629,28 @@ Creating a stash uses a command that names its scope:
 - Create and apply are refused while the repository has unsaved editor
   buffers.
 - An apply conflict keeps the stash. Open `Space g c` to inspect unmerged
-  stages and review supported saved-file resolutions; unsupported structural
-  or submodule cases can still use an external Git tool. Resolving does not
-  remove the retained stash.
+  stages and review supported saved-file resolutions. For structural or
+  submodule cases that aren't supported, use an external Git tool. Resolving
+  does not remove the retained stash.
 
 ### Reviewed merges and conflicts
 
-In the branch list (`Space g b`), `Tab m` reviews merging the selected local
-or cached remote branch **into the current branch**. Cached remote tips reflect
-the last fetch; merge review does not contact the remote. The native overlay
-names both branches and captured commit IDs, lists proposed file changes, and
-predicts already up to date, fast-forward, clean pending merge, or conflicts.
-Already-contained requests still open the review with approval disabled.
+In the branch list (`Space g b`), `Tab m` reviews merging the selected local or
+cached remote branch **into the current branch**. Cached remote tips reflect
+the last fetch. Merge review does not contact the remote. The overlay names
+both branches and their commit IDs and lists proposed file changes. It predicts
+one of four results: already up to date, fast-forward, clean pending merge, or
+conflicts. Already-contained requests still open the review with approval
+disabled.
 
 Cancel is selected initially. Up/Down visit file rows and footer actions;
 Left/Right choose a footer action. Enter inspects a file or activates the
 selected action. `a`/`A` approves and `c`/`C` cancels at the root. Escape,
 `Ctrl-c`, and the configured leader cancel. The footer remains visible in
-narrow terminals. Details contain the proposed patch or labelled Base,
-Current, Other, and provisional Result where available. Back returns to the
-same root selection and scroll; approval shortcuts are inactive in details.
-Long details and overviews remain scrollable with explicit continuation.
+narrow terminals. Details contain the proposed patch or labelled Base, Current,
+Other, and provisional Result where available. Back returns to the same
+selection and scroll position. Approval shortcuts don't work in details. Long
+details and overviews remain scrollable with explicit continuation.
 
 Live terminal sessions require typing the exact destination branch before
 approval. While that input has focus, letters are text. Unsaved repository
@@ -666,13 +660,13 @@ are refused. A stale review must be opened again.
 
 Approval applies the reviewed merge with no autostash and no automatic merge
 commit. A fast-forward has no pending merge to continue or abort. A successful
-non-fast-forward merge remains pending even if clean or textually unchanged;
-creating its commit always requires a separate reviewed Continue and explicit
+non-fast-forward merge stays pending, even if it is clean or changes no text.
+Creating its commit always needs a separate reviewed Continue and an explicit
 message save. Actual index conflicts replace the simulated conflict inventory.
 
 `Space g c` / `:git-conflicts` opens `[git conflicts]`, a read-only list from
 unmerged index stages. It supports merges started in Runyte or with the CLI.
-The header identifies the active operation and sides; empty state distinguishes
+The header identifies the active operation and sides. Empty state distinguishes
 “No conflicts” from “Merge ready to commit.” Enter opens the ordinary working
 file at its first recognized region. Editing, language tools, undo/redo, save,
 search, copying, and splits keep their ordinary meanings.
@@ -689,29 +683,29 @@ search, copying, and splits keep their ordinary meanings.
 
 The conflict list also offers sides, staging, and complete-side actions, so
 absent working paths remain manageable. Region choices are one undoable text
-transaction and preserve edits outside the region. Standard, diff3, and
-zdiff3 markers use the path's configured marker width; malformed marker blocks
-are refused. Saving changes the working file without resolving its index
-stages. `Tab r` reviews and stages that exact saved file or deletion; remaining
-markers require the explicit `Tab R` override. Undo after staging makes the
+transaction and preserve edits outside the region. Standard, diff3, and zdiff3
+markers use the path's configured marker width. Malformed marker blocks are
+refused. Saving changes the working file without resolving its index stages.
+`Tab r` reviews and stages that exact saved file or deletion. If markers
+remain, you need the explicit `Tab R` override. Undo after staging makes the
 working file dirty without undoing the staged resolution.
 
 Binary content is labelled. Related paths for structural conflicts are shown
-with an explanation; review each manually saved file or deletion. Unsafe whole
+with an explanation. Review each manually saved file or deletion. Unsafe whole
 side choices for structural groups and submodules are disabled. In a rebase,
-cherry-pick, or other non-merge operation, inspection uses stage identities;
-Runyte stages supported file resolutions but continuation/abort use Git.
+cherry-pick, or other non-merge operation, inspection uses stage identities.
+Runyte stages supported file resolutions, but continuing and aborting use Git.
 
 In the conflict list, `Tab c` continues and `Tab A` aborts. Git status offers
-`Tab C` and `Tab A`; ordinary Commit routes an active merge through its reviewed
-Continue workflow too. Continue refreshes operation state and the index and
-requires all index conflicts resolved. Its approval opens the seeded merge
-message; only saving that exact buffer creates the commit. A rejected hook
-retains the message and review authority for retry while its captured state
-remains valid. Cancelling message editing leaves the merge pending.
+`Tab C` and `Tab A`. Ordinary Commit also sends an active merge through its
+reviewed Continue workflow. Continue refreshes operation state and the index
+and requires all index conflicts resolved. Approving it opens the prepared
+merge message. Only saving that exact buffer creates the commit. A rejected
+hook keeps the message and review authority for retry while its captured
+state remains valid. Cancelling message editing leaves the merge pending.
 
 Abort is a separate review with Cancel selected. It explains that resolution
-work and post-merge edits can be discarded; unsaved repository buffers must be
+work and post-merge edits can be discarded. Unsaved repository buffers must be
 saved first. Closing a conflict file or list never aborts a merge. Git versions
 without the required simulated-merge capability refuse preview safely.
 
@@ -730,14 +724,14 @@ what is already local.
   `.` upstream is not a network target. Excluded or ambiguous fetch mappings,
   symbolic destinations, and mappings outside `refs/remotes/` are refused.
 - Only the selected remote-tracking ref changes. Other cached branches and tags
-  stay in place; no pruning or tag fetching occurs. A force-pushed upstream may
-  replace that cached ref, and the retained Git operation notification identifies
-  the forced update.
+  stay in place. There is no pruning or tag fetching. A force-pushed upstream
+  may replace that cached ref, and the retained Git operation notification
+  identifies the forced update.
 - Local branches, the index, and working files remain intact. Unsaved buffers
   and a dirty working tree do not prevent fetching.
-- The branch list refreshes and retains its selected ref, including after
-  failure or cancellation. Discovering branches not yet known locally belongs
-  in an external Git tool; there is no whole-remote fetch action.
+- The branch list refreshes and keeps its selected ref, including after
+  failure or cancellation. To discover branches not yet known locally, use an
+  external Git tool. There is no whole-remote fetch action.
 
 `:git-fetch-branch` performs the same action on the selected branch-list row.
 
@@ -755,19 +749,18 @@ The offer reads like:
 Escape leaves the branch as it was.
 
 - **The replay is a rebase**, so there is never a merge commit whose message
-  nothing here could write. It rewrites the replayed commits; they stay
-  reachable from the reflog under their old identities, which is why it asks.
+  nothing here could write. It rewrites the replayed commits, so it asks first.
+  They stay reachable from the reflog under their old IDs.
 - **On conflict it undoes itself:** the rebase is aborted, the working tree
-  keeps what it held, and the refusal says so. Runyte has no surface for
-  resolving conflicts, so it never leaves you holding one; finish those in
-  your usual Git tool.
+  keeps what it held, and the refusal says so. Runyte has no way to resolve
+  these conflicts, so finish them in your usual Git tool.
 - **Afterwards** open files are reloaded and gutter bases refreshed, as after a
   checkout.
 - **No autostash.** Uncommitted changes are never stashed, even with
   `merge.autoStash` or `rebase.autoStash`. Git reapplies such a stash
-  afterwards, and when that conflicts it still exits successfully — leaving
-  conflict markers and a stash to recover, with nothing to roll back. A dirty
-  worktree is refused up front instead.
+  afterwards. If that conflicts, Git still exits successfully and leaves
+  conflict markers and a stash to recover. There is nothing to roll back. A
+  dirty worktree is refused up front instead.
 - **Fetch and merge run separately**, not as one `git pull`, so an unreachable
   remote is reported as such. The drift offered for replay is read from
   remote-tracking refs, which are only worth reading once a fetch has
@@ -783,25 +776,24 @@ Escape leaves the branch as it was.
 
 ### Background operation and failures
 
-Git discovery, reads, mutations, hooks, fetch, pull, and push run on a bounded
-background service, so editing and rendering continue while they queue or run.
+Git operations run in the background, so you can keep editing while they queue
+or run. That includes discovery, reads, mutations, hooks, fetch, pull and push.
 
 **Progress.** A long mutation temporarily replaces the status row with the
-action, its target, elapsed time, a cancellation hint, and a rotating
-`- \ | /` bar at the right. Every background service using this surface gets
-the same spinner.
+action, its target, elapsed time, a cancellation hint, and a rotating `- \ | /`
+bar at the right. Other background services show the same spinner.
 
-**Cancelling.** `:git-cancel` stops the current operation. A cancelled
-mutation is reported as uncertain and reconciled at once, because cancelling
-is not rollback.
+**Cancelling.** `:git-cancel` stops the current operation. A cancelled mutation
+is reported as uncertain and checked right away, because cancelling does not
+undo anything.
 
 **Network safety.**
 
 - Network operations have a two-minute deadline.
 - Nothing can prompt: Git's prompts are off, `ssh` runs in batch mode unless
   you set `GIT_SSH_COMMAND`, and no askpass helper falls back to the terminal.
-  An authentication needing a password fails with a message instead of
-  hanging behind an invisible prompt.
+  Authentication that needs a password fails with a message. It never hangs
+  behind an invisible prompt.
 
 **Environment safety.**
 
@@ -828,8 +820,8 @@ is not rollback.
   refreshes the repository or reports that the project is not in a Git
   repository, which offers no retry.
 - Failure notifications stay in the notification history.
-- Persistent sessions keep the discovery state and notifications across
-  detach and reattach; reattaching does not start another attempt.
+- Persistent sessions keep the discovery state and notifications when you
+  detach and reattach. Reattaching does not start another attempt.
 
 <!-- navigation -->
 [Contents](README.md) · [Previous: Terminals](terminals.md) · [Next: Language support](language-support.md)

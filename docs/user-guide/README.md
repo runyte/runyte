@@ -35,10 +35,10 @@ or find [files](files-and-buffers.md), [terminal sessions](terminals.md), and [s
 
 These chapters are the authoritative guide for the repository, embedded `:help`,
 and runyte.com. The Contents list above defines their assembly order. Keep chapter
-headings and anchors stable; links may point directly to another chapter.
+headings and anchors stable. Links may point directly to another chapter.
 Run `python3 contrib/check_user_guide.py` from the repository root to check
 chapter navigation and local links.
-The website importer reads this checkout; do not hand-edit imported website data.
+The website importer reads this checkout. Do not hand-edit imported website data.
 
 Related references: [installation](../../INSTALLATION.md), [plugins](../plugins.md),
 [MCP](../mcp.md), and [FAQ](../faq.md).

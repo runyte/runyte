@@ -35,4 +35,4 @@ These are workflow recommendations based on the capabilities above.
 
 - **Runyte:** You alternate between writing code, reviewing changes, composing prompts, and searching agent output.
 - **Herdr:** You supervise several agents or machines and want to see which needs a decision without visiting every pane.
-- **Together:** Runyte could serve as the editor inside a Herdr pane. That is a composition option, not a tested integration; choose which layer owns terminal layout and persistence.
+- **Together:** Runyte could serve as the editor inside a Herdr pane. That is a composition option, not a tested integration. Choose which layer owns terminal layout and persistence.

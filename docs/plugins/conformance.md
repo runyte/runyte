@@ -30,8 +30,8 @@ client. Run `python3 docs/plugins/check_context.py` with the same development
 environment. Its fake Unix hosts cover admission, ownership, scope denial,
 strict requests, response identity, deadlines and uncertain writes without an
 agent account or network access. Local Unix socket access is required. The
-ordinary schema rejects context authentication and terminal-read requests;
-the frozen stable process-plugin fixtures remain unchanged.
+ordinary schema rejects context authentication and terminal-read requests.
+The frozen stable process-plugin fixtures remain unchanged.
 
 Run the remaining SDK/controller checks:
 
@@ -56,10 +56,10 @@ done
 ```
 
 These fixtures create temporary keys, certificates, passwords and files and run
-loopback servers. They need local socket access; they do not use personal SSH
+loopback servers. They need local socket access. They do not use personal SSH
 configuration, service accounts or a live FTP server. Paramiko is a plugin-side
-SFTP dependency. The shipped FTP/FTPS transport uses the Python standard library;
-its test-server packages are development dependencies.
+SFTP dependency. The shipped FTP/FTPS transport uses the Python standard library.
+Its test-server packages are development dependencies.
 
 Install mpv separately, then run the real local-media checks. Null audio/video
 outputs let them run without a display or audio device:
@@ -78,7 +78,7 @@ check and needs an installed Node.js runtime:
 ```
 
 The Node checker also accepts an explicit `NODE` executable and reports skips
-when no runtime is available; record those skips rather than treating them as
+when no runtime is available. Record those skips rather than treating them as
 another language's successful conformance run.
 
 The [todo showcase](todo/README.md) has matching Python, Rust and C checks.
@@ -94,7 +94,7 @@ Set `RUNYTE_TODO_BIN_DIR` to the output directory when using `build.py --output`
 The checker runs each program against the same public-wire scenarios. Compiled
 variants that have not been built are skipped unless `--require-all` is supplied.
 The Rust example is an independent Cargo package and is outside the editor's
-canonical workspace coverage; its behavior is measured by these process tests.
+canonical workspace coverage. Its behavior is measured by these process tests.
 
 Once the Python dependencies, mpv and Node are installed and the todo variants built, run every checked-in
 `check_*.py` suite through the central entry point:
@@ -148,8 +148,8 @@ and job cancellation, bounded shutdown and rejection before registration.
 for bounds, malformed declarations, prereleases, build metadata and subsets.
 Actual ru-time subprocess tests reject hosts outside its declared range.
 
-The separate moving-head ru-time job stays advisory. It can reveal future work;
-it cannot replace a retained profile or authorize a release. Adding a new release
+The separate moving-head ru-time job stays advisory. It can reveal future work.
+It cannot replace a retained profile or authorize a release. Adding a new release
 profile preserves older profiles as rejection evidence and requires at least one
 accepted frozen plugin for each candidate. Runyte owns within-range host
 regressions, ru-time owns new plugin regressions and support-floor claims, and
@@ -168,7 +168,7 @@ python3 docs/plugins/compatibility/check_inventory.py --verify-upstream
 python3 docs/plugins/compatibility/check_frozen.py
 ```
 
-The checker needs `jsonschema`; external execution additionally takes `--checkout`,
+The checker needs `jsonschema`. External execution additionally takes `--checkout`,
 `--host-bin` and `--host-version`. It verifies the external checkout before running
 it. Pins must be publicly fetchable before CI/release acceptance. The
 first actual release and later compatible releases extend the plugin's independent
@@ -204,11 +204,11 @@ that its current run or native acceptance has passed.
 
 Use the schema's `$defs.hostMessage` and `$defs.pluginMessage` when checking one
 direction. The schema root accepts either direction. Every line still needs a
-UTF-8 byte-length check including its newline; schema string lengths do not count
+UTF-8 byte-length check including its newline. Schema string lengths do not count
 JSON escape expansion or guarantee a complete encoded frame fits. Implement
 bounded decoding before retaining large containers, including staged model JSON.
 Unknown plugin envelope fields and malformed structural messages can end a
-connection; unsupported methods are ordinary errors.
+connection. Unsupported methods are ordinary errors.
 
 ## Conformance matrix
 
@@ -257,7 +257,7 @@ port. An all-valid-fixtures test alone is insufficient:
 - Fill queues and quotas, delay replies and stall readers. Refusals must preserve
   previous model/text/baseline, and cleanup must not wait behind unbounded output.
 - Close the connection during a remote mutation. Distinguish a proven no-change
-  rejection from an unknown outcome; restarting or reading matching bytes is not
+  rejection from an unknown outcome. Restarting or reading matching bytes is not
   proof that a previous remote operation cannot commit later.
 - Stop and restart owners while work is queued. Old callbacks must not publish
   into the replacement, replay commands or reuse its handles. Detach alone must
@@ -279,14 +279,14 @@ The [completed plan](../../context/plans/completed/PLAN_PLUGIN_APPLICATIONS.md)
 records Linux application performance acceptance and passing Linux/macOS CI at
 `8b0000a`, including native macOS tests, lifecycle stress, all 26 plugin suites
 and canonical line coverage of 91.65%. This closes the implementation plan's
-validation gate; subsequent releases still require their own passing checks.
+validation gate. Subsequent releases still require their own passing checks.
 The compatibility promise starts with the first stable release. These results do not establish behavior
 with every terminal backend or portable performance timings. Pure controller
 tests and null-output mpv fixtures also do not establish audible playback quality
 or behavior with every video/output device.
 
-Spotify and YouTube service access is optional, account-dependent validation;
-see the [service adapter guide](media-services.md). Passing local tests does not
+Spotify and YouTube service access is optional, account-dependent validation.
+See the [service adapter guide](media-services.md). Passing local tests does not
 grant API access, demonstrate live service playback or supply an inline video
 renderer. Binary remote fixtures similarly do not make best-effort FTP/SFTP
 checks into atomic compare-and-swap.

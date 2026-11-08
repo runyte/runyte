@@ -3,7 +3,7 @@
 Runyte supplies native views, explicit browser handoffs, managed helpers and
 activity leases. Authentication, service access and playback belong to an
 adapter and its external backend. The local-file controller in `media.py` is the
-deterministic reference application; it does not accept Spotify or YouTube URLs.
+deterministic reference application. It does not accept Spotify or YouTube URLs.
 No conformance test uses a service account or contacts either service.
 
 The service requirements below were checked against official documentation on
@@ -50,7 +50,7 @@ An adapter implementation should:
    rate limits and account quota exhaustion in retained diagnostics.
 4. Report an unacknowledged control as uncertain, then inspect device state instead
    of blindly replaying it. A playback lease represents continuing work the
-   adapter actually owns; an externally owned Spotify client may continue playing
+   adapter actually owns. An externally owned Spotify client may continue playing
    after the adapter stops. Document that ownership explicitly.
 
 ## YouTube: external playback first
@@ -72,7 +72,7 @@ opening an arbitrary browser tab does not establish that channel. The backend
 must account for browser autoplay blocking and wait for player readiness before
 accepting controls.
 [IFrame API](https://developers.google.com/youtube/iframe_api_reference).
-An embedded player also has documented dimensions and player parameters; a
+An embedded player also has documented dimensions and player parameters. A
 terminal pane is not that web surface.
 [Player parameters](https://developers.google.com/youtube/player_parameters).
 

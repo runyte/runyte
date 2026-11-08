@@ -37,4 +37,4 @@ These are workflow recommendations based on the capabilities above.
 
 - **Runyte:** You want native editing and integrated project navigation alongside persistent terminals.
 - **Zellij:** You want a terminal workspace with configurable layouts and plugin panes while keeping your chosen editor.
-- **Together:** Running Runyte inside Zellij is a composition option. Decide which layer owns splits and shortcuts; resurrecting a terminal command does not restore that editor’s previous in-memory buffers.
+- **Together:** Running Runyte inside Zellij is a composition option. Decide which layer owns splits and shortcuts. Resurrecting a terminal command does not restore that editor’s previous in-memory buffers.

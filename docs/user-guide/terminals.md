@@ -1,8 +1,8 @@
 ## Terminals
 
-A terminal session runs a program — a shell, `htop`, `vim`, a coding agent —
-inside a pane. It is pane content, not a buffer, and it outlives the pane
-showing it.
+A terminal session runs a program inside a pane: a shell, `htop`, `vim`, or a
+coding agent. It is not a buffer, and it keeps running after the pane showing
+it goes away.
 
 ### Starting a terminal
 
@@ -16,9 +16,9 @@ showing it.
 | `:terminal-session-directory <number\|name>` | A shell in another terminal's last safe directory |
 | `Tab t` in an explorer | A terminal in the directory the explorer shows |
 
-- The pane's own buffer stays where it is; leaving the terminal shows it
+- The pane's own buffer stays where it is. Leaving the terminal shows it
   again.
-- Unix splits command lines shell-style; Windows uses native
+- Unix splits command lines shell-style. Windows uses native
   double-quote/backslash syntax.
 - **Directory reports.** Shells may report their directory with a bounded
   local OSC 7 `file:` URL. Remote hosts, control characters, non-file schemes,
@@ -40,12 +40,12 @@ Windows terminals use ConPTY and need no Bash.
   - `:terminal cmd.exe /d /c "\"C:\scripts\my task.cmd\""` runs a batch
     file whose path has spaces.
 - PowerShell 7 and Git Bash are optional installations.
-- Each terminal owns an independent process tree; closing it or quitting the
+- Each terminal has its own process tree. Closing the terminal or quitting the
   editor ends that tree.
 - Working directories need an ordinary Windows path shorter than 260 UTF-16
-  units; paths needing extended-name semantics are refused before launch.
-  `cmd.exe` also refuses UNC working directories, so use a shell that
-  supports them. These limits do not affect which files the editor can open.
+  units. Longer paths are refused before launch. `cmd.exe` also refuses UNC
+  working directories, so use a shell that supports them. These limits don't
+  affect which files the editor can open.
 
 ### Terminal modes
 
@@ -61,8 +61,8 @@ Windows terminals use ConPTY and need no Bash.
    └──────── i, a, o, or another terminal insert key ◀──────────────┘
 ```
 
-The title answers whether typing reaches the child, so NORMAL is unmarked: the
-mode line already says it.
+The title tells you whether typing reaches the program. NORMAL has no marker,
+because the mode line already says it.
 
 #### Terminal Insert mode
 
@@ -78,37 +78,36 @@ Every key belongs to the program except:
 - `Escape`, `Ctrl-c`, `Ctrl-o`, `Space`, and ordinary keys reach the child
   unchanged.
 - **Window keys from a terminal.** `Ctrl-w h/j/k/l` and their control-key
-  aliases move to another pane at once. `Ctrl-w v/s` split, leaving the child
-  live in the original pane; the new pane opens the working-directory
+  aliases move to another pane at once. `Ctrl-w v/s` split, and the program
+  keeps running in the original pane. The new pane opens the working-directory
   explorer, as `Space E` does. `Ctrl-w f/z` toggle full-screen and zen from
   terminal Insert, live Normal, Normal/review, and Select without changing the
   mode. Bare `Ctrl-w`, or cancelling the prefix, keeps the current mode.
   Window actions never capture or discard a review snapshot.
-- **Arriving at a pane.** Every focus route — these keys, pane cycling, a
-  mouse click — enters a live terminal in Insert mode. A terminal with a
-  captured review stays in review until `i`, `a`, `o`, or another insert key.
-  A document reached from Terminal Insert starts in Normal.
+- **Arriving at a pane.** However you focus a live terminal (these keys, pane
+  cycling, a mouse click), it enters Insert mode. A terminal with a captured
+  review stays in review until `i`, `a`, `o`, or another insert key. A document
+  reached from Terminal Insert starts in Normal.
 - **`Ctrl-\` spelling.** On macOS, Runyte asks for unambiguous Ctrl-key reports
   without repeat and release events. A terminal without that protocol sends
-  legacy control bytes, where `Ctrl-\` arrives as `Ctrl-4`; both work.
+  old-style control bytes, and `Ctrl-\` arrives as `Ctrl-4`. Both work.
 
 #### Review mode
 
-**Review navigates and copies. It does not edit.** The screen is a picture of
-the program's text, and the program owns its own input area, so an edit to
-those cells would be an edit to a picture. Commands that would edit are
-refused rather than applied to the buffer behind the pane.
+**Review navigates and copies. It does not edit.** The screen is only a picture
+of the program's text, and the program owns its own input area. Commands that
+would edit are refused.
 
-A second `Ctrl-\`, or the first review command used from live Normal, captures
-the bounded output as an immutable snapshot. New output keeps arriving behind
-it.
+A second `Ctrl-\`, or the first review command used from live Normal, freezes
+the output as a snapshot. New output keeps arriving behind it.
 
 - Motions move a visible review caret and keep it within the viewport margin.
-- `v` enters Select mode; motions then extend inclusively through both the
-  start and end characters, in either direction. `Escape` cancels a selection.
-- The title marks review and newer output, and the reviewed text is grayed,
-  so a frozen image never looks like a live program.
-- Moving to another pane does not start review; returning to a reviewed
+- `v` enters Select mode. Motions then extend the selection, including both
+  the start and end characters, in either direction. `Escape` cancels a
+  selection.
+- The title marks review and newer output, and the reviewed text is gray. A
+  frozen image never looks like a live program.
+- Moving to another pane does not start review. Returning to a reviewed
   terminal keeps its snapshot.
 - A live terminal keeps its own colours. Alternate-screen review holds only
   the captured visible screen.
@@ -123,10 +122,9 @@ it.
 
 - Both routes leave review first and write at the child's real cursor, never
   into captured output.
-- `u` works only while the paste is still the child's last input: any key
-  typed into the terminal ends it. It is refused for a paste that ended a line
-  the child has already run, since what ran is the child's. A shell at a
-  prompt erases exactly the paste.
+- `u` works only while the paste is still the program's last input. Any key
+  typed into the terminal ends that. It is refused if the paste ended a line
+  the program has already run. A shell at a prompt erases exactly the paste.
 
 `i` leaves review and types again.
 
@@ -170,18 +168,17 @@ with stable highlighted matches.
 ### Moving text in and out
 
 **Out of a terminal.** `Space t y` (`:terminal-output`) copies the session into
-an ordinary read-only buffer. That is real text: search, multiple selections,
-`n`/`N`, and yank all work. `Ctrl-o` or `Alt-o` returns to the terminal, and
-`Ctrl-i` or `Alt-i` goes back to the output.
+an ordinary read-only buffer. That is real text, so search, multiple
+selections, `n`/`N`, and yank all work. `Ctrl-o` or `Alt-o` returns to the
+terminal, and `Ctrl-i` or `Alt-i` goes back to the output.
 
-**Into a terminal.** Write the text in an ordinary buffer, with every editing
-command available — multiple cursors above all — then `Space t s`
-(`:terminal-send [number|name]`) sends the selection to a terminal as one
-bracketed paste, or the whole buffer when nothing is selected.
+**Into a terminal.** Write the text in an ordinary buffer, using any editing
+command you like. Then `Space t s` (`:terminal-send [number|name]`) sends the
+selection to a terminal as one bracketed paste. With nothing selected, it sends
+the whole buffer.
 
-This is the only way modal editing can reach a program that owns its input
-area, and it is what makes long prompts for a coding agent worth writing in the
-editor.
+This is how you use modal editing with a program that owns its input area. It
+is very useful for writing long prompts for coding agents.
 
 **Example:** write a prompt for an agent running in terminal 2.
 
@@ -196,12 +193,12 @@ A session outlives the pane showing it.
 
 - `Space t q` shows the pane's buffer again and leaves the program running.
   Opening a file in the pane, or closing the split, does the same.
-- When the program exits, a pane showing it returns to its most recently used
-  buffer (or a scratch buffer) without closing. By default, the terminal
-  session and its output are forgotten and disappear from the Finder and
-  `Space t t`. Set `editor.auto_close_terminal` to `false` in `Space o o` to
-  retain future exited sessions for review, search, or Close. Changing this
-  setting does not discard sessions already retained.
+- When the program exits, the pane stays open and shows its most recently used
+  buffer (or a scratch buffer). By default, the terminal session and its output
+  are forgotten and disappear from the Finder and `Space t t`.
+- To keep exited sessions for review, search or Close, set
+  `editor.auto_close_terminal` to `false` in `Space o o`. Changing this setting
+  does not discard sessions you already kept.
 
 #### The terminal list
 
@@ -213,10 +210,10 @@ A session outlives the pane showing it.
 - `exited`, `unread`, and `bell` in the STATE column;
 - the program, number, and directory in the preview.
 
-**The preview** shows the live screen with its colours, updating while you move
-through the list; an exited terminal shows its final screen. It is read-only
-and never resizes the terminal. A wider screen is clipped, and a shorter
-preview keeps the child's cursor row visible. `Ctrl-t` toggles it.
+**The preview** shows the live screen with its colours and updates as you move
+through the list. An exited terminal shows its final screen. The preview is
+read-only and never resizes the terminal. A wider screen is clipped, and a
+shorter preview keeps the program's cursor row visible. `Ctrl-t` toggles it.
 
 | Action | Effect |
 | --- | --- |
@@ -228,11 +225,16 @@ preview keeps the child's cursor row visible. `Ctrl-t` toggles it.
 | **Force kill** (Tab) | For a hung program. Always asks, naming the terminal, even when visible: Enter confirms, Escape cancels. Kills the process group, discards its output, and shows the pane's buffer. Unsaved work in the program is lost. Not offered for exited terminals. |
 | **Create** (Tab) | Start a new terminal |
 
-**Ending a program is always explicit:** type `exit` in it, or choose Close or
-Force kill, or use `:quit-all!!` (`:qa!!`) to terminate this workspace’s terminal
-processes, discard unsaved buffers, and quit. Ordinary quit spellings, including
-`:qa!`, refuse while terminals run. Pending plugin writes and activity still
-protect against quitting; finish those operations or stop their owner first.
+**Runyte never ends a program unless you tell it to.** You can:
+
+- type `exit` in it
+- choose Close or Force kill
+- use `:quit-all!!` (`:qa!!`) to end this workspace's terminal processes,
+  discard unsaved buffers and quit
+
+Ordinary quit commands, including `:qa!`, refuse while terminals run. Pending
+plugin writes and activity also block quitting. Finish those operations or stop
+their owner first.
 
 **Other commands:**
 
@@ -247,17 +249,16 @@ A pane title reads `[terminal #<number>] <name>`.
 - The number is what `:terminal-send`, `:terminal-show`, and
   `:terminal-session-directory` accept. It is also in the list preview.
 - Only running terminals have numbers. A new terminal takes the lowest free
-  number, and gives it up when its program exits or it is closed, so numbers
-  stay small and are reused. Numbers never depend on list order.
-- Because a number can pass to a new terminal, it identifies what is running
-  now. Do not record one in a macro or script expecting the same terminal
+  number and gives it up when its program exits or it is closed. Numbers stay
+  small and get reused. They never depend on list order.
+- A number can pass to a new terminal, so it only identifies what is running
+  now. Don't record one in a macro or script and expect the same terminal
   later.
-- A retained exited terminal has no number: its title is `[terminal] <name>`, and it
-  is reached from `:terminals` or the Finder by name. Action menu titles use
-  the `[terminal] <name>` form too.
-- The name is the one you assigned, otherwise what the program calls itself:
-  the title a shell sets from its prompt, or the program's name until it sets
-  one.
+- A retained exited terminal has no number. Its title is `[terminal] <name>`,
+  and you reach it from `:terminals` or the Finder by name. Action menu titles
+  use the `[terminal] <name>` form too.
+- The name is the one you gave it. Otherwise it is what the program calls
+  itself: the title a shell sets from its prompt, or the program's name.
 - Scrolled back into history, the title adds `↑` and how far.
 - The active pane adds `[insert]` while keys go to the child.
 
@@ -272,9 +273,9 @@ Sessions live as long as the workspace-host process that owns them:
 | Switching workspaces | Logout or reboot |
 | Reattaching | Machine failure |
 
-`:detach` leaves persistent terminal children running without signalling them.
-In ide and mux modes alike, ordinary quitting refuses while a terminal
-runs; `:qa!!` explicitly terminates this workspace’s terminal processes.
+`:detach` leaves persistent terminal programs running. In both ide and mux
+modes, ordinary quitting refuses while a terminal runs. `:qa!!` ends this
+workspace's terminal processes.
 
 ### Emulation and limits
 
@@ -288,54 +289,53 @@ titles.
 **Scrollback and performance:**
 
 - `terminal.scrollback_lines` keeps up to 2,000 history rows per terminal by
-  default, excluding the visible screen. Set it from 0 to 100,000 in the config
-  or settings page; 0 disables history but still allows visible-screen review
-  and copying. Reloading the config or saving the setting updates existing and
-  future terminals. Lowering it immediately drops the oldest live history;
-  raising it cannot restore discarded rows.
-- Each terminal can retain one frozen review snapshot independently of the
-  history limit. New output, other terminals, and history-limit changes leave
-  its text and selections intact. Returning to input releases it. A Finder
-  result outside an existing snapshot cannot replace that snapshot; return to
-  input before opening newer output for review.
-- There is no shared native terminal memory budget. Memory grows with the
-  number and width of terminals, retained history, and review snapshots.
-- Noisy sessions use independent bounded queues and round-robin byte and
+  default, not counting the visible screen. You can set it from 0 to 100,000 in
+  the config or settings page. With 0 you get no history, but you can still
+  review and copy the visible screen. Reloading the config or saving the
+  setting updates all terminals. Lowering it drops the oldest history right
+  away. Raising it can't bring discarded rows back.
+- Each terminal can keep one frozen review snapshot, separate from the history
+  limit. New output, other terminals and history-limit changes don't touch its
+  text or selections. Returning to input releases it. A Finder result outside
+  the snapshot can't replace it, so return to input before opening newer output
+  for review.
+- There is no shared memory budget for terminals. Memory grows with the number
+  and width of terminals, retained history and review snapshots.
+- Noisy sessions have their own bounded queues and take turns with byte and
   message budgets. PTY input is bounded and chunked.
 - Terminal and review output is never written to disk.
-- Output frames are coalesced to a bounded cadence. Repainting sends only
-  changed rows, with a full resynchronization when the base is stale.
-- Rapid identical wheel reports are merged into bounded requests, keeping
-  their scroll distance and their order relative to clicks and keys.
-- The alternate screen has no history, so while `htop` or `vim` runs there is
+- Output frames are combined to limit how often the screen updates. Repainting
+  sends only changed rows, with a full refresh when needed.
+- Rapid identical wheel reports are merged. They keep their scroll distance and
+  their order relative to clicks and keys.
+- The alternate screen has no history. While `htop` or `vim` runs there is
   nothing behind the screen to scroll to or copy.
 - Inline TUIs on the primary screen may keep a composer or status area fixed
-  while completed output scrolls through a top-anchored region. Those
-  completed rows are ordinary scrollback, including Codex output in inline
-  mode.
+  while finished output scrolls above it. Those finished rows are ordinary
+  scrollback, including Codex output in inline mode.
 
-**Mouse.** SGR mouse reports are forwarded inside the pane body when the child
-asks for them. Borders stay Runyte's, and the wheel scrolls review history
-when the child has not asked for the pointer. In the native window,
-Ctrl-left-click (Cmd-left-click on macOS) follows links instead, even while
-the terminal is in input mode and requesting mouse reports.
+**Mouse.** SGR mouse reports are forwarded inside the pane body when the
+program asks for them. Borders stay with Runyte. The wheel scrolls review
+history when the program has not asked for the pointer. In the native window,
+Ctrl-left-click (Cmd-left-click on macOS) follows links instead, even when the
+program is requesting mouse reports.
 
 **Colour queries.** Read-only `OSC 10;?` and `OSC 11;?` queries get the theme's
-default foreground and background, so light- and dark-aware programs pick
-fitting colours. A theme colour set to `reset` is unknown and gets no reply.
-`OSC 4` palette queries and setters remain ignored even with theme ANSI colours
-enabled: colour depth and palette rendering belong to each attached client.
+default foreground and background, so programs can adapt to light and dark
+themes. A theme colour set to `reset` is unknown and gets no reply. `OSC 4`
+palette queries and setters are ignored, even with theme ANSI colours enabled.
+Colour depth and palette rendering belong to each attached client.
 
 **Known limitations:**
 
-- Colour-setting and palette queries are ignored, as is `OSC 52`, so a program
-  cannot change the palette or write your clipboard unasked.
-- A cell keeps up to three combining marks without taking columns; more are
-  deliberately dropped.
-- Inline images — kitty graphics, sixel — are not passed through.
+- Colour-setting and palette queries are ignored, as is `OSC 52`. A program
+  can't change the palette or write to your clipboard.
+- A cell keeps up to three combining marks without taking columns. Any more are
+  dropped.
+- Inline images (kitty graphics, sixel) are not passed through.
 - Resizing does not reflow wrapped lines. Emulators disagree about what a
   resized wrapped line should become, and a wrong guess corrupts a live
-  full-screen program worse than truncation does.
+  full-screen program.
 - Windows provides ide-mode and mux-mode ConPTY terminals.
 
 <!-- navigation -->

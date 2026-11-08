@@ -41,9 +41,9 @@ theme: everforest-dark-medium
 
 #### About the themes
 
-**`ocean-dark` and `ocean-light`** are one palette seen from two grounds, drawn
-from a breaking wave: deep water is the ground, the wave's turquoise face is
-the accent, and foam and sky are what the palette lightens toward.
+**`ocean-dark` and `ocean-light`** share one palette, based on a breaking wave.
+Deep water is the background, the wave's turquoise face is the accent, and the
+palette lightens toward foam and sky.
 
 - Every role is the same hue at the same contrast in both variants.
 - Both are deliberately soft: text reads at 8.6:1 against the background
@@ -54,9 +54,9 @@ the accent, and foam and sky are what the palette lightens toward.
 - Mode carets and status labels use turquoise Normal, coral Insert, apricot
   Select, indigo Command, and orchid Replace. Insert and Select take their
   red/orange pairing from `terafox`, adjusted for the ocean grounds.
-- Other warm colours are the error red, which one-key jump labels share,
-  the warning amber, and the Git gutter and diff colours every built-in theme
-  shares.
+- The other warm colours are the error red (also used by one-key jump labels),
+  the warning amber, and the Git gutter and diff colours shared by every
+  built-in theme.
 
 **`ember-dark` and `ember-light`** are Runyte's branded pair, named for the
 red they carry on a neutral gray ground.
@@ -76,10 +76,10 @@ legible option for each kind of terminal.
 
 - An almost-black ground with a green cast, a saturated code green for
   keywords and the accent, and a ladder of greens for everything else.
-- Blue is rare on purpose, so blue things are the ones worth finding: azure
-  for functions, directories, and Command mode; cyan for types; indigo for the
-  Replace caret.
-- Ordinary selections are deep green; the primary selection is blue.
+- Blue is rare on purpose, so blue things stand out. Azure is for functions,
+  directories and Command mode. Cyan is for types. Indigo is for the Replace
+  caret.
+- Ordinary selections are deep green. The primary selection is blue.
 - Only errors and one-key jump labels are red, apart from the Git gutter and
   diff colours every built-in theme shares.
 
@@ -90,14 +90,14 @@ like a heads-up game menu.
   caret.
 - Cyan marks what you act on: calls, directories, and the Insert caret.
 - Acid green is kept for strings.
-- Text reads at 9.7:1, about as bright as `ocean-dark`; the ratio is higher
+- Text reads at 9.7:1, about as bright as `ocean-dark`. The ratio is higher
   only because the ground is darker.
 - The red stays darker than the other colours. Lightening a saturated red to
   match them turns it pink and loses the frame.
-- The primary selection is the Select caret's acid green, darkened to a
-  ground and kept at the yellow end of green so it is not read as a Git
-  "added" line. Ordinary selections are blue. A deep red selection was
-  rejected because it looked like a deleted line.
+- The primary selection is a darker version of the Select caret's acid green.
+  It stays at the yellow end of green, so it doesn't look like a Git "added"
+  line. Ordinary selections are blue. A deep red selection was rejected because
+  it looked like a deleted line.
 
 **Nightfox themes** use the canonical palettes from
 [Nightfox](https://github.com/EdenEast/nightfox.nvim).
@@ -108,7 +108,7 @@ like a heads-up game menu.
 - `terafox` uses deep blue-green backgrounds and warm accents.
 - `terafox-soft` is Runyte's own variant: `terafox` with text lowered from
   13.1:1 to 8.6:1 contrast, for long reading without glare. Identifiers,
-  operators, and punctuation move by the same amount; everything else is
+  operators, and punctuation move by the same amount. Everything else is
   unchanged.
 
 **`atom-one-light`** follows Atom's official
@@ -156,7 +156,7 @@ themes:
 ```
 
 Every field is optional. An omitted field either takes a fixed default or
-borrows another role's colour; the
+borrows another role's colour. The
 [theme colour reference](themes.md#theme-colour-reference) says which.
 
 A theme that sets most roles:
@@ -242,7 +242,7 @@ Terminal panes, frozen review and terminal previews use the active theme's
 sixteen ANSI colours by default. Switching themes or toggling
 `editor.terminal_theme_colors` in `Space o o` recolours existing output
 immediately. Set it to `false` to use the outer terminal's palette instead.
-Only indices 0–15 are remapped; indices 16–255 and explicit RGB retain the
+Only indices 0–15 are remapped. Indices 16–255 and explicit RGB retain the
 program's colours, subject to the client's colour depth.
 
 Custom themes can override any of these slots under `terminal`:
@@ -260,15 +260,15 @@ Omitted normal slots use `muted`, `error`, `change_added`, `warning`,
 `directory`, `change_modified`, `accent`, and `foreground`, respectively.
 Omitted bright slots take those roles a further 12% toward white on dark
 grounds or black on light grounds. Derived colours are moved toward the higher-contrast
-black or white extreme to reach at least 3:1 on the theme ground; explicit overrides are used exactly.
+black or white extreme to reach at least 3:1 on the theme ground. Explicit overrides are used exactly.
 An override of a normal slot does not change an omitted bright slot.
 
-Bundled third-party themes start from their upstream terminal palettes;
+Bundled third-party themes start from their upstream terminal palettes.
 Atom One Light uses its official syntax hues. Low-contrast entries are moved
 toward white or black to reach 3:1 on the theme background, including neutral
 slots upstream intended as backgrounds. Runyte's original themes derive their
 palettes from the roles above. Upstream hues are retained, while Runyte's
-shared Git roles remain unchanged; ANSI green and Git added marks need not
+shared Git roles remain unchanged. ANSI green and Git added marks need not
 have identical RGB values.
 
 A `reset` background still uses the theme palette. Its actual ground is
@@ -286,8 +286,8 @@ or another role's colour.
   well as the base colours.
 - Setting `warning`, `info`, `change_*`, or `diff_*` to `null` uses a fallback
   instead of the fixed default: `warning` borrows `change_modified` and `info`
-  borrows `change_added` (then terminal yellow and green); `change_*` use the
-  terminal's green, magenta, and red; `diff_*` leave lines unfilled, so only
+  borrows `change_added` (then terminal yellow and green). `change_*` use the
+  terminal's green, magenta, and red. `diff_*` leave lines unfilled, so only
   the gutter marks show the comparison.
 
 #### Base colours
@@ -402,7 +402,7 @@ These colour the `gw` (goto-word) labels.
   it off with `editor.command_mode_dim: false`.
 
 The look of `gw` is inspired by
-[`smoka7/hop.nvim`](https://github.com/smoka7/hop.nvim); Runyte's
+[`smoka7/hop.nvim`](https://github.com/smoka7/hop.nvim). Runyte's
 implementation is independent.
 
 #### Accepted but unused
@@ -453,8 +453,8 @@ picks the colour.
 
 ### Derived colours
 
-Some surfaces are computed from the theme rather than named in it, so every
-theme, custom or built-in, gets them:
+Some colours are computed from the theme, so every theme, custom or built-in,
+gets them:
 
 - **Inactive panes** use a ground halfway between `background` and the popup
   ground.

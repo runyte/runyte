@@ -4,7 +4,7 @@
 
 Pane commands live under `Space w`, with `Ctrl-w` as the compatibility
 spelling. From Insert and Replace modes, `Ctrl-w` reaches focus movement
-(`h/j/k/l`), pane moves (`H/J/K/L`), `w`, `x`, `n`, `p`, and `a`; Terminal Insert adds `v/s` and
+(`h/j/k/l`), pane moves (`H/J/K/L`), `w`, `x`, `n`, `p`, and `a`. Terminal Insert adds `v/s` and
 `f/z` (see [Terminals](terminals.md#terminals)).
 
 | Key | Action |
@@ -25,30 +25,38 @@ spelling. From Insert and Replace modes, `Ctrl-w` reaches focus movement
 Borders can also be dragged with the mouse. The key-hint popup after
 `Space w` lists every window command.
 
-Hold Alt and drag with the left mouse button inside a pane to rearrange it.
-A thick **pane drop outline** shows where it will land on release. The outer
-two columns or one row of the layout move it to that whole edge; the outer
-quarter of another pane splits that pane to make room; the middle of another
-pane swaps their complete contents. Shared borders resize even with Alt held.
-Alt-left-press inside a terminal pane belongs to Runyte and is not forwarded
-to the child, even when the child requests mouse reporting. Pane moves preserve
-the pane's content and terminal session, and are unavailable while Zen or
-full-screen maximizes a pane.
+Hold Alt and drag with the left mouse button inside a pane to rearrange it. A
+thick **pane drop outline** shows where it will land when you release. Where
+you drop it matters:
 
-Hold Shift and Alt when starting a left-drag to **extend** the pane in place.
-Drag outside one of its sides: the outline snaps that side to the far edge
+- The outer two columns or one row of the layout move it to that whole edge.
+- The outer quarter of another pane splits that pane to make room.
+- The middle of another pane swaps their contents.
+
+Shared borders resize even with Alt held. Alt-left-press inside a terminal pane
+belongs to Runyte and is not forwarded to the child, even if the child asks for
+mouse reporting. Pane moves keep the pane's content and terminal session. They
+are not available while Zen or full-screen maximizes a pane.
+
+Hold Shift and Alt when you start a left-drag to **extend** the pane in place.
+Drag outside one of its sides, and the outline snaps that side to the far edge
 of the pane under the pointer. Release to apply it, or press Escape to cancel.
-The other sides stay anchored. Neighbours shrink where they can remain one
-rectangle; covered panes, or panes that would be split into separate pieces,
-close as with `:wc`. Adjacent panes grow into any space left by those closures.
-Buffers, unsaved edits, and terminal sessions remain available. If the result
-cannot form a rectangular split layout, there is no outline and release leaves
-the layout unchanged. Shared borders still resize normally.
 
-For example, starting with `AA / BC`, extending C upward gives `AC / BC`;
-extending B right gives `AC / BB`; extending B upward leaves B filling the
-editor. With `AAA / BCD`, extending C upward closes A and grows B and D,
-leaving three full-height columns `BCD`.
+The other sides stay where they are. Neighbours shrink if they can stay one
+rectangle. Covered panes, and panes that would be cut into separate pieces,
+close as with `:wc`. Adjacent panes grow into the free space. Buffers, unsaved
+edits and terminal sessions stay available. If the result can't form a
+rectangular layout, no outline appears and release changes nothing. Shared
+borders still resize normally.
+
+For example, starting with `AA / BC`:
+
+- extending C upward gives `AC / BC`
+- extending B right gives `AC / BB`
+- extending B upward leaves B filling the editor
+
+With `AAA / BCD`, extending C upward closes A and grows B and D. You end up
+with three full-height columns, `BCD`.
 
 **Examples:**
 
@@ -65,16 +73,14 @@ leaving three full-height columns `BCD`.
 - **An explorer** splits the same way: same listing, same row. No key opens the
   entry under the caret in a split. Navigate the new pane elsewhere and it
   gets an explorer of its own.
-- **A terminal** is the exception. A terminal is pane content, not a buffer,
-  so the pane still holds the buffer it showed before; that buffer is history,
-  not something you asked to see twice. The terminal stays where it is, live
-  or in review, and the new pane opens the working directory as an explorer,
-  as `Space E` would.
+- **A terminal** is the exception. The terminal stays where it is, live or in
+  review. The new pane opens the working directory as an explorer, as
+  `Space E` would.
 
 ### Fast pane keys
 
 Set `editor.fast_pane_keys: true` to move between panes with the bare
-`Ctrl-h/j/k/l` — left, down, up, right — as a tmux user would. It works in
+`Ctrl-h/j/k/l` (left, down, up, right), as a tmux user would. It works in
 Normal, Select, Insert, and a live terminal.
 
 It is off by default because those keys are not free:
@@ -86,26 +92,24 @@ It is off by default because those keys are not free:
 | `Ctrl-h` | Backspace, in most terminal programs |
 | `Ctrl-l` | Clear the screen, in most terminal programs |
 
-With the setting on, a terminal's child never receives those four keys. Both
-prefixed spellings keep working, and help and the key-hint popup describe
-whichever set is in force. Configured bindings still decide the action.
+With the setting on, a program in a terminal never receives those four keys.
+Both prefixed spellings keep working. Help and the key-hint popup show the keys
+currently in use. Configured bindings still decide the action.
 
-On native Windows, Runyte requests keyboard reporting that keeps Ctrl chords
-distinct from Backspace and Enter. Fast pane keys also work in the explorer,
-where the physical Backspace and Enter keys keep directory navigation and
-opening.
+On native Windows, Runyte asks for keyboard reporting that keeps Ctrl chords
+separate from Backspace and Enter. Fast pane keys also work in the explorer,
+where the physical Backspace and Enter keys still navigate and open.
 
 ### Equalizing
 
-`Space w =` levels splits after `:resize-*` or a dragged border has skewed
-them.
+`Space w =` evens out splits after `:resize-*` or dragging a border.
 
 1. Every pane gets the same width.
 2. Every pane sharing a column gets the same height.
 
-Only the boundaries move; which pane sits beside or above which stays the
-same. A pane spanning the full width above a row of others keeps spanning
-it, and the row below is levelled.
+Only the boundaries move. The panes stay in the same arrangement. A pane
+spanning the full width above a row of others keeps spanning it, and the row
+below is levelled.
 
 ### Zen and fullscreen
 
@@ -119,11 +123,11 @@ it, and the row below is levelled.
 - The buffer, selections, undo history, and split tree are unchanged. Toggling
   again restores the exact previous layout.
 - Soft wrap keeps the same settings, including the rendered Markdown override.
-- With several panes, the two views share one state: asking for the other
-  switches to it, and only the view actually showing toggles off.
-- While a pane is maximized, splitting, closing, directional focus, and pane
-  cycling wait until it is toggled off. The maximized pane is the only one keys
-  can reach, so what is on screen and what receives typing cannot diverge.
+- With several panes, the two views share one state. Asking for the other view
+  switches to it. Only the view currently showing toggles off.
+- While a pane is maximized, splitting, closing, directional focus and pane
+  cycling are unavailable. Keys only reach the maximized pane, so you always
+  type into what you see.
 - The title tag follows the `[+]` and `[RO]` markers. An ordinary pane has
   neither tag.
 - Both cover the directory tree temporarily, and zen hides the session strip.

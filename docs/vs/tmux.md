@@ -36,4 +36,4 @@ These are workflow recommendations based on the capabilities above.
 
 - **Runyte:** You want the editor to own navigation across code, scratch buffers, Git views, and terminal output.
 - **tmux:** You need persistent shells and arbitrary terminal applications, while choosing and configuring your editor independently.
-- **Together:** Runyte can sit inside tmux. Standalone Runyte may be sufficient when tmux owns detach/reattach; check outer keybindings because they can intercept editor shortcuts.
+- **Together:** Runyte can sit inside tmux. Standalone Runyte may be sufficient when tmux owns detach/reattach. Check outer keybindings because they can intercept editor shortcuts.
