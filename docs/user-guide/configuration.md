@@ -395,7 +395,7 @@ and memory behavior.
 | `lsp.enable` | `true` | boolean | Allow configured language servers to start. Restart required. |
 | `mcp.default_grants` | none | identity: list of permissions | Identities that may read in every workspace that has no grant or revocation of its own. The only permission is `read`; `write` is granted per workspace with `:mcp`. Earlier capability names are accepted; a list with both `terminal_read` and `editor_context_read` means `read`, and any other grants nothing and is reported at start. Read when a workspace starts. See [Default grants](agent-access-to-workspace-context.md#default-grants). |
 | `lsp.<language>` | `rust` only | `command`, `args`, `initialization_options`, `roots` | A language server definition. See [Language servers](language-support.md#language-servers). |
-| `theme` | `ocean-dark` | theme name | The active theme. See [Themes](themes.md#themes). |
+| `theme` | `base16` | theme name | The active theme. See [Themes](themes.md#themes). |
 
 ### Configuration recipes
 
