@@ -1230,10 +1230,7 @@ with `{ command: name, argument: text }`.
 | `quit-here` | `quit-here` | Quit and hand the active directory to the shell wrapper |
 | `quit-here!` | `quit-here!` | Discard changes, quit, and hand the active directory to the shell wrapper |
 | `reload` | `reload` | Reload the active view |
-| `resize-right` | `resize-right <+\|-> <cells>` | Grow or shrink the active pane at its right edge |
-| `resize-left` | `resize-left <+\|-> <cells>` | Grow or shrink the active pane at its left edge |
-| `resize-top` | `resize-top <+\|-> <cells>` | Grow or shrink the active pane at its top edge |
-| `resize-bottom` | `resize-bottom <+\|-> <cells>` | Grow or shrink the active pane at its bottom edge |
+| `resize` | `resize` | Preview pane resizing and extension; Enter applies, Escape cancels |
 | `write-quit` | `write-quit` | Write the active buffer, then close its pane or quit if it is the last pane |
 | `write-buffer-close` | `write-buffer-close` | Write and close the active buffer without changing the pane layout |
 
@@ -1343,3 +1340,10 @@ to that editor interaction until it finishes. The preview map is limited to 512
 local/forwarding entries and 512 compatibility aliases. If it exceeds those
 limits, the preview reports this and input returns to source. It never installs
 a partial map.
+
+`ui.pane-resize` owns keyboard layout previews. Its actions are `next` / `previous`
+(Tab / Shift-Tab), `move-left/right/up/down` (h/l/k/j and arrows),
+`extend-left/right/up/down` (H/L/K/J and Shift+arrows), `back` (u, undo),
+`accept` (Enter), and `cancel` (Esc). The legend uses the effective bindings.
+This owner inherits no leader alias. The `resize` command opens the preview;
+previous directional resize command bindings must be updated to it.

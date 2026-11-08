@@ -1120,7 +1120,7 @@ async fn run_loop(
                 let idle = Duration::from_secs((host.config.workspace.idle_retirement_minutes as u64).saturating_mul(60));
                 stop = !idle.is_zero() && !attached && clients.renames.is_empty() && host.may_retire_idle() && clients.last_detached().elapsed() >= idle;
             }
-            _ = status_animation.tick(), if attached && host.has_long_running_action() => { changed = true; }
+            _ = status_animation.tick(), if attached && host.has_presentation_animation() => { changed = true; }
             _ = frame_tick.tick(), if attached && frame_pending && !host.finder_scan_refills() => { changed = true; }
             _ = finder_refresh.tick(), if host.finder_terminals_dirty() => {
                 if host.refresh_finder_terminals() && !host.resource_finder_scan_pending() { changed = true; }

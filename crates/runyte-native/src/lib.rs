@@ -530,7 +530,9 @@ pub(crate) fn dimensions() -> (u16, u16) {
 pub(crate) fn capture_attached(snapshot: &runyte::workspace::HostFrame) {
     let Some(bridge) = BRIDGE.get() else { return };
     bridge.media_input.store(
-        snapshot.editor.mode != runyte::app::Mode::Command && snapshot.overlays.is_empty(),
+        snapshot.editor.mode != runyte::app::Mode::Command
+            && snapshot.overlays.is_empty()
+            && snapshot.editor.resize.is_none(),
         Ordering::Release,
     );
     let counts = bridge.pages.lock().unwrap().clone();

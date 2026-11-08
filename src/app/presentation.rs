@@ -390,6 +390,8 @@ impl App {
             self.plugins.presented_views = self.plugin_view_presentation();
         }
         let (geometry, session_strip) = self.prepare_session_strip(geometry);
+        self.validate_resize_preview(Some(geometry.editor));
+        self.advance_resize_fade(Instant::now());
         self.pace_picker_progress();
         self.flush_lsp_replies();
         self.sync_word_index();
@@ -1640,7 +1642,9 @@ impl App {
     /// The terminal event loop uses the same boundary as `handle_key` so a key
     /// that closes an overlay cannot also produce a normal-mode key hint.
     pub fn has_input_overlay(&self) -> bool {
-        self.plugins.input.is_some() || self.has_native_input_overlay()
+        self.pane_resize.is_some()
+            || self.plugins.input.is_some()
+            || self.has_native_input_overlay()
     }
 
     pub(crate) fn plugin_view_presentation(
@@ -1770,7 +1774,8 @@ impl App {
     }
 
     pub(crate) fn has_native_input_overlay(&self) -> bool {
-        self.context_overlay_active()
+        self.pane_resize.is_some()
+            || self.context_overlay_active()
             || self.plugins.provider_reload.is_some()
             || self.plugins.provider_overwrite.is_some()
             || self.picker.is_some()

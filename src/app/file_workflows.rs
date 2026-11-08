@@ -17,8 +17,8 @@ use super::{
     ListAction, ListPicker, MAX_DIFF_BYTES, MaximizedPane, MaximizedView, Mode, PaneDirectory,
     Path, PathBuf, PickerItem, PromptKind, Result, Selection, SelectionSemantics, Side, TerminalId,
     Transaction, TransferMode, bail, buffer_language, diff_row_for_identity, diff_row_identity,
-    enclosing_area, ensure, expand_home_path, external_open, external_opening, fs,
-    open_or_new_at_identity, resolved_operation_path, trailing_whitespace_changes,
+    ensure, expand_home_path, external_open, external_opening, fs, open_or_new_at_identity,
+    resolved_operation_path, trailing_whitespace_changes,
 };
 use crate::{
     directory_buffer::ListingView,
@@ -3335,62 +3335,6 @@ impl App {
         } else if terminal_input {
             self.enter_normal_mode();
         }
-    }
-
-    /// Why `resize_pane_edge(dx, dy, _)` would find no boundary to move.
-    ///
-    /// The same geometry the resize reads, without resizing, so command
-    /// discovery offers exactly the directions with an edge.
-    pub(super) fn pane_edge_context(&self, dx: i32, dy: i32) -> Result<(), &'static str> {
-        if self.pane_edge_touches_tree(dx, dy) && self.directory_tree_geometry.is_some() {
-            return Ok(());
-        }
-        if self.directory_tree.focused {
-            return Err("directory tree has no boundary in that direction");
-        }
-        if self.pane_neighbor(dx, dy).is_none() {
-            return Err("active pane has no boundary in that direction");
-        }
-        Ok(())
-    }
-
-    fn pane_edge_touches_tree(&self, dx: i32, dy: i32) -> bool {
-        self.directory_tree.visible
-            && self.maximized.is_none()
-            && ((self.directory_tree.focused && dx > 0)
-                || (!self.directory_tree.focused && dx < 0 && self.pane_neighbor(dx, dy).is_none()))
-    }
-
-    pub(super) fn resize_pane_edge(&mut self, dx: i32, dy: i32, delta: i16) -> Result<()> {
-        let tree_boundary = self.pane_edge_touches_tree(dx, dy);
-        if tree_boundary && let Some((tree, editor)) = self.directory_tree_geometry {
-            let editor_width = editor.width;
-            let width = tree.width;
-            let delta = i32::from(delta) * if self.directory_tree.focused { 1 } else { -1 };
-            self.resize_tree(i32::from(width) + delta, editor_width);
-            self.status("resized directory tree");
-            return Ok(());
-        }
-        if self.directory_tree.focused {
-            self.status("directory tree has no boundary in that direction");
-            return Ok(());
-        }
-        let Some(neighbor) = self.pane_neighbor(dx, dy) else {
-            self.status("active pane has no boundary in that direction");
-            return Ok(());
-        };
-        let Some(area) = enclosing_area(self.areas.values().copied()) else {
-            self.status("pane layout is not ready");
-            return Ok(());
-        };
-        self.layout
-            .resize_between_cells(self.active_pane, neighbor, area, delta);
-        self.status(format!(
-            "resized pane by {} cell{}",
-            delta.unsigned_abs(),
-            if delta.unsigned_abs() == 1 { "" } else { "s" }
-        ));
-        Ok(())
     }
 }
 

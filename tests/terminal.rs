@@ -857,7 +857,14 @@ fn terminal_insert_swap_keeps_the_live_child_and_resizes_at_its_new_geometry() {
     session.type_text("v");
     let document_pane = session.app.active_pane;
     render(&mut session.app, 80, 16);
-    type_colon(&mut session.app, "resize-left + 10");
+    type_colon(&mut session.app, "resize");
+    for _ in 0..10 {
+        session.app.handle_key(KeyStroke::char('h')).unwrap();
+    }
+    session
+        .app
+        .handle_key(KeyStroke::plain(KeyCode::Enter))
+        .unwrap();
     render(&mut session.app, 80, 16);
 
     session.app.handle_key(KeyStroke::ctrl('w')).unwrap();

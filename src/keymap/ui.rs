@@ -7,6 +7,7 @@ mod context_review;
 mod grammar;
 mod plugin_input;
 mod provider;
+mod resize;
 pub(crate) use context_review::Route as ContextReviewRoute;
 mod merge;
 mod picker;
@@ -25,6 +26,7 @@ mod tests;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Owner {
+    PaneResize,
     Completion,
     ContextActions,
     Path,
@@ -69,7 +71,8 @@ pub enum Owner {
 }
 
 impl Owner {
-    const ALL: [Self; 41] = [
+    const ALL: [Self; 42] = [
+        Self::PaneResize,
         Self::Completion,
         Self::ContextActions,
         Self::Path,
@@ -114,6 +117,7 @@ impl Owner {
     ];
     pub fn name(self) -> &'static str {
         match self {
+            Self::PaneResize => "pane-resize",
             Self::Completion => "completion",
             Self::ContextActions => "context-actions",
             Self::Path => "path",
@@ -202,7 +206,8 @@ impl Owner {
     fn inherits_leader(self) -> bool {
         !matches!(
             self,
-            Self::Completion
+            Self::PaneResize
+                | Self::Completion
                 | Self::ContextReview
                 | Self::MergeAcknowledgment
                 | Self::MergePrefix
@@ -221,6 +226,21 @@ impl Owner {
     fn actions(self) -> &'static [Action] {
         use Action::*;
         match self {
+            Self::PaneResize => &[
+                Next,
+                Previous,
+                Accept,
+                Cancel,
+                Back,
+                MoveLeft,
+                MoveRight,
+                MoveUp,
+                MoveDown,
+                ExtendLeft,
+                ExtendRight,
+                ExtendUp,
+                ExtendDown,
+            ],
             Self::Completion => &[
                 Next,
                 Previous,
@@ -292,7 +312,11 @@ impl Owner {
     }
     pub(crate) fn structural(self, key: KeyStroke) -> bool {
         match self {
-            Self::MergePrefix | Self::MacroReplay | Self::GrammarPrefix | Self::KeyHints => false,
+            Self::PaneResize
+            | Self::MergePrefix
+            | Self::MacroReplay
+            | Self::GrammarPrefix
+            | Self::KeyHints => false,
             Self::CharacterInput => matches!(key.code, KeyCode::Char(_)),
             Self::NativeWindow => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control() || !key.modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER))
@@ -369,6 +393,12 @@ impl Owner {
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Action {
+    MoveUp,
+    MoveDown,
+    ExtendLeft,
+    ExtendRight,
+    ExtendUp,
+    ExtendDown,
     Copy,
     KeepOpenAndContinue,
     ForwardPane,
@@ -417,6 +447,12 @@ pub enum Action {
 impl Action {
     pub fn name(self) -> &'static str {
         match self {
+            Self::MoveUp => "move-up",
+            Self::MoveDown => "move-down",
+            Self::ExtendLeft => "extend-left",
+            Self::ExtendRight => "extend-right",
+            Self::ExtendUp => "extend-up",
+            Self::ExtendDown => "extend-down",
             Self::Copy => "copy",
             Self::KeepOpenAndContinue => "keep-open-and-continue",
             Self::ForwardPane => "forward-pane",
@@ -533,6 +569,10 @@ impl Bindings {
                             KeyCode::Char('w'),
                             KeyCode::Char('u'),
                             KeyCode::Char('h'),
+                            KeyCode::Char('H'),
+                            KeyCode::Char('J'),
+                            KeyCode::Char('K'),
+                            KeyCode::Char('L'),
                             KeyCode::Char('d'),
                             KeyCode::Char(' '),
                         ] {
@@ -823,6 +863,9 @@ impl OwnerBindings {
 
 fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     use Action::*;
+    if owner == Owner::PaneResize {
+        return resize::action(key);
+    }
     if matches!(owner, Owner::GrammarPrefix | Owner::KeyHints) {
         return grammar::legacy_action(owner, key);
     }
@@ -920,6 +963,9 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
 }
 
 fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
+    if owner == Owner::PaneResize {
+        return resize::labels(action);
+    }
     if owner == Owner::NativePreview {
         return match action {
             Action::Back => &["Esc"],

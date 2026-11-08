@@ -17,6 +17,15 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-08 — resize preview transition
+
+Keyboard resize previews reuse the existing 80 ms presentation tick for a
+160 ms entrance fade. The tick is enabled only while that finite transition
+or an existing long-running action remains active. Any resize control ends
+the fade immediately; completed previews add no idle timer. A regression test
+advances the transition clock and verifies that animation demand ends. No
+startup benchmark was run; no startup latency change is claimed.
+
 ## 2026-11-06 — exact home workspace
 
 [#73](https://github.com/runyte/runyte/issues/73) captures canonical home

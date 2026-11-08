@@ -46,6 +46,15 @@ them, regardless of which extensibility direction is chosen.
   `EditorSnapshot.pane_drop` carries only the optional rectangle; the editor
   owns hit testing and the move. Private bundled-client protocol version 80
   carries this field for both terminal and desktop attachments.
+- **Resize preview** — the keyboard-owned layout draft opened by `:resize`.
+  Labelled tiles replace pane content; the active tile is tinted and a thick
+  edge with a handle identifies the selected boundary. Every surviving tile
+  reflects the draft, including secondary effects of extensions. The status
+  line teaches effective controls and the interaction line keeps Apply/Cancel
+  beside dimensions and feedback. Live pane views and PTY sizes stay unchanged
+  until Enter. Escape, a geometry/layout change or attachment change discards
+  the draft. Private bundled-client protocol version 95 carries the draft
+  tiles, selected edge and effective legend in `EditorSnapshot.resize`.
 - **Pane title** — structural buffer identity in the pane's top border, such as
   `[file] path`, `[explorer] path`, `[notifications]`, or `[log]`, plus `[+]`,
   `[STALE]`, and `[RO]`, in that order, and finally `[zen]` or `[fullscreen]`

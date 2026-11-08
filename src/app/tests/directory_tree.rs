@@ -553,13 +553,22 @@ fn tree_focus_and_resize_share_the_sidebar_boundary() {
     assert!(app.directory_tree.focused);
     // Exercise the actual colon prompt while the tree owns focus.
     key(&mut app, KeyCode::Char(':'), Modifiers::NONE);
-    app.handle_input(InputEvent::Text("resize-right + 5".into()))
-        .unwrap();
+    app.handle_input(InputEvent::Text("resize".into())).unwrap();
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    for _ in 0..5 {
+        key(&mut app, KeyCode::Right, Modifiers::NONE);
+    }
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     let view = app.prepare_view(geometry(120, 24));
     assert_eq!(view.tree_area.unwrap().width, 38);
     key(&mut app, KeyCode::Char('l'), Modifiers::CONTROL);
-    app.execute_command("resize-left + 3").unwrap();
+    app.execute_command("resize").unwrap();
+    // Right then left are this pane's two movable edges.
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    for _ in 0..3 {
+        key(&mut app, KeyCode::Left, Modifiers::NONE);
+    }
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
     let view = app.prepare_view(geometry(120, 24));
     assert_eq!(view.tree_area.unwrap().width, 35);
     for (kind, column) in [

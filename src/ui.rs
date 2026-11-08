@@ -20,7 +20,8 @@ use crate::{
 use ratatui::{
     Frame,
     layout::{
-        Constraint, Direction, Layout as TuiLayout, Position as ScreenPosition, Rect as TuiRect,
+        Alignment, Constraint, Direction, Layout as TuiLayout, Margin, Position as ScreenPosition,
+        Rect as TuiRect,
     },
     style::{Modifier, Style},
     text::{Line, Span},
@@ -846,6 +847,13 @@ fn render_editor_frame(
     key_hints: &KeyHintState,
     color_depth: TerminalColorDepth,
 ) {
+    if draw_resize(
+        frame,
+        &TuiTheme::with_color_depth(&snapshot.theme, color_depth),
+        snapshot,
+    ) {
+        return;
+    }
     let overlays = app.overlay_snapshots();
     let confirmation_overlay = overlays
         .iter()
@@ -1206,6 +1214,9 @@ fn render_attached_frame(
 ) {
     let mut theme = TuiTheme::with_color_depth(&snapshot.editor.theme, color_depth);
     theme.terminal_theme_colors = snapshot.editor.terminal_theme_colors;
+    if draw_resize(frame, &theme, &snapshot.editor) {
+        return;
+    }
     draw_session_strip(frame, &theme, &snapshot.editor);
     if let Some(tree) = &snapshot.editor.directory_tree {
         draw_directory_tree(frame, &theme, tree);
@@ -1270,6 +1281,9 @@ fn render_attached_frame(
 /// Native frontends can composite these cells above media without revealing
 /// the editor cells beneath the rest of the image.
 pub fn overlay_rectangles(editor: &EditorSnapshot, overlays: &[OverlaySnapshot]) -> Vec<Rect> {
+    if editor.resize.is_some() {
+        return vec![editor.geometry.screen];
+    }
     let completion_visible = overlays
         .iter()
         .any(|overlay| overlay.kind == OverlayKind::Completion);
@@ -2513,6 +2527,132 @@ fn place_directory_tree_cursor(frame: &mut Frame<'_>, tree: &DirectoryTreeSnapsh
             frame.set_cursor_position(ScreenPosition::new(tree.area.x.saturating_add(1), y));
         }
     }
+}
+
+/// The layout draft deliberately has no document, terminal or media content.
+fn draw_resize(frame: &mut Frame<'_>, theme: &TuiTheme, editor: &EditorSnapshot) -> bool {
+    let Some(resize) = &editor.resize else {
+        return false;
+    };
+    let fading = if resize.fade < 255 {
+        for pane in &editor.panes {
+            draw_pane(frame, theme, editor.mode, pane);
+        }
+        if let Some(tree) = &editor.directory_tree {
+            draw_directory_tree(frame, theme, tree);
+        }
+        Some(frame.buffer_mut().clone())
+    } else {
+        None
+    };
+
+    frame.render_widget(
+        Block::default().style(Style::default().bg(theme.background)),
+        frame.area(),
+    );
+    for pane in &resize.panes {
+        let area = to_tui_rect(pane.area).intersection(frame.area());
+        if area.width < 2 || area.height < 2 {
+            continue;
+        }
+        let foreground = if pane.active {
+            theme.accent
+        } else {
+            theme.muted
+        };
+        let background = if pane.active {
+            theme.overlay_background
+        } else {
+            theme.background
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(foreground))
+            .style(Style::default().bg(background));
+        frame.render_widget(block, area);
+        let body = area.inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
+        if let Some(original) = &fading {
+            let color = match (theme.muted, background) {
+                (ratatui::style::Color::Rgb(r, g, b), ratatui::style::Color::Rgb(br, bg, bb)) => {
+                    let mix = |a: u8, b: u8| {
+                        ((u16::from(a) * u16::from(255 - resize.fade)
+                            + u16::from(b) * u16::from(resize.fade))
+                            / 255) as u8
+                    };
+                    ratatui::style::Color::Rgb(mix(r, br), mix(g, bg), mix(b, bb))
+                }
+                _ => theme.muted,
+            };
+            for y in body.y..body.bottom() {
+                for x in body.x..body.right() {
+                    let cell = &original[(x, y)];
+                    frame.buffer_mut()[(x, y)]
+                        .set_symbol(cell.symbol())
+                        .set_style(
+                            Style::default()
+                                .fg(color)
+                                .bg(background)
+                                .add_modifier(Modifier::DIM),
+                        );
+                }
+            }
+        }
+        let center = body.y + body.height.saturating_sub(2) / 2;
+        frame.render_widget(
+            Paragraph::new(pane.title.clone())
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(foreground).bg(background)),
+            TuiRect::new(body.x, center, body.width, 1).intersection(body),
+        );
+        if pane.active && body.height > 1 {
+            frame.render_widget(
+                Paragraph::new(format!("{} × {}", pane.area.width, pane.area.height))
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(theme.muted).bg(background)),
+                TuiRect::new(body.x, center + 1, body.width, 1).intersection(body),
+            );
+        }
+    }
+    if let Some(edge) = resize.selected_edge {
+        let area = to_tui_rect(edge).intersection(frame.area());
+        let vertical = edge.width == 1;
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                frame.buffer_mut()[(x, y)]
+                    .set_symbol(if vertical { "┃" } else { "━" })
+                    .set_style(
+                        Style::default()
+                            .fg(theme.accent)
+                            .bg(theme.overlay_background)
+                            .add_modifier(Modifier::BOLD),
+                    );
+            }
+        }
+        if area.width > 0 && area.height > 0 {
+            frame.buffer_mut()[(area.x + area.width / 2, area.y + area.height / 2)].set_symbol("◆");
+        }
+    }
+    let status = to_tui_rect(editor.geometry.status).intersection(frame.area());
+    let message = to_tui_rect(editor.geometry.message).intersection(frame.area());
+    frame.render_widget(
+        Paragraph::new(format!(" RESIZE  {}", resize.controls)).style(
+            Style::default()
+                .fg(theme.foreground)
+                .bg(theme.overlay_background),
+        ),
+        status,
+    );
+    // Keep acceptance and cancellation at the start even on narrow screens.
+    frame.render_widget(
+        Paragraph::new(format!(" {} · {}", resize.decisions, resize.detail))
+            .style(Style::default().fg(theme.accent).bg(theme.background)),
+        message,
+    );
+    true
 }
 
 /// Outlines where an Alt-dragged pane would land, over whatever it would
@@ -11284,3 +11424,51 @@ mod plugin_prompt_tests {
 #[cfg(test)]
 #[path = "ui/tests/terminal_palette.rs"]
 mod terminal_palette_tests;
+
+#[cfg(test)]
+mod resize_tests {
+    use super::*;
+    use crate::input::{KeyCode, KeyStroke};
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn resize_preview_replaces_text_covers_media_and_draws_edge_and_pinned_decisions() {
+        for (width, height) in [(100, 32), (40, 12), (8, 4)] {
+            let mut app = App::new(crate::config::Config::default(), None).unwrap();
+            app.execute(crate::command::parse_colon_command("vsplit").unwrap())
+                .unwrap();
+            let geometry = frame_geometry(TuiRect::new(0, 0, width, height));
+            app.prepare_view(geometry);
+            app.execute(crate::command::parse_colon_command("resize").unwrap())
+                .unwrap();
+            app.handle_key(KeyStroke::plain(KeyCode::Left)).unwrap();
+            let prepared = app.prepare_view(geometry);
+            let snapshot = app.snapshot(&prepared);
+            assert!(snapshot.resize.is_some());
+            assert_eq!(overlay_rectangles(&snapshot, &[]), vec![geometry.screen]);
+            let theme = TuiTheme::with_color_depth(&snapshot.theme, TerminalColorDepth::TrueColor);
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| {
+                    assert!(draw_resize(frame, &theme, &snapshot));
+                })
+                .unwrap();
+            let text = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(text.contains("RESIZE"));
+            if width >= 40 {
+                assert!(text.contains("Enter apply"));
+                assert!(text.contains("Esc cancel"));
+                assert!(text.contains('◆'));
+            }
+            let edge = snapshot.resize.unwrap().selected_edge.unwrap();
+            let cell = &terminal.backend().buffer()[(edge.x, edge.y)];
+            assert_eq!(cell.fg, theme.accent);
+        }
+    }
+}

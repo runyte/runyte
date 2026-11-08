@@ -161,14 +161,8 @@ pub enum CommandContext {
     ClosablePane,
     /// More than one pane, or an active full-screen view to leave.
     Fullscreen,
-    /// A boundary on the right of the active pane.
-    PaneEdgeRight,
-    /// A boundary on the left of the active pane.
-    PaneEdgeLeft,
-    /// A boundary above the active pane.
-    PaneEdgeTop,
-    /// A boundary below the active pane.
-    PaneEdgeBottom,
+    /// A movable pane or directory-tree boundary.
+    PaneResize,
     /// A frontend attached to a persistent session host.
     PersistentAttachment,
     /// A launcher that can receive a directory on quit.
@@ -217,10 +211,7 @@ impl CommandContext {
         Self::WritableInPlace,
         Self::ClosablePane,
         Self::Fullscreen,
-        Self::PaneEdgeRight,
-        Self::PaneEdgeLeft,
-        Self::PaneEdgeTop,
-        Self::PaneEdgeBottom,
+        Self::PaneResize,
         Self::PersistentAttachment,
         Self::QuitDirectoryHandoff,
         Self::PluginStop,
@@ -294,10 +285,7 @@ pub enum ColonCommand {
     QuitHere,
     ForceQuitHere,
     Reload,
-    ResizeRight,
-    ResizeLeft,
-    ResizeTop,
-    ResizeBottom,
+    Resize,
     ServiceHealth,
     Pipe,
     PipeCancel,
@@ -477,10 +465,7 @@ impl ColonCommand {
         Self::QuitHere,
         Self::ForceQuitHere,
         Self::Reload,
-        Self::ResizeRight,
-        Self::ResizeLeft,
-        Self::ResizeTop,
-        Self::ResizeBottom,
+        Self::Resize,
         Self::ServiceHealth,
         Self::Pipe,
         Self::PipeCancel,
@@ -506,9 +491,7 @@ impl ColonCommand {
             | Self::Reload
             | Self::WriteQuit
             | Self::WriteBufferClose => CommandCategory::File,
-            Self::ResizeRight | Self::ResizeLeft | Self::ResizeTop | Self::ResizeBottom => {
-                CommandCategory::Window
-            }
+            Self::Resize => CommandCategory::Window,
             Self::DiffThis
             | Self::DiffDisk
             | Self::DiffRemote
@@ -1900,11 +1883,8 @@ impl CommandId {
                 Colon::PipeCancel => Some(Context::RunningPipe),
                 Colon::Path => Some(Context::FilePath),
                 Colon::Reload => Some(Context::Reloadable),
+                Colon::Resize => Some(Context::PaneResize),
                 Colon::WriteQuit | Colon::WriteBufferClose => Some(Context::WritableInPlace),
-                Colon::ResizeRight => Some(Context::PaneEdgeRight),
-                Colon::ResizeLeft => Some(Context::PaneEdgeLeft),
-                Colon::ResizeTop => Some(Context::PaneEdgeTop),
-                Colon::ResizeBottom => Some(Context::PaneEdgeBottom),
                 Colon::Detach => Some(Context::PersistentAttachment),
                 Colon::QuitHere | Colon::ForceQuitHere => Some(Context::QuitDirectoryHandoff),
                 Colon::PluginStop => Some(Context::PluginStop),
@@ -2922,36 +2902,12 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
-        ColonId(Colon::ResizeRight),
-        "resize-right",
+        ColonId(Colon::Resize),
+        "resize",
         [],
-        "resize-right <+|-> <cells>",
-        "Grow or shrink the active pane at its right edge",
-        Required(FreeText)
-    ),
-    spec!(
-        ColonId(Colon::ResizeLeft),
-        "resize-left",
-        [],
-        "resize-left <+|-> <cells>",
-        "Grow or shrink the active pane at its left edge",
-        Required(FreeText)
-    ),
-    spec!(
-        ColonId(Colon::ResizeTop),
-        "resize-top",
-        [],
-        "resize-top <+|-> <cells>",
-        "Grow or shrink the active pane at its top edge",
-        Required(FreeText)
-    ),
-    spec!(
-        ColonId(Colon::ResizeBottom),
-        "resize-bottom",
-        [],
-        "resize-bottom <+|-> <cells>",
-        "Grow or shrink the active pane at its bottom edge",
-        Required(FreeText)
+        "resize",
+        "Preview pane resizing and extension; Enter applies, Escape cancels",
+        NoArguments
     ),
     editor_spec!(
         Editor::DocumentOutline,
@@ -3014,7 +2970,6 @@ pub enum HelpInvocation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InvocationParameters {
     None,
-    PaneResize(i16),
     Path(PathBuf),
     OptionalPath(Option<PathBuf>),
     OptionalText(Option<String>),
@@ -3447,6 +3402,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::QuitHere
             | Colon::ForceQuitHere
             | Colon::Reload
+            | Colon::Resize
             | Colon::WriteQuit
             | Colon::WriteBufferClose
             | Colon::SessionList
@@ -3457,10 +3413,6 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             Colon::GitStashTracked | Colon::GitStashAll | Colon::GitStashUntracked,
             InvocationParameters::OptionalText(value),
         ) => value.as_ref().is_none_or(|value| !value.trim().is_empty()),
-        (
-            Colon::ResizeRight | Colon::ResizeLeft | Colon::ResizeTop | Colon::ResizeBottom,
-            InvocationParameters::PaneResize(delta),
-        ) => *delta != 0,
         (
             Colon::ChangeDirectory | Colon::Open | Colon::SessionAttach,
             InvocationParameters::Path(path),
@@ -3875,6 +3827,7 @@ fn invocation_from_parts(
                 | ColonCommand::QuitHere
                 | ColonCommand::ForceQuitHere
                 | ColonCommand::Reload
+                | ColonCommand::Resize
                 | ColonCommand::WriteQuit
                 | ColonCommand::WriteBufferClose
                 | ColonCommand::SessionList
@@ -3900,16 +3853,6 @@ fn invocation_from_parts(
                     InvocationParameters::SessionRename { workspace, name },
                 ))
             }
-            (
-                ColonCommand::ResizeRight
-                | ColonCommand::ResizeLeft
-                | ColonCommand::ResizeTop
-                | ColonCommand::ResizeBottom,
-                ParsedArgument::Text(Some(value)),
-            ) => Ok(CommandInvocation::new(
-                id,
-                InvocationParameters::PaneResize(parse_pane_resize(command, &value)?),
-            )),
             (
                 ColonCommand::PluginStop | ColonCommand::PluginRestart,
                 ParsedArgument::Text(Some(value)),
@@ -4002,29 +3945,6 @@ fn parse_session_rename(
         });
     }
     Ok((selector, remainder.to_owned()))
-}
-
-fn parse_pane_resize(command: ColonCommand, value: &str) -> Result<i16, CommandParseError> {
-    let name = COMMANDS
-        .iter()
-        .find(|spec| spec.id == CommandId::Colon(command))
-        .expect("pane resize commands belong to the inventory")
-        .name;
-    let compact = value
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect::<String>();
-    let (sign, magnitude) = compact.split_at(compact.chars().next().map_or(0, char::len_utf8));
-    let magnitude = magnitude.parse::<i16>().ok().filter(|value| *value > 0);
-    match (sign, magnitude) {
-        ("+", Some(magnitude)) => Ok(magnitude),
-        ("-", Some(magnitude)) => Ok(-magnitude),
-        _ => Err(CommandParseError::InvalidArgument {
-            command: name,
-            value: value.to_owned(),
-            expected: "+ N or - N, where N is 1 through 32767",
-        }),
-    }
 }
 
 #[cfg(test)]
@@ -4194,16 +4114,13 @@ mod tests {
             Context::WritableInPlace => 33,
             Context::ClosablePane => 34,
             Context::Fullscreen => 35,
-            Context::PaneEdgeRight => 36,
-            Context::PaneEdgeLeft => 37,
-            Context::PaneEdgeTop => 38,
-            Context::PaneEdgeBottom => 39,
-            Context::PersistentAttachment => 40,
-            Context::QuitDirectoryHandoff => 41,
-            Context::PluginStop => 42,
-            Context::PluginRestart => 43,
+            Context::PaneResize => 36,
+            Context::PersistentAttachment => 37,
+            Context::QuitDirectoryHandoff => 38,
+            Context::PluginStop => 39,
+            Context::PluginRestart => 40,
         };
-        let mut seen = [false; 44];
+        let mut seen = [false; 41];
         for context in Context::ALL {
             let index = position(*context);
             assert!(!seen[index], "{context:?} is listed twice");
@@ -4408,32 +4325,6 @@ mod tests {
     }
 
     #[test]
-    fn pane_resize_commands_parse_signed_cell_counts() {
-        for (source, expected) in [
-            ("resize-right + 12", 12),
-            ("resize-left -3", -3),
-            ("resize-top +1", 1),
-            ("resize-bottom - 7", -7),
-        ] {
-            assert_eq!(
-                parse_colon_command(source).unwrap().parameters(),
-                &InvocationParameters::PaneResize(expected)
-            );
-        }
-        for invalid in [
-            "resize-right 3",
-            "resize-left +0",
-            "resize-top --2",
-            "resize-bottom + 40000",
-        ] {
-            assert!(matches!(
-                parse_colon_command(invalid),
-                Err(CommandParseError::InvalidArgument { .. })
-            ));
-        }
-    }
-
-    #[test]
     fn session_commands_parse_optional_workspaces_and_typed_renames() {
         assert_eq!(
             parse_colon_command("session-stop api")
@@ -4544,7 +4435,7 @@ mod tests {
                 assert!(
                     CommandInvocation::from_parts(
                         parsed.id(),
-                        InvocationParameters::PaneResize(1),
+                        InvocationParameters::Grammar(None),
                         parsed.execution(),
                     )
                     .is_err()
@@ -4570,12 +4461,6 @@ mod tests {
                 CommandArguments::Required(ArgumentKind::FreeText) => Some(match spec.id {
                     CommandId::Colon(ColonCommand::SessionRename) => "workspace name",
                     CommandId::Colon(ColonCommand::GitNetworkRef) => "refs/heads/main",
-                    CommandId::Colon(
-                        ColonCommand::ResizeLeft
-                        | ColonCommand::ResizeRight
-                        | ColonCommand::ResizeTop
-                        | ColonCommand::ResizeBottom,
-                    ) => "+ 1",
                     _ => "example",
                 }),
             };

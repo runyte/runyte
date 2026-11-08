@@ -2519,7 +2519,7 @@ async fn run(
                     continue;
                 }
             }
-            _ = status_animation_tick.tick(), if app.has_long_running_action() => {}
+            _ = status_animation_tick.tick(), if app.has_presentation_animation() => {}
             _ = tokio::task::yield_now(), if app.macro_replay_pending() => {
                 if let Err(error) = app.advance_macro_replay() {
                     app.report_host_error(error.to_string());
@@ -3653,7 +3653,7 @@ async fn run_host_server(
                     shutting_down = true;
                 }
             }
-            _ = status_animation_tick.tick(), if host.has_long_running_action() => {
+            _ = status_animation_tick.tick(), if host.has_presentation_animation() => {
                 changed = true;
             }
             _ = tokio::task::yield_now(), if host.macro_replay_pending() => {
