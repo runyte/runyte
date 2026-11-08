@@ -31,13 +31,28 @@ theme: everforest-dark-medium
 | Ocean | `ocean-dark` | `ocean-light` |
 | Ember | `ember-dark` | `ember-light` |
 | Neutral | `dark` | `light` |
-| Classic | `base16` (default), `gruvbox` | `paper` |
+| Classic | `base16` (default), `gruvbox` | `paper`, `gruvbox-light` |
 | Graphite | `graphite-dark` | `graphite-light` |
 | Runyte originals | `matrix`, `neon` | |
-| Atom and GitHub | | `atom-one-light`, `github-light` |
+| Atom and GitHub | `atom-one-dark`, `github-dark`, `github-dark-dimmed`, `github-dark-high-contrast` | `atom-one-light`, `github-light` |
 | Catppuccin | `frappe`, `macchiato`, `mocha` | `latte` |
 | Everforest | `everforest-dark-hard`, `everforest-dark-medium`, `everforest-dark-soft` | `everforest-light-hard`, `everforest-light-medium`, `everforest-light-soft` |
-| Nightfox | `nordfox`, `nordfox-warm`, `terafox`, `terafox-soft` | |
+| Nightfox | `nightfox`, `duskfox`, `carbonfox`, `nordfox`, `nordfox-warm`, `terafox`, `terafox-soft` | `dawnfox`, `dayfox` |
+| Ayu | `ayu-dark`, `ayu-mirage` | `ayu-light` |
+| Doom | `doom-one` | |
+| Dracula | `dracula` | |
+| Flexoki | `flexoki-dark` | `flexoki-light` |
+| Gruvbox Material | `gruvbox-material-dark` | `gruvbox-material-light` |
+| Iceberg | `iceberg-dark` | `iceberg-light` |
+| Kanagawa | `kanagawa-wave`, `kanagawa-dragon` | `kanagawa-lotus` |
+| Night Owl | `night-owl` | |
+| Nord | `nord` | |
+| Oxocarbon | `oxocarbon-dark` | `oxocarbon-light` |
+| PaperColor | `papercolor-dark` | `papercolor-light` |
+| Rosé Pine | `rose-pine`, `rose-pine-moon` | `rose-pine-dawn` |
+| Solarized | `solarized-dark` | `solarized-light` |
+| Synthwave | `synthwave-84` | |
+| Tomorrow | `tomorrow-night`, `tomorrow-night-eighties`, `tomorrow-night-blue`, `tomorrow-night-bright` | `tomorrow` |
 | Zenbones | `zenbones-dark`, `zenwritten-dark`, `neobones-dark`, `rosebones-dark`, `forestbones-dark`, `tokyobones-dark`, `seoulbones-dark`, `nordbones-dark`, `nordbones-dark-soft`, `duckbones-dark`, `zenburned-dark`, `kanagawabones-dark` | `zenbones-light`, `zenwritten-light`, `neobones-light`, `rosebones-light`, `forestbones-light`, `tokyobones-light`, `seoulbones-light`, `vimbones-light` |
 
 #### About the themes
@@ -142,6 +157,24 @@ like a heads-up game menu.
   lowered from 10.6:1 to 7:1 contrast. Its background, accents, and
   selections are unchanged.
 - These themes keep their upstream Visual and Search selection backgrounds.
+
+**Imported families** (Ayu, Doom, Dracula, Flexoki, Gruvbox Material, Iceberg,
+Kanagawa, Night Owl, Nord, Oxocarbon, PaperColor, Rosé Pine, Solarized,
+Synthwave, Tomorrow, and the newer Nightfox, GitHub, Gruvbox and Atom members)
+keep their upstream background, text and syntax colours, and their terminal
+colours where upstream publishes a table.
+
+- Runyte supplies what upstream has no equivalent for: the primary selection,
+  mode carets, and jump labels. Selection grounds are usually Runyte's own tints:
+  one that sits too close to the background, or that its text cannot be read on,
+  is replaced. Carets and notification colours that would be hard to see move
+  until they stand out.
+- `github-dark` is GitHub's default dark palette, `#0d1117`.
+- `solarized-light`'s text is deliberately below 4.5:1 even on white, so its
+  selections and comparison rows keep most of its own contrast instead.
+- `oxocarbon-*` keeps upstream's terminal table, which puts its blue in the ANSI
+  red slot. `oxocarbon-light` also keeps upstream's comment colour, which is
+  darker than its text.
 
 **Mode colours in most other built-in themes** are blue Normal, red Insert,
 neon green Replace, orange Select, and purple Command. The Command and Replace
@@ -280,7 +313,7 @@ black or white extreme to reach at least 3:1 on the theme ground. Explicit overr
 An override of a normal slot does not change an omitted bright slot.
 
 Bundled third-party themes start from their upstream terminal palettes.
-Atom One Light uses its official syntax hues. Low-contrast entries are moved
+Atom One Light and Atom One Dark use their official syntax hues. Low-contrast entries are moved
 toward white or black to reach 3:1 on the theme background, including neutral
 slots upstream intended as backgrounds. Runyte's original themes derive their
 palettes from the roles above. Upstream hues are retained, while Runyte's
@@ -363,7 +396,9 @@ selections.
   enough on dark themes and light enough on light themes to keep text
   readable.
 - Every built-in theme uses high-contrast green, purple, and red for these, so
-  a meaning keeps its hue everywhere.
+  a meaning keeps its hue everywhere. `atom-one-dark` and `solarized-dark` tint
+  rows of their own, because their text cannot be read on every shared row
+  background.
 
 #### Destination types
 

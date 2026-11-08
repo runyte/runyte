@@ -37,17 +37,27 @@ upstream theme implementations.
 `src/config/terminal_palette.rs` also incorporates terminal palettes from the
 same revisions: Zenbones `extras/alacritty/*.toml`, Nightfox
 `extra/{nordfox,terafox}/alacritty.toml`, Everforest's terminal mapping in
-`colors/everforest.vim`, GitHub Light's `black` through `cyan` base/bright
+`colors/everforest.vim`, the GitHub themes' `black` through `cyan` base/bright
 roles, Gruvbox's normal/bright terminal colours, and Base16's standard ANSI
 mapping. Runyte adjusts entries below 3:1 contrast on its theme background;
 custom overrides bypass this adjustment. Runyte variants reuse their parent
 palette. These values are data only; no upstream implementation runs at startup.
 
+Themes in `src/config/imported.rs` and the variants at the end of
+`src/config/nightfox.rs` share one role mapping. Unless a section below says
+otherwise, their background, text, and syntax colours are upstream's. Runyte
+moves mode carets and notification colours below 3:1 and one-key jump labels
+below 4.5:1 toward legibility, replaces a selection ground that upstream leaves
+too close to the background, or that its text cannot be read on, with a
+palette-local tint, and supplies its own primary selection and dimmed-text
+colours where those are needed. Their terminal tables come from the sources
+named below.
+
 The `dark`, `light`, and `paper` built-in themes are Runyte-authored palettes.
 The audit found no third-party source material requiring a notice for those
 three themes.
 
-### GitHub Light
+### GitHub
 
 Project: GitHub Theme for Neovim
 
@@ -58,13 +68,15 @@ Source:
 
 Upstream revision: `c106c9472154d6b2c74b74565616b877ae8ed31d`
 
-License: MIT; copyright (c) 2021 projekt0n̅. The generated Primer light
+License: MIT; copyright (c) 2021 projekt0n̅. The generated Primer
 primitives incorporated upstream carry a separate MIT notice, copyright (c)
 2018 GitHub Inc.
 
-Runyte's `github-light` theme maps the upstream palette and syntax
-specification onto Runyte's presentation roles and adds its own mode-specific
-cursors and jump-label colors. Both upstream MIT notices are preserved in
+Runyte's `github-light`, `github-dark`, `github-dark-dimmed`, and
+`github-dark-high-contrast` themes map the upstream palette and syntax
+specification (`github_dark_default` for `github-dark`) onto Runyte's
+presentation roles and add their own mode-specific cursors and jump-label
+colors. Both upstream MIT notices are preserved in
 `licenses/GitHub-Nvim-Theme-MIT.txt`.
 
 ### Base16 Default Dark
@@ -98,9 +110,9 @@ Upstream revision: `5d15b2765f59754d7ac263c88a0f6e3e58124951`
 
 License: MIT/X11, as declared by the upstream README and `package.json`
 
-Runyte's `gruvbox` theme uses colors from Gruvbox's canonical dark palette and
-assigns them to Runyte editor and syntax roles. Runyte supplies its own
-selection and diff-background tints. The upstream repository does not contain
+Runyte's `gruvbox` and `gruvbox-light` themes use colors from Gruvbox's canonical
+dark and light palettes and assign them to Runyte editor and syntax roles.
+Runyte supplies its own selection and diff-background tints. The upstream repository does not contain
 a standalone license file or a copyright year; `licenses/Gruvbox-MIT.txt`
 therefore records the named author, the upstream license declaration, and the
 complete standard MIT terms without inventing a year.
@@ -154,7 +166,7 @@ colours rather than a sixteen-slot terminal table; Runyte maps its monochrome
 and syntax hues into normal and bright slots. The MIT notice, copyright (c)
 2016 GitHub Inc., is preserved in `licenses/Atom-One-Light-MIT.txt`.
 
-### Nightfox: Nordfox and Terafox
+### Nightfox
 
 Project: Nightfox
 
@@ -162,18 +174,312 @@ Author: James Simpson (`EdenEast`)
 
 Sources:
 
-- <https://github.com/EdenEast/nightfox.nvim/blob/4dacd3f0185a2227bdf3b6c0975a8f0bf87cac9a/lua/nightfox/palette/nordfox.lua>;
-  and
-- <https://github.com/EdenEast/nightfox.nvim/blob/4dacd3f0185a2227bdf3b6c0975a8f0bf87cac9a/lua/nightfox/palette/terafox.lua>.
+- <https://github.com/EdenEast/nightfox.nvim/tree/4dacd3f0185a2227bdf3b6c0975a8f0bf87cac9a/lua/nightfox/palette>; and
+- <https://github.com/EdenEast/nightfox.nvim/tree/4dacd3f0185a2227bdf3b6c0975a8f0bf87cac9a/extra>.
 
 Upstream revision: `4dacd3f0185a2227bdf3b6c0975a8f0bf87cac9a`
 
 License: MIT; copyright (c) 2021 James Simpson
 
-Runyte's `nordfox`, `nordfox-warm`, and `terafox` themes map the corresponding
-Nightfox palette and syntax-spec values to Runyte roles and add Runyte-specific
+Runyte's `nordfox`, `nordfox-warm`, `terafox`, `nightfox`, `duskfox`, `carbonfox`,
+`dawnfox`, and `dayfox` themes map the corresponding Nightfox palette and
+syntax-spec values to Runyte roles and add Runyte-specific
 selection and diff-background tints. The exact upstream license text is
 preserved in `licenses/Nightfox-MIT.txt`.
+
+### Atom One Dark
+
+Project: Atom One Dark Syntax and One Dark UI
+
+Author: GitHub Inc.
+
+Sources:
+
+- <https://github.com/atom/one-dark-syntax/blob/9c96f4454362267ac45322063e193ccf9d2debb1/styles/colors.less>
+- <https://github.com/atom/one-dark-syntax/blob/9c96f4454362267ac45322063e193ccf9d2debb1/styles/syntax-variables.less>
+- <https://github.com/atom/one-dark-ui/blob/18c2143d41e17b337fff6dc7024562c4d999be17/styles/ui-variables.less>
+
+Upstream revisions: `9c96f4454362267ac45322063e193ccf9d2debb1`, `18c2143d41e17b337fff6dc7024562c4d999be17`
+
+License: MIT; copyright (c) 2016 GitHub Inc. (syntax) and 2014 GitHub Inc. (UI)
+
+Runyte's `atom-one-dark` theme maps the upstream HSL syntax palette onto its roles, mirroring `atom-one-light`, and takes its error, warning, and success colours from the UI palette. Atom publishes no terminal table, so Runyte maps the monochrome and syntax hues into the ANSI slots. The exact upstream license text is preserved in
+`licenses/Atom-One-Dark-MIT.txt`.
+
+### Ayu
+
+Project: ayu-colors
+
+Author: Konstantin Pschera
+
+Sources:
+
+- <https://github.com/ayu-theme/ayu-colors/blob/c6e86054896ef10c69ba899dc11fdad0e004d4d3/themes/dark.yaml>
+- <https://github.com/ayu-theme/ayu-colors/blob/c6e86054896ef10c69ba899dc11fdad0e004d4d3/themes/mirage.yaml>
+- <https://github.com/ayu-theme/ayu-colors/blob/c6e86054896ef10c69ba899dc11fdad0e004d4d3/themes/light.yaml>
+- Generated values from the `ayu` npm package, version 9.1.0, built from those files
+
+Upstream revision: `c6e86054896ef10c69ba899dc11fdad0e004d4d3`
+
+License: MIT; copyright (c) Konstantin Pschera
+
+Runyte's `ayu-dark`, `ayu-mirage`, and `ayu-light` themes use the resolved syntax, surface, and terminal colours of those schemes. The exact upstream license text is preserved in
+`licenses/Ayu-MIT.txt`.
+
+### Doom One
+
+Project: doom-themes
+
+Author: Henrik Lissner
+
+Sources:
+
+- <https://github.com/doomemacs/themes/blob/a59202912ad55014e53a685eee6cd94130bdd4fd/themes/doom-one-theme.el>
+- <https://github.com/doomemacs/themes/blob/a59202912ad55014e53a685eee6cd94130bdd4fd/doom-themes-base.el>
+
+Upstream revision: `a59202912ad55014e53a685eee6cd94130bdd4fd`
+
+License: MIT; copyright (c) 2016-2026 Henrik Lissner
+
+Runyte's `doom-one` theme maps the Doom One palette and its universal syntax classes onto Runyte's roles. The terminal table follows the upstream `ansi-color-*` and `ansi-color-bright-*` faces. The exact upstream license text is preserved in
+`licenses/Doom-Themes-MIT.txt`.
+
+### Dracula
+
+Project: Dracula for Vim and Dracula for Alacritty
+
+Author: Dracula Theme
+
+Sources:
+
+- <https://github.com/dracula/vim/blob/c689958744a93851b870e17ede7e9cbd28bc7cf8/autoload/dracula.vim>
+- <https://github.com/dracula/vim/blob/c689958744a93851b870e17ede7e9cbd28bc7cf8/colors/dracula_base.vim>
+- <https://github.com/dracula/alacritty/blob/c8a3a13404b78d520d04354e133b5075d9b785e1/dracula.toml>
+
+Upstream revisions: `c689958744a93851b870e17ede7e9cbd28bc7cf8`, `c8a3a13404b78d520d04354e133b5075d9b785e1`
+
+License: MIT; copyright (c) 2016 and 2018 Dracula Theme
+
+Runyte's `dracula` theme uses the free Dracula palette; Dracula PRO is a separate product and is not used. The exact upstream license text is preserved in
+`licenses/Dracula-MIT.txt`.
+
+### Flexoki
+
+Project: Flexoki
+
+Author: Steph Ango
+
+Sources:
+
+- <https://github.com/kepano/flexoki/blob/8d723bac4a9ac46adfdf99d42155286977aac72a/vscode/Flexoki-Dark-color-theme.json>
+- <https://github.com/kepano/flexoki/blob/8d723bac4a9ac46adfdf99d42155286977aac72a/vscode/Flexoki-Light-color-theme.json>
+- <https://github.com/kepano/flexoki/blob/8d723bac4a9ac46adfdf99d42155286977aac72a/alacritty/flexoki-dark.toml>
+- <https://github.com/kepano/flexoki/blob/8d723bac4a9ac46adfdf99d42155286977aac72a/alacritty/flexoki-light.toml>
+
+Upstream revision: `8d723bac4a9ac46adfdf99d42155286977aac72a`
+
+License: MIT; copyright (c) 2023 Steph Ango
+
+Runyte's `flexoki-dark` and `flexoki-light` themes take editor and syntax colours from the VS Code themes and terminal colours from the Alacritty themes. The exact upstream license text is preserved in
+`licenses/Flexoki-MIT.txt`.
+
+### Gruvbox Material
+
+Project: Gruvbox Material
+
+Author: sainnhe
+
+Sources:
+
+- <https://github.com/sainnhe/gruvbox-material/blob/11d779b26a9ab2b3db8c22c6ac9fb6e8ed4fea79/autoload/gruvbox_material.vim>
+- <https://github.com/sainnhe/gruvbox-material/blob/11d779b26a9ab2b3db8c22c6ac9fb6e8ed4fea79/colors/gruvbox-material.vim>
+
+Upstream revision: `11d779b26a9ab2b3db8c22c6ac9fb6e8ed4fea79`
+
+License: MIT; copyright (c) 2020 sainnhe
+
+Runyte's `gruvbox-material-dark` and `gruvbox-material-light` themes use the medium background and the default `material` foreground palette, with the upstream terminal mapping. The exact upstream license text is preserved in
+`licenses/Gruvbox-Material-MIT.txt`.
+
+### Iceberg
+
+Project: Iceberg
+
+Author: cocopon
+
+Sources:
+
+- <https://github.com/cocopon/iceberg.vim/blob/23835d5ed696436f716cbfdb56a93a7850fe3b18/colors/iceberg.vim>
+
+Upstream revision: `23835d5ed696436f716cbfdb56a93a7850fe3b18`
+
+License: MIT; copyright (c) 2014 cocopon
+
+Runyte's `iceberg-dark` and `iceberg-light` themes map the generated Vim highlight groups and terminal colours onto Runyte's roles. The exact upstream license text is preserved in
+`licenses/Iceberg-MIT.txt`.
+
+### Kanagawa
+
+Project: Kanagawa
+
+Author: Tommaso Laurenzi
+
+Sources:
+
+- <https://github.com/rebelot/kanagawa.nvim/blob/bb85e4bfc8d89b0e62c8fa53ccdd13d12e2f77b3/lua/kanagawa/colors.lua>
+- <https://github.com/rebelot/kanagawa.nvim/blob/bb85e4bfc8d89b0e62c8fa53ccdd13d12e2f77b3/lua/kanagawa/themes.lua>
+- <https://github.com/rebelot/kanagawa.nvim/blob/bb85e4bfc8d89b0e62c8fa53ccdd13d12e2f77b3/extras/alacritty/kanagawa_wave.toml>
+- <https://github.com/rebelot/kanagawa.nvim/blob/bb85e4bfc8d89b0e62c8fa53ccdd13d12e2f77b3/extras/alacritty/kanagawa_dragon.toml>
+- <https://github.com/rebelot/kanagawa.nvim/blob/bb85e4bfc8d89b0e62c8fa53ccdd13d12e2f77b3/extras/alacritty/kanagawa_lotus.toml>
+
+Upstream revision: `bb85e4bfc8d89b0e62c8fa53ccdd13d12e2f77b3`
+
+License: MIT; copyright (c) 2021 Tommaso Laurenzi
+
+Runyte's `kanagawa-wave`, `kanagawa-dragon`, and `kanagawa-lotus` themes follow the upstream semantic theme tables and Alacritty terminal palettes. The exact upstream license text is preserved in
+`licenses/Kanagawa-MIT.txt`.
+
+### Night Owl
+
+Project: Night Owl
+
+Author: Sarah Drasner
+
+Sources:
+
+- <https://github.com/sdras/night-owl-vscode-theme/blob/cc291eba7976b20d7c66bde6883c27b902196b07/themes/Night%20Owl-color-theme.json>
+
+Upstream revision: `cc291eba7976b20d7c66bde6883c27b902196b07`
+
+License: MIT; copyright (c) 2018 Sarah Drasner
+
+Runyte's `night-owl` theme maps the VS Code workbench, token, and terminal colours onto Runyte's roles. The exact upstream license text is preserved in
+`licenses/Night-Owl-MIT.txt`.
+
+### Nord
+
+Project: Nord, Nord Vim, and Nord Alacritty
+
+Author: Sven Greb
+
+Sources:
+
+- <https://github.com/nordtheme/nord/blob/1cef71605416a222e57225b544540ce0fcec18d4/src/nord.css>
+- <https://github.com/nordtheme/vim/blob/f13f5dfbb784deddbc1d8195f34dfd9ec73e2295/colors/nord.vim>
+- <https://github.com/nordtheme/alacritty/blob/9949642f3903e8fcb62bfc03f09410e3d78440c2/src/nord.yaml>
+
+Upstream revisions: `1cef71605416a222e57225b544540ce0fcec18d4`, `f13f5dfbb784deddbc1d8195f34dfd9ec73e2295`, `9949642f3903e8fcb62bfc03f09410e3d78440c2`
+
+License: MIT; copyright (c) 2016-present Sven Greb
+
+Runyte's `nord` theme uses the Nord palette, Nord Vim's syntax mapping and brightened comment colour, and the Nord Alacritty terminal table. The same MIT text covers all three repositories. The exact upstream license text is preserved in
+`licenses/Nord-MIT.txt`.
+
+### Oxocarbon
+
+Project: Oxocarbon
+
+Author: Riccardo Mazzarini
+
+Sources:
+
+- <https://github.com/nyoom-engineering/oxocarbon.nvim/blob/cd6523a0836d6e8ee823d343149fd06c7b71fdde/lua/oxocarbon/init.lua>
+
+Upstream revision: `cd6523a0836d6e8ee823d343149fd06c7b71fdde`
+
+License: MIT; copyright (c) 2022 Riccardo Mazzarini
+
+Runyte's `oxocarbon-dark` and `oxocarbon-light` themes map the upstream base palette and terminal slots onto Runyte's roles, including upstream's assignment of its blue to the ANSI red slot. Upstream derives the gray steps by blending in HSLuv; Runyte stores the resulting gray values. The exact upstream license text is preserved in
+`licenses/Oxocarbon-MIT.txt`.
+
+### PaperColor
+
+Project: PaperColor Theme
+
+Author: Nikyle Nguyen
+
+Sources:
+
+- <https://github.com/NLKNguyen/papercolor-theme/blob/0cfe64ffb24c21a6101b5f994ca342a74c977aef/colors/PaperColor.vim>
+
+Upstream revision: `0cfe64ffb24c21a6101b5f994ca342a74c977aef`
+
+License: MIT; copyright (c) 2015-2020 Nikyle Nguyen
+
+Runyte's `papercolor-dark` and `papercolor-light` themes use the upstream default theme's `color00`-`color15` slots as their terminal table and its syntax assignments for code. The exact upstream license text is preserved in
+`licenses/PaperColor-MIT.txt`.
+
+### Rosé Pine
+
+Project: Rosé Pine for Neovim
+
+Author: Rosé Pine
+
+Sources:
+
+- <https://github.com/rose-pine/neovim/blob/ff483051a47e27d84bdef47703538df1ed9f4a47/lua/rose-pine/palette.lua>
+- <https://github.com/rose-pine/neovim/blob/ff483051a47e27d84bdef47703538df1ed9f4a47/lua/rose-pine.lua>
+
+Upstream revision: `ff483051a47e27d84bdef47703538df1ed9f4a47`
+
+License: MIT; copyright (c) 2023 Rosé Pine
+
+Runyte's `rose-pine`, `rose-pine-moon`, and `rose-pine-dawn` themes use the upstream palettes, highlight assignments, and terminal mapping. The exact upstream license text is preserved in
+`licenses/Rose-Pine-MIT.txt`.
+
+### Solarized
+
+Project: Solarized
+
+Author: Ethan Schoonover
+
+Sources:
+
+- <https://github.com/altercation/solarized/blob/62f656a02f93c5190a8753159e34b385588d5ff3/README.md>
+- <https://github.com/altercation/solarized/blob/62f656a02f93c5190a8753159e34b385588d5ff3/gedit/solarized-dark.xml>
+
+Upstream revision: `62f656a02f93c5190a8753159e34b385588d5ff3`
+
+License: MIT; copyright (c) 2011 Ethan Schoonover
+
+Runyte's `solarized-dark` and `solarized-light` themes use the published sixteen-colour table for both the palette and the terminal slots, with syntax roles following the gedit scheme. `solarized-dark` carries its own row tints in side-by-side comparisons, because its text cannot be read on Runyte's shared ones. The exact upstream license text is preserved in
+`licenses/Solarized-MIT.txt`.
+
+### Synthwave '84
+
+Project: Synthwave '84
+
+Author: Robb Owen
+
+Sources:
+
+- <https://github.com/robb0wen/synthwave-vscode/blob/ecfa2fe1279f7233663fa3f98a96e6756000567b/themes/synthwave-color-theme.json>
+
+Upstream revision: `ecfa2fe1279f7233663fa3f98a96e6756000567b`
+
+License: MIT; copyright (c) 2019 Robb Owen
+
+Runyte's `synthwave-84` theme maps the VS Code workbench, token, and terminal colours onto Runyte's roles. Upstream's terminal table omits black and white; Runyte fills them from the comment and foreground colours. The exact upstream license text is preserved in
+`licenses/Synthwave-84-MIT.txt`.
+
+### Tomorrow
+
+Project: Tomorrow Theme
+
+Author: Chris Kempson
+
+Sources:
+
+- <https://github.com/chriskempson/tomorrow-theme/tree/ccf6666d888198d341b26b3a99d0bc96500ad503/vim/colors>
+- <https://github.com/chriskempson/tomorrow-theme/tree/ccf6666d888198d341b26b3a99d0bc96500ad503/Atom>
+- <https://github.com/chriskempson/tomorrow-theme/tree/ccf6666d888198d341b26b3a99d0bc96500ad503/iTerm2>
+
+Upstream revision: `ccf6666d888198d341b26b3a99d0bc96500ad503`
+
+License: MIT; copyright (c) 2011 Chris Kempson
+
+Runyte's `tomorrow`, `tomorrow-night`, `tomorrow-night-eighties`, `tomorrow-night-blue`, and `tomorrow-night-bright` themes use the Vim palettes, the role assignments of the Atom themes, and the iTerm2 terminal colours. The exact upstream license text is preserved in
+`licenses/Tomorrow-MIT.txt`.
 
 ### Zenbones
 
