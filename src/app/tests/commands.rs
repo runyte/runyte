@@ -2577,10 +2577,10 @@ fn theme_names_activate_the_matching_theme() {
 
     let mut app = App::new(Config::default(), None).unwrap();
     private_theme_config(&mut app, &directory);
-    assert_eq!(app.theme_name, "ocean-dark");
+    assert_eq!(app.theme_name, "base16");
     assert_eq!(
         app.terminals.default_colors(),
-        DefaultColors::new(Some((0xa6, 0xbd, 0xc5)), Some((0x0b, 0x1f, 0x2a)))
+        DefaultColors::new(Some((0xd8, 0xd8, 0xd8)), Some((0x18, 0x18, 0x18)))
     );
     let default_accent = app.theme.accent;
 

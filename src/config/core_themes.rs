@@ -482,7 +482,7 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     // blue things on screen are the ones worth finding.
     //
     // Three colours are not the palette's own and cannot be: the Git gutter
-    // and diff grounds are one shared semantic palette across every bundled
+    // and diff grounds are one shared semantic palette across the coloured bundled
     // theme, and `built_in_jump_labels_are_red_and_one_neon_cyan_hue` requires
     // a red one-key jump label and the shared neon cyan for the two-key pair.
     // The red is therefore kept to exactly two roles, errors and that label,
@@ -604,8 +604,8 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
     // the one-key jump label `built_in_jump_labels_are_red_and_one_neon_cyan_hue`
     // requires to be red, and the amber a warning is drawn in. Each is named
     // once per variant. Insert and Select also use warm hues for recognition.
-    // The Git gutter and diff grounds are the shared semantic palette every bundled
-    // theme carries, and the two-key jump labels are the shared neon cyan.
+    // The Git gutter and diff grounds are the shared semantic palette the coloured bundled
+    // themes carry, and the two-key jump labels are the shared neon cyan.
     //
     // Mode carets separate turquoise Normal from coral Insert and apricot
     // Select, softening Terafox's red/orange pairing to suit the ocean grounds.
@@ -906,6 +906,123 @@ pub(super) fn themes() -> impl Iterator<Item = (String, ThemeDefinition)> {
                 ("type", "#4d9fff"),
                 ("variable", "#afbec4"),
             ]),
+        },
+    );
+    // Neutral surfaces from runyte.com's grayscale redesign, lifted from
+    // the page's #0a0a0a ground to its #171717 code surface for long editing.
+    // Brightness carries every role, including Git, jumps and ANSI colours.
+    // Explicit mode colours avoid the otherwise chromatic Replace fallback.
+    themes.insert(
+        "graphite-dark".into(),
+        ThemeDefinition {
+            background: "#171717".into(),
+            foreground: "#c8c8c8".into(),
+            muted: "#929292".into(),
+            whitespace: Some("#303030".into()),
+            jump_text_muted: Some("#929292".into()),
+            accent: "#d0d0d0".into(),
+            cursor_normal: Some("#d0d0d0".into()),
+            cursor_insert: Some("#a0a0a0".into()),
+            cursor_replace: Some("#ececec".into()),
+            cursor_select: Some("#b8b8b8".into()),
+            cursor_command: Some("#888888".into()),
+            cursor_secondary: Some("#747474".into()),
+            directory: Some("#e4e4e4".into()),
+            destination_scratch: Some("#ababab".into()),
+            destination_terminal: Some("#b8b8b8".into()),
+            selection: "#303030".into(),
+            selection_primary: Some("#454545".into()),
+            status_background: "#1e1e1e".into(),
+            status_foreground: "#c8c8c8".into(),
+            error: "#ececec".into(),
+            warning: Some("#b8b8b8".into()),
+            info: Some("#a0a0a0".into()),
+            jump_label_immediate: Some("#ececec".into()),
+            jump_label_primary: "#d0d0d0".into(),
+            jump_label_secondary: "#b8b8b8".into(),
+            change_added: Some("#d0d0d0".into()),
+            change_modified: Some("#aaaaaa".into()),
+            change_removed: Some("#888888".into()),
+            diff_added: Some("#383838".into()),
+            diff_removed: Some("#474747".into()),
+            diff_changed: Some("#404040".into()),
+            syntax: syntax_theme(&[
+                ("attribute", "#b8b8b8"),
+                ("comment", "#929292"),
+                ("constant", "#aaaaaa"),
+                ("constructor", "#d8d8d8"),
+                ("function", "#d8d8d8"),
+                ("keyword", "#e4e4e4"),
+                ("label", "#b8b8b8"),
+                ("namespace", "#b8b8b8"),
+                ("number", "#aaaaaa"),
+                ("operator", "#b0b0b0"),
+                ("property", "#c8c8c8"),
+                ("punctuation", "#969696"),
+                ("string", "#b0b0b0"),
+                ("tag", "#e4e4e4"),
+                ("type", "#b8b8b8"),
+                ("variable", "#c8c8c8"),
+            ]),
+            ..ThemeDefinition::default()
+        },
+    );
+    // The light counterpart uses a soft silver ground instead of white.
+    // Darker keywords and calls lead the hierarchy; comments recede into gray.
+    // Selection and diff grounds retain enough contrast for ordinary text.
+    themes.insert(
+        "graphite-light".into(),
+        ThemeDefinition {
+            background: "#e4e4e4".into(),
+            foreground: "#404040".into(),
+            muted: "#666666".into(),
+            whitespace: Some("#cccccc".into()),
+            jump_text_muted: Some("#666666".into()),
+            accent: "#383838".into(),
+            cursor_normal: Some("#383838".into()),
+            cursor_insert: Some("#606060".into()),
+            cursor_replace: Some("#202020".into()),
+            cursor_select: Some("#505050".into()),
+            cursor_command: Some("#707070".into()),
+            cursor_secondary: Some("#808080".into()),
+            directory: Some("#282828".into()),
+            destination_scratch: Some("#585858".into()),
+            destination_terminal: Some("#505050".into()),
+            selection: "#cccccc".into(),
+            selection_primary: Some("#b0b0b0".into()),
+            status_background: "#dadada".into(),
+            status_foreground: "#404040".into(),
+            error: "#202020".into(),
+            warning: Some("#505050".into()),
+            info: Some("#606060".into()),
+            jump_label_immediate: Some("#202020".into()),
+            jump_label_primary: "#383838".into(),
+            jump_label_secondary: "#505050".into(),
+            change_added: Some("#383838".into()),
+            change_modified: Some("#585858".into()),
+            change_removed: Some("#707070".into()),
+            diff_added: Some("#c2c2c2".into()),
+            diff_removed: Some("#b6b6b6".into()),
+            diff_changed: Some("#bcbcbc".into()),
+            syntax: syntax_theme(&[
+                ("attribute", "#505050"),
+                ("comment", "#666666"),
+                ("constant", "#585858"),
+                ("constructor", "#303030"),
+                ("function", "#303030"),
+                ("keyword", "#282828"),
+                ("label", "#505050"),
+                ("namespace", "#505050"),
+                ("number", "#585858"),
+                ("operator", "#606060"),
+                ("property", "#404040"),
+                ("punctuation", "#646464"),
+                ("string", "#606060"),
+                ("tag", "#282828"),
+                ("type", "#505050"),
+                ("variable", "#404040"),
+            ]),
+            ..ThemeDefinition::default()
         },
     );
     themes.into_iter()

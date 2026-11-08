@@ -254,7 +254,7 @@ pub(crate) const MAX_GIT_REFRESH_INTERVAL_SECONDS: usize = 3_600;
 pub(crate) const MAX_IDLE_RETIREMENT_MINUTES: usize = 43_200;
 
 /// The theme Runyte starts in when nothing else has been chosen.
-pub const DEFAULT_THEME: &str = "ocean-dark";
+pub const DEFAULT_THEME: &str = "base16";
 
 // Git colours are deliberately shared by appearance rather than softened into
 // each palette. A Git meaning must be recognizable before the reader decodes
@@ -2852,6 +2852,8 @@ themes:
                 "forestbones-light",
                 "frappe",
                 "github-light",
+                "graphite-dark",
+                "graphite-light",
                 "gruvbox",
                 "kanagawabones-dark",
                 "latte",
@@ -2952,15 +2954,107 @@ themes:
         }
     }
 
-    /// Runyte starts in `ocean-dark`. The branded pair is named for the red
-    /// it is built on rather than for being what starts, so nothing about
-    /// which theme is the default can be read off a theme's name any more.
     #[test]
-    fn the_startup_theme_is_ocean_dark() {
-        assert_eq!(DEFAULT_THEME, "ocean-dark");
+    fn graphite_is_monochromatic_after_resolving_all_fallbacks() {
+        for (name, appearance) in [
+            ("graphite-dark", ThemeAppearance::Dark),
+            ("graphite-light", ThemeAppearance::Light),
+        ] {
+            let theme = Config::default().resolve_theme(name).unwrap();
+            assert_eq!(theme.appearance(), Some(appearance));
+            let mut colors = vec![
+                theme.background,
+                theme.inactive_background(),
+                theme.overlay_background(),
+                theme.foreground,
+                theme.muted,
+                theme.whitespace,
+                theme.jump_text_muted,
+                theme.accent,
+                theme.command,
+                theme.cursor_normal,
+                theme.cursor_insert,
+                theme.cursor_replace,
+                theme.cursor_select,
+                theme.cursor_command,
+                theme.cursor_secondary,
+                theme.directory,
+                theme.destination_file,
+                theme.destination_explorer,
+                theme.destination_generated,
+                theme.destination_scratch,
+                theme.destination_terminal,
+                theme.selection,
+                theme.selection_primary,
+                theme.fuzzy_match_secondary,
+                theme.fuzzy_match_primary,
+                theme.status_background,
+                theme.status_foreground,
+                theme.error,
+                theme.warning,
+                theme.info,
+                theme.jump_label_immediate,
+                theme.jump_label_primary,
+                theme.jump_label_secondary,
+                theme.change_added,
+                theme.change_modified,
+                theme.change_removed,
+            ];
+            colors.extend(
+                [theme.diff_added, theme.diff_removed, theme.diff_changed]
+                    .into_iter()
+                    .flatten(),
+            );
+            colors.extend(theme.syntax.iter().flatten().copied());
+            colors.extend(theme.terminal);
+            for color in colors {
+                let (r, g, b) = color.channels().unwrap();
+                assert!(r == g && g == b, "chromatic fallback: {color:?}");
+                assert!(r > 0 && r < 255, "avoid pure black or white: {color:?}");
+            }
+            let contrast = |a: Color, b: Color| {
+                let a = a.relative_luminance().unwrap();
+                let b = b.relative_luminance().unwrap();
+                (a.max(b) + 0.05) / (a.min(b) + 0.05)
+            };
+            for ground in [theme.background, theme.selection, theme.selection_primary] {
+                assert!(contrast(theme.foreground, ground) >= 4.5);
+            }
+            for scope in crate::syntax::SCOPES {
+                let color = theme
+                    .syntax_color(crate::syntax::Scope::named(scope).unwrap())
+                    .unwrap();
+                assert!(contrast(color, theme.background) >= 4.5, "{scope}");
+            }
+            assert!(contrast(theme.selection, theme.selection_primary) >= 1.3);
+            assert!(contrast(theme.jump_label_primary, theme.jump_text_muted) >= 1.75);
+            for group in [
+                [
+                    theme.change_added,
+                    theme.change_modified,
+                    theme.change_removed,
+                ],
+                [
+                    theme.diff_added.unwrap(),
+                    theme.diff_changed.unwrap(),
+                    theme.diff_removed.unwrap(),
+                ],
+                [theme.error, theme.warning, theme.info],
+            ] {
+                assert_ne!(group[0], group[1]);
+                assert_ne!(group[1], group[2]);
+                assert_ne!(group[0], group[2]);
+            }
+        }
+    }
+
+    /// An unconfigured startup uses the bundled Base16 palette.
+    #[test]
+    fn the_startup_theme_is_base16() {
+        assert_eq!(DEFAULT_THEME, "base16");
         let config = Config::default();
         assert!(config.theme_names().contains(&DEFAULT_THEME));
-        assert_eq!(config.startup_theme().unwrap().0, "ocean-dark");
+        assert_eq!(config.startup_theme().unwrap().0, "base16");
     }
 
     /// `matrix` is defined by what it refuses to spend as much as by what it
@@ -3610,7 +3704,10 @@ themes:
                 theme.diff_changed.unwrap(),
                 theme.diff_removed.unwrap(),
             ];
-            assert_eq!(actual, expected, "wrong Git palette for {name}");
+            // Graphite deliberately replaces semantic hues with gray levels.
+            if !matches!(name, "graphite-dark" | "graphite-light") {
+                assert_eq!(actual, expected, "wrong Git palette for {name}");
+            }
 
             for (role, color, dominant) in [
                 ("added mark", theme.change_added, 1),
@@ -3620,7 +3717,9 @@ themes:
                 ("changed row", theme.diff_changed.unwrap(), 2),
                 ("removed row", theme.diff_removed.unwrap(), 0),
             ] {
-                assert_hue(name, role, color, dominant);
+                if !matches!(name, "graphite-dark" | "graphite-light") {
+                    assert_hue(name, role, color, dominant);
+                }
             }
 
             for (role, color) in [
@@ -4424,6 +4523,10 @@ themes:
                 replace_contrast >= 3.0,
                 "{name} Replace cursor obscures its glyph: {replace_contrast}"
             );
+            // The monochromatic themes supply an explicit gray Replace.
+            if matches!(name, "graphite-dark" | "graphite-light") {
+                continue;
+            }
             let green_is_occupied = [
                 theme.cursor_normal,
                 theme.cursor_insert,
@@ -4922,6 +5025,10 @@ themes:
                 contrast(theme.jump_label_primary, theme.jump_label_secondary) <= 1.75,
                 "{name} two-key characters differ too much in visual weight"
             );
+            // Graphite retains the contrast rules above, without hue rules.
+            if matches!(name, "graphite-dark" | "graphite-light") {
+                continue;
+            }
             let (immediate_red, immediate_green, immediate_blue) =
                 channels(theme.jump_label_immediate);
             assert!(

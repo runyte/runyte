@@ -1,6 +1,6 @@
 ## Themes
 
-Runyte starts in `ocean-dark`. Pick another built-in theme, or define your own
+Runyte starts in `base16`. Pick another built-in theme, or define your own
 in the configuration file.
 
 ### Choosing a theme
@@ -28,10 +28,11 @@ theme: everforest-dark-medium
 
 | Family | Dark | Light |
 | --- | --- | --- |
-| Ocean (default) | `ocean-dark` | `ocean-light` |
+| Ocean | `ocean-dark` | `ocean-light` |
 | Ember | `ember-dark` | `ember-light` |
 | Neutral | `dark` | `light` |
-| Classic | `base16`, `gruvbox` | `paper` |
+| Classic | `base16` (default), `gruvbox` | `paper` |
+| Graphite | `graphite-dark` | `graphite-light` |
 | Runyte originals | `matrix`, `neon` | |
 | Atom and GitHub | | `atom-one-light`, `github-light` |
 | Catppuccin | `frappe`, `macchiato`, `mocha` | `latte` |
@@ -40,6 +41,20 @@ theme: everforest-dark-medium
 | Zenbones | `zenbones-dark`, `zenwritten-dark`, `neobones-dark`, `rosebones-dark`, `forestbones-dark`, `tokyobones-dark`, `seoulbones-dark`, `nordbones-dark`, `nordbones-dark-soft`, `duckbones-dark`, `zenburned-dark`, `kanagawabones-dark` | `zenbones-light`, `zenwritten-light`, `neobones-light`, `rosebones-light`, `forestbones-light`, `tokyobones-light`, `seoulbones-light`, `vimbones-light` |
 
 #### About the themes
+
+**`graphite-dark` and `graphite-light`** are fully monochromatic, inspired by
+runyte.com's grayscale redesign. Select either with `:theme graphite-dark` or
+`:theme graphite-light`.
+
+- Dark uses charcoal surfaces and silver text; light uses soft silver surfaces
+  and graphite text. Keywords and calls stand out while comments and strings
+  recede, with a ladder of grays without pure black or white.
+- Primary selections are lighter than secondary selections in dark, and darker
+  in light. Modes, diagnostics, jump labels and Git changes also differ by
+  brightness; use their labels and gutter symbols to identify their meaning.
+- Unlike the other built-ins, Git and jump roles have no semantic hues.
+  The sixteen themed ANSI slots are gray too. Programs that explicitly request
+  RGB or extended terminal colours keep those colours.
 
 **`ocean-dark` and `ocean-light`** share one palette, based on a breaking wave.
 Deep water is the background, the wave's turquoise face is the accent, and the
@@ -55,8 +70,8 @@ palette lightens toward foam and sky.
   Select, indigo Command, and orchid Replace. Insert and Select take their
   red/orange pairing from `terafox`, adjusted for the ocean grounds.
 - The other warm colours are the error red (also used by one-key jump labels),
-  the warning amber, and the Git gutter and diff colours shared by every
-  built-in theme.
+  the warning amber, and the Git gutter and diff colours shared by the other
+  coloured built-in themes.
 
 **`ember-dark` and `ember-light`** are Runyte's branded pair, named for the
 red they carry on a neutral gray ground.
@@ -66,8 +81,9 @@ red they carry on a neutral gray ground.
   names are blue while the accent stays on borders and headings.
 - Selections differ by hue alone: a blue secondary against a pink primary
   that matches the Select caret.
-- The dark theme takes its surface, text, and accent from runyte.com. The
-  light theme uses darker forms of the same hues on light gray.
+- The dark theme takes its surface, text, and accent from runyte.com's
+  earlier red-accented design. The light theme uses darker forms of the same
+  hues on light gray.
 
 **`dark` and `light`** are the neutral pair: no palette identity, just a
 legible option for each kind of terminal.
@@ -81,7 +97,7 @@ legible option for each kind of terminal.
   caret.
 - Ordinary selections are deep green. The primary selection is blue.
 - Only errors and one-key jump labels are red, apart from the Git gutter and
-  diff colours every built-in theme shares.
+  diff colours the coloured built-in themes share.
 
 **`neon`** is a near-black ground under a red frame and a cyan interior, shaped
 like a heads-up game menu.

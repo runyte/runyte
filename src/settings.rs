@@ -1908,6 +1908,8 @@ mod tests {
                 "forestbones-light",
                 "frappe",
                 "github-light",
+                "graphite-dark",
+                "graphite-light",
                 "gruvbox",
                 "kanagawabones-dark",
                 "latte",
