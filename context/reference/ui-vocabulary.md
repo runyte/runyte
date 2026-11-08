@@ -89,7 +89,7 @@ them, regardless of which extensibility direction is chosen.
   not this row, owns active-buffer identity.
   Active-buffer state includes `[+]`, `[STALE]`, and `[RO]` with the same
   meanings and order as the pane title.
-  The session word after the mode is `ide`, `ide+mux`, or `editor`. Editor
+  The session word after the mode is `ide`, `mux`, or `editor`. Editor
   mode has no workspace, so its directory is labelled `Directory:`
   rather than `Workspace:`; the frontend chooses the word, not the snapshot.
   A long-running background action temporarily replaces the ordinary fields

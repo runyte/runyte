@@ -7,7 +7,7 @@ session keeps its mode until it ends.
 | --- | --- | --- | --- |
 | **editor** | `--editor`, or the `runed` command | None: edits files and directories anywhere | Gone |
 | **ide** (default) | `--ide` | Yes, with Git, language servers, MCP, plugins, and terminals | Gone |
-| **mux** (`ide+mux`) | `--mux`, `-a` | Yes, as in ide, kept by a local host process, the **persistent session** | Kept: open and unsaved buffers, selections, registers, syntax state, diagnostics, Git projections, language-server processes, and terminal sessions |
+| **mux** | `--mux`, `-a` | Yes, as in ide, kept by a local host process, the **persistent session** | Kept: open and unsaved buffers, selections, registers, syntax state, diagnostics, Git projections, language-server processes, and terminal sessions |
 
 The `mode` setting chooses the mode for launches that give no mode option; it
 is `ide` unless set otherwise. The launch directory never changes the mode.
@@ -181,7 +181,7 @@ are contained:
 `g f` resolves relative paths beside the active file only.
 
 **The status line** reads `editor` where it otherwise reads `ide` or
-`ide+mux`, labels the directory `Directory:` rather than `Workspace:`, and
+`mux`, labels the directory `Directory:` rather than `Workspace:`, and
 shows no Git information.
 
 **Running as root,** Runyte runs only in editor mode: `--ide`, `--mux`,

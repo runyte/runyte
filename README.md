@@ -10,14 +10,16 @@ https://github.com/user-attachments/assets/5f039873-8232-4ad9-b089-0d54b2b05e85
 Runyte is a Helix-style modal text editor living in your terminal or its own native window.
 It supports multiple panes, and each pane shows a text file, a terminal, or a file manager.
 
+Many keybindings have aliases and will feel familiar to both Helix and Vim users.
+
 Three *modes* are available:
 - `editor` - text editor + file manager
 - `ide` - text editor + file manager + LSP + terminals
-- `ide+mux` - text editor + file manager + LSP + terminals + multiple persistent sessions
+- `mux` - text editor + file manager + LSP + terminals + multiple persistent sessions
 
-In the `ide+mux` mode Runyte works like a terminal multiplexer. You can close it (detach)
+In the `mux` mode Runyte works like a terminal multiplexer. You can close it (detach)
 and open it again (attach) and you're back where you left off - no work is lost and
-all terminals and AI agents keep doing what they were. The `ide+mux` mode replaces the need to use tools like tmux.
+all terminals and AI agents keep doing what they were. The `mux` mode replaces the need to use tools like tmux.
 
 There are also two Runyte *editions*:
 - terminal edition - run Runyte in your terminal of choice
@@ -31,6 +33,11 @@ In other words, you can choose how you want to use Runyte.
 It can be just a text editor or a full replacement of many terminal apps
 that traditionally needed to be carefully wired together to feel like a
 consistent terminal environment.
+
+In addition, Runyte is equipped with an MCP server giving AI agents optional
+access (granted by the user) to read and write into all panes, including
+terminals with other AI agents. It also gives AI agents an `:agent-channel` - a
+chat window where agents can write public or private messages to other agents.
 
 This project is well tested. Test coverage is about 92% of lines, and CI requires at least 89%.
 
@@ -99,12 +106,12 @@ for details.
 
 ## Terminals
 
-Type `:terminal` (or `:t`), or press `Space t n` or `Ctrl-w t`, to start a
-terminal in the current pane. A new terminal starts in Insert mode, where keys
-go to the running program. Press `Ctrl-\` to switch to Normal mode: the output
-keeps running, but keys go to Runyte. Press `Ctrl-\` again to review the
-output. This freezes a snapshot of the output, which you can move around,
-search with `s` or `/`, and copy with `y`. Press `i` to go back to Insert mode.
+Type `:terminal` (or `:t`) to start a terminal in the current pane. A new
+terminal starts in Insert mode, where keys go to the running program. Press
+`Ctrl-\` to switch to Normal mode: the output keeps running, but keys go to
+Runyte. Press `Ctrl-\` again to review the output. This freezes a snapshot of
+the output, which you can move around, search with `s` or `/`, and copy with
+`y`. Press `i` to go back to Insert mode.
 
 ## Modes
 
@@ -114,30 +121,31 @@ The status line names the one you are in.
 | Mode | Start with |
 | --- | --- |
 | `ide` (default) | `runyte` |
-| `ide+mux` | `runyte --mux`, or `runyte -a` |
+| `mux` | `runyte --mux`, or `runyte -a` |
 | `editor` | `runyte --editor`, or `runed` |
 
-`ide` and `ide+mux` need a workspace: a Git, Jujutsu, or Subversion working
+`ide` and `mux` need a workspace: a Git, Jujutsu, or Subversion working
 copy, or a directory holding a `.runyte/` state directory. `ide` creates
-`.runyte/` in the launch directory when there is none; `ide+mux` needs one to
+`.runyte/` in the launch directory when there is none; `mux` needs one to
 exist already. `runyte --init DIRECTORY` makes any directory a workspace. See
 [starting a workspace](docs/user-guide/workspaces-and-persistent-sessions.md#starting-a-workspace)
 for the exceptions, such as your home directory.
 
-To start a new session from inside Runyte:
+In the `mux` mode, to start a new session from inside Runyte:
 - `Space Space` opens the session manager
 - in the file explorer (`Space e`), go to another directory and press `Tab s`
 - in an integrated terminal, `cd` to another directory and run `runyte -a`
 
 Switch between sessions with `Space Space`, or with `Shift-Left` and `Shift-Right`.
 
-## Quick edits with runed
+### Quick edits with runed
 
-`runed` is Runyte in editor mode, whatever your configuration says. It edits a
-file or browses a directory anywhere, writes nothing beside it, and the Finder
-searches the directory you are in. The installer puts `runed` next to
-`runyte`. After `cargo install`, create it as a symbolic link:
-`ln -s runyte ~/.cargo/bin/runed`.
+It is sometimes useful to run Runyte in the `editor` mode for quick
+edits of config and system files, e.g. as `sudo`.
+
+Since most users prefer to use `ide` or `mux` as their default mode,
+the installation script `install.sh` provides an additional command `runed`
+which always runs Runyte in the `editor` mode.
 
 Use `runed` for standalone edits and with `sudoedit` for system files. To edit
 inside an existing persistent session, use the [`--wait` setup](#post-install-setup).
@@ -149,10 +157,12 @@ sudoedit /etc/fstab
 
 ## Installation
 
-Choose an edition above. [INSTALLATION.md](INSTALLATION.md) covers dependencies,
+[INSTALLATION.md](INSTALLATION.md) covers dependencies,
 platform-specific instructions, source builds, shell setup and updates.
 
-### Easy install
+The summary of installation methods is also listed below.
+
+### Terminal edition
 
 Install or update the **terminal edition** on Linux or macOS:
 
@@ -161,16 +171,13 @@ curl -fsSL https://raw.githubusercontent.com/runyte/runyte/main/install.sh | sh
 ```
 
 The script verifies the release checksum and installs `runyte` and `runed` in
-`~/.local/bin`, without sudo. Add that directory to `PATH` if needed. Linux
-archives require glibc 2.35 or newer. Add `sh -s -- --desktop` in place of `sh`
-to install the [desktop edition](INSTALLATION.md#install-script-desktop-edition)
-instead. For Windows, use the x86-64 ZIP from
+`~/.local/bin`, without sudo. Add that directory to `PATH` if needed.
+
+For Windows, use the x86-64 ZIP from
 [GitHub Releases](https://github.com/runyte/runyte/releases) and follow the
 [Windows instructions](INSTALLATION.md#windows).
 
-### Install through cargo
-
-Install the **terminal edition** with Rust 1.88 or newer and a C compiler:
+You can also install the **terminal edition** through cargo:
 
 ```sh
 cargo install runyte --locked
@@ -178,19 +185,24 @@ cargo install runyte --locked
 
 ### Desktop edition
 
-Install it with `install.sh --desktop` as shown above, or download the Linux
-**desktop** archive for your CPU from
-[GitHub Releases](https://github.com/runyte/runyte/releases) and follow the
-[desktop installation steps](INSTALLATION.md#desktop-edition). Linux desktop
-archives require glibc 2.39 or newer and a working Vulkan driver. On macOS 11 or
-later, download the signed and notarized `Runyte-X.Y.Z.dmg` from releases and
-drag Runyte into Applications.
-
-The desktop executable also runs in a terminal:
+Install or update the **desktop edition** on Linux or macOS:
 
 ```sh
-runyte --window --mux  # window with a persistent session
-runyte --mux           # terminal frontend, same persistent sessions
+curl -fsSL https://raw.githubusercontent.com/runyte/runyte/main/install.sh | sh -s -- --desktop
+```
+
+You can also download the **desktop** archive for your system and CPU from
+[GitHub Releases](https://github.com/runyte/runyte/releases).
+
+We also provide a `dmg` image for macOS 11 or later:
+download the signed and notarized `Runyte-X.Y.Z.dmg` from releases and
+drag Runyte into Applications.
+
+The desktop executable can also run in a terminal:
+
+```sh
+runyte --window  # run in its own native window
+runyte           # run in an external terminal
 ```
 
 ### Build from source
@@ -203,9 +215,9 @@ cargo build --release --locked                    # target/release/runyte
 cargo build --release --locked -p runyte-desktop  # target/release/runyte-desktop
 ```
 
-Building does not install either executable. The [source installation
-steps](INSTALLATION.md#install-a-source-build) explain how to install the desktop
-build as `runyte`.
+Building does not install either executable. The
+[source installation steps](INSTALLATION.md#install-a-source-build)
+explain how to install the desktop build as `runyte`.
 
 ### Post-install setup
 
@@ -219,25 +231,35 @@ export VISUAL='runyte --wait'
 
 Start `runyte --mux` (or `runyte --window --mux`) in your project, then run the
 agent in an integrated terminal. Its `Ctrl-g` edit opens in the parent
-persistent session; `:wbc` saves and closes the buffer so the agent resumes.
-Every client and host must use the same Runyte version. See [shell setup and
-source-build paths](INSTALLATION.md#shell-and-external-editor-setup) for details,
-Windows settings and optional `:quit-here` integration.
+persistent session; `:wq` saves and closes the buffer so the agent resumes.
 
 ### First run
 
 ```sh
 runyte --editor notes.md  # edit anywhere, without a workspace
-runyte --mux              # open a persistent session in a project
+runyte --ide .            # open IDE mode in the current directory
+runyte --mux path/to/dir  # open a persistent session in path/to/dir
 ```
 
 Use `runyte --help` for all command-line options.
 
-## Help
+Inside Runyte:
+```
+:tutorial     · learn Runyte interactively
+:help         · open the general manual
+Space ?       · help for the current view
+Space e       · explore the active directory
+Space n       · list open buffers and terminals
+Space f       · find anything (Tab to switch between files/content)
+Space Space   · session management (persistent mode)
+Alt-o | Alt-i · move back and forth between buffers
+Ctrl-w ...    · pane management commands
+:terminal     · integrated terminal
+:             · open the command palette
+:q            · quit
+```
 
-Key sequences show hints. `:tutorial` provides an
-interactive introduction, `Space ?` opens contextual help, and `:help` opens
-the complete manual.
+## Documentation
 
 - [User guide and command reference](docs/user-guide/README.md)
 - [Frequently asked questions](docs/faq.md)

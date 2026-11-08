@@ -3205,7 +3205,7 @@ impl SessionMode {
     fn label(self) -> &'static str {
         match self {
             Self::Standalone => "ide",
-            Self::Persistent => "ide+mux",
+            Self::Persistent => "mux",
             Self::Editor => "editor",
         }
     }
@@ -6078,7 +6078,7 @@ mod tests {
         status.workspace_number = Some(1);
         let numbered = rendered_status_line_for(&status, SessionMode::Persistent, 120);
         assert!(
-            numbered.starts_with(" NOR │ ide+mux │ Workspace: /project/runyte "),
+            numbered.starts_with(" NOR │ mux │ Workspace: /project/runyte "),
             "{numbered:?}"
         );
         assert!(!numbered.contains("[S1]"), "{numbered:?}");
@@ -6102,7 +6102,7 @@ mod tests {
             "{standalone:?}"
         );
         assert!(
-            persistent.starts_with(" NOR │ ide+mux │ Workspace: /project/runyte "),
+            persistent.starts_with(" NOR │ mux │ Workspace: /project/runyte "),
             "{persistent:?}"
         );
         // Without a workspace the path is only where the session works.
@@ -8163,7 +8163,7 @@ mod tests {
         for (session, label) in [
             (SessionMode::Editor, "editor"),
             (SessionMode::Standalone, "ide"),
-            (SessionMode::Persistent, "ide+mux"),
+            (SessionMode::Persistent, "│ mux │"),
         ] {
             let mut terminal = Terminal::new(TestBackend::new(100, 24)).unwrap();
             terminal
@@ -8178,7 +8178,7 @@ mod tests {
                 .collect::<String>();
             assert!(status.contains(label), "{session:?}: {status:?}");
             if session != SessionMode::Persistent {
-                assert!(!status.contains("ide+mux"), "{status:?}");
+                assert!(!status.contains("│ mux │"), "{status:?}");
             }
         }
     }

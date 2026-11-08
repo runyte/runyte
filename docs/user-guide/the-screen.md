@@ -74,7 +74,7 @@ open the same retained special commit-detail buffer when a commit is selected.
 | Part | Meaning |
 | --- | --- |
 | `NOR` | The mode, in the current mode's caret colour (see [Mode carets](themes.md#mode-carets)). The rest of the row keeps the theme's ordinary background. |
-| `ide` | The mode: `ide` keeps live state in the TUI process, `ide+mux` keeps it in a persistent session, and `editor` has no workspace at all. See [Workspaces and persistent sessions](workspaces-and-persistent-sessions.md#workspaces-and-persistent-sessions). |
+| `ide` | The mode: `ide` keeps live state in the TUI process, `mux` keeps it in a persistent session, and `editor` has no workspace at all. See [Workspaces and persistent sessions](workspaces-and-persistent-sessions.md#workspaces-and-persistent-sessions). |
 | `Workspace: …` | The current workspace directory. When it does not fit, the beginning is replaced with `...` and the identifying end kept. [Editor mode](workspaces-and-persistent-sessions.md#editor-mode) labels it `Directory: …` and shows no Git information. |
 | `[+]` / `[STALE]` / `[RO]` | The active buffer has unsaved changes / the path it shows (a file or an explorer's directory) disagrees with the accepted baseline / is read-only. |
 | `412:17 · 34%` | Cursor line and column, and how far through the buffer it is. |
