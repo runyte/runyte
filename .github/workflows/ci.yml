@@ -73,6 +73,8 @@ jobs:
       CARGO_BUILD_JOBS: 1
       RUST_TEST_THREADS: 2
     steps:
+      - name: Record native diagnostic start
+        run: '"RUNYTE_WINDOWS_TEST_START=$([DateTimeOffset]::UtcNow.ToString(''o''))" >> $env:GITHUB_ENV'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.source.outputs.sha || '0000000000000000000000000000000000000000' }}
@@ -171,6 +173,42 @@ jobs:
           $acceptance = Get-Content -Raw "$env:RUNNER_TEMP/native-lsp-acceptance.log"
           if ($acceptance -notmatch 'test real_rust_analyzer_permission_diagnostics_edits_restart_and_cleanup \.\.\. ok') {
             throw 'Required native language-server acceptance did not run'
+          }
+      - name: Report native crash metadata
+        if: failure()
+        run: |
+          # Keep only fault metadata, never process dumps, environment or input.
+          $matched = 0
+          try {
+            $events = Get-WinEvent -FilterHashtable @{
+              LogName = 'Application'
+              ProviderName = 'Application Error'
+              Id = 1000
+              StartTime = [DateTimeOffset]::Parse($env:RUNYTE_WINDOWS_TEST_START).LocalDateTime
+            } -ErrorAction Stop
+            foreach ($event in $events) {
+              $data = @{}
+              ([xml]$event.ToXml()).Event.EventData.Data | ForEach-Object {
+                $data[$_.Name] = $_.'#text'
+              }
+              $app = [IO.Path]::GetFileName($data['AppName'])
+              if ($app -ne 'runyte.exe' -and $app -notmatch '^windows_wait-[0-9a-f]+\.exe$') {
+                continue
+              }
+              $matched++
+              [ordered]@{
+                time = $event.TimeCreated.ToUniversalTime().ToString('o')
+                executable = $app
+                module = [IO.Path]::GetFileName($data['ModuleName'])
+                exception = $data['ExceptionCode']
+                offset = $data['FaultingOffset']
+              } | ConvertTo-Json -Compress
+            }
+          } catch {
+            Write-Host "Crash event lookup unavailable: $($_.Exception.GetType().Name)"
+          }
+          if ($matched -eq 0) {
+            Write-Host 'No matching Runyte or wait-fixture Application Error event.'
           }
       # Windows coverage is provisional and has no measured baseline yet.
       # The Linux/macOS jobs continue enforcing the unchanged 89% floor.
