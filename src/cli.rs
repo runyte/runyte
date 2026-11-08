@@ -277,10 +277,15 @@ fn cli_main(environment: Environment) -> Result<()> {
         .context("failed to start the async runtime")?;
     #[cfg(windows)]
     let mut native_termination = runtime.block_on(async { TerminationSignals::new() })?;
+    // The launch future contains both standalone editor and attachment paths.
+    // Keep it off the executor's by-value stack frames: in debug builds those
+    // copies otherwise consume most of the Windows main thread's stack before
+    // the selected frontend starts polling.
     #[cfg(windows)]
-    let result = runtime.block_on(run(&mut startup, &mut native_termination, environment));
+    let launch = Box::pin(run(&mut startup, &mut native_termination, environment));
     #[cfg(not(windows))]
-    let result = runtime.block_on(run(&mut startup, environment));
+    let launch = Box::pin(run(&mut startup, environment));
+    let result = runtime.block_on(launch);
     #[cfg(windows)]
     let result = reconcile_pending_console_event(
         result,
