@@ -1819,8 +1819,10 @@ async fn a_known_transport_failure_keeps_its_reason_and_no_payload() {
         .write_all(br#"{"Input":{"secret-typed-text"#)
         .await
         .unwrap();
+    // Half-close only. Closing the socket outright is a hang-up, which the
+    // host reports without a cause: its next write breaks the pipe, and frames
+    // left unread here turn the read of this frame into a reset.
     writer.shutdown().await.unwrap();
-    drop(stream);
 
     let retained = await_lost_client_notice(&endpoint).await;
     assert_exactly_one_loss(&retained);
@@ -1830,6 +1832,7 @@ async fn a_known_transport_failure_keeps_its_reason_and_no_payload() {
     );
     assert!(!retained.contains("cause is unknown"), "{retained}");
     assert!(!retained.contains("secret-typed-text"), "{retained}");
+    drop(stream);
     fs::remove_dir_all(root).unwrap();
 }
 
