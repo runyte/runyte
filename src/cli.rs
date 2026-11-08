@@ -9042,6 +9042,87 @@ mod tests {
         assert!(!hints.is_pending());
     }
 
+    fn app_with_live_jump_labels(words: usize) -> App {
+        let mut app = App::new(Config::default(), None).unwrap();
+        app.buffers[0].apply(&crate::text::Transaction::insert(0, "aa ".repeat(words)));
+        app.jump = crate::jump_labels::JumpLabels::new((0..words).map(|word| word * 3));
+        app
+    }
+
+    /// Delivers a key in frontend order: the hint tracker observes it, then
+    /// the editor receives it.
+    fn press_through_key_hints(app: &mut App, hints: &mut KeyHintState, key: KeyStroke) {
+        let input = InputEvent::Key(key);
+        assert_eq!(
+            observe_key_or_text_hint(app, hints, &input),
+            crate::key_hints::HintEventResult::Forward
+        );
+        app.handle_input(input).unwrap();
+    }
+
+    #[test]
+    fn jump_label_spelling_an_unbound_sequence_jumps_without_a_no_binding_message() {
+        use crate::jump_labels::LabelPart;
+
+        // Two hundred targets is the first count that gives `z` an `n` child.
+        let mut app = app_with_live_jump_labels(200);
+        let target = (0..200)
+            .map(|word| word * 3)
+            .find(|offset| {
+                let labels = app.jump.as_ref().unwrap();
+                labels.label_at(*offset) == Some(('z', LabelPart::Prefix))
+                    && labels.label_at(offset + 1) == Some(('n', LabelPart::Suffix))
+            })
+            .expect("two hundred targets include the label zn");
+        let mut hints = KeyHintState::default();
+
+        press_through_key_hints(&mut app, &mut hints, KeyStroke::char('z'));
+        assert!(app.jump.is_some());
+        assert!(!hints.is_visible());
+
+        press_through_key_hints(&mut app, &mut hints, KeyStroke::char('n'));
+        assert!(app.jump.is_none());
+        assert_eq!(app.active().selection.primary().head, target);
+        assert!(hints.message().is_none());
+        assert!(!hints.is_visible());
+    }
+
+    #[test]
+    fn jump_label_spelling_a_bound_prefix_leaves_no_hint_for_the_next_key() {
+        for (words, label) in [(5, &['g'][..]), (27, &['m', 'a'][..])] {
+            let mut app = app_with_live_jump_labels(words);
+            let mut hints = KeyHintState::default();
+
+            for key in label {
+                press_through_key_hints(&mut app, &mut hints, KeyStroke::char(*key));
+                assert!(!hints.is_visible(), "label {label:?}");
+            }
+            assert!(app.jump.is_none(), "label {label:?}");
+
+            // The key after the jump starts fresh: a tilde is unbound beneath
+            // both prefixes and silent on its own.
+            press_through_key_hints(&mut app, &mut hints, KeyStroke::char('~'));
+            assert!(hints.message().is_none(), "label {label:?}");
+            assert!(!hints.is_visible(), "label {label:?}");
+        }
+    }
+
+    #[test]
+    fn live_jump_labels_own_the_window_prefix_in_insert_mode() {
+        let mut app = app_with_live_jump_labels(1);
+        app.mode = crate::command::Mode::Insert;
+        let mut hints = KeyHintState::default();
+
+        press_through_key_hints(
+            &mut app,
+            &mut hints,
+            KeyStroke::new(KeyCode::Char('w'), Modifiers::CONTROL),
+        );
+
+        assert!(app.jump.is_none());
+        assert!(!hints.is_visible());
+    }
+
     #[test]
     fn frontend_observes_the_configured_window_prefix_in_insert_mode() {
         let config = Config {

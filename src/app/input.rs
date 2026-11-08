@@ -119,8 +119,9 @@ impl App {
         // Character-taking commands own the next key before the registry can
         // interpret it as a command or prefix. In particular, the first Space
         // in `r Space Space` is replacement text; only the second Space starts
-        // the application command tree.
-        if self.grammar.awaiting_character().is_some() {
+        // the application command tree. Live jump labels own the keyboard the
+        // same way: `z n` names a target even where no such binding exists.
+        if self.grammar.awaiting_character().is_some() || self.jump.is_some() {
             return None;
         }
         match self.grammar.kind() {
@@ -140,7 +141,8 @@ impl App {
 
     /// Registry mode a frontend should use while observing this key.
     pub fn key_hint_mode_for_key(&self, key: KeyStroke) -> Option<Mode> {
-        if matches!(self.mode, Mode::Insert | Mode::Replace)
+        if self.jump.is_none()
+            && matches!(self.mode, Mode::Insert | Mode::Replace)
             && (key.canonical_for_binding() == self.keymap.window_prefix()
                 || !self.grammar.pending_sequence().is_empty())
         {
