@@ -5,8 +5,6 @@
 
 https://github.com/user-attachments/assets/5f039873-8232-4ad9-b089-0d54b2b05e85
 
-*[Watch the 45-second demo](https://runyte.com/videos/runyte-demo.mp4?v=7b63a9df8e582e64): editing, terminals, Markdown, persistent sessions, and the desktop window with animated images, PDFs, and pane dragging.*
-
 Runyte is a Helix-style modal text editor living in your terminal or its own native window.
 It supports multiple panes, and each pane shows a text file, a terminal, or a file manager.
 
