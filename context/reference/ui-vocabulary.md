@@ -97,7 +97,9 @@ them, regardless of which extensibility direction is chosen.
   wraps a rendered page. The pane title,
   not this row, owns active-buffer identity.
   Active-buffer state includes `[+]`, `[STALE]`, and `[RO]` with the same
-  meanings and order as the pane title.
+  meanings and order as the pane title. The directory is the workspace root;
+  a working directory elsewhere follows it as `(cd: …)`, relative below the
+  root and absolute outside it.
   The session word after the mode is `ide`, `mux`, or `editor`. Editor
   mode has no workspace, so its directory is labelled `Directory:`
   rather than `Workspace:`; the frontend chooses the word, not the snapshot.

@@ -35,6 +35,7 @@ fn attach_alias_captures_the_editor_working_directory_for_relative_selectors() {
     assert_eq!(
         app.take_workspace_switch(),
         Some(WorkspaceSwitchRequest {
+            arrive_in_working_directory: false,
             target: WorkspaceSwitchTarget::UserSelector(PathBuf::from("../project")),
             working_directory: editor_directory,
             running_only: false,
@@ -4618,4 +4619,550 @@ fn remapped_session_strip_activation_keeps_the_presented_target() {
         app.take_workspace_switch().unwrap().target,
         WorkspaceSwitchTarget::Selected(target)
     );
+}
+
+fn make_repository(directory: &Path) {
+    fs::create_dir_all(directory.join(".git")).unwrap();
+    fs::write(directory.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+}
+
+struct WorkspaceChange {
+    base: PathBuf,
+    current: PathBuf,
+    other: PathBuf,
+    app: App,
+}
+
+impl WorkspaceChange {
+    /// An editor in one repository, beside a second repository.
+    fn new(name: &str) -> Self {
+        let base = temporary(name);
+        let current = base.join("current");
+        let other = base.join("other");
+        for repository in [&current, &other] {
+            make_repository(repository);
+            fs::create_dir_all(repository.join("src")).unwrap();
+        }
+        let base = base.canonicalize().unwrap();
+        let current = base.join("current");
+        let other = base.join("other");
+        let app = App::new_in_isolated_project(
+            &current,
+            HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                String::new(),
+            ))))),
+        )
+        .unwrap();
+        Self {
+            base,
+            current,
+            other,
+            app,
+        }
+    }
+
+    fn run(&mut self, command: &str, argument: Option<&Path>) {
+        let argument = argument.map(|path| path.to_string_lossy().into_owned());
+        self.app
+            .execute(crate::command::parse_named_command(command, argument.as_deref()).unwrap())
+            .unwrap();
+    }
+
+    fn open_explorer(&mut self, directory: &Path) {
+        self.run("open", Some(directory));
+    }
+
+    fn expect_relaunch(&mut self, root: &Path, directory: &Path) {
+        assert!(self.app.should_quit);
+        assert_eq!(
+            self.app.take_workspace_relaunch(),
+            Some(WorkspaceRelaunchRequest {
+                root: root.to_owned(),
+                directory: directory.to_owned(),
+            })
+        );
+    }
+
+    fn expect_stayed(&mut self) {
+        assert!(!self.app.should_quit);
+        assert_eq!(self.app.take_workspace_relaunch(), None);
+    }
+}
+
+impl Drop for WorkspaceChange {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.base);
+    }
+}
+
+#[test]
+fn cd_inside_the_workspace_moves_only_the_working_directory() {
+    let mut test = WorkspaceChange::new("cd-inside-workspace");
+    let source = test.current.join("src");
+
+    test.run("cd", Some(&source));
+
+    test.expect_stayed();
+    assert_eq!(test.app.working_directory, source);
+    assert_eq!(test.app.project_root, test.current);
+}
+
+#[test]
+fn cd_into_another_repository_replaces_an_ide_editor_there() {
+    let mut test = WorkspaceChange::new("cd-other-repository");
+    let (root, directory) = (test.other.clone(), test.other.join("src"));
+
+    test.run("cd", Some(&directory));
+
+    test.expect_relaunch(&root, &directory);
+    assert_eq!(test.app.project_root, test.current);
+    assert_ne!(test.app.working_directory, directory);
+}
+
+#[cfg(unix)]
+#[test]
+fn cd_into_another_repository_attaches_a_persistent_session_and_keeps_the_directory() {
+    let mut test = WorkspaceChange::new("cd-other-session");
+    test.app.enable_persistent_session();
+    test.app.buffers[0].dirty = true;
+    let (root, directory) = (test.other.clone(), test.other.join("src"));
+
+    test.run("cd", Some(&directory));
+
+    assert!(test.app.should_quit);
+    assert_eq!(test.app.take_workspace_relaunch(), None);
+    assert_eq!(
+        test.app.take_workspace_switch(),
+        Some(WorkspaceSwitchRequest {
+            target: WorkspaceSwitchTarget::UserSelector(root),
+            working_directory: directory,
+            running_only: false,
+            visit: None,
+            arrive_in_working_directory: true,
+        })
+    );
+}
+
+#[test]
+fn unsaved_work_refuses_leaving_an_ide_workspace() {
+    let mut test = WorkspaceChange::new("cd-refused-unsaved");
+    test.app.buffers[0].dirty = true;
+    let start = test.app.working_directory.clone();
+    let other = test.other.clone();
+
+    test.run("cd", Some(&other));
+
+    test.expect_stayed();
+    assert_eq!(test.app.working_directory, start);
+    assert!(
+        test.app.status.contains("unsaved changes"),
+        "{}",
+        test.app.status
+    );
+}
+
+#[test]
+fn unsaved_work_does_not_refuse_moving_inside_the_workspace() {
+    let mut test = WorkspaceChange::new("cd-inside-unsaved");
+    test.app.buffers[0].dirty = true;
+    let source = test.current.join("src");
+
+    test.run("cd", Some(&source));
+
+    test.expect_stayed();
+    assert_eq!(test.app.working_directory, source);
+}
+
+#[test]
+fn cd_to_a_directory_without_a_workspace_moves_and_creates_nothing() {
+    let mut test = WorkspaceChange::new("cd-unclaimed");
+    let plain = test.base.join("plain");
+    fs::create_dir(&plain).unwrap();
+
+    test.run("cd", Some(&plain));
+
+    test.expect_stayed();
+    assert_eq!(test.app.working_directory, plain);
+    assert!(!plain.join(".runyte").exists());
+    assert!(test.app.status.contains(":init"), "{}", test.app.status);
+}
+
+#[test]
+fn a_workspace_made_inside_a_repository_stays_open_while_moving_around_in_it() {
+    let base = temporary("cd-nested-workspace");
+    let nested = base.join("repository/package");
+    fs::create_dir_all(nested.join("src")).unwrap();
+    make_repository(&base.join("repository"));
+    fs::create_dir_all(nested.join(".runyte")).unwrap();
+    let nested = nested.canonicalize().unwrap();
+    let mut app = App::new_in_isolated_project(
+        &nested,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+
+    app.execute(crate::command::parse_named_command("cd", Some("src")).unwrap())
+        .unwrap();
+
+    assert!(!app.should_quit);
+    assert_eq!(app.working_directory, nested.join("src"));
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn a_repository_nested_in_the_workspace_is_a_different_workspace() {
+    let mut test = WorkspaceChange::new("cd-nested-repository");
+    let vendored = test.current.join("vendor/library");
+    make_repository(&vendored);
+
+    test.run("cd", Some(&vendored));
+
+    test.expect_relaunch(&vendored, &vendored);
+}
+
+#[test]
+fn bare_cd_uses_the_active_explorer() {
+    let mut test = WorkspaceChange::new("cd-bare-explorer");
+    let other = test.other.clone();
+    test.open_explorer(&other);
+
+    test.run("cd", None);
+
+    test.expect_relaunch(&other, &other);
+}
+
+#[test]
+fn bare_cd_needs_a_view_showing_a_directory() {
+    let mut test = WorkspaceChange::new("cd-bare-file");
+    let invocation = crate::command::parse_named_command("cd", None).unwrap();
+
+    let error = test.app.execute(invocation);
+
+    let reported = match error {
+        Err(error) => format!("{error:#}"),
+        Ok(_) => test.app.status.clone(),
+    };
+    assert!(reported.contains("needs a directory"), "{reported}");
+    test.expect_stayed();
+}
+
+#[test]
+fn editor_mode_cd_only_moves_the_working_directory() {
+    let mut test = WorkspaceChange::new("cd-editor-mode");
+    test.app.editor_mode = true;
+    let other = test.other.clone();
+
+    test.run("cd", Some(&other));
+
+    test.expect_stayed();
+    assert_eq!(test.app.working_directory, other);
+}
+
+#[test]
+fn init_makes_the_exact_directory_a_workspace_and_moves_there() {
+    let mut test = WorkspaceChange::new("init-exact");
+    let plain = test.base.join("plain");
+    fs::create_dir(&plain).unwrap();
+
+    test.run("init", Some(&plain));
+
+    assert!(plain.join(".runyte").is_dir());
+    test.expect_relaunch(&plain, &plain);
+}
+
+#[test]
+fn init_does_not_touch_the_filesystem_when_the_move_would_be_refused() {
+    let mut test = WorkspaceChange::new("init-refused");
+    test.app.buffers[0].dirty = true;
+    let plain = test.base.join("plain");
+    fs::create_dir(&plain).unwrap();
+
+    test.run("init", Some(&plain));
+
+    test.expect_stayed();
+    assert!(!plain.join(".runyte").exists());
+}
+
+#[test]
+fn init_on_the_open_workspace_says_so_and_stays() {
+    let mut test = WorkspaceChange::new("init-current");
+    let current = test.current.clone();
+
+    test.run("init", Some(&current));
+
+    test.expect_stayed();
+    assert!(
+        test.app.status.contains("already a workspace"),
+        "{}",
+        test.app.status
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn init_in_a_persistent_session_attaches_to_the_new_workspace() {
+    let mut test = WorkspaceChange::new("init-persistent");
+    test.app.enable_persistent_session();
+    let plain = test.base.join("plain");
+    fs::create_dir(&plain).unwrap();
+
+    test.run("init", Some(&plain));
+
+    assert!(plain.join(".runyte").is_dir());
+    let switch = test.app.take_workspace_switch().unwrap();
+    assert_eq!(switch.target, WorkspaceSwitchTarget::UserSelector(plain));
+    assert!(switch.arrive_in_working_directory);
+}
+
+#[test]
+fn explorer_key_goes_where_cd_would() {
+    let mut test = WorkspaceChange::new("tab-c-other");
+    let other = test.other.clone();
+    test.open_explorer(&other);
+
+    test.run("open-explorer-workspace", None);
+
+    test.expect_relaunch(&other, &other);
+}
+
+#[test]
+fn explorer_key_inside_the_workspace_moves_only_the_working_directory() {
+    let mut test = WorkspaceChange::new("tab-c-current");
+    let source = test.current.join("src");
+    test.open_explorer(&source);
+
+    test.run("open-explorer-workspace", None);
+
+    test.expect_stayed();
+    assert_eq!(test.app.working_directory, source);
+}
+
+#[test]
+fn explorer_key_makes_a_workspace_where_discovery_finds_none() {
+    let mut test = WorkspaceChange::new("tab-c-adopt");
+    let plain = test.base.join("plain");
+    fs::create_dir(&plain).unwrap();
+    test.open_explorer(&plain);
+
+    test.run("open-explorer-workspace", None);
+
+    assert!(plain.join(".runyte").is_dir());
+    test.expect_relaunch(&plain, &plain);
+}
+
+#[cfg(unix)]
+#[test]
+fn explorer_key_refuses_a_directory_other_accounts_can_write() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut test = WorkspaceChange::new("tab-c-shared");
+    let shared = test.base.join("shared");
+    fs::create_dir(&shared).unwrap();
+    fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).unwrap();
+    test.open_explorer(&shared);
+
+    test.run("open-explorer-workspace", None);
+
+    test.expect_stayed();
+    assert!(!shared.join(".runyte").exists());
+    assert!(
+        test.app.status.contains("cannot make"),
+        "{}",
+        test.app.status
+    );
+}
+
+#[test]
+fn explorer_key_is_refused_outside_an_explorer() {
+    let mut test = WorkspaceChange::new("tab-c-file");
+
+    test.run("open-explorer-workspace", None);
+
+    test.expect_stayed();
+}
+
+#[test]
+fn arriving_from_another_session_stays_inside_the_workspace() {
+    let mut test = WorkspaceChange::new("arrive");
+    let source = test.current.join("src");
+
+    test.app.arrive_in_directory(&source).unwrap();
+    assert_eq!(test.app.working_directory, source);
+
+    assert!(test.app.arrive_in_directory(&test.other).is_err());
+    assert_eq!(test.app.working_directory, source);
+}
+
+#[test]
+fn the_status_line_names_the_workspace_rather_than_the_working_directory() {
+    let mut test = WorkspaceChange::new("status-workspace");
+    let source = test.current.join("src");
+    test.run("cd", Some(&source));
+
+    let geometry = crate::ui::frame_geometry(ratatui::layout::Rect::new(0, 0, 120, 24));
+    let prepared = test.app.prepare_view(geometry);
+    let status = test.app.snapshot(&prepared).status;
+
+    assert_eq!(status.workspace_directory, test.current.to_string_lossy());
+    assert_eq!(status.working_directory.as_deref(), Some("src"));
+}
+
+#[test]
+fn a_destination_the_replacement_would_refuse_keeps_the_editor_open() {
+    let mut test = WorkspaceChange::new("cd-refused-destination");
+    let other = test.other.clone();
+    // A workspace whose state directory would land in the configuration root.
+    test.app.config_path = Some(other.join("config.yaml"));
+    let start = test.app.working_directory.clone();
+
+    test.run("cd", Some(&other));
+
+    test.expect_stayed();
+    assert_eq!(test.app.working_directory, start);
+    assert!(
+        test.app.status.contains("cannot open"),
+        "{}",
+        test.app.status
+    );
+}
+
+#[test]
+fn enter_on_a_bare_cd_keeps_the_prompt_for_a_path_when_the_view_offers_none() {
+    let mut test = WorkspaceChange::new("cd-enter-file");
+    for key in [":", "c", "d"] {
+        test.app
+            .handle_key(crate::input::KeyStroke::char(key.chars().next().unwrap()))
+            .unwrap();
+    }
+
+    test.app
+        .handle_key(crate::input::KeyStroke::plain(crate::input::KeyCode::Enter))
+        .unwrap();
+
+    assert_eq!(test.app.command, "cd ");
+    test.expect_stayed();
+}
+
+#[test]
+fn enter_on_a_bare_cd_runs_at_once_in_an_explorer() {
+    let mut test = WorkspaceChange::new("cd-enter-explorer");
+    let other = test.other.clone();
+    test.open_explorer(&other);
+    for key in [":", "c", "d"] {
+        test.app
+            .handle_key(crate::input::KeyStroke::char(key.chars().next().unwrap()))
+            .unwrap();
+    }
+
+    test.app
+        .handle_key(crate::input::KeyStroke::plain(crate::input::KeyCode::Enter))
+        .unwrap();
+
+    test.expect_relaunch(&other, &other);
+}
+
+fn editor_on_a_plain_directory(root: &Path) -> App {
+    App::new_in_isolated_project(
+        root,
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_subdirectory_of_a_workspace_discovery_cannot_find_is_still_inside_it() {
+    let base = temporary("cd-undiscoverable-workspace");
+    fs::create_dir_all(base.join("project/sub")).unwrap();
+    let project = base.join("project").canonicalize().unwrap();
+    let mut app = editor_on_a_plain_directory(&project);
+    app.config.workspace.state = base.join("state");
+
+    app.execute(crate::command::parse_named_command("cd", Some("sub")).unwrap())
+        .unwrap();
+
+    assert_eq!(app.working_directory, project.join("sub"));
+    assert!(!app.status.contains(":init"), "{}", app.status);
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn a_subdirectory_of_the_home_workspace_has_no_workspace_of_its_own() {
+    let base = temporary("cd-home-subdirectory");
+    fs::create_dir_all(base.join("home/notes")).unwrap();
+    let home = base.join("home").canonicalize().unwrap();
+    let mut app = editor_on_a_plain_directory(&home);
+    app.home_workspace = true;
+
+    app.execute(crate::command::parse_named_command("cd", Some("notes")).unwrap())
+        .unwrap();
+
+    assert_eq!(app.working_directory, home.join("notes"));
+    assert!(app.status.contains(":init"), "{}", app.status);
+    fs::remove_dir_all(base).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn explorer_key_does_not_create_state_when_discovery_fails() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut test = WorkspaceChange::new("tab-c-discovery-error");
+    let broken = test.base.join("broken");
+    fs::create_dir(&broken).unwrap();
+    // A `.git` that is neither a directory nor a readable file makes discovery
+    // an error rather than an answer. Root reads it regardless, so the
+    // premise is checked rather than assumed.
+    fs::write(broken.join(".git"), "gitdir: elsewhere\n").unwrap();
+    fs::set_permissions(broken.join(".git"), fs::Permissions::from_mode(0o000)).unwrap();
+    if crate::project_root::discover_with_home(&broken, Path::new(".runyte")).is_ok() {
+        return;
+    }
+    test.open_explorer(&broken);
+
+    test.run("open-explorer-workspace", None);
+
+    test.expect_stayed();
+    assert!(!broken.join(".runyte").exists());
+    assert!(
+        test.app.status.contains("cannot tell"),
+        "{}",
+        test.app.status
+    );
+}
+
+#[test]
+fn a_configuration_file_broken_during_the_session_keeps_the_editor_open() {
+    let mut test = WorkspaceChange::new("cd-broken-config");
+    let configuration = test.base.join("config.yaml");
+    fs::write(&configuration, ": not [valid yaml\n").unwrap();
+    test.app.config_path = Some(configuration);
+    let other = test.other.clone();
+
+    test.run("cd", Some(&other));
+
+    test.expect_stayed();
+    assert!(
+        test.app.status.contains("cannot open"),
+        "{}",
+        test.app.status
+    );
+}
+
+#[test]
+fn init_creates_nothing_when_the_replacement_could_not_start() {
+    let mut test = WorkspaceChange::new("init-broken-config");
+    let configuration = test.base.join("config.yaml");
+    fs::write(&configuration, ": not [valid yaml\n").unwrap();
+    test.app.config_path = Some(configuration);
+    let plain = test.base.join("plain");
+    fs::create_dir(&plain).unwrap();
+
+    test.run("init", Some(&plain));
+
+    test.expect_stayed();
+    assert!(!plain.join(".runyte").exists());
 }

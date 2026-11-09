@@ -225,7 +225,7 @@ use crate::workspace::{
 // Version 93 adds bounded, one-shot graphical launch targets on native attachments.
 // Version 94 admits 1 MiB document captures and larger bounded host responses.
 // Version 95 carries keyboard pane-layout previews.
-pub const VERSION: u32 = 95;
+pub const VERSION: u32 = 96;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -537,6 +537,10 @@ pub enum ClientRequest {
     /// be reported through the editor that is on screen.
     Notify {
         message: String,
+    },
+    /// Finishes a `:cd` that crossed into this workspace from another session.
+    SetWorkingDirectory {
+        directory: Vec<u8>,
     },
     Health,
     SessionPreview,
@@ -916,6 +920,7 @@ impl ClientRequest {
                 !message.is_empty() && message.len() <= MAX_NOTIFICATION_BYTES,
                 "client notification exceeds the protocol limit",
             ),
+            Self::SetWorkingDirectory { directory } => validate_path_bytes(directory),
             Self::OpenLaunchTargets { targets } => launch::validate_targets(targets),
             Self::OpenBuffers { paths, .. } | Self::CreateWait { paths } => {
                 require(
@@ -1208,6 +1213,9 @@ pub enum HostResponse {
         working_directory_bytes: Vec<u8>,
         running_only: bool,
         visit: Option<DestinationVisit>,
+        /// The client asks the destination to adopt `working_directory_bytes`.
+        #[serde(default)]
+        arrive_in_working_directory: bool,
     },
     /// A provisional native handoff. The source attachment remains reserved
     /// until its own connection receives a matching commit or abort.
@@ -1483,6 +1491,7 @@ mod tests {
                 working_directory_bytes: valid.clone(),
                 running_only: false,
                 visit: None,
+                arrive_in_working_directory: false,
             },
             HostResponse::SwitchWorkspace {
                 target: Box::new(WorkspaceSwitchTarget::UserSelector {
@@ -1491,6 +1500,7 @@ mod tests {
                 working_directory_bytes: bytes.clone(),
                 running_only: false,
                 visit: None,
+                arrive_in_working_directory: false,
             },
             HostResponse::ParentSwitchWorkspace {
                 selector: bytes.clone(),
@@ -1627,7 +1637,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 95);
+        assert_eq!(VERSION, 96);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),
@@ -1806,6 +1816,7 @@ mod tests {
             working_directory_bytes: encode_path(std::path::Path::new("working")),
             running_only: true,
             visit: None,
+            arrive_in_working_directory: false,
         };
         let encoded = serde_json::to_value(&response).unwrap();
         assert_eq!(
@@ -2156,6 +2167,20 @@ mod tests {
             ClientRequest::VisitDestination {
                 incarnation: "a".repeat(64),
                 destination: OpenDestination::Buffer(0)
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            ClientRequest::SetWorkingDirectory {
+                directory: Vec::new()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            ClientRequest::SetWorkingDirectory {
+                directory: vec![b'a'; MAX_PATH_BYTES + 1]
             }
             .validate()
             .is_err()

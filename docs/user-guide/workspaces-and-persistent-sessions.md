@@ -259,10 +259,43 @@ groups them into one `Space 1-9` row, and lists remapped ones separately.
 terminal programs. Switching away is always safe, because the old host keeps
 them.
 
-**In ide mode** (Unix) there is no host, so session commands are not available.
+**In ide mode** (Unix) there is no host, so session commands are not available;
+[`:cd`](workspaces-and-persistent-sessions.md#changing-workspace) changes
+workspace instead.
 `Space Space` and `Space 1`–`Space 9` are greyed in the key hints.
 `:session-list`, `:session-attach`, `:session-stop`, and `:session-rename` are
 left out of the command palette, and running one answers `needs mux mode`.
+
+### Changing workspace
+
+`:cd DIRECTORY` finds the workspace DIRECTORY belongs to, the same way a launch
+does, and acts on the answer in ide and mux alike:
+
+| DIRECTORY's workspace | ide | mux |
+| --- | --- | --- |
+| The one already open | The working directory moves | The same |
+| A different one | Runyte restarts there, on an explorer of DIRECTORY | Attaches to its session, starting it if needed; the session you left keeps running |
+| None | The working directory moves, and nothing is created | The same |
+
+- A bare `:cd` uses the directory the active explorer or terminal shows.
+- The explorer's `Tab c` goes where `:cd` would. Where there is no workspace it
+  also makes one, refusing the directories
+  [listed above](workspaces-and-persistent-sessions.md#starting-a-workspace).
+- `:init [DIRECTORY]` makes exactly that directory a workspace, even inside a
+  repository, and moves there, as `runyte --init` followed by a launch would.
+  It defaults to the active explorer or terminal, then the working directory.
+- A workspace made inside a repository stays open while you move around in it.
+- In ide, leaving a workspace ends the editor's panes, selections and undo
+  history. It refuses while there are unsaved changes, plugin work still
+  running, or terminals with a live program, an idle shell included. It also
+  refuses a workspace Runyte could not open, and when the Runyte program has
+  been removed since it started. A refused move changes nothing, and moving
+  inside the workspace is never refused.
+- On Windows, a mux `:cd` attaches to the workspace without moving that
+  session's working directory.
+
+Editor mode has no workspace, so there `:cd` only changes the working
+directory.
 
 ### The session manager
 

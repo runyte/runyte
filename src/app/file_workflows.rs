@@ -448,20 +448,7 @@ impl App {
             .map(Path::to_path_buf)
     }
 
-    pub(super) fn change_directory(&mut self, requested: PathBuf) -> Result<()> {
-        let requested = self.resolve_working_path(requested);
-        let directory = fs::canonicalize(&requested).map_err(|error| {
-            anyhow::anyhow!(
-                "failed to change directory to {}: {error}",
-                requested.display()
-            )
-        })?;
-        anyhow::ensure!(
-            directory.is_dir(),
-            "cannot change directory to {}: not a directory",
-            directory.display()
-        );
-
+    pub(super) fn move_working_directory(&mut self, directory: PathBuf) -> Result<()> {
         self.working_directory = directory.clone();
         if self.active_buffer().is_directory() {
             self.open_file(directory.clone())?;

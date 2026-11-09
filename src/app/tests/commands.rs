@@ -1461,7 +1461,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .iter()
             .filter(|exposure| **exposure == CommandExposure::SharedColon)
             .count(),
-        55
+        56
     );
     assert_eq!(
         exposures
@@ -1478,7 +1478,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
         EditorCommand::ALL.len()
             - INTERNAL_EDITOR_COMMANDS.len()
             - GRAMMAR_ONLY_EDITOR_COMMANDS.len()
-            - 62
+            - 63
     );
 
     for spec in COMMANDS {

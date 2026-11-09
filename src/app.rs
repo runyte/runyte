@@ -324,6 +324,7 @@ mod syntax_workflows;
 mod terminal_workflows;
 mod tutorial_workflows;
 mod view_position;
+mod workspace_change;
 mod workspace_startup;
 mod workspace_workflows;
 
@@ -2844,6 +2845,16 @@ pub struct WorkspaceSwitchRequest {
     pub running_only: bool,
     pub target: WorkspaceSwitchTarget,
     pub working_directory: PathBuf,
+    /// The destination's working directory becomes `working_directory` once
+    /// attached, as `:cd` promises.
+    pub arrive_in_working_directory: bool,
+}
+
+/// An ide editor asking to be replaced by one rooted in another workspace.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkspaceRelaunchRequest {
+    pub root: PathBuf,
+    pub directory: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3213,6 +3224,7 @@ pub struct App {
     parent_wait_actions: Vec<(usize, bool)>,
     parent_wait_origins: HashMap<usize, (usize, TerminalId)>,
     workspace_switch: Option<WorkspaceSwitchRequest>,
+    workspace_relaunch: Option<WorkspaceRelaunchRequest>,
     /// A persistent session can keep owning its buffers after a TUI detaches or
     /// switches roots. Standalone mode leaves this false because replacing its
     /// process would otherwise lose that text.
@@ -3972,6 +3984,7 @@ impl App {
             parent_wait_actions: Vec::new(),
             parent_wait_origins: HashMap::new(),
             workspace_switch: None,
+            workspace_relaunch: None,
             persistent_session: false,
             #[cfg(windows)]
             current_native_publication: None,

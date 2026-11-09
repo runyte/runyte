@@ -726,9 +726,12 @@ pub struct StatusSnapshot {
     /// has one. Kept in the snapshot for wire compatibility; the global status
     /// line leaves shortcut presentation to the manager itself.
     pub workspace_number: Option<u8>,
-    /// The editor working directory selected by startup or `:cd`, rendered as
-    /// workspace context independently of the active pane's buffer identity.
+    /// The workspace root, or in editor mode the working directory, rendered
+    /// as context independently of the active pane's buffer identity.
     pub workspace_directory: String,
+    /// Where `:cd` left the working directory, when that is not the workspace
+    /// root: relative below it, absolute otherwise.
+    pub working_directory: Option<String>,
     pub dirty: bool,
     pub external_file_status: ExternalFileStatus,
     pub read_only: bool,
@@ -1019,7 +1022,21 @@ impl App {
             status: StatusSnapshot {
                 mode: self.mode,
                 workspace_number: self.workspace_number,
-                workspace_directory: self.working_directory.to_string_lossy().into_owned(),
+                workspace_directory: if self.is_editor_mode() {
+                    self.working_directory.to_string_lossy().into_owned()
+                } else {
+                    crate::project_root::ordinary_spelling(&self.project_root)
+                        .to_string_lossy()
+                        .into_owned()
+                },
+                working_directory: (!self.is_editor_mode())
+                    .then(|| {
+                        crate::project_root::working_directory_label(
+                            &self.project_root,
+                            &self.working_directory,
+                        )
+                    })
+                    .flatten(),
                 dirty: terminal.is_none() && buffer.dirty,
                 external_file_status: if terminal.is_none() {
                     buffer.external_file_status()
@@ -2549,8 +2566,12 @@ mod tests {
         let snapshot = prepared_snapshot(&mut app, 80, 24);
 
         assert_eq!(
+            snapshot.status.working_directory.as_deref(),
+            Some("/workspace/\u{fffd}tail")
+        );
+        assert_eq!(
             snapshot.status.workspace_directory,
-            "/workspace/\u{fffd}tail"
+            app.project_root.to_string_lossy()
         );
     }
 
@@ -2874,6 +2895,7 @@ mod tests {
             workspace_number: None,
             mode: Mode::Normal,
             workspace_directory: String::new(),
+            working_directory: None,
             dirty: false,
             external_file_status: ExternalFileStatus::Synchronized,
             read_only: false,

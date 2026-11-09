@@ -175,7 +175,7 @@ When a workspace launch refuses, the message tells you:
   one
 
 A directory argument to ide opens an explorer. To choose a different workspace,
-use `cd DIRECTORY && runyte`. Mux can choose one directly with
+use `cd DIRECTORY && runyte`, or `:cd DIRECTORY` once Runyte is open. Mux can choose one directly with
 `runyte --mux DIRECTORY`. Replace `DIRECTORY` with the directory you want, and
 quote paths that contain spaces or shell characters.
 
@@ -183,7 +183,7 @@ quote paths that contain spaces or shell characters.
 
 The macOS app and the Linux application-menu entry start in your home directory
 in the configured `mode`. IDE and mux use the home workspace with integrated
-terminals. `mode: editor` stays in editor mode. Close a mux window and launch
+terminals; `:cd` or the explorer's `Tab c` moves to another. `mode: editor` stays in editor mode. Close a mux window and launch
 again to get back to the same persistent session. A host accepts one
 interactive frontend at a time.
 

@@ -1247,6 +1247,7 @@ mod tests {
             mode: Mode::Normal,
             workspace_number: None,
             workspace_directory: "/workspace".to_owned(),
+            working_directory: None,
             dirty: false,
             external_file_status: ExternalFileStatus::Synchronized,
             read_only: false,
@@ -2811,6 +2812,8 @@ pub struct StatusSnapshot {
     #[serde(default)]
     pub workspace_number: Option<u8>,
     pub workspace_directory: String,
+    #[serde(default)]
+    pub working_directory: Option<String>,
     pub dirty: bool,
     pub external_file_status: ExternalFileStatus,
     pub read_only: bool,
@@ -2891,6 +2894,7 @@ impl From<core::StatusSnapshot> for StatusSnapshot {
             mode: value.mode.into(),
             workspace_number: value.workspace_number,
             workspace_directory: value.workspace_directory,
+            working_directory: value.working_directory,
             dirty: value.dirty,
             external_file_status: value.external_file_status.into(),
             read_only: value.read_only,
@@ -2914,6 +2918,7 @@ impl From<StatusSnapshot> for core::StatusSnapshot {
             mode: value.mode.into(),
             workspace_number: value.workspace_number,
             workspace_directory: value.workspace_directory,
+            working_directory: value.working_directory,
             dirty: value.dirty,
             external_file_status: value.external_file_status.into(),
             read_only: value.read_only,

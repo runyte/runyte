@@ -3937,6 +3937,7 @@ mod tests {
             working_directory_bytes: encode_path(std::path::Path::new("/")),
             running_only: false,
             visit: None,
+            arrive_in_working_directory: false,
         }
     }
 

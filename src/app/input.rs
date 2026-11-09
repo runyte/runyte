@@ -4322,8 +4322,11 @@ impl App {
                     .split_once(char::is_whitespace)
                     .is_some_and(|(_, argument)| !argument.trim().is_empty());
                 if let Some(spec) = spec
-                    && spec.arguments.is_required()
                     && !has_argument
+                    && (spec.arguments.is_required()
+                        || (spec.id
+                            == CommandId::Colon(crate::command::ColonCommand::ChangeDirectory)
+                            && self.contextual_directory().is_none()))
                 {
                     self.command = format!("{} ", spec.name);
                     self.command_cursor = self.command.chars().count();
@@ -5363,6 +5366,7 @@ impl App {
             Command::PreviousRunningSession => self.cycle_persistent_session(false),
             Command::OpenSessionDirectory => self.open_session_directory_chooser(),
             Command::OpenExplorerSession => self.open_explorer_session(),
+            Command::OpenExplorerWorkspace => self.change_to_explorer_workspace(),
             Command::OpenBufferPicker => self.open_buffer_picker(),
             Command::GlobalSearch => {
                 self.open_prompt(PromptKind::GlobalSearch(SearchMode::Insensitive))
@@ -6605,8 +6609,11 @@ impl App {
         }
 
         match (command, parameters) {
-            (Colon::ChangeDirectory, InvocationParameters::Path(path)) => {
+            (Colon::ChangeDirectory, InvocationParameters::OptionalPath(path)) => {
                 self.change_directory(path)
+            }
+            (Colon::InitializeWorkspace, InvocationParameters::OptionalPath(path)) => {
+                self.initialize_workspace(path)
             }
             (Colon::SessionAttach, InvocationParameters::Path(path)) => {
                 if self.reject_unavailable_persistent_session(

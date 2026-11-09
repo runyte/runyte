@@ -3522,7 +3522,11 @@ fn draw_normal_status(
     let indicator_width = indicator_width(&indicator);
     let content_width = status_width.saturating_sub(indicator_width);
     let path_width = content_width.saturating_sub(fixed_width);
-    let directory = clip_path_start(&status.workspace_directory, path_width);
+    let location = match &status.working_directory {
+        Some(working) => format!("{} (cd: {working})", status.workspace_directory),
+        None => status.workspace_directory.clone(),
+    };
+    let directory = clip_path_start(&location, path_width);
     let left = format!("{left_prefix}{directory}{left_suffix}");
     let base_width = UnicodeWidthStr::width(mode_label.as_str())
         + UnicodeWidthStr::width(left.as_str())
@@ -6080,6 +6084,7 @@ mod tests {
             workspace_number: None,
             mode: Mode::Normal,
             workspace_directory: "/a/very/long/workspace/directory".to_owned(),
+            working_directory: None,
             dirty: true,
             external_file_status: crate::buffer::ExternalFileStatus::Synchronized,
             read_only: false,
@@ -6170,6 +6175,20 @@ mod tests {
         assert!(line.contains("│ main ~3"), "{line:?}");
         assert!(line.contains("│ rust-analyzer 0E 1W"), "{line:?}");
         assert!(line.ends_with("│ E1 W2 "), "{line:?}");
+    }
+
+    #[test]
+    fn status_shows_a_working_directory_beside_the_workspace_it_differs_from() {
+        let mut status = status_with_notifications(NotificationCounts::default());
+        status.workspace_directory = "/project/runyte".to_owned();
+        status.working_directory = Some("packages/api".to_owned());
+
+        let line = rendered_status_line(&status, 120);
+
+        assert!(
+            line.contains("Workspace: /project/runyte (cd: packages/api) [+]"),
+            "{line:?}"
+        );
     }
 
     #[test]
@@ -6442,10 +6461,18 @@ mod tests {
         let geometry = frame_geometry(TuiRect::new(0, 0, 160, 8));
         let prepared = app.prepare_view(geometry);
         let snapshot = app.snapshot(&prepared);
-        assert_eq!(snapshot.status.workspace_directory, after.to_string_lossy());
-        let screen = rendered(&mut app, 160, 8);
+        let after = after.to_string_lossy();
+        assert_eq!(snapshot.status.working_directory.as_deref(), Some(&*after));
+        assert_eq!(
+            snapshot.status.workspace_directory,
+            app.project_root.to_string_lossy()
+        );
+        let screen = rendered(&mut app, 200, 8);
         assert!(
-            screen.contains(&format!("Workspace: {}", after.to_string_lossy())),
+            screen.contains(&format!(
+                "Workspace: {} (cd: {after})",
+                app.project_root.display()
+            )),
             "{screen:?}"
         );
 

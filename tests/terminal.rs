@@ -2458,6 +2458,32 @@ fn quitting_refuses_a_running_terminal_even_when_forced() {
 }
 
 #[test]
+fn a_running_terminal_refuses_leaving_an_ide_workspace() {
+    let directory = std::env::temp_dir().join(format!(
+        "runyte-cd-refused-by-terminal-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(directory.join(".git")).unwrap();
+    std::fs::write(directory.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let destination = directory.canonicalize().unwrap();
+    let mut session = Session::start("/bin/cat");
+    let before = session.app.working_directory.clone();
+
+    session.colon(&format!("cd {}", destination.display()));
+
+    assert!(!session.app.should_quit);
+    assert_eq!(session.app.take_workspace_relaunch(), None);
+    assert_eq!(session.app.working_directory, before);
+    assert!(
+        session.app.status.contains("still running"),
+        "{}",
+        session.app.status
+    );
+    assert!(session.app.terminals.iter().all(|terminal| terminal.live()));
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn persistent_quit_refuses_a_running_terminal_even_when_forced() {
     let mut session = Session::start("/bin/cat");
     let terminal = session.app.active_terminal().unwrap();
