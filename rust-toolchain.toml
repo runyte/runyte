@@ -6,7 +6,7 @@
 # branch red with no change to the code. rustup reads this file locally and on
 # CI alike, so the gates move when this line moves and not before.
 #
-# The MSRV job overrides it with `cargo +1.88`, which is the version
+# The MSRV job overrides it with `cargo +1.89`, which is the version
 # `rust-version` in Cargo.toml promises.
 [toolchain]
 channel = "1.97.1"
