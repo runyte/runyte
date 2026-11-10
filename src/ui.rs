@@ -6461,17 +6461,18 @@ mod tests {
         let geometry = frame_geometry(TuiRect::new(0, 0, 160, 8));
         let prepared = app.prepare_view(geometry);
         let snapshot = app.snapshot(&prepared);
+        let after = crate::project_root::ordinary_spelling(&after);
         let after = after.to_string_lossy();
         assert_eq!(snapshot.status.working_directory.as_deref(), Some(&*after));
         assert_eq!(
             snapshot.status.workspace_directory,
-            app.project_root.to_string_lossy()
+            crate::project_root::ordinary_spelling(&app.project_root).to_string_lossy()
         );
         let screen = rendered(&mut app, 200, 8);
         assert!(
             screen.contains(&format!(
                 "Workspace: {} (cd: {after})",
-                app.project_root.display()
+                snapshot.status.workspace_directory
             )),
             "{screen:?}"
         );

@@ -8,7 +8,9 @@ import pwd
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 
 APP_ID = "com.runyte.Runyte"
 HERE = Path(__file__).resolve().parent
@@ -163,8 +165,22 @@ def disk_image(app, output):
         (stage / "Applications").symlink_to("/Applications")
         shutil.copyfile(HERE.parents[1] / "README.md", stage / "README.md")
         shutil.copyfile(HERE.parents[1] / "INSTALLATION.md", stage / "INSTALLATION.md")
-        subprocess.run(["hdiutil", "create", "-volname", f"Runyte {version}",
-                        "-srcfolder", str(stage), "-format", "UDZO", str(output)], check=True)
+        create = ["hdiutil", "create", "-volname", f"Runyte {version}",
+                  "-srcfolder", str(stage), "-format", "UDZO", str(output)]
+        # hdiutil intermittently reports "Resource busy" while the system
+        # still holds a previous image or the staging folder; it succeeds
+        # when retried, so a bounded retry keeps that from failing a build.
+        attempts = 5
+        for attempt in range(1, attempts + 1):
+            result = subprocess.run(create, stderr=subprocess.PIPE, text=True)
+            if result.returncode == 0:
+                break
+            print(result.stderr, end="", file=sys.stderr)
+            if "Resource busy" not in result.stderr or attempt == attempts:
+                raise subprocess.CalledProcessError(result.returncode, create,
+                                                    stderr=result.stderr)
+            output.unlink(missing_ok=True)
+            time.sleep(attempt * 2)
     return output
 
 

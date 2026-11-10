@@ -4678,7 +4678,8 @@ impl WorkspaceChange {
             self.app.take_workspace_relaunch(),
             Some(WorkspaceRelaunchRequest {
                 root: root.to_owned(),
-                directory: directory.to_owned(),
+                // An ide successor starts in an ordinary spelling on Windows.
+                directory: crate::project_root::ordinary_spelling(directory),
             })
         );
     }
@@ -5005,7 +5006,10 @@ fn the_status_line_names_the_workspace_rather_than_the_working_directory() {
     let prepared = test.app.prepare_view(geometry);
     let status = test.app.snapshot(&prepared).status;
 
-    assert_eq!(status.workspace_directory, test.current.to_string_lossy());
+    assert_eq!(
+        status.workspace_directory,
+        crate::project_root::ordinary_spelling(&test.current).to_string_lossy()
+    );
     assert_eq!(status.working_directory.as_deref(), Some("src"));
 }
 
