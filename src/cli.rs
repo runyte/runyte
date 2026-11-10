@@ -8347,13 +8347,15 @@ Inside the editor press Space+? for the complete key reference.
 
 #[cfg(test)]
 mod tests {
-    // Deterministically reproduce the half-close ordering from #108: writes
-    // fail before the authoritative reply has even been put on the wire.
+    // Force the failed-write ordering from #108 while retaining the read side
+    // for the authoritative reply. Shut down the local write half: shutting
+    // down only the peer's read half does not make writes fail immediately on
+    // every Unix platform (Darwin can wait until the write-stall deadline).
     #[cfg(unix)]
     fn broken_attachment() -> (super::BufferedLocalClient, std::os::unix::net::UnixStream) {
         let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
         client.set_nonblocking(true).unwrap();
-        server.shutdown(std::net::Shutdown::Read).unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
         let client = tokio::net::UnixStream::from_std(client).unwrap();
         (
             super::BufferedLocalClient::from_connected_stream(client).unwrap(),
