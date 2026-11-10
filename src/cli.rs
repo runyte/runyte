@@ -5366,6 +5366,7 @@ async fn run_attached(
     pointer_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut wait_tick = tokio::time::interval(Duration::from_millis(100));
     wait_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let outcome = async {
     loop {
         tokio::select! {
             input = terminal_events.next() => {
@@ -5594,6 +5595,62 @@ async fn run_attached(
         }
     }
     Ok(AttachOutcome::Detached)
+    }.await;
+    match outcome {
+        Err(error)
+            if wait_token.is_none()
+                && error.downcast_ref::<io::Error>().is_some_and(|error| {
+                    matches!(
+                        error.kind(),
+                        io::ErrorKind::BrokenPipe
+                            | io::ErrorKind::ConnectionReset
+                            | io::ErrorKind::NotConnected
+                    )
+                }) =>
+        {
+            recover_attached_exit(&mut client, cwd_file, error).await
+        }
+        outcome => outcome,
+    }
+}
+
+/// A host can close its read side while its final lifecycle reply is still
+/// being flushed. Input, resize and native paint acknowledgements may then
+/// fail before the client consumes that reply (#108). Stop writing and require
+/// the host's explicit outcome; EOF or a deadline alone is never a detach.
+#[cfg(unix)]
+async fn recover_attached_exit(
+    client: &mut BufferedLocalClient,
+    cwd_file: Option<&Path>,
+    error: anyhow::Error,
+) -> Result<AttachOutcome> {
+    let response = tokio::time::timeout(SHUTDOWN_FLUSH_BUDGET, async {
+        loop {
+            match client.recv().await {
+                Ok(Some(
+                    HostResponse::Frame { .. }
+                    | HostResponse::TerminalDamage { .. }
+                    | HostResponse::EditorDamage { .. }
+                    | HostResponse::InputBarrier { .. }
+                    | HostResponse::MediaAction { .. },
+                )) => {}
+                response => return response,
+            }
+        }
+    })
+    .await;
+    match response {
+        Ok(Ok(Some(HostResponse::Detached { directory_bytes }))) => {
+            if let (Some(cwd_file), Some(directory)) =
+                (cwd_file, directory_bytes.map(decode_path).transpose()?)
+            {
+                write_cwd_file(cwd_file, &directory)?;
+            }
+            Ok(AttachOutcome::Detached)
+        }
+        Ok(Ok(Some(HostResponse::ShuttingDown))) => Ok(AttachOutcome::Quit),
+        _ => Err(error),
+    }
 }
 
 /// Reads a durable completion that can already be queued when the final
@@ -8290,6 +8347,139 @@ Inside the editor press Space+? for the complete key reference.
 
 #[cfg(test)]
 mod tests {
+    // Deterministically reproduce the half-close ordering from #108: writes
+    // fail before the authoritative reply has even been put on the wire.
+    #[cfg(unix)]
+    fn broken_attachment() -> (super::BufferedLocalClient, std::os::unix::net::UnixStream) {
+        let (client, server) = std::os::unix::net::UnixStream::pair().unwrap();
+        client.set_nonblocking(true).unwrap();
+        server.shutdown(std::net::Shutdown::Read).unwrap();
+        let client = tokio::net::UnixStream::from_std(client).unwrap();
+        (
+            super::BufferedLocalClient::from_connected_stream(client).unwrap(),
+            server,
+        )
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn detach_reply_survives_a_failed_native_frame_acknowledgement() {
+        use super::*;
+        let (mut client, mut server) = broken_attachment();
+        let error = client
+            .send(&ClientRequest::FrameDrawn {
+                frame: crate::protocol::FrameId::from_raw(1),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+        let root = std::env::temp_dir().join(format!(
+            "runyte-detach-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let cwd_file = root.join("cwd");
+        let response = HostResponse::Detached {
+            directory_bytes: Some(encode_path(&root)),
+        };
+        let mut host = WorkspaceHost::new(App::new(Config::default(), None).unwrap());
+        let barrier = HostResponse::InputBarrier {
+            serial: 1,
+            frame: Box::new(
+                host.prepare_frame(crate::app::FrameGeometry::default())
+                    .into(),
+            ),
+        };
+        let reply = async {
+            tokio::task::yield_now().await;
+            server
+                .write_all(&serde_json::to_vec(&barrier).unwrap())
+                .unwrap();
+            server.write_all(b"\n").unwrap();
+            server
+                .write_all(&serde_json::to_vec(&response).unwrap())
+                .unwrap();
+            server.write_all(b"\n").unwrap();
+        };
+        let (outcome, ()) = tokio::join!(
+            recover_attached_exit(&mut client, Some(&cwd_file), error),
+            reply
+        );
+        assert!(matches!(outcome.unwrap(), AttachOutcome::Detached));
+        let mut expected = root.as_os_str().as_encoded_bytes().to_vec();
+        expected.push(0);
+        assert_eq!(std::fs::read(&cwd_file).unwrap(), expected);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_attachment_write_requires_an_explicit_exit_reply() {
+        use super::*;
+        for response in [
+            None,
+            Some(HostResponse::ShuttingDown),
+            Some(HostResponse::Error {
+                message: "host failure".into(),
+            }),
+        ] {
+            let (mut client, mut server) = broken_attachment();
+            let error = client.send(&ClientRequest::Detach).await.unwrap_err();
+            let quits = matches!(response, Some(HostResponse::ShuttingDown));
+            if let Some(response) = response {
+                server
+                    .write_all(&serde_json::to_vec(&response).unwrap())
+                    .unwrap();
+                server.write_all(b"\n").unwrap();
+            }
+            drop(server);
+            let outcome = recover_attached_exit(&mut client, None, error).await;
+            if quits {
+                assert!(matches!(outcome.unwrap(), AttachOutcome::Quit));
+            } else {
+                assert_eq!(
+                    outcome
+                        .err()
+                        .unwrap()
+                        .downcast_ref::<io::Error>()
+                        .unwrap()
+                        .kind(),
+                    io::ErrorKind::BrokenPipe
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_attachment_write_does_not_wait_forever_for_exit() {
+        use super::*;
+        let (mut client, _server) = broken_attachment();
+        let error = client.send(&ClientRequest::Detach).await.unwrap_err();
+        let outcome = tokio::time::timeout(
+            SHUTDOWN_FLUSH_BUDGET + Duration::from_secs(1),
+            recover_attached_exit(&mut client, None, error),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            outcome
+                .err()
+                .unwrap()
+                .downcast_ref::<io::Error>()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::BrokenPipe
+        );
+    }
+
     #[tokio::test]
     async fn ended_services_deliver_queued_work_and_then_stop_waking_the_loop() {
         use super::{note_ended_service, receive_optional_service_event, receive_service_event};
