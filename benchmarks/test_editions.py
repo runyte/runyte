@@ -1,8 +1,49 @@
 # SPDX-License-Identifier: MPL-2.0
 
 import unittest
+from pathlib import Path
+from unittest import mock
 
 import editions
+
+
+class CompositorEnvironment(unittest.TestCase):
+    def test_failed_window_spawn_cleans_its_temporary_directory(self):
+        display = mock.Mock()
+        display.environment.return_value = {}
+        with mock.patch.object(editions.subprocess, 'Popen', side_effect=FileNotFoundError('missing binary')) as launch:
+            with self.assertRaisesRegex(RuntimeError, 'missing binary'):
+                editions.DesktopSession(display, '/missing', {}, Path('/fixture/main.txt'), 'ide')
+        log = launch.call_args.kwargs['stdout']
+        self.assertTrue(log.closed)
+        self.assertFalse(Path(log.name).parent.exists())
+
+    def test_editor_cannot_reintroduce_ambient_wayland_after_environment_merge(self):
+        display = editions.Display.__new__(editions.Display)
+        display.number, display.runtime = 42, '/fixture-runtime'
+        env = display.environment({'WAYLAND_DISPLAY': 'inherited', 'XAUTHORITY': '/outside-auth',
+                                   'XDG_SESSION_TYPE': 'wayland', 'DISPLAY': ':99'})
+        self.assertEqual(env['DISPLAY'], ':42')
+        for name in ('WAYLAND_DISPLAY', 'XDG_SESSION_TYPE', 'XAUTHORITY'):
+            self.assertNotIn(name, env)
+
+    def test_compositor_storage_is_isolated_and_ambient_bus_removed(self):
+        with mock.patch.dict(editions.os.environ, {
+            "HOME": "/outside-home", "XDG_CONFIG_HOME": "/outside-config",
+            "DBUS_SESSION_BUS_ADDRESS": "unix:path=/outside-bus",
+            "DISPLAY": ":99", "WAYLAND_DISPLAY": "outside-wayland",
+            "XAUTHORITY": "/outside-auth",
+        }), mock.patch.object(editions.subprocess, "Popen") as launch, \
+                mock.patch.object(editions.Display, "wait_for_socket", side_effect=RuntimeError("stop")):
+            with self.assertRaisesRegex(RuntimeError, "stop"):
+                editions.Display()
+        env = launch.call_args.kwargs["env"]
+        root = Path(env["XDG_RUNTIME_DIR"])
+        for name in ("HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME"):
+            self.assertTrue(Path(env[name]).is_relative_to(root), name)
+        for name in ("DBUS_SESSION_BUS_ADDRESS", "DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY"):
+            self.assertNotIn(name, env)
+        self.assertFalse(root.exists())
 
 
 def pixels(width, height, ink):

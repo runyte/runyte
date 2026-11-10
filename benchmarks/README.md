@@ -13,6 +13,11 @@ that a change in Runyte's numbers can be separated from a change in the machine.
 - **`editions.py`** — readiness, quit and idle cost across the terminal and
   desktop editions and the editor, ide and mux modes. See
   [editions and modes](#editions-and-modes).
+- **`interaction_latency.py`** — settled native editing in IDE/mux with a
+  text or PDF companion pane, measured through calibrated glyph pixels on an
+  isolated KWin/Xwayland display. **`interaction_pty.py`** supplies a separate
+  decoded-PTY baseline. See [interaction latency](#interaction-latency) and the
+  [measurement register](../context/reference/interaction-performance.md).
 - **`session_navigation.py`** — persistent attachment and unchanged-screen cost
   with one or several sessions, a hidden strip, and noisy output in another
   session. It uses the same fixed PTY geometry and capability replies, isolated
@@ -92,6 +97,47 @@ ignored by Git. Deleting `.work/` is safe; the next run rebuilds everything in i
 
 Recorded startup samples are retained under [`results/`](results/) so the
 published medians and ranges can be checked without repeating a timing run.
+
+# Interaction latency
+
+Build release binaries before measuring, and wait for builds and other CPU-heavy
+work to finish. The desktop harness requires Linux, KWin, Xwayland, D-Bus,
+libX11 and libXdamage. It creates its own virtual display and uses targeted
+`XSendEvent` input; it does not use XTEST or the person's desktop display.
+
+```sh
+benchmarks/.work/venv/bin/python benchmarks/interaction_latency.py \
+  --samples 40 --rounds 3 --json /tmp/interaction-native.json
+benchmarks/.work/venv/bin/python benchmarks/interaction_pty.py \
+  --runs 40 --json /tmp/interaction-pty.json
+```
+
+Run the commands sequentially. Both use 120×40 cells, an isolated workspace
+and user-storage directories, disabled LSP, two side-by-side panes, and the
+same 100-line plain-text editing fixture. Each timed operation inserts one
+leading space or deletes it with BackSpace, with 200 ms before the next key.
+The native cases vary IDE/mux and a text/PDF companion; the PTY cases have a
+text companion. The PDF fixture must visibly render before timing begins.
+Whole-file saves verify the edit and restored document outside timing.
+
+Native timing ends when `XGetImage` observes a calibrated glyph shape beyond
+the caret. PTY timing ends at exact decoded cells in a completed synchronized
+frame, including Python decoding overhead. Neither measures physical display
+scanout, and the PTY endpoint excludes terminal-emulator rendering entirely.
+Do not subtract these endpoints to claim native rendering overhead.
+
+Native rounds rotate case order and retain all insertion/deletion samples,
+summary percentiles, binary hashes, and failures. A quiet-machine check precedes
+each case in both harnesses; by default it aborts if CPU usage does not fall below one
+logical core within 60 seconds. This is a precondition check, not continuous
+proof of an uncontended machine. Samples within a case share one process; tail
+percentiles from small samples are descriptive, not stable population estimates.
+
+Use `--paint-timing` in a **separate** native run to retain CPU cell-paint traces.
+Those cover the timed editing loop, excluding setup and save verification;
+they do not identify per-key GPU or compositor costs. These settled plain-text
+tests do not establish burst-typing, syntax-update, busy-terminal, large-file,
+Wayland-native, or macOS latency.
 
 # Startup milestones
 

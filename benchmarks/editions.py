@@ -360,22 +360,29 @@ class Display:
     which needs interactive consent that a headless compositor cannot give.
     """
 
-    def __init__(self):
+    def __init__(self, env=None):
         self.runtime = tempfile.mkdtemp(prefix="rb")
         known = set(os.listdir("/tmp/.X11-unix"))
         environment = ptybench.clean_environment()
-        for name in ("WAYLAND_DISPLAY", "DISPLAY"):
+        # The compositor and its helpers need fixture-owned storage too, not
+        # just the editor windows launched inside it.
+        if env is None:
+            from session_navigation import environment as isolated_environment
+            env = isolated_environment(Path(self.runtime))
+        environment.update(env)
+        for name in ("WAYLAND_DISPLAY", "DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "XAUTHORITY"):
             environment.pop(name, None)
         environment["XDG_RUNTIME_DIR"] = self.runtime
         width, height = WINDOW_SIZE
         self.log = open(Path(self.runtime) / "kwin.log", "w")
-        self.compositor = subprocess.Popen(
-            ["dbus-run-session", "--", "kwin_wayland", "--virtual", "--xwayland", "--socket", "rb",
-             "--width", str(width + 320), "--height", str(height + 200),
-             "--no-lockscreen", "--no-global-shortcuts", "--no-kactivities"],
-            env=environment, stdout=self.log, stderr=self.log, start_new_session=True,
-        )
+        self.compositor = None
         try:
+            self.compositor = subprocess.Popen(
+                ["dbus-run-session", "--", "kwin_wayland", "--virtual", "--xwayland", "--socket", "rb",
+                 "--width", str(width + 320), "--height", str(height + 200),
+                 "--no-lockscreen", "--no-global-shortcuts", "--no-kactivities"],
+                env=environment, stdout=self.log, stderr=self.log, start_new_session=True,
+            )
             self.number = self.wait_for_socket(known)
             self.x = C.CDLL("libX11.so.6")
             self.damage = C.CDLL("libXdamage.so.1")
@@ -428,7 +435,8 @@ class Display:
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if self.compositor.poll() is not None:
-                raise RuntimeError("the virtual compositor exited during startup")
+                diagnostic = (Path(self.runtime) / "kwin.log").read_text(errors="replace")[-4000:]
+                raise RuntimeError(f"the virtual compositor exited during startup:\n{diagnostic}")
             created = set(os.listdir("/tmp/.X11-unix")) - known
             if created and (Path(self.runtime) / "rb").exists():
                 return min(int(name[1:]) for name in created)
@@ -449,9 +457,9 @@ class Display:
         for name in list(environment):
             if name.startswith("RUNYTE_"):
                 environment.pop(name)
+        environment.update(env)
         for name in ("WAYLAND_DISPLAY", "XDG_SESSION_TYPE", "XAUTHORITY"):
             environment.pop(name, None)
-        environment.update(env)
         environment["DISPLAY"] = f":{self.number}"
         environment["SHELL"] = "/bin/sh"
         # A measured window must not reach the person's real session bus.
@@ -578,9 +586,18 @@ class DesktopSession:
         self.started = time.perf_counter()
         self.deadline = self.started + TIMEOUT
         argv = [binary] + launch_arguments("desktop", mode, fixture.name)
-        self.process = subprocess.Popen(argv, cwd=fixture.parent, env=display.environment(env),
-                                        stdout=self.log, stderr=self.log)
-        self.window = poll(display.find_window, self.deadline, "window creation", self.process)
+        self.process = None
+        try:
+            self.process = subprocess.Popen(argv, cwd=fixture.parent, env=display.environment(env),
+                                            stdout=self.log, stderr=self.log)
+            self.window = poll(display.find_window, self.deadline, "window creation", self.process)
+        except BaseException as error:
+            self.log.flush()
+            details = (self.root / "window.log").read_text(errors="replace")[-8000:]
+            self.close()
+            if isinstance(error, Exception):
+                raise RuntimeError(f"{error}\nWindow log:\n{details}") from error
+            raise
         self.mapped = (time.perf_counter() - self.started) * 1000
 
     def key(self, name):
@@ -618,7 +635,7 @@ class DesktopSession:
         return elapsed
 
     def close(self):
-        if self.process.poll() is None:
+        if self.process is not None and self.process.poll() is None:
             self.process.kill()
             self.process.wait(10)
         self.log.close()
