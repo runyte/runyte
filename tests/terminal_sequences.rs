@@ -613,3 +613,95 @@ fn keypad_and_character_set_sequences_are_recorded_or_ignored_but_never_printed(
         "character-set and line-attribute designations print nothing"
     );
 }
+
+#[test]
+fn rep_reproduces_cpu_meter_runs_across_chunk_boundaries() {
+    let bytes = b"\r\n|\x1b[9b!\r\n";
+    for split in 0..=bytes.len() {
+        let mut emulator = Emulator::new(20, 4);
+        emulator.feed(&bytes[..split]);
+        emulator.feed(&bytes[split..]);
+        assert_eq!(screen(&emulator, 1), "||||||||||!");
+        assert_eq!(cursor(&emulator), (2, 0));
+    }
+}
+
+#[test]
+fn rep_defaults_retains_printed_character_and_reset_forgets_it() {
+    let mut emulator = Emulator::new(20, 3);
+    emulator.feed(b"\x1b[3b");
+    assert_eq!(cursor(&emulator), (0, 0));
+    emulator.feed(b"A\x1b[b\x1b[0b\x1b[2b");
+    assert_eq!(screen(&emulator, 0), "AAAAA");
+    // Cursor motion and erasure do not replace the last printed character.
+    emulator.feed(b"\r\x1b[2K\x1b[2b");
+    assert_eq!(screen(&emulator, 0), "AA");
+    emulator.feed(b"\x1bc\x1b[2b");
+    assert_eq!(screen(&emulator, 0), "");
+    assert_eq!(cursor(&emulator), (0, 0));
+    emulator.feed(b"B\x1b[?3b\x1b[3 b!");
+    assert_eq!(screen(&emulator, 0), "B!");
+}
+
+#[test]
+fn rep_uses_current_rendition_insert_mode_and_printed_unicode() {
+    let mut emulator = Emulator::new(20, 3);
+    emulator.feed(b"abcd\r\x1b[4h\x1b[31m|\x1b[32m\x1b[2b");
+    assert_eq!(screen(&emulator, 0), "|||abcd");
+    assert_eq!(cell(&emulator, 0, 0).foreground, Color::Indexed(1));
+    assert_eq!(cell(&emulator, 0, 1).foreground, Color::Indexed(2));
+    assert_eq!(cell(&emulator, 0, 2).foreground, Color::Indexed(2));
+    emulator.feed("\x1b[4l\r\n界\x1b[2b!".as_bytes());
+    assert_eq!(screen(&emulator, 1), "界界界!");
+    assert_eq!(cursor(&emulator), (1, 7));
+    assert_wide_cells(&emulator);
+}
+
+#[test]
+fn rep_wraps_scrolls_and_accounts_for_completed_lines() {
+    let mut emulator = Emulator::new(4, 2);
+    assert_eq!(emulator.feed(b"xxxx\x1b[4b\x1b[2b"), 2);
+    assert_eq!(emulator.plain_text(), "xxxx\nxxxx\nxx\n");
+    assert_eq!(cursor(&emulator), (1, 2));
+    emulator.feed(b"\x1b[?1049h");
+    assert_eq!(emulator.feed(b"yyyy\x1b[4b\x1b[2b"), 0);
+    assert_eq!(screen(&emulator, 0), "yyyy");
+    assert_eq!(screen(&emulator, 1), "yy");
+    emulator.feed(b"\x1b[?7l\x1b[20b!");
+    assert_eq!(screen(&emulator, 1), "yyy!");
+}
+
+#[test]
+fn rep_large_parameters_are_limited_to_one_screen_width() {
+    let mut emulator = Emulator::new(256, 2);
+    assert_eq!(emulator.feed(b"x\x1b[999999999999999999b!"), 1);
+    assert_eq!(cursor(&emulator), (1, 2));
+    assert_eq!(emulator.grid().scrollback_len(), 0);
+    assert_eq!(screen(&emulator, 0), "x".repeat(256));
+    assert_eq!(screen(&emulator, 1), "x!");
+}
+
+#[test]
+fn rep_matches_literal_output_in_scroll_regions_and_clusters() {
+    for (prefix, character, count) in [
+        ("top\r\nmid\r\nend\x1b[2;3r\x1b[3;4H", 'x', 3),
+        ("\x1b[1;4H", '界', 3),
+        ("e", '\u{301}', 3),
+        ("\x1b[?7l\x1b[1;4H", 'x', 3),
+    ] {
+        let mut repeated = Emulator::new(4, 4);
+        let mut literal = Emulator::new(4, 4);
+        let initial = format!("{prefix}{character}");
+        repeated.feed(initial.as_bytes());
+        literal.feed(initial.as_bytes());
+        let repeated_lines = repeated.feed(format!("\x1b[{count}b").as_bytes());
+        let literal_lines = literal.feed(character.to_string().repeat(count).as_bytes());
+        assert_eq!(repeated_lines, literal_lines);
+        assert_eq!(repeated.plain_text(), literal.plain_text());
+        assert_eq!(cursor(&repeated), cursor(&literal));
+        for row in 0..4 {
+            assert_eq!(repeated.grid().line(row), literal.grid().line(row));
+        }
+        assert_wide_cells(&repeated);
+    }
+}

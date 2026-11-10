@@ -128,7 +128,7 @@ stops rearming for hidden windows. It never uses GPUI's refresh-rate image
 animation loop. Unused image textures are explicitly removed from the atlas.
 
 Hayro 0.8 is the default PDF backend, pinned with its interpreter and syntax
-crates in `runyte-native` (Rust 1.92; terminal edition MSRV remains 1.88).
+crates in `runyte-native` (Rust 1.92; terminal edition MSRV is 1.89).
 `--helper pdf` runs before frontend initialization. Each request owns a
 fresh parser/cache in a killable process: 128 MiB input, 1–10,000 pages,
 15-second wall/CPU limits, 1 GiB address space (plus initial mappings on macOS),

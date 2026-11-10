@@ -190,6 +190,28 @@ mode, widening at the margin, scrolling, and completed-line accounting.
 `emoji_widening_at_the_margin_preserves_wrapped_link_provenance` in
 `src/terminal/tests/navigation.rs` checks review navigation across the wrap.
 
+## Repeat preceding character
+
+REP (`CSI Ps b`) repeats the last printed Unicode scalar through the ordinary
+printing path, using the current rendition, insert mode, autowrap and scroll
+region. Omitted and zero counts mean one; before any print and after a full
+terminal reset, REP does nothing. Cursor motion and erasure retain the last
+printed scalar. Combining scalars follow the same cluster attachment rules as
+literal output; REP does not copy an entire grapheme cluster or its old style.
+Each REP is capped at the terminal's column count so short PTY output cannot
+expand into tens of thousands of synchronous writes per control sequence.
+This is a deliberate responsiveness limit: larger counts are truncated, while
+accepted repetitions still wrap and scroll like literal output.
+Primary-screen wraps count as completed-line activity; alternate-screen
+repaints do not.
+
+The `rep_` regressions in `tests/terminal_sequences.rs` cover the missing CPU
+meter run reported in [issue #105](https://github.com/runyte/runyte/issues/105),
+fragmented input, defaults, reset, rendition, insertion, Unicode, scrolling,
+and oversized-count truncation. The htop connection remains unconfirmed without an
+affected program-output capture; the fixed REP reproduction is independent
+of htop and the frontend.
+
 ## Wrapped web links in review
 
 Native Ctrl-left-click (Cmd-left-click on macOS) uses the same inference at the
