@@ -1807,12 +1807,10 @@ async fn a_known_transport_failure_keeps_its_reason_and_no_payload() {
         .await
         .unwrap();
     stream.write_all(&frame).await.unwrap();
-    let (reader, mut writer) = stream.split();
+    let (reader, mut writer) = stream.into_split();
+    let mut reader = BufReader::new(reader);
     let mut welcome = String::new();
-    BufReader::new(reader)
-        .read_line(&mut welcome)
-        .await
-        .unwrap();
+    reader.read_line(&mut welcome).await.unwrap();
     assert!(welcome.contains(r#""type":"welcome""#), "{welcome}");
     // A frame that ends inside itself, carrying text a notice must not echo.
     writer
@@ -1824,6 +1822,17 @@ async fn a_known_transport_failure_keeps_its_reason_and_no_payload() {
     // left unread here turn the read of this frame into a reset.
     writer.shutdown().await.unwrap();
 
+    // Keep draining frames until the host reads the truncated request and
+    // closes the connection. Otherwise its initial frame can fill the socket
+    // (especially on macOS), producing a write-stall notice instead.
+    tokio::time::timeout(
+        HOST_RESPONSE_TIMEOUT,
+        tokio::io::copy(&mut reader, &mut tokio::io::sink()),
+    )
+    .await
+    .expect("host did not close after the truncated request")
+    .unwrap();
+
     let retained = await_lost_client_notice(&endpoint).await;
     assert_exactly_one_loss(&retained);
     assert!(
@@ -1832,7 +1841,8 @@ async fn a_known_transport_failure_keeps_its_reason_and_no_payload() {
     );
     assert!(!retained.contains("cause is unknown"), "{retained}");
     assert!(!retained.contains("secret-typed-text"), "{retained}");
-    drop(stream);
+    drop(reader);
+    drop(writer);
     fs::remove_dir_all(root).unwrap();
 }
 
