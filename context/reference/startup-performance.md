@@ -7,8 +7,9 @@ is a register of measurements, not of budgets: `tests/performance.rs` holds
 the assertions that fail in CI, and nothing here is enforced automatically.
 
 The harness is `benchmarks/`, and `benchmarks/README.md` documents what each
-fixture isolates and how the measurement is taken. The current readiness
-comparison uses `benchmarks/startup.py`; its file-loaded and syntax-ready
+fixture isolates and how the measurement is taken. Runyte's modes and editions
+are compared with `benchmarks/editions.py`. The readiness comparison with other
+editors uses `benchmarks/startup.py`; its file-loaded and syntax-ready
 columns require the probes documented there. The older first-output, quit,
 and idle harness remains available:
 
@@ -16,6 +17,128 @@ and idle harness remains available:
 cargo build --release
 benchmarks/run.py
 ```
+
+## 2026-11-09 — Runyte 0.4.4, editions and modes
+
+Release `v0.4.4`, commit `50644e3`, built with
+`cargo build --release --locked -p runyte -p runyte-desktop` and Rust 1.97.1.
+Machine: AMD Ryzen AI 9 365 with Radeon 880M, 10 cores / 20 logical CPUs,
+Linux 7.2.14-arch1-1, ext4, Mesa 26.2.6 (RADV), KWin 6.8.2. Python 3.14.9,
+pyte 0.8.2 and wcwidth 0.8.3 from `benchmarks/requirements.txt`. The harness is
+`benchmarks/editions.py`, at this measurement uncommitted on top of that
+commit; [its guide](../../benchmarks/README.md#editions-and-modes) defines each
+column, the desktop display and the pixel comparison.
+
+| Binary | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `runyte` (terminal) | 61,024,200 | `dfb4daf6bd449cd248319441e55918728691c5f3d140516adc2f09e5f5cc9f21` |
+| `runyte-desktop` | 111,781,752 | `1f3f6982d73bccad56aff814ed5570deb4a5bc46eaa0ab6c17c2de9f24510009` |
+
+Isolated home and XDG storage, LSP disabled, syntax enabled, 120×40 cells
+(a 1080×800 window for the desktop edition, drawn on the Radeon GPU in an
+isolated virtual KWin compositor). Each cell is **median (min–max),
+milliseconds**, from ten warm-cache launches after one discarded launch; cell
+order rotates each round. Every round started with at most 1.0 logical CPU
+busy across the machine (101 rounds, 122 seconds of waiting in total); no round
+timed out. The [samples](../../benchmarks/results/editions-2026-11-09.json)
+retain all 640 launches, 30 idle windows and those waits. None failed.
+
+### Ready to edit
+
+| Fixture | Editor | Ide | Mux, cold host | Mux, reattach |
+| --- | ---: | ---: | ---: | ---: |
+| **Terminal edition** | | | | |
+| `short.txt` | 29.7 (22.7–34.4) | 31.2 (24.8–41.6) | 95.0 (91.7–107.0) | 21.4 (16.9–30.9) |
+| `medium.txt` | 32.5 (21.0–39.6) | 34.4 (23.8–59.3) | 103.7 (90.0–134.9) | 23.7 (19.1–25.1) |
+| `long.txt` | 39.4 (30.3–46.2) | 43.5 (30.7–52.3) | 101.2 (88.7–110.2) | 23.7 (18.5–32.4) |
+| `huge.txt` | 90.1 (84.1–137.1) | 97.1 (85.7–157.6) | 166.9 (137.5–204.9) | 20.6 (16.3–23.4) |
+| `short.lua` | 33.6 (27.1–39.4) | 37.7 (29.2–44.7) | 105.8 (95.5–116.3) | 32.9 (29.6–55.0) |
+| `medium.lua` | 31.4 (28.6–36.1) | 31.8 (27.8–38.9) | 105.6 (76.5–140.2) | 30.2 (23.7–38.1) |
+| `long.lua` | 33.2 (27.9–55.1) | 40.3 (29.7–56.9) | 75.6 (64.5–104.5) | 25.6 (18.6–31.2) |
+| `huge.lua` | 103.9 (86.4–131.3) | 97.5 (84.2–120.5) | 117.2 (109.8–201.1) | 19.6 (17.5–42.3) |
+| **Desktop edition** | | | | |
+| `short.txt` | 83.7 (69.1–95.8) | 85.5 (72.6–91.9) | 109.1 (99.2–117.2) | 80.6 (77.1–87.5) |
+| `medium.txt` | 80.2 (63.5–93.5) | 83.9 (76.6–102.0) | 113.7 (102.6–117.8) | 83.8 (74.6–90.9) |
+| `long.txt` | 83.8 (65.2–92.7) | 85.8 (78.5–94.0) | 128.7 (114.9–133.1) | 81.5 (70.4–87.2) |
+| `huge.txt` | 127.5 (116.8–165.1) | 136.7 (112.6–179.9) | 179.8 (153.7–217.7) | 75.4 (69.4–81.8) |
+| `short.lua` | 88.5 (77.2–95.9) | 85.4 (76.1–97.8) | 114.0 (102.2–117.0) | 84.2 (79.5–90.2) |
+| `medium.lua` | 85.4 (80.2–94.8) | 86.2 (76.2–96.6) | 112.7 (102.2–114.4) | 78.0 (74.6–89.6) |
+| `long.lua` | 82.7 (67.5–96.7) | 75.9 (68.4–104.6) | 91.7 (80.4–124.7) | 77.7 (74.6–84.2) |
+| `huge.lua` | 118.5 (111.5–134.8) | 136.3 (109.9–144.6) | 161.2 (131.2–177.5) | 71.5 (65.4–74.7) |
+
+Editor and ide readiness ranges overlap in every row of both editions. As in
+the 2026-10-04 set, ide's additional services start after the first editable
+frame, so the difference between the modes is background work, not time to the
+first edit. A cold mux launch includes starting the host and the `:open`
+command, because `--mux` takes a workspace rather than a file. Reattaching does
+not grow with document size, since the host already holds the document.
+
+The desktop edition's medians are 36–55 ms above the terminal edition for
+editor and ide up to 50,000 lines (15–40 ms at 500,000 lines, where document
+loading dominates), and 48–60 ms above it for reattach. The window itself
+appears at a median of 39–45 ms. Its edit lands 14–17 ms after the document is
+visible in every cell (medians), which is consistent with waiting for the next
+presented frame; the harness cannot separate that from input handling.
+Document-visible timings for every cell are in the samples.
+
+Values are higher than the 0.3.5 table below, whose kernel and filesystem
+differ. The 2026-10-04 set is closer, on ext4 with the same CPU, and its medians
+are within about 9 ms of these with overlapping ranges. A different build and a
+different rotation of cells mean that comparison neither establishes nor rules
+out a regression.
+
+### Quit or detach
+
+Timed from the final key of `:q!`, or of `:detach` in mux, to process exit,
+after the verified save.
+
+| Fixture | Editor | Ide | Mux, cold host | Mux, reattach |
+| --- | ---: | ---: | ---: | ---: |
+| **Terminal edition** | | | | |
+| `short.txt` | 4.9 (3.5–5.8) | 4.6 (4.2–5.9) | 4.1 (3.0–5.5) | 4.1 (2.7–5.2) |
+| `long.txt` | 5.6 (4.2–6.5) | 5.9 (4.5–6.6) | 4.8 (4.1–6.2) | 4.3 (3.2–5.7) |
+| `huge.txt` | 8.1 (7.4–9.6) | 8.6 (7.3–9.6) | 5.5 (4.3–6.5) | 5.1 (4.5–6.1) |
+| `long.lua` | 8.7 (6.5–10.0) | 9.0 (6.5–10.1) | 5.8 (4.1–6.7) | 5.2 (4.5–7.7) |
+| `huge.lua` | 16.7 (14.9–20.8) | 17.4 (14.9–21.2) | 4.8 (4.2–5.2) | 4.3 (3.7–5.1) |
+| **Desktop edition** | | | | |
+| `short.txt` | 11.1 (9.6–12.3) | 11.9 (8.7–14.2) | 13.7 (12.1–14.7) | 12.5 (9.7–13.8) |
+| `long.txt` | 12.7 (10.6–15.5) | 12.5 (11.3–13.4) | 13.3 (11.7–15.8) | 13.7 (11.7–14.7) |
+| `huge.txt` | 13.3 (11.7–16.0) | 14.8 (13.3–16.9) | 12.8 (12.0–14.8) | 12.3 (11.0–14.4) |
+| `long.lua` | 15.0 (13.5–16.8) | 14.2 (11.8–16.1) | 13.3 (12.3–15.6) | 13.5 (9.7–14.7) |
+| `huge.lua` | 22.2 (19.6–25.2) | 23.9 (20.0–26.8) | 13.1 (10.6–14.9) | 12.0 (10.8–13.4) |
+
+The omitted `medium` and `short.lua` rows are within these ranges and in the
+samples. Detaching leaves the document with the host, so mux does not pay the
+cost of dropping it that grows with `huge.lua` in the other modes.
+
+All 160 desktop mux detaches in this set exited. The same `:detach`
+intermittently failed outside it, leaving the window open with `Broken pipe
+(os error 32)` under a "Runyte could not start" heading: 5 of 60 launches on the
+quiet machine and 17 of 60 while builds were running, when detaching without
+first saving to another path. The cause has not been established; it is
+tracked in [#108](https://github.com/runyte/runyte/issues/108). The harness
+records such a sample as `detach_failed` rather than dropping it.
+
+### Idle
+
+`medium.lua`, five independent 16-second windows after 2.5 seconds of settling.
+CPU is the client process tree plus any persistent host, excluding the
+compositor and Xwayland. One 10 ms scheduler tick is about 0.06% of such a
+window.
+
+| Edition | Mode | CPU %, median (range) | Screen writes or repaints |
+| --- | --- | ---: | ---: |
+| Terminal | editor | 0.00 (0.00–0.06) | 0 in every window |
+| Terminal | ide | 0.06 (0.00–0.12) | 0 in every window |
+| Terminal | mux | 0.00 (0.00–0.12) | 0 in every window |
+| Desktop | editor | 0.06 (0.00–0.12) | 0 in every window |
+| Desktop | ide | 0.06 (0.00–0.06) | 0 in every window |
+| Desktop | mux | 0.12 (0.00–0.12) | 0 in every window |
+
+These are at or near the measurement floor in every mode and edition. Neovim
+and Helix were not rerun for this set. These results describe this Linux machine
+only and do not measure macOS, Windows, a physical display's latency, or a
+Wayland window.
 
 ## 2026-11-08 — resize preview transition
 

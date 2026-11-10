@@ -1,0 +1,6931 @@
+{
+  "date": "2026-11-09",
+  "machine": "Linux 7.2.14-arch1-1 x86_64 GNU/Linux",
+  "binaries": {
+    "terminal": {
+      "version": "runyte 0.4.4 (terminal edition)",
+      "bytes": 61024200,
+      "sha256": "dfb4daf6bd449cd248319441e55918728691c5f3d140516adc2f09e5f5cc9f21"
+    },
+    "desktop": {
+      "version": "runyte 0.4.4 (desktop edition)",
+      "bytes": 111781752,
+      "sha256": "1f3f6982d73bccad56aff814ed5570deb4a5bc46eaa0ab6c17c2de9f24510009"
+    }
+  },
+  "fixtures": [
+    "short.txt",
+    "medium.txt",
+    "long.txt",
+    "huge.txt",
+    "short.lua",
+    "medium.lua",
+    "long.lua",
+    "huge.lua"
+  ],
+  "runs": 10,
+  "idle_runs": 5,
+  "idle_window_seconds": 16.0,
+  "quiet": [
+    {
+      "round": "calibrate short.txt",
+      "busy_cores": 0.67,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.txt round 0",
+      "busy_cores": 0.86,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.txt round 1",
+      "busy_cores": 0.35,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.txt round 2",
+      "busy_cores": 0.39,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.txt round 3",
+      "busy_cores": 0.39,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.txt round 4",
+      "busy_cores": 0.78,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.txt round 5",
+      "busy_cores": 0.28,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.txt round 6",
+      "busy_cores": 0.53,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.txt round 7",
+      "busy_cores": 0.85,
+      "waited_seconds": 3.0,
+      "quiet": true
+    },
+    {
+      "round": "short.txt round 8",
+      "busy_cores": 0.68,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.txt round 9",
+      "busy_cores": 0.69,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.txt round 10",
+      "busy_cores": 0.81,
+      "waited_seconds": 2.0,
+      "quiet": true
+    },
+    {
+      "round": "calibrate medium.txt",
+      "busy_cores": 0.82,
+      "waited_seconds": 2.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.txt round 0",
+      "busy_cores": 0.86,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.txt round 1",
+      "busy_cores": 0.82,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.txt round 2",
+      "busy_cores": 0.48,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.txt round 3",
+      "busy_cores": 0.87,
+      "waited_seconds": 2.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.txt round 4",
+      "busy_cores": 0.9,
+      "waited_seconds": 4.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.txt round 5",
+      "busy_cores": 0.42,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.txt round 6",
+      "busy_cores": 0.7,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.txt round 7",
+      "busy_cores": 0.34,
+      "waited_seconds": 2.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.txt round 8",
+      "busy_cores": 0.44,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.txt round 9",
+      "busy_cores": 0.77,
+      "waited_seconds": 8.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.txt round 10",
+      "busy_cores": 0.66,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "calibrate long.txt",
+      "busy_cores": 0.77,
+      "waited_seconds": 2.0,
+      "quiet": true
+    },
+    {
+      "round": "long.txt round 0",
+      "busy_cores": 0.57,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.txt round 1",
+      "busy_cores": 0.77,
+      "waited_seconds": 3.0,
+      "quiet": true
+    },
+    {
+      "round": "long.txt round 2",
+      "busy_cores": 0.49,
+      "waited_seconds": 2.0,
+      "quiet": true
+    },
+    {
+      "round": "long.txt round 3",
+      "busy_cores": 0.53,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.txt round 4",
+      "busy_cores": 0.64,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.txt round 5",
+      "busy_cores": 0.51,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.txt round 6",
+      "busy_cores": 0.45,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.txt round 7",
+      "busy_cores": 0.47,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.txt round 8",
+      "busy_cores": 0.5,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.txt round 9",
+      "busy_cores": 0.51,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.txt round 10",
+      "busy_cores": 0.64,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "calibrate huge.txt",
+      "busy_cores": 0.44,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.txt round 0",
+      "busy_cores": 0.61,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.txt round 1",
+      "busy_cores": 0.42,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.txt round 2",
+      "busy_cores": 0.61,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.txt round 3",
+      "busy_cores": 0.46,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.txt round 4",
+      "busy_cores": 0.45,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.txt round 5",
+      "busy_cores": 0.49,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.txt round 6",
+      "busy_cores": 0.56,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.txt round 7",
+      "busy_cores": 0.38,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.txt round 8",
+      "busy_cores": 0.42,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.txt round 9",
+      "busy_cores": 0.47,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.txt round 10",
+      "busy_cores": 0.55,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "calibrate short.lua",
+      "busy_cores": 0.4,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.lua round 0",
+      "busy_cores": 0.44,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.lua round 1",
+      "busy_cores": 0.64,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.lua round 2",
+      "busy_cores": 0.46,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.lua round 3",
+      "busy_cores": 0.44,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.lua round 4",
+      "busy_cores": 0.44,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.lua round 5",
+      "busy_cores": 0.6,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.lua round 6",
+      "busy_cores": 0.43,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.lua round 7",
+      "busy_cores": 0.41,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.lua round 8",
+      "busy_cores": 0.41,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.lua round 9",
+      "busy_cores": 0.42,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "short.lua round 10",
+      "busy_cores": 0.59,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "calibrate medium.lua",
+      "busy_cores": 0.45,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.lua round 0",
+      "busy_cores": 0.44,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.lua round 1",
+      "busy_cores": 0.47,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.lua round 2",
+      "busy_cores": 0.77,
+      "waited_seconds": 2.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.lua round 3",
+      "busy_cores": 0.61,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.lua round 4",
+      "busy_cores": 0.47,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.lua round 5",
+      "busy_cores": 0.45,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.lua round 6",
+      "busy_cores": 0.45,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.lua round 7",
+      "busy_cores": 0.39,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.lua round 8",
+      "busy_cores": 0.86,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.lua round 9",
+      "busy_cores": 0.39,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "medium.lua round 10",
+      "busy_cores": 0.52,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "calibrate long.lua",
+      "busy_cores": 0.42,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.lua round 0",
+      "busy_cores": 0.45,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.lua round 1",
+      "busy_cores": 0.59,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.lua round 2",
+      "busy_cores": 0.44,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.lua round 3",
+      "busy_cores": 0.47,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.lua round 4",
+      "busy_cores": 0.68,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.lua round 5",
+      "busy_cores": 0.52,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.lua round 6",
+      "busy_cores": 0.42,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.lua round 7",
+      "busy_cores": 0.41,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.lua round 8",
+      "busy_cores": 0.46,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.lua round 9",
+      "busy_cores": 0.64,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "long.lua round 10",
+      "busy_cores": 0.51,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "calibrate huge.lua",
+      "busy_cores": 0.48,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.lua round 0",
+      "busy_cores": 0.44,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.lua round 1",
+      "busy_cores": 0.44,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.lua round 2",
+      "busy_cores": 0.46,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.lua round 3",
+      "busy_cores": 0.59,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.lua round 4",
+      "busy_cores": 0.46,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.lua round 5",
+      "busy_cores": 0.43,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.lua round 6",
+      "busy_cores": 0.41,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.lua round 7",
+      "busy_cores": 0.61,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.lua round 8",
+      "busy_cores": 0.45,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.lua round 9",
+      "busy_cores": 0.46,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "huge.lua round 10",
+      "busy_cores": 0.45,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "idle round 1",
+      "busy_cores": 0.62,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "idle round 2",
+      "busy_cores": 0.39,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "idle round 3",
+      "busy_cores": 0.42,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "idle round 4",
+      "busy_cores": 0.1,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    {
+      "round": "idle round 5",
+      "busy_cores": 0.09,
+      "waited_seconds": 1.0,
+      "quiet": true
+    }
+  ],
+  "samples": [
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 1,
+      "document_visible": 22.272139999586216,
+      "ready_to_edit": 32.29773299972294,
+      "quit": 5.935381999734091
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 1,
+      "document_visible": 94.28925599968352,
+      "ready_to_edit": 100.36874699926557,
+      "quit": 5.4875519999768585
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 1,
+      "document_visible": 17.005772999254987,
+      "ready_to_edit": 29.179764999753388,
+      "quit": 4.826641999898129
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 1,
+      "window_mapped": 46.45314099980169,
+      "document_visible": 72.00114500028576,
+      "ready_to_edit": 87.74659499977133,
+      "quit": 12.312021000070672
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 1,
+      "window_mapped": 44.07147399979294,
+      "document_visible": 64.05036300020583,
+      "ready_to_edit": 79.60240000011254,
+      "quit": 14.155286999994132
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 1,
+      "window_mapped": 45.86663099962607,
+      "document_visible": 101.61396300009073,
+      "ready_to_edit": 117.2363919995405,
+      "quit": 12.760812000124133
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 1,
+      "window_mapped": 41.99547100051859,
+      "document_visible": 62.05725600011647,
+      "ready_to_edit": 77.85552500081394,
+      "quit": 12.932534999890777
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 1,
+      "document_visible": 17.739879999680852,
+      "ready_to_edit": 29.386852999778057,
+      "quit": 5.225419999987935
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 2,
+      "document_visible": 97.34027700051229,
+      "ready_to_edit": 103.3919870005775,
+      "quit": 4.469633000553586
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 2,
+      "document_visible": 13.130464999449032,
+      "ready_to_edit": 21.243109999886656,
+      "quit": 5.2259410003898665
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 2,
+      "window_mapped": 43.605419999948936,
+      "document_visible": 67.58258800073236,
+      "ready_to_edit": 83.71694700053922,
+      "quit": 11.75729999977193
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 2,
+      "window_mapped": 45.336357000451244,
+      "document_visible": 74.03124300071795,
+      "ready_to_edit": 88.8859720007531,
+      "quit": 13.329739000255358
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 2,
+      "window_mapped": 45.78530900016631,
+      "document_visible": 83.63432300029672,
+      "ready_to_edit": 99.17284400034987,
+      "quit": 13.939883999228186
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 2,
+      "window_mapped": 39.91332500027056,
+      "document_visible": 65.22967500040977,
+      "ready_to_edit": 80.99808800034225,
+      "quit": 9.685635000096227
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 2,
+      "document_visible": 22.422121999625233,
+      "ready_to_edit": 28.035098999680486,
+      "quit": 4.76605899984861
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 2,
+      "document_visible": 22.6180090003254,
+      "ready_to_edit": 30.396526999538764,
+      "quit": 4.4200000002092565
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 3,
+      "document_visible": 16.05964899954415,
+      "ready_to_edit": 29.598891000205185,
+      "quit": 4.014368999378348
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 3,
+      "window_mapped": 50.37717000050179,
+      "document_visible": 75.86290699964593,
+      "ready_to_edit": 91.44242599995778,
+      "quit": 11.045795999962138
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 3,
+      "window_mapped": 42.92991300007998,
+      "document_visible": 67.66678599979059,
+      "ready_to_edit": 83.7980090000201,
+      "quit": 11.619451999649755
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 3,
+      "window_mapped": 43.24447299950407,
+      "document_visible": 98.4913759994015,
+      "ready_to_edit": 113.74982300003467,
+      "quit": 12.127044000408205
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 3,
+      "window_mapped": 39.14163799981907,
+      "document_visible": 64.19074600034946,
+      "ready_to_edit": 80.11074400019425,
+      "quit": 13.796775000628259
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 3,
+      "document_visible": 21.31041600023309,
+      "ready_to_edit": 33.68367200073408,
+      "quit": 5.345706000298378
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 3,
+      "document_visible": 28.54795099938201,
+      "ready_to_edit": 41.61729099996592,
+      "quit": 5.641611000100966
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 3,
+      "document_visible": 95.65420499984612,
+      "ready_to_edit": 100.97758899973996,
+      "quit": 4.182544999821403
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 4,
+      "window_mapped": 44.81285500060039,
+      "document_visible": 69.7291940005016,
+      "ready_to_edit": 85.95840100042551,
+      "quit": 11.182191999978386
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 4,
+      "window_mapped": 49.049100000047474,
+      "document_visible": 75.57505800014042,
+      "ready_to_edit": 91.92943000016385,
+      "quit": 13.728736999837565
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 4,
+      "window_mapped": 46.566664000238234,
+      "document_visible": 101.06763800013141,
+      "ready_to_edit": 117.1592069995313,
+      "quit": 12.493541000367259
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 4,
+      "window_mapped": 42.73900499993033,
+      "document_visible": 67.7986629998486,
+      "ready_to_edit": 83.66799600025843,
+      "quit": 11.696717000631907
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 4,
+      "document_visible": 23.054277000483125,
+      "ready_to_edit": 34.38647000075434,
+      "quit": 4.949692999616673
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 4,
+      "document_visible": 23.583420000250044,
+      "ready_to_edit": 33.7399780000851,
+      "quit": 5.379919000006339
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 4,
+      "document_visible": 99.96947800027556,
+      "ready_to_edit": 107.04620999968029,
+      "quit": 3.8821709995318088
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 4,
+      "document_visible": 13.296256000103313,
+      "ready_to_edit": 21.54773100028251,
+      "quit": 2.696145999834698
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 5,
+      "window_mapped": 44.992921999437385,
+      "document_visible": 68.7292479997268,
+      "ready_to_edit": 84.91223900000477,
+      "quit": 8.721856999727606
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 5,
+      "window_mapped": 49.9948630003928,
+      "document_visible": 89.81514399965818,
+      "ready_to_edit": 104.88314299982449,
+      "quit": 13.810912000735698
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 5,
+      "window_mapped": 43.62250199937989,
+      "document_visible": 69.18217800011917,
+      "ready_to_edit": 85.18158399965614,
+      "quit": 12.090915000044333
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 5,
+      "document_visible": 19.166166000104568,
+      "ready_to_edit": 25.2805130003253,
+      "quit": 4.393709999931161
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 5,
+      "document_visible": 18.93297800052096,
+      "ready_to_edit": 24.845697000273503,
+      "quit": 4.278123000403866
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 5,
+      "document_visible": 92.20719000040845,
+      "ready_to_edit": 95.95540999998775,
+      "quit": 4.948499999954947
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 5,
+      "document_visible": 14.877462000185915,
+      "ready_to_edit": 22.330680000777647,
+      "quit": 4.333007000241196
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 5,
+      "window_mapped": 50.357914000414894,
+      "document_visible": 67.19771600000968,
+      "ready_to_edit": 82.98322100017685,
+      "quit": 10.689177000131167
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 6,
+      "window_mapped": 41.648999999779335,
+      "document_visible": 91.58769799978472,
+      "ready_to_edit": 106.60752700005105,
+      "quit": 12.754872000186879
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 6,
+      "window_mapped": 38.29259599933721,
+      "document_visible": 65.77407599979779,
+      "ready_to_edit": 81.82986799965875,
+      "quit": 12.010625000584696
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 6,
+      "document_visible": 15.618913000253087,
+      "ready_to_edit": 22.741109999515174,
+      "quit": 3.488653000204067
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 6,
+      "document_visible": 19.115850999696704,
+      "ready_to_edit": 28.093828999772086,
+      "quit": 4.632989000128873
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 6,
+      "document_visible": 90.0373109998327,
+      "ready_to_edit": 93.97727000032319,
+      "quit": 3.026716999556811
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 6,
+      "document_visible": 14.488521999737713,
+      "ready_to_edit": 20.671096999649308,
+      "quit": 3.0785029994149227
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 6,
+      "window_mapped": 42.856766000113566,
+      "document_visible": 68.40547100000549,
+      "ready_to_edit": 83.75345599961292,
+      "quit": 9.584315000211063
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 6,
+      "window_mapped": 51.01628900047217,
+      "document_visible": 75.98934399993595,
+      "ready_to_edit": 91.86651100026211,
+      "quit": 12.22827400033566
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 7,
+      "window_mapped": 36.12086300017836,
+      "document_visible": 60.96484600038821,
+      "ready_to_edit": 77.06194599995797,
+      "quit": 10.305227000571904
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 7,
+      "document_visible": 21.317510000699258,
+      "ready_to_edit": 30.88865000063379,
+      "quit": 4.6144939997248
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 7,
+      "document_visible": 22.747472000446578,
+      "ready_to_edit": 31.107761999919603,
+      "quit": 4.642376999981934
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 7,
+      "document_visible": 87.56560500023625,
+      "ready_to_edit": 93.31114000087837,
+      "quit": 3.9992010006244527
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 7,
+      "document_visible": 18.586678000247048,
+      "ready_to_edit": 30.93184099998325,
+      "quit": 5.157532000339415
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 7,
+      "window_mapped": 38.88217199983046,
+      "document_visible": 64.80807400021149,
+      "ready_to_edit": 80.53703299992776,
+      "quit": 10.304806000021927
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 7,
+      "window_mapped": 42.17661999973643,
+      "document_visible": 55.927408999195904,
+      "ready_to_edit": 72.59524899927783,
+      "quit": 11.10515700020187
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 7,
+      "window_mapped": 40.26699899986852,
+      "document_visible": 96.1471390000952,
+      "ready_to_edit": 111.72151800019492,
+      "quit": 14.370711000083247
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 8,
+      "document_visible": 23.366473000351107,
+      "ready_to_edit": 31.45311899970693,
+      "quit": 4.036049999740499
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 8,
+      "document_visible": 20.78517100017052,
+      "ready_to_edit": 29.565398000158893,
+      "quit": 4.552908999357896
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 8,
+      "document_visible": 87.23210999960429,
+      "ready_to_edit": 92.02973799983738,
+      "quit": 5.053236999629007
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 8,
+      "document_visible": 11.070041000493802,
+      "ready_to_edit": 16.904133000025467,
+      "quit": 3.6391049998201197
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 8,
+      "window_mapped": 35.702719000255456,
+      "document_visible": 60.80715100051748,
+      "ready_to_edit": 76.74814800066088,
+      "quit": 12.181606000012835
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 8,
+      "window_mapped": 39.102795999497175,
+      "document_visible": 64.0767129998494,
+      "ready_to_edit": 80.18872100001317,
+      "quit": 10.459815999638522
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 8,
+      "window_mapped": 48.827564000021084,
+      "document_visible": 89.75443000053929,
+      "ready_to_edit": 104.58784999991622,
+      "quit": 13.666169999851263
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 8,
+      "window_mapped": 46.112050999909115,
+      "document_visible": 71.40970500040567,
+      "ready_to_edit": 87.49586399972031,
+      "quit": 13.280686999678437
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 9,
+      "document_visible": 28.929516000061994,
+      "ready_to_edit": 35.08136300024489,
+      "quit": 4.705285000454751
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 9,
+      "document_visible": 87.70860300046479,
+      "ready_to_edit": 92.84066800046276,
+      "quit": 3.7983430001986562
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 9,
+      "document_visible": 14.61556100002781,
+      "ready_to_edit": 20.43465400038258,
+      "quit": 3.832198000054632
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 9,
+      "window_mapped": 54.221149000113655,
+      "document_visible": 79.46161600011692,
+      "ready_to_edit": 95.76109499994345,
+      "quit": 11.929432999750134
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 9,
+      "window_mapped": 51.13498099944991,
+      "document_visible": 75.94883799993113,
+      "ready_to_edit": 91.6919040000721,
+      "quit": 12.606873000549967
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 9,
+      "window_mapped": 41.027665000001434,
+      "document_visible": 96.05570799976704,
+      "ready_to_edit": 111.67135399955441,
+      "quit": 14.698054999826127
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 9,
+      "window_mapped": 37.778392000291205,
+      "document_visible": 63.05100899953686,
+      "ready_to_edit": 78.65542499985168,
+      "quit": 13.5459749999427
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 9,
+      "document_visible": 21.612683999592264,
+      "ready_to_edit": 30.093648999354627,
+      "quit": 5.00973599991994
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 10,
+      "document_visible": 87.80439299971476,
+      "ready_to_edit": 91.71350500037079,
+      "quit": 4.034426000544045
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 10,
+      "document_visible": 12.884914999631292,
+      "ready_to_edit": 20.436105999579013,
+      "quit": 4.223371000080078
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 10,
+      "window_mapped": 35.8889379995162,
+      "document_visible": 53.088323999872955,
+      "ready_to_edit": 69.05374699999811,
+      "quit": 11.067155000091589
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 10,
+      "window_mapped": 45.40833100054442,
+      "document_visible": 70.41898799980117,
+      "ready_to_edit": 86.1842650001563,
+      "quit": 11.344796000230417
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.txt",
+      "round": 10,
+      "window_mapped": 48.428946000058204,
+      "document_visible": 88.16352599933452,
+      "ready_to_edit": 103.25739399922895,
+      "quit": 14.173831999869435
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.txt",
+      "round": 10,
+      "window_mapped": 38.07361500003026,
+      "document_visible": 63.161635999676946,
+      "ready_to_edit": 79.54432099995756,
+      "quit": 12.876429999778338
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.txt",
+      "round": 10,
+      "document_visible": 16.461803000311193,
+      "ready_to_edit": 25.284940999881655,
+      "quit": 5.799677000140946
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.txt",
+      "round": 10,
+      "document_visible": 25.21694299957744,
+      "ready_to_edit": 31.2663889999385,
+      "quit": 4.191871999864816
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 1,
+      "document_visible": 25.26943199973175,
+      "ready_to_edit": 33.523891999720945,
+      "quit": 5.023572000027343
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 1,
+      "document_visible": 91.43524299997807,
+      "ready_to_edit": 95.87273499982985,
+      "quit": 5.044911000368302
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 1,
+      "document_visible": 16.42275999984122,
+      "ready_to_edit": 23.062411999489996,
+      "quit": 4.332484999395092
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 1,
+      "window_mapped": 36.238824000065506,
+      "document_visible": 61.74105199988844,
+      "ready_to_edit": 77.21014400067361,
+      "quit": 12.188188999971317
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 1,
+      "window_mapped": 43.72022499956074,
+      "document_visible": 68.64218499958952,
+      "ready_to_edit": 84.41886399941723,
+      "quit": 12.925259999974514
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 1,
+      "window_mapped": 43.47698899982788,
+      "document_visible": 98.78312300043035,
+      "ready_to_edit": 113.8217670004451,
+      "quit": 12.467051000385254
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 1,
+      "window_mapped": 38.95357600049465,
+      "document_visible": 65.81193700003496,
+      "ready_to_edit": 81.55491199977405,
+      "quit": 12.464406999242783
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 1,
+      "document_visible": 14.98589500079106,
+      "ready_to_edit": 20.986098000321363,
+      "quit": 5.993158999444859
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 2,
+      "document_visible": 96.14330200020049,
+      "ready_to_edit": 103.47735699997429,
+      "quit": 5.748910999500367
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 2,
+      "document_visible": 15.986081999471935,
+      "ready_to_edit": 22.347571999489446,
+      "quit": 5.303506999553065
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 2,
+      "window_mapped": 51.17949499981478,
+      "document_visible": 77.32049100013683,
+      "ready_to_edit": 93.45049199964706,
+      "quit": 12.100242999622424
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 2,
+      "window_mapped": 44.284853999670304,
+      "document_visible": 69.13373699990188,
+      "ready_to_edit": 84.65202000024874,
+      "quit": 13.123953999638616
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 2,
+      "window_mapped": 43.120700999679684,
+      "document_visible": 98.98785699988366,
+      "ready_to_edit": 113.9605179996579,
+      "quit": 13.908594999520574
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 2,
+      "window_mapped": 44.814698000664066,
+      "document_visible": 70.83822399999917,
+      "ready_to_edit": 86.44582500073739,
+      "quit": 14.286122999692452
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 2,
+      "document_visible": 18.347770999753266,
+      "ready_to_edit": 26.0491640001419,
+      "quit": 6.030609999470471
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 2,
+      "document_visible": 22.858740999254223,
+      "ready_to_edit": 32.68800499972713,
+      "quit": 5.4492799999934505
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 3,
+      "document_visible": 18.162051999752293,
+      "ready_to_edit": 23.835922999751347,
+      "quit": 3.810886999417562
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 3,
+      "window_mapped": 33.09934600019915,
+      "document_visible": 47.074615999918024,
+      "ready_to_edit": 63.46535600005154,
+      "quit": 12.401307999425626
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 3,
+      "window_mapped": 55.140693999419454,
+      "document_visible": 80.67746699998679,
+      "ready_to_edit": 96.59901699978946,
+      "quit": 11.705161999998381
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 3,
+      "window_mapped": 44.261520999498316,
+      "document_visible": 99.79026199926011,
+      "ready_to_edit": 114.97012099971471,
+      "quit": 11.935595000068133
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 3,
+      "window_mapped": 48.201419999713835,
+      "document_visible": 73.09038800030976,
+      "ready_to_edit": 88.51613800015912,
+      "quit": 12.043857999742613
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 3,
+      "document_visible": 23.74453199990967,
+      "ready_to_edit": 34.35212600015802,
+      "quit": 4.736201999548939
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 3,
+      "document_visible": 16.337480000402138,
+      "ready_to_edit": 23.76326700050413,
+      "quit": 5.079376000139746
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 3,
+      "document_visible": 85.15823000016098,
+      "ready_to_edit": 92.98546999980317,
+      "quit": 3.298597000139125
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 4,
+      "window_mapped": 45.14443600055529,
+      "document_visible": 70.24538200039387,
+      "ready_to_edit": 86.2232480003513,
+      "quit": 11.567083999580063
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 4,
+      "window_mapped": 41.683675999593106,
+      "document_visible": 65.71779099976993,
+      "ready_to_edit": 81.98798499961413,
+      "quit": 13.244980000308715
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 4,
+      "window_mapped": 46.64144399976067,
+      "document_visible": 102.1418829996037,
+      "ready_to_edit": 117.83704800018313,
+      "quit": 13.569339000241598
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 4,
+      "window_mapped": 39.342375000160246,
+      "document_visible": 58.15595900003245,
+      "ready_to_edit": 74.56157700016774,
+      "quit": 13.915298000028997
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 4,
+      "document_visible": 17.71626599929732,
+      "ready_to_edit": 29.56727199943998,
+      "quit": 3.8386489995900774
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 4,
+      "document_visible": 22.44378199975472,
+      "ready_to_edit": 34.552993000033894,
+      "quit": 3.82451299992681
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 4,
+      "document_visible": 96.22418399976596,
+      "ready_to_edit": 102.10217799976817,
+      "quit": 5.232251999586879
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 4,
+      "document_visible": 16.52283799921861,
+      "ready_to_edit": 25.082230999942112,
+      "quit": 4.599636000421015
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 5,
+      "window_mapped": 42.667881999477686,
+      "document_visible": 67.81616699936421,
+      "ready_to_edit": 83.29424499970628,
+      "quit": 13.439676000416512
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 5,
+      "window_mapped": 48.28481499953341,
+      "document_visible": 86.94534099959128,
+      "ready_to_edit": 102.87674000028346,
+      "quit": 14.341225999487506
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 5,
+      "window_mapped": 41.931259999728354,
+      "document_visible": 66.82874399939465,
+      "ready_to_edit": 83.40421999946557,
+      "quit": 13.600678000329935
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 5,
+      "document_visible": 21.797549999973853,
+      "ready_to_edit": 38.62163300073007,
+      "quit": 4.855405999478535
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 5,
+      "document_visible": 21.0186389995215,
+      "ready_to_edit": 34.222051999677205,
+      "quit": 4.808247999790183
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 5,
+      "document_visible": 101.02715199991508,
+      "ready_to_edit": 107.55646699999488,
+      "quit": 4.396004999762226
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 5,
+      "document_visible": 14.306089999990945,
+      "ready_to_edit": 22.583533999750216,
+      "quit": 3.547733000232256
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 5,
+      "window_mapped": 43.16680699957942,
+      "document_visible": 63.76905599972815,
+      "ready_to_edit": 79.07422999960545,
+      "quit": 11.25637099994492
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 6,
+      "window_mapped": 52.09435999950074,
+      "document_visible": 90.6226279994371,
+      "ready_to_edit": 106.119571999443,
+      "quit": 12.615830999493483
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 6,
+      "window_mapped": 37.75205200054188,
+      "document_visible": 64.56877600066946,
+      "ready_to_edit": 80.69231500030583,
+      "quit": 11.044873999708216
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 6,
+      "document_visible": 13.260628999887558,
+      "ready_to_edit": 26.494569000533374,
+      "quit": 4.834176000258594
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 6,
+      "document_visible": 25.60566200008907,
+      "ready_to_edit": 31.62214599979052,
+      "quit": 4.449515000487736
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 6,
+      "document_visible": 85.8664890001819,
+      "ready_to_edit": 89.96853200005717,
+      "quit": 4.281098999854294
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 6,
+      "document_visible": 12.985313999706705,
+      "ready_to_edit": 19.06791099918337,
+      "quit": 6.351130999973975
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 6,
+      "window_mapped": 50.95188799987227,
+      "document_visible": 68.6435679999704,
+      "ready_to_edit": 84.61326799988456,
+      "quit": 13.45016499999474
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 6,
+      "window_mapped": 41.4095019996239,
+      "document_visible": 62.8976119996878,
+      "ready_to_edit": 79.3007550000766,
+      "quit": 13.123241999892343
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 7,
+      "window_mapped": 46.05935200015665,
+      "document_visible": 70.96226599969668,
+      "ready_to_edit": 87.51137299987022,
+      "quit": 11.84086700050102
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 7,
+      "document_visible": 17.372912000610086,
+      "ready_to_edit": 33.95088300021598,
+      "quit": 6.258706999688002
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 7,
+      "document_visible": 28.344999999717402,
+      "ready_to_edit": 36.715277999974205,
+      "quit": 5.056352999417868
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 7,
+      "document_visible": 99.23796600014612,
+      "ready_to_edit": 105.18645199954335,
+      "quit": 4.370246000689804
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 7,
+      "document_visible": 16.290702000333113,
+      "ready_to_edit": 24.606517999927746,
+      "quit": 5.942995999248524
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 7,
+      "window_mapped": 39.34179399948334,
+      "document_visible": 57.22614499973133,
+      "ready_to_edit": 73.03037499968923,
+      "quit": 10.834269000042696
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 7,
+      "window_mapped": 44.789569999920786,
+      "document_visible": 69.15596799990453,
+      "ready_to_edit": 85.51952699963294,
+      "quit": 10.980783999912092
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 7,
+      "window_mapped": 48.5898980005004,
+      "document_visible": 87.13297400026931,
+      "ready_to_edit": 102.61179300050571,
+      "quit": 12.53090099999099
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 8,
+      "document_visible": 22.276798999882885,
+      "ready_to_edit": 39.599766999344865,
+      "quit": 4.296437999983027
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 8,
+      "document_visible": 26.292079000086233,
+      "ready_to_edit": 39.523012999779894,
+      "quit": 4.089911000846769
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 8,
+      "document_visible": 97.62533200046164,
+      "ready_to_edit": 103.90770400044858,
+      "quit": 2.938530999927025
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 8,
+      "document_visible": 16.099834999295126,
+      "ready_to_edit": 24.726683999688248,
+      "quit": 2.918002999649616
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 8,
+      "window_mapped": 35.532339999917895,
+      "document_visible": 50.6418869999834,
+      "ready_to_edit": 67.05557999976008,
+      "quit": 13.701185999707377
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 8,
+      "window_mapped": 56.32648800019524,
+      "document_visible": 87.63641800032929,
+      "ready_to_edit": 101.97476900066249,
+      "quit": 10.5221639996671
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 8,
+      "window_mapped": 35.784522000540164,
+      "document_visible": 98.08399200028362,
+      "ready_to_edit": 115.27755800034356,
+      "quit": 9.444182000152068
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 8,
+      "window_mapped": 34.28052100025525,
+      "document_visible": 58.94893599997886,
+      "ready_to_edit": 74.88715700037574,
+      "quit": 15.217119000226376
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 9,
+      "document_visible": 50.51052999988315,
+      "ready_to_edit": 59.261461999994935,
+      "quit": 5.73090800025966
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 9,
+      "document_visible": 123.76544600010675,
+      "ready_to_edit": 134.92439399942668,
+      "quit": 4.339488999903551
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 9,
+      "document_visible": 14.190382999913709,
+      "ready_to_edit": 23.534578000180773,
+      "quit": 3.5997510003653588
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 9,
+      "window_mapped": 45.37647100005415,
+      "document_visible": 64.76205799935997,
+      "ready_to_edit": 81.39985099933256,
+      "quit": 9.292608000578184
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 9,
+      "window_mapped": 42.16883600020083,
+      "document_visible": 59.79062500045984,
+      "ready_to_edit": 76.64267000018299,
+      "quit": 12.852374000431155
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 9,
+      "window_mapped": 41.36347500025295,
+      "document_visible": 97.73293400030525,
+      "ready_to_edit": 113.48659899977065,
+      "quit": 14.174353000271367
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 9,
+      "window_mapped": 49.05156299992086,
+      "document_visible": 74.16124599967588,
+      "ready_to_edit": 90.8815639995737,
+      "quit": 12.650636000216764
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 9,
+      "document_visible": 27.638785999442916,
+      "ready_to_edit": 35.84650899938424,
+      "quit": 4.734129000098619
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 10,
+      "document_visible": 103.57667300013418,
+      "ready_to_edit": 109.42850800074666,
+      "quit": 4.678764000345836
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 10,
+      "document_visible": 17.921611000019766,
+      "ready_to_edit": 24.912973000027705,
+      "quit": 3.9306420003413223
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 10,
+      "window_mapped": 50.0808450005934,
+      "document_visible": 76.11409899982391,
+      "ready_to_edit": 92.33575200050836,
+      "quit": 10.989060000611062
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 10,
+      "window_mapped": 43.554203999519814,
+      "document_visible": 59.9438219996955,
+      "ready_to_edit": 76.95606800007226,
+      "quit": 11.08371700047428
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.txt",
+      "round": 10,
+      "window_mapped": 41.4531429996714,
+      "document_visible": 97.03429299952404,
+      "ready_to_edit": 112.54470199946809,
+      "quit": 13.051266999354993
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.txt",
+      "round": 10,
+      "window_mapped": 42.55281599944283,
+      "document_visible": 68.04757999998401,
+      "ready_to_edit": 84.13873900008184,
+      "quit": 12.047564000567945
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.txt",
+      "round": 10,
+      "document_visible": 18.65829300004407,
+      "ready_to_edit": 30.961426999965624,
+      "quit": 4.758132999995723
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.txt",
+      "round": 10,
+      "document_visible": 28.504419000455528,
+      "ready_to_edit": 42.019585999696574,
+      "quit": 5.108541000481637
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 1,
+      "document_visible": 26.508885999646736,
+      "ready_to_edit": 38.87073999976565,
+      "quit": 4.467869000109204
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 1,
+      "document_visible": 93.41049700014992,
+      "ready_to_edit": 100.69902600025671,
+      "quit": 4.324350999922899
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 1,
+      "document_visible": 17.362782999953197,
+      "ready_to_edit": 25.937825000255543,
+      "quit": 4.023726000013994
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 1,
+      "window_mapped": 44.02277300050628,
+      "document_visible": 62.7855910006474,
+      "ready_to_edit": 78.76935800049978,
+      "quit": 12.053286000082153
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 1,
+      "window_mapped": 47.23703099989507,
+      "document_visible": 71.25726999947801,
+      "ready_to_edit": 86.95736499976192,
+      "quit": 11.260819000199263
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 1,
+      "window_mapped": 44.74596899945027,
+      "document_visible": 117.03799999941111,
+      "ready_to_edit": 133.06192199979705,
+      "quit": 14.488984000308847
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 1,
+      "window_mapped": 37.84134999932576,
+      "document_visible": 54.24513499929162,
+      "ready_to_edit": 70.3659989994776,
+      "quit": 11.944111000047997
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 1,
+      "document_visible": 23.194128999421082,
+      "ready_to_edit": 34.341935999691486,
+      "quit": 4.275328000403533
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 2,
+      "document_visible": 97.36824900028296,
+      "ready_to_edit": 103.53038599987485,
+      "quit": 4.082596000444028
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 2,
+      "document_visible": 14.381953000338399,
+      "ready_to_edit": 23.125951999645622,
+      "quit": 3.1788309997864417
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 2,
+      "window_mapped": 45.79361299965967,
+      "document_visible": 65.77851400015788,
+      "ready_to_edit": 82.1088709999458,
+      "quit": 10.573830999419442
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 2,
+      "window_mapped": 43.936271000347915,
+      "document_visible": 62.091419999887876,
+      "ready_to_edit": 79.04000600046857,
+      "quit": 12.33575500009465
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 2,
+      "window_mapped": 44.599222999750054,
+      "document_visible": 117.0678250000492,
+      "ready_to_edit": 132.51052699979482,
+      "quit": 13.065434000054665
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 2,
+      "window_mapped": 38.880658999914885,
+      "document_visible": 64.16670199996588,
+      "ready_to_edit": 80.21647299938195,
+      "quit": 12.289819000216085
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 2,
+      "document_visible": 20.889147000161756,
+      "ready_to_edit": 30.313401999592315,
+      "quit": 4.150404000029084
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 2,
+      "document_visible": 35.763183000199206,
+      "ready_to_edit": 49.673591000100714,
+      "quit": 5.744935000620899
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 3,
+      "document_visible": 16.30659199963702,
+      "ready_to_edit": 24.842780999279057,
+      "quit": 4.124054000385513
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 3,
+      "window_mapped": 48.509557000215864,
+      "document_visible": 70.35653999992064,
+      "ready_to_edit": 86.27279000029375,
+      "quit": 11.077414999817847
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 3,
+      "window_mapped": 46.40603200004989,
+      "document_visible": 72.8247699998974,
+      "ready_to_edit": 89.05397699982132,
+      "quit": 11.956373999964853
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 3,
+      "window_mapped": 51.18795999987924,
+      "document_visible": 108.47033099980763,
+      "ready_to_edit": 124.53121199996531,
+      "quit": 14.015525999639067
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 3,
+      "window_mapped": 42.390872000396485,
+      "document_visible": 68.27712100039207,
+      "ready_to_edit": 84.28856000045926,
+      "quit": 13.278522999826237
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 3,
+      "document_visible": 27.455761999590322,
+      "ready_to_edit": 40.80071000043972,
+      "quit": 5.866602999958559
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 3,
+      "document_visible": 37.63060399978713,
+      "ready_to_edit": 50.901612999950885,
+      "quit": 6.0159929998917505
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 3,
+      "document_visible": 104.45511099987925,
+      "ready_to_edit": 110.24253499999759,
+      "quit": 4.074251000020013
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 4,
+      "window_mapped": 44.242253999982495,
+      "document_visible": 63.36922599984973,
+      "ready_to_edit": 79.63440000003175,
+      "quit": 10.558962999311916
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 4,
+      "window_mapped": 44.93031399942993,
+      "document_visible": 70.40895799946156,
+      "ready_to_edit": 86.19283999996696,
+      "quit": 12.946089999786636
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 4,
+      "window_mapped": 43.17208700012998,
+      "document_visible": 99.10496700013027,
+      "ready_to_edit": 114.9482299997544,
+      "quit": 11.79629299986118
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 4,
+      "window_mapped": 42.531416000201716,
+      "document_visible": 69.6460980007032,
+      "ready_to_edit": 85.8248000004096,
+      "quit": 12.78085000012652
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 4,
+      "document_visible": 27.28686499995092,
+      "ready_to_edit": 40.528028999688104,
+      "quit": 4.556706000585109
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 4,
+      "document_visible": 37.1192759994301,
+      "ready_to_edit": 46.96731500007445,
+      "quit": 5.892400999982783
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 4,
+      "document_visible": 95.59512399937375,
+      "ready_to_edit": 101.70995299995411,
+      "quit": 4.5439120003720745
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 4,
+      "document_visible": 16.095916999802284,
+      "ready_to_edit": 24.764173999756167,
+      "quit": 4.36714999977994
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 5,
+      "window_mapped": 53.04698700001609,
+      "document_visible": 77.97291400038375,
+      "ready_to_edit": 94.0169240002433,
+      "quit": 13.367178999942553
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 5,
+      "window_mapped": 48.33909799981484,
+      "document_visible": 103.67492699970171,
+      "ready_to_edit": 118.86176999996678,
+      "quit": 11.666801000501437
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 5,
+      "window_mapped": 40.725669000494236,
+      "document_visible": 59.46238900014578,
+      "ready_to_edit": 75.49794300030044,
+      "quit": 11.685194999699888
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 5,
+      "document_visible": 35.10975700010022,
+      "ready_to_edit": 45.91916000026686,
+      "quit": 4.840347000026668
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 5,
+      "document_visible": 38.162853000358155,
+      "ready_to_edit": 52.34971000027144,
+      "quit": 5.399786999987555
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 5,
+      "document_visible": 90.659969000626,
+      "ready_to_edit": 97.27243999986968,
+      "quit": 6.16712600003666
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 5,
+      "document_visible": 12.445180999748118,
+      "ready_to_edit": 18.46641300016927,
+      "quit": 4.269756999747187
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 5,
+      "window_mapped": 34.94754199982708,
+      "document_visible": 48.430007999741065,
+      "ready_to_edit": 65.21581899960438,
+      "quit": 13.367520000429067
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 6,
+      "window_mapped": 53.3452670006227,
+      "document_visible": 109.00147700067464,
+      "ready_to_edit": 125.74606100042729,
+      "quit": 14.253141000153846
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 6,
+      "window_mapped": 45.386830999632366,
+      "document_visible": 70.5455349998374,
+      "ready_to_edit": 86.82082799987256,
+      "quit": 14.352387999679195
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 6,
+      "document_visible": 34.36822599996958,
+      "ready_to_edit": 46.2211149997529,
+      "quit": 5.670976000146766
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 6,
+      "document_visible": 26.061296000079892,
+      "ready_to_edit": 33.39188400059356,
+      "quit": 6.3376159996551
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 6,
+      "document_visible": 83.01679399937711,
+      "ready_to_edit": 88.66570800000773,
+      "quit": 5.308366000463138
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 6,
+      "document_visible": 15.652455000235932,
+      "ready_to_edit": 21.741796000242175,
+      "quit": 4.302368999560713
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 6,
+      "window_mapped": 43.327057999704266,
+      "document_visible": 68.87971000014659,
+      "ready_to_edit": 85.2280110002539,
+      "quit": 14.89637800023047
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 6,
+      "window_mapped": 41.44478800026263,
+      "document_visible": 66.5256460006276,
+      "ready_to_edit": 82.98413300053653,
+      "quit": 12.625347999346559
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 7,
+      "window_mapped": 42.089677000149095,
+      "document_visible": 67.31843299985485,
+      "ready_to_edit": 82.79068999945594,
+      "quit": 14.72787199963932
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 7,
+      "document_visible": 25.55553799993504,
+      "ready_to_edit": 38.33823100012523,
+      "quit": 5.644595999910962
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 7,
+      "document_visible": 31.455864000236033,
+      "ready_to_edit": 44.37464200054819,
+      "quit": 6.562788000337605
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 7,
+      "document_visible": 95.34230999997817,
+      "ready_to_edit": 100.39686999971309,
+      "quit": 4.9583489999349695
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 7,
+      "document_visible": 13.695875999474083,
+      "ready_to_edit": 20.33241299977817,
+      "quit": 4.619503999492736
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 7,
+      "window_mapped": 47.41351200027566,
+      "document_visible": 72.43731299968204,
+      "ready_to_edit": 88.05484300046373,
+      "quit": 15.157546999944316
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 7,
+      "window_mapped": 43.77870499956771,
+      "document_visible": 61.83490900002653,
+      "ready_to_edit": 78.53691199943569,
+      "quit": 11.37010399997962
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 7,
+      "window_mapped": 45.24800099989079,
+      "document_visible": 117.36328999995749,
+      "ready_to_edit": 133.02343899977132,
+      "quit": 15.838263000659936
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 8,
+      "document_visible": 34.044127999550255,
+      "ready_to_edit": 43.18534199956048,
+      "quit": 5.609179999737535
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 8,
+      "document_visible": 30.9104309999384,
+      "ready_to_edit": 41.4008460002151,
+      "quit": 5.6883079996623565
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 8,
+      "document_visible": 93.06690199991863,
+      "ready_to_edit": 99.08059099961974,
+      "quit": 4.915057999824057
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 8,
+      "document_visible": 15.62546500008466,
+      "ready_to_edit": 23.895694999737316,
+      "quit": 4.173227000137558
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 8,
+      "window_mapped": 45.64767000010761,
+      "document_visible": 72.593345000314,
+      "ready_to_edit": 88.25783300017065,
+      "quit": 15.473299999939627
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 8,
+      "window_mapped": 41.68662099982612,
+      "document_visible": 66.58920500012755,
+      "ready_to_edit": 82.53426900046179,
+      "quit": 13.025209000261384
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 8,
+      "window_mapped": 42.40076099995349,
+      "document_visible": 113.45523999989382,
+      "ready_to_edit": 129.63888200010842,
+      "quit": 13.42330499937816
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 8,
+      "window_mapped": 34.90871999929368,
+      "document_visible": 59.629812999446585,
+      "ready_to_edit": 75.71930799986148,
+      "quit": 14.583972000764334
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 9,
+      "document_visible": 30.657606999739073,
+      "ready_to_edit": 42.610954999872774,
+      "quit": 5.842185999426874
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 9,
+      "document_visible": 99.22278800058848,
+      "ready_to_edit": 105.34613200070453,
+      "quit": 6.104348999542708
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 9,
+      "document_visible": 27.095987000393507,
+      "ready_to_edit": 32.43990900045901,
+      "quit": 5.678800999703526
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 9,
+      "window_mapped": 47.22726300042268,
+      "document_visible": 66.27892300002713,
+      "ready_to_edit": 82.36327899976459,
+      "quit": 11.901480000233278
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 9,
+      "window_mapped": 43.990662000396696,
+      "document_visible": 68.6365850006041,
+      "ready_to_edit": 85.38564700029383,
+      "quit": 11.29792899973836
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 9,
+      "window_mapped": 40.65232099947025,
+      "document_visible": 111.71639900021546,
+      "ready_to_edit": 127.85223099945142,
+      "quit": 13.21525500043208
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 9,
+      "window_mapped": 34.49161699973047,
+      "document_visible": 59.57465899973613,
+      "ready_to_edit": 75.7929459996376,
+      "quit": 14.14335499976005
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 9,
+      "document_visible": 23.154043999966234,
+      "ready_to_edit": 31.360093999865057,
+      "quit": 5.539187999602291
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 10,
+      "document_visible": 99.10532699996111,
+      "ready_to_edit": 106.48854400005803,
+      "quit": 4.703120999693056
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 10,
+      "document_visible": 14.727800999935425,
+      "ready_to_edit": 23.556037999696855,
+      "quit": 4.700455000602233
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 10,
+      "window_mapped": 50.79561500042473,
+      "document_visible": 76.61946700045519,
+      "ready_to_edit": 92.69784099979006,
+      "quit": 14.041935000022931
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 10,
+      "window_mapped": 51.77726600049937,
+      "document_visible": 77.24571100061439,
+      "ready_to_edit": 92.76839300036954,
+      "quit": 12.695891000475967
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.txt",
+      "round": 10,
+      "window_mapped": 41.862361000312376,
+      "document_visible": 114.66751300031319,
+      "ready_to_edit": 130.59852100013813,
+      "quit": 12.937754000631685
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.txt",
+      "round": 10,
+      "window_mapped": 46.292629999697965,
+      "document_visible": 71.23455699911574,
+      "ready_to_edit": 87.16754899978696,
+      "quit": 14.473965999968641
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.txt",
+      "round": 10,
+      "document_visible": 29.220342000371602,
+      "ready_to_edit": 37.162176000492764,
+      "quit": 6.517884000459162
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.txt",
+      "round": 10,
+      "document_visible": 24.780914999610104,
+      "ready_to_edit": 30.68568900016544,
+      "quit": 6.510870999591134
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 1,
+      "document_visible": 148.33563699994556,
+      "ready_to_edit": 157.60222599965346,
+      "quit": 8.56388100055483
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 1,
+      "document_visible": 161.9678130000466,
+      "ready_to_edit": 168.1135600001653,
+      "quit": 6.48423099937645
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 1,
+      "document_visible": 13.433082999654289,
+      "ready_to_edit": 22.316141999908723,
+      "quit": 5.411328000263893
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 1,
+      "window_mapped": 40.02327200032596,
+      "document_visible": 112.38736700033769,
+      "ready_to_edit": 126.44714599991858,
+      "quit": 15.957526999955007
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 1,
+      "window_mapped": 38.09110800011695,
+      "document_visible": 126.57745000069553,
+      "ready_to_edit": 143.6259140000402,
+      "quit": 16.882000999430602
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 1,
+      "window_mapped": 38.1231179999304,
+      "document_visible": 155.99100399958843,
+      "ready_to_edit": 171.52089899991552,
+      "quit": 12.015795000479557
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 1,
+      "window_mapped": 35.15780700035975,
+      "document_visible": 59.865344999707304,
+      "ready_to_edit": 75.99863199993706,
+      "quit": 10.979642000165768
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 1,
+      "document_visible": 76.28602099975978,
+      "ready_to_edit": 84.22085299935134,
+      "quit": 8.38253099936992
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 2,
+      "document_visible": 198.90064899936988,
+      "ready_to_edit": 204.26767400022072,
+      "quit": 6.48523300060333
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 2,
+      "document_visible": 17.27982800002792,
+      "ready_to_edit": 23.364448999927845,
+      "quit": 5.287525999847276
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 2,
+      "window_mapped": 37.6056269997207,
+      "document_visible": 113.72724000011658,
+      "ready_to_edit": 127.37723000009282,
+      "quit": 11.747711999305466
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 2,
+      "window_mapped": 36.20912799942744,
+      "document_visible": 118.1660339998416,
+      "ready_to_edit": 134.4776659998388,
+      "quit": 13.815890999467229
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 2,
+      "window_mapped": 34.797901999809255,
+      "document_visible": 149.6257759999935,
+      "ready_to_edit": 165.63511100048345,
+      "quit": 12.369549000140978
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 2,
+      "window_mapped": 34.95916399970156,
+      "document_visible": 53.50830200040946,
+      "ready_to_edit": 69.37700300022698,
+      "quit": 12.457442999220802
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 2,
+      "document_visible": 82.36228700025094,
+      "ready_to_edit": 88.26393500021368,
+      "quit": 7.769350999296876
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 2,
+      "document_visible": 78.47889399999985,
+      "ready_to_edit": 85.72081599959347,
+      "quit": 9.555279999403865
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 3,
+      "document_visible": 15.835158000299998,
+      "ready_to_edit": 21.802139000101306,
+      "quit": 6.068982000215328
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 3,
+      "window_mapped": 37.81602199978806,
+      "document_visible": 122.8920379999181,
+      "ready_to_edit": 135.85935799983417,
+      "quit": 13.167654999961087
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 3,
+      "window_mapped": 39.36744200018438,
+      "document_visible": 114.72058300023491,
+      "ready_to_edit": 131.82676499945956,
+      "quit": 16.57153899941477
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 3,
+      "window_mapped": 35.61410200018145,
+      "document_visible": 137.80660900010844,
+      "ready_to_edit": 153.7361350001447,
+      "quit": 13.467267999658361
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 3,
+      "window_mapped": 38.147614000081376,
+      "document_visible": 65.19883700002538,
+      "ready_to_edit": 80.95452600082353,
+      "quit": 14.11283800007368
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 3,
+      "document_visible": 78.05744300003425,
+      "ready_to_edit": 92.00113299993973,
+      "quit": 9.601165999811201
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 3,
+      "document_visible": 81.15467200059356,
+      "ready_to_edit": 86.65889500025514,
+      "quit": 8.634072999484488
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 3,
+      "document_visible": 161.93230600038078,
+      "ready_to_edit": 167.3246990003463,
+      "quit": 5.05572200017923
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 4,
+      "window_mapped": 54.545336999581195,
+      "document_visible": 152.09833300013997,
+      "ready_to_edit": 165.05272900030832,
+      "quit": 13.01649200013344
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 4,
+      "window_mapped": 36.510963999717205,
+      "document_visible": 117.81983499986382,
+      "ready_to_edit": 134.26122999953805,
+      "quit": 13.296858000103384
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 4,
+      "window_mapped": 34.26195700012613,
+      "document_visible": 161.85901900007593,
+      "ready_to_edit": 178.52934399979858,
+      "quit": 12.447815000086848
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 4,
+      "window_mapped": 36.160847999781254,
+      "document_visible": 55.2797450000071,
+      "ready_to_edit": 71.4921709995906,
+      "quit": 12.890877000245382
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 4,
+      "document_visible": 92.9610639996099,
+      "ready_to_edit": 97.0770639996772,
+      "quit": 7.801180999194912
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 4,
+      "document_visible": 79.62434199998825,
+      "ready_to_edit": 86.22513099999196,
+      "quit": 8.853944999827945
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 4,
+      "document_visible": 141.26632799980143,
+      "ready_to_edit": 145.46127599987813,
+      "quit": 4.340390999459487
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 4,
+      "document_visible": 10.72552599998744,
+      "ready_to_edit": 17.01267699991149,
+      "quit": 4.575110000587301
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 5,
+      "window_mapped": 50.14947299969208,
+      "document_visible": 163.67685800014442,
+      "ready_to_edit": 179.8934520002149,
+      "quit": 13.316984999619308
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 5,
+      "window_mapped": 38.53436899953522,
+      "document_visible": 163.86283700012427,
+      "ready_to_edit": 178.86119600007078,
+      "quit": 12.59289700010413
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 5,
+      "window_mapped": 37.55742699922848,
+      "document_visible": 62.661638999998104,
+      "ready_to_edit": 78.61640099963552,
+      "quit": 11.46036299996922
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 5,
+      "document_visible": 129.56325999948604,
+      "ready_to_edit": 137.11557399983576,
+      "quit": 8.687973000633065
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 5,
+      "document_visible": 107.84961700028362,
+      "ready_to_edit": 119.1521240007205,
+      "quit": 8.172105999619816
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 5,
+      "document_visible": 160.89883800032112,
+      "ready_to_edit": 166.45972800051823,
+      "quit": 4.839446999540087
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 5,
+      "document_visible": 11.895358999936434,
+      "ready_to_edit": 18.02345200030686,
+      "quit": 4.531397999926412
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 5,
+      "window_mapped": 41.913226999895414,
+      "document_visible": 106.25208100009331,
+      "ready_to_edit": 120.25132599956123,
+      "quit": 12.144807000368019
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 6,
+      "window_mapped": 36.8056079996677,
+      "document_visible": 202.23640499989415,
+      "ready_to_edit": 217.68252400033816,
+      "quit": 12.95059800031595
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 6,
+      "window_mapped": 38.328143000398995,
+      "document_visible": 58.190894999825105,
+      "ready_to_edit": 73.92506300038804,
+      "quit": 11.642514999948617
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 6,
+      "document_visible": 79.1177119999702,
+      "ready_to_edit": 84.81808200031082,
+      "quit": 7.70434900005057
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 6,
+      "document_visible": 86.27107700067427,
+      "ready_to_edit": 101.83866300030786,
+      "quit": 8.02903800013155
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 6,
+      "document_visible": 134.7516199994061,
+      "ready_to_edit": 140.4123559996151,
+      "quit": 6.201821000104246
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 6,
+      "document_visible": 11.852808999719855,
+      "ready_to_edit": 17.962436999368947,
+      "quit": 4.892566000307852
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 6,
+      "window_mapped": 41.88886099927913,
+      "document_visible": 113.45961799997895,
+      "ready_to_edit": 127.53896300000633,
+      "quit": 13.911430000007385
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 6,
+      "window_mapped": 40.50132799966377,
+      "document_visible": 121.93021399980353,
+      "ready_to_edit": 138.8296380000611,
+      "quit": 15.221427000142285
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 7,
+      "window_mapped": 40.42662900064897,
+      "document_visible": 65.6845390003582,
+      "ready_to_edit": 81.81026200054475,
+      "quit": 12.731638000332168
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 7,
+      "document_visible": 78.87193100032164,
+      "ready_to_edit": 85.1780980001422,
+      "quit": 7.382855999821913
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 7,
+      "document_visible": 80.62519899976905,
+      "ready_to_edit": 92.45582599942281,
+      "quit": 9.17971699982445
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 7,
+      "document_visible": 134.67080800000986,
+      "ready_to_edit": 140.29356399987591,
+      "quit": 5.584713999269297
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 7,
+      "document_visible": 13.528501999644504,
+      "ready_to_edit": 19.307640000079118,
+      "quit": 4.921789999571047
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 7,
+      "window_mapped": 38.02626699962275,
+      "document_visible": 103.29143799935991,
+      "ready_to_edit": 116.9173829994179,
+      "quit": 12.158051999904274
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 7,
+      "window_mapped": 33.60225999949762,
+      "document_visible": 117.73081899991666,
+      "ready_to_edit": 134.33650200022385,
+      "quit": 15.211988999908499
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 7,
+      "window_mapped": 38.11786799997208,
+      "document_visible": 168.37501900045027,
+      "ready_to_edit": 184.0382549999049,
+      "quit": 14.812930999141827
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 8,
+      "document_visible": 106.74778999964474,
+      "ready_to_edit": 116.38582599971414,
+      "quit": 7.604923000144481
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 8,
+      "document_visible": 85.76896599970496,
+      "ready_to_edit": 119.55256500004907,
+      "quit": 7.676758000343398
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 8,
+      "document_visible": 132.42353399982676,
+      "ready_to_edit": 137.46684299985645,
+      "quit": 4.770486000779783
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 8,
+      "document_visible": 10.354149000704638,
+      "ready_to_edit": 16.277077000268036,
+      "quit": 6.032414000401332
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 8,
+      "window_mapped": 41.079101999457635,
+      "document_visible": 102.83989099934843,
+      "ready_to_edit": 116.77938399952836,
+      "quit": 13.382487999479054
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 8,
+      "window_mapped": 36.050581999916176,
+      "document_visible": 95.74398399945494,
+      "ready_to_edit": 112.62000399983663,
+      "quit": 13.909667000007175
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 8,
+      "window_mapped": 38.228926000556385,
+      "document_visible": 164.14165000060166,
+      "ready_to_edit": 180.70422200071334,
+      "quit": 13.547307000408182
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 8,
+      "window_mapped": 38.806669999758014,
+      "document_visible": 57.932059000449954,
+      "ready_to_edit": 74.74810700023227,
+      "quit": 12.062693000189029
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 9,
+      "document_visible": 106.89382399959868,
+      "ready_to_edit": 116.10368699984974,
+      "quit": 8.733629000744259
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 9,
+      "document_visible": 162.52420599994366,
+      "ready_to_edit": 170.0134220000109,
+      "quit": 5.479626000123972
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 9,
+      "document_visible": 11.662491999231861,
+      "ready_to_edit": 23.22846299921366,
+      "quit": 4.8832880002009915
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 9,
+      "window_mapped": 44.648656000390474,
+      "document_visible": 113.89492400030576,
+      "ready_to_edit": 127.93414400039183,
+      "quit": 13.45275999938167
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 9,
+      "window_mapped": 38.499663999573386,
+      "document_visible": 127.21696900007373,
+      "ready_to_edit": 143.05517299999337,
+      "quit": 14.300109000032535
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 9,
+      "window_mapped": 39.54977300054452,
+      "document_visible": 169.1236230008144,
+      "ready_to_edit": 185.25403500007087,
+      "quit": 13.125155000125233
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 9,
+      "window_mapped": 38.02815999915765,
+      "document_visible": 57.440827999926114,
+      "ready_to_edit": 72.77478599917231,
+      "quit": 11.852538999846729
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 9,
+      "document_visible": 75.35348199962755,
+      "ready_to_edit": 84.08950600005483,
+      "quit": 8.931641000344825
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 10,
+      "document_visible": 199.64037600038864,
+      "ready_to_edit": 204.8677900002076,
+      "quit": 5.62656199963385
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 10,
+      "document_visible": 14.606894999815268,
+      "ready_to_edit": 22.798998999860487,
+      "quit": 5.949358000179927
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 10,
+      "window_mapped": 41.959031999795116,
+      "document_visible": 112.94177699983265,
+      "ready_to_edit": 128.24860399996396,
+      "quit": 14.234826000574685
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 10,
+      "window_mapped": 38.78688300028443,
+      "document_visible": 128.73453500014875,
+      "ready_to_edit": 145.17232300022442,
+      "quit": 15.707778999967559
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.txt",
+      "round": 10,
+      "window_mapped": 38.370622000002186,
+      "document_visible": 168.78008900039276,
+      "ready_to_edit": 184.99072200029332,
+      "quit": 12.616902000445407
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.txt",
+      "round": 10,
+      "window_mapped": 38.99130599984346,
+      "document_visible": 61.63360099981219,
+      "ready_to_edit": 77.38628400056768,
+      "quit": 14.412870000342082
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.txt",
+      "round": 10,
+      "document_visible": 102.43554299995594,
+      "ready_to_edit": 111.13548899993475,
+      "quit": 8.338218000062625
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.txt",
+      "round": 10,
+      "document_visible": 83.50673299992195,
+      "ready_to_edit": 91.29881600074441,
+      "quit": 7.3336539999218076
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 1,
+      "document_visible": 26.19377499922848,
+      "ready_to_edit": 42.47754399966652,
+      "quit": 5.910213999413827
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 1,
+      "document_visible": 97.43278099995223,
+      "ready_to_edit": 106.08493699965038,
+      "quit": 6.375717000082659
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 1,
+      "document_visible": 17.504638999525923,
+      "ready_to_edit": 34.26439099985146,
+      "quit": 4.628200000297511
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 1,
+      "window_mapped": 42.86564299945894,
+      "document_visible": 60.82082699958846,
+      "ready_to_edit": 77.54917999955069,
+      "quit": 12.774497999998857
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 1,
+      "window_mapped": 46.90223299985519,
+      "document_visible": 72.14350199956243,
+      "ready_to_edit": 87.69145099995512,
+      "quit": 14.053386999876238
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 1,
+      "window_mapped": 43.50711600000068,
+      "document_visible": 98.65438199994969,
+      "ready_to_edit": 114.29420400054369,
+      "quit": 13.889668999581772
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 1,
+      "window_mapped": 40.074116999676335,
+      "document_visible": 64.74791199980245,
+      "ready_to_edit": 80.67955099977553,
+      "quit": 14.172971000334655
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 1,
+      "document_visible": 16.801650999695994,
+      "ready_to_edit": 30.01406999919709,
+      "quit": 4.405011000017112
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 2,
+      "document_visible": 102.45752399987396,
+      "ready_to_edit": 116.25167500005773,
+      "quit": 6.53453500035539
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 2,
+      "document_visible": 16.330336999999417,
+      "ready_to_edit": 31.005560000266996,
+      "quit": 4.446670000106678
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 2,
+      "window_mapped": 51.39618100020016,
+      "document_visible": 75.62903899997764,
+      "ready_to_edit": 91.82117599993944,
+      "quit": 13.260460000310559
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 2,
+      "window_mapped": 48.2282100001612,
+      "document_visible": 72.7062570003909,
+      "ready_to_edit": 88.33390600011626,
+      "quit": 12.957842000105302
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 2,
+      "window_mapped": 42.593271000441746,
+      "document_visible": 97.68012400036241,
+      "ready_to_edit": 113.35554300057993,
+      "quit": 13.885521999327466
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 2,
+      "window_mapped": 38.36231599962048,
+      "document_visible": 63.51376699967659,
+      "ready_to_edit": 79.47104399954696,
+      "quit": 12.969584000529721
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 2,
+      "document_visible": 18.52063500064105,
+      "ready_to_edit": 32.72100699996372,
+      "quit": 6.012736000229779
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 2,
+      "document_visible": 23.752496999804862,
+      "ready_to_edit": 37.56384899952536,
+      "quit": 5.532094999580295
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 3,
+      "document_visible": 12.149004999628232,
+      "ready_to_edit": 30.012887999873783,
+      "quit": 4.780686000231071
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 3,
+      "window_mapped": 45.02420999961032,
+      "document_visible": 62.80326399974001,
+      "ready_to_edit": 79.30223699986527,
+      "quit": 12.581136000335391
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 3,
+      "window_mapped": 41.192645000592165,
+      "document_visible": 66.23180500082526,
+      "ready_to_edit": 82.91202800046449,
+      "quit": 12.179813000329887
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 3,
+      "window_mapped": 42.6133299997673,
+      "document_visible": 97.45332900001813,
+      "ready_to_edit": 113.7739080004394,
+      "quit": 11.712695999449352
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 3,
+      "window_mapped": 46.10213199975988,
+      "document_visible": 71.31109999954788,
+      "ready_to_edit": 86.91636699950323,
+      "quit": 13.816312000017206
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 3,
+      "document_visible": 19.86653899984958,
+      "ready_to_edit": 27.05399899969052,
+      "quit": 4.613852999682422
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 3,
+      "document_visible": 19.861208999827795,
+      "ready_to_edit": 29.227355000330135,
+      "quit": 5.773317000603129
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 3,
+      "document_visible": 89.40837099999044,
+      "ready_to_edit": 95.45544200045697,
+      "quit": 5.668531000083021
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 4,
+      "window_mapped": 48.069492000649916,
+      "document_visible": 72.225585000524,
+      "ready_to_edit": 88.18453599997156,
+      "quit": 11.400741999750608
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 4,
+      "window_mapped": 41.737005999493704,
+      "document_visible": 67.7516559999276,
+      "ready_to_edit": 83.83083099943178,
+      "quit": 13.534794000406691
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 4,
+      "window_mapped": 44.93435199947271,
+      "document_visible": 100.90145599951938,
+      "ready_to_edit": 116.25181499948667,
+      "quit": 13.37803000023996
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 4,
+      "window_mapped": 42.42233100012527,
+      "document_visible": 67.37878600051772,
+      "ready_to_edit": 82.50639700054307,
+      "quit": 14.674610999463766
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 4,
+      "document_visible": 18.429173000185983,
+      "ready_to_edit": 38.665545000185375,
+      "quit": 4.071414999998524
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 4,
+      "document_visible": 22.729306999281107,
+      "ready_to_edit": 43.86893399987457,
+      "quit": 4.808658999536419
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 4,
+      "document_visible": 97.13518300031865,
+      "ready_to_edit": 104.32180099996913,
+      "quit": 4.747263000353996
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 4,
+      "document_visible": 13.504638000085833,
+      "ready_to_edit": 33.48650299994915,
+      "quit": 5.017059000238078
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 5,
+      "window_mapped": 56.27793599978759,
+      "document_visible": 81.65873699999793,
+      "ready_to_edit": 97.79521000018576,
+      "quit": 13.385574000494671
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 5,
+      "window_mapped": 46.233348999521695,
+      "document_visible": 101.82330499992531,
+      "ready_to_edit": 116.91340599918476,
+      "quit": 13.693822999812255
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 5,
+      "window_mapped": 43.75754600005166,
+      "document_visible": 69.09121799981222,
+      "ready_to_edit": 85.82662399930996,
+      "quit": 13.511670999832859
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 5,
+      "document_visible": 19.67997900010232,
+      "ready_to_edit": 33.66011799971602,
+      "quit": 5.171279000023787
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 5,
+      "document_visible": 21.683797000150662,
+      "ready_to_edit": 31.451406000087445,
+      "quit": 6.811073999415385
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 5,
+      "document_visible": 93.31854399988515,
+      "ready_to_edit": 101.79112399964652,
+      "quit": 6.494300000667863
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 5,
+      "document_visible": 11.837851000564115,
+      "ready_to_edit": 32.36463800021738,
+      "quit": 5.696784000065236
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 5,
+      "window_mapped": 55.36539500008075,
+      "document_visible": 80.74213800045982,
+      "ready_to_edit": 95.94284600007086,
+      "quit": 11.52119699963805
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 6,
+      "window_mapped": 46.9978130004165,
+      "document_visible": 101.6280089997963,
+      "ready_to_edit": 117.0029840004645,
+      "quit": 13.586341000518587
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 6,
+      "window_mapped": 46.05500399975426,
+      "document_visible": 71.59612499981449,
+      "ready_to_edit": 87.00219799993647,
+      "quit": 14.746786999239703
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 6,
+      "document_visible": 21.732678999796917,
+      "ready_to_edit": 33.60642699954042,
+      "quit": 4.785896000612411
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 6,
+      "document_visible": 22.56124199993792,
+      "ready_to_edit": 36.21722299976682,
+      "quit": 5.291454000143858
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 6,
+      "document_visible": 96.74569200069527,
+      "ready_to_edit": 106.06058200028201,
+      "quit": 5.787964999399264
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 6,
+      "document_visible": 14.726017999237229,
+      "ready_to_edit": 36.73399299987068,
+      "quit": 5.682658000296215
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 6,
+      "window_mapped": 51.32542800038209,
+      "document_visible": 75.72994800011656,
+      "ready_to_edit": 91.59085400006006,
+      "quit": 14.607105000322917
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 6,
+      "window_mapped": 47.23405500044464,
+      "document_visible": 72.71031500022218,
+      "ready_to_edit": 88.22544299982837,
+      "quit": 12.857374000304844
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 7,
+      "window_mapped": 39.8610069996721,
+      "document_visible": 65.73933100025897,
+      "ready_to_edit": 81.98170299965568,
+      "quit": 12.166396999418794
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 7,
+      "document_visible": 18.879767999351316,
+      "ready_to_edit": 33.17687199978536,
+      "quit": 5.596395999418746
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 7,
+      "document_visible": 19.090983999376476,
+      "ready_to_edit": 33.68489399963437,
+      "quit": 4.355038000539935
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 7,
+      "document_visible": 96.22422400025243,
+      "ready_to_edit": 105.4757250003604,
+      "quit": 6.6693480002868455
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 7,
+      "document_visible": 11.688010000398208,
+      "ready_to_edit": 54.9650439998004,
+      "quit": 4.671601000154624
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 7,
+      "window_mapped": 43.71785000057571,
+      "document_visible": 61.64521200025774,
+      "ready_to_edit": 77.18666000073426,
+      "quit": 10.264610999911383
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 7,
+      "window_mapped": 46.3392269994074,
+      "document_visible": 71.11812899984216,
+      "ready_to_edit": 86.88911699937307,
+      "quit": 11.224672000025748
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 7,
+      "window_mapped": 40.13809699972626,
+      "document_visible": 96.66103299969109,
+      "ready_to_edit": 112.44463499951962,
+      "quit": 11.91740100057359
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 8,
+      "document_visible": 26.088438000442693,
+      "ready_to_edit": 39.44418599985511,
+      "quit": 5.129870999553532
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 8,
+      "document_visible": 23.4833520007669,
+      "ready_to_edit": 37.843183999939356,
+      "quit": 5.313245000252209
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 8,
+      "document_visible": 94.36016800009384,
+      "ready_to_edit": 105.2949160002754,
+      "quit": 4.499028000282124
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 8,
+      "document_visible": 14.415275999454025,
+      "ready_to_edit": 39.935326999511744,
+      "quit": 4.714712000350119
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 8,
+      "window_mapped": 44.34765200039692,
+      "document_visible": 62.72190199979377,
+      "ready_to_edit": 78.75023300039175,
+      "quit": 11.273092000010365
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 8,
+      "window_mapped": 43.58772700015834,
+      "document_visible": 68.02545899972756,
+      "ready_to_edit": 83.89031299975613,
+      "quit": 13.381576000028872
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 8,
+      "window_mapped": 40.60301899971819,
+      "document_visible": 95.92026399968745,
+      "ready_to_edit": 111.13875600040046,
+      "quit": 13.96491099967534
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 8,
+      "window_mapped": 49.27595499975723,
+      "document_visible": 74.63397299943608,
+      "ready_to_edit": 90.21794999989652,
+      "quit": 14.81894199969247
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 9,
+      "document_visible": 23.97283999926003,
+      "ready_to_edit": 38.08933399977832,
+      "quit": 5.754701999649114
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 9,
+      "document_visible": 98.53072900023108,
+      "ready_to_edit": 109.11682300047687,
+      "quit": 5.451473999528389
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 9,
+      "document_visible": 16.044601000430703,
+      "ready_to_edit": 30.876187000103528,
+      "quit": 4.950894999637967
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 9,
+      "window_mapped": 50.438915000086126,
+      "document_visible": 75.17423499939468,
+      "ready_to_edit": 91.78694199999882,
+      "quit": 11.180898999555211
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 9,
+      "window_mapped": 40.97548800018558,
+      "document_visible": 60.09666899990407,
+      "ready_to_edit": 76.06284200028313,
+      "quit": 14.124910999271378
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 9,
+      "window_mapped": 43.7876910000341,
+      "document_visible": 100.35051199974987,
+      "ready_to_edit": 114.64155399971787,
+      "quit": 14.755021999917517
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 9,
+      "window_mapped": 46.325901999807684,
+      "document_visible": 71.55367599989404,
+      "ready_to_edit": 86.94664500035287,
+      "quit": 13.010360000407672
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 9,
+      "document_visible": 21.781170000394923,
+      "ready_to_edit": 36.86280500005523,
+      "quit": 5.787654000414477
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 10,
+      "document_visible": 100.29225299967948,
+      "ready_to_edit": 108.10256100012339,
+      "quit": 5.006598999898415
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 10,
+      "document_visible": 14.977710000493971,
+      "ready_to_edit": 29.595044000416237,
+      "quit": 5.6133069992938545
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 10,
+      "window_mapped": 47.734253000271565,
+      "document_visible": 72.50560100055736,
+      "ready_to_edit": 88.73455800039665,
+      "quit": 15.142819000175223
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 10,
+      "window_mapped": 43.380338000133634,
+      "document_visible": 62.40770299973519,
+      "ready_to_edit": 78.6022749998665,
+      "quit": 13.962696999442414
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "short.lua",
+      "round": 10,
+      "window_mapped": 48.01073199996608,
+      "document_visible": 87.12211300007766,
+      "ready_to_edit": 102.21249500045815,
+      "quit": 14.15528799952881
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "short.lua",
+      "round": 10,
+      "window_mapped": 40.28053399997589,
+      "document_visible": 65.55891200059705,
+      "ready_to_edit": 81.05619700017996,
+      "quit": 14.94848499987711
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "short.lua",
+      "round": 10,
+      "document_visible": 22.164789000271412,
+      "ready_to_edit": 35.92911299983825,
+      "quit": 5.420917000265035
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "short.lua",
+      "round": 10,
+      "document_visible": 30.807608000031905,
+      "ready_to_edit": 44.705182000143395,
+      "quit": 6.1583590004374855
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 1,
+      "document_visible": 30.352804999893124,
+      "ready_to_edit": 38.874126999871805,
+      "quit": 5.783777000033297
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 1,
+      "document_visible": 96.7569430004005,
+      "ready_to_edit": 104.22835500048677,
+      "quit": 4.993886000193015
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 1,
+      "document_visible": 15.959711999130377,
+      "ready_to_edit": 38.132184999994934,
+      "quit": 5.435823999505374
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 1,
+      "window_mapped": 45.442485000421584,
+      "document_visible": 63.90838700008317,
+      "ready_to_edit": 80.18615499986481,
+      "quit": 15.584808000312478
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 1,
+      "window_mapped": 40.17284200017457,
+      "document_visible": 60.91008400017017,
+      "ready_to_edit": 76.23243000034563,
+      "quit": 13.423694999801228
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 1,
+      "window_mapped": 42.91995499988843,
+      "document_visible": 98.11088199967344,
+      "ready_to_edit": 114.42559999977675,
+      "quit": 14.432226999815612
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 1,
+      "window_mapped": 35.86287899997842,
+      "document_visible": 62.24187099996925,
+      "ready_to_edit": 78.2313690006049,
+      "quit": 13.621856999634474
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 1,
+      "document_visible": 26.25419900050474,
+      "ready_to_edit": 32.258940000247094,
+      "quit": 4.098627000530541
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 2,
+      "document_visible": 101.6815390003103,
+      "ready_to_edit": 107.05129000052693,
+      "quit": 4.562076000183879
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 2,
+      "document_visible": 14.44040199930896,
+      "ready_to_edit": 32.49902999959886,
+      "quit": 6.5551139996387064
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 2,
+      "window_mapped": 43.26216600020416,
+      "document_visible": 68.46099500035052,
+      "ready_to_edit": 84.45199499965383,
+      "quit": 12.464436000300338
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 2,
+      "window_mapped": 52.49629400077538,
+      "document_visible": 78.46399500067491,
+      "ready_to_edit": 94.0121050007292,
+      "quit": 10.938463999991654
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 2,
+      "window_mapped": 41.4507590003268,
+      "document_visible": 96.87666799982253,
+      "ready_to_edit": 112.50443700009782,
+      "quit": 13.685766999515181
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 2,
+      "window_mapped": 37.06277899982524,
+      "document_visible": 62.52816799951688,
+      "ready_to_edit": 78.43682400016405,
+      "quit": 14.25563599968882
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 2,
+      "document_visible": 17.860576000202855,
+      "ready_to_edit": 31.670166000367317,
+      "quit": 5.5801249991418445
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 2,
+      "document_visible": 19.142490999911388,
+      "ready_to_edit": 27.76111499952094,
+      "quit": 5.727541999476671
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 3,
+      "document_visible": 15.88329900005192,
+      "ready_to_edit": 31.030707000354596,
+      "quit": 4.810460999578936
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 3,
+      "window_mapped": 45.14614900017477,
+      "document_visible": 70.67279300008522,
+      "ready_to_edit": 86.39147300073091,
+      "quit": 11.466744999779621
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 3,
+      "window_mapped": 44.11506599990389,
+      "document_visible": 69.25503500042396,
+      "ready_to_edit": 85.33015300054103,
+      "quit": 11.154478999742423
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 3,
+      "window_mapped": 49.93809600000532,
+      "document_visible": 88.51809099996899,
+      "ready_to_edit": 103.96133399990504,
+      "quit": 15.500210000027437
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 3,
+      "window_mapped": 40.666708000571816,
+      "document_visible": 57.721062999917194,
+      "ready_to_edit": 74.58618300006492,
+      "quit": 13.065403999462433
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 3,
+      "document_visible": 17.70934300020599,
+      "ready_to_edit": 28.55334000014409,
+      "quit": 6.346442999529245
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 3,
+      "document_visible": 17.53493599971989,
+      "ready_to_edit": 32.71577699979389,
+      "quit": 4.5772349994877
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 3,
+      "document_visible": 87.580522999815,
+      "ready_to_edit": 92.10082000026887,
+      "quit": 5.570156999965548
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 4,
+      "window_mapped": 47.512428000118234,
+      "document_visible": 74.38389399976586,
+      "ready_to_edit": 89.74175699950138,
+      "quit": 11.089949000052002
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 4,
+      "window_mapped": 41.87005600033444,
+      "document_visible": 61.835258999963116,
+      "ready_to_edit": 77.4232440007836,
+      "quit": 16.884346000551886
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 4,
+      "window_mapped": 48.86262000036368,
+      "document_visible": 87.1025570004349,
+      "ready_to_edit": 102.21637199992983,
+      "quit": 14.384127000084845
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 4,
+      "window_mapped": 37.176783999711915,
+      "document_visible": 61.76423600027192,
+      "ready_to_edit": 77.77756799987401,
+      "quit": 15.333988000747922
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 4,
+      "document_visible": 17.92978600042261,
+      "ready_to_edit": 29.321501000595163,
+      "quit": 4.425750000336848
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 4,
+      "document_visible": 19.414289999986067,
+      "ready_to_edit": 28.09407899985672,
+      "quit": 5.245076999926823
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 4,
+      "document_visible": 89.59856799992849,
+      "ready_to_edit": 93.8751889998457,
+      "quit": 4.284345999622019
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 4,
+      "document_visible": 12.400546000208124,
+      "ready_to_edit": 23.65565499985678,
+      "quit": 4.6319269995365175
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 5,
+      "window_mapped": 55.44783000004827,
+      "document_visible": 80.79712099970493,
+      "ready_to_edit": 96.64697700009128,
+      "quit": 13.78739800020412
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 5,
+      "window_mapped": 42.88351600007445,
+      "document_visible": 98.72617600012745,
+      "ready_to_edit": 114.43064899958699,
+      "quit": 13.735300000007555
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 5,
+      "window_mapped": 38.58834100083186,
+      "document_visible": 58.335155000349914,
+      "ready_to_edit": 75.088625000717,
+      "quit": 13.564369999585324
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 5,
+      "document_visible": 20.13258799979667,
+      "ready_to_edit": 31.39112299959379,
+      "quit": 5.55801300015446
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 5,
+      "document_visible": 19.809622000138916,
+      "ready_to_edit": 29.219811000075424,
+      "quit": 5.90301099964563
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 5,
+      "document_visible": 98.5449769996194,
+      "ready_to_edit": 104.02368199993361,
+      "quit": 5.829662999531138
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 5,
+      "document_visible": 14.90617600029509,
+      "ready_to_edit": 27.61629299948254,
+      "quit": 5.483394000293629
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 5,
+      "window_mapped": 42.02391400031047,
+      "document_visible": 66.43301199983398,
+      "ready_to_edit": 83.0217230004564,
+      "quit": 11.130885999591555
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 6,
+      "window_mapped": 47.89576599978318,
+      "document_visible": 97.8290740004013,
+      "ready_to_edit": 113.60328800037678,
+      "quit": 13.287661000504158
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 6,
+      "window_mapped": 38.99652600011905,
+      "document_visible": 64.19143800030724,
+      "ready_to_edit": 80.48753000002762,
+      "quit": 15.311815999666578
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 6,
+      "document_visible": 23.23246099967946,
+      "ready_to_edit": 34.838317000321695,
+      "quit": 5.296844000440615
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 6,
+      "document_visible": 28.399621999597002,
+      "ready_to_edit": 36.90353999991203,
+      "quit": 6.032773999322671
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 6,
+      "document_visible": 104.31047899965051,
+      "ready_to_edit": 111.84800599949085,
+      "quit": 6.174740999995265
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 6,
+      "document_visible": 14.217705000191927,
+      "ready_to_edit": 29.377806999946188,
+      "quit": 4.289023999263009
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 6,
+      "window_mapped": 53.730358999928285,
+      "document_visible": 74.30881300024339,
+      "ready_to_edit": 90.23001200057479,
+      "quit": 12.346915999842167
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 6,
+      "window_mapped": 43.44026000035228,
+      "document_visible": 69.3740879996767,
+      "ready_to_edit": 85.26999999958207,
+      "quit": 12.52047100024356
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 7,
+      "window_mapped": 44.914283999787585,
+      "document_visible": 70.67464699957782,
+      "ready_to_edit": 85.61152000038419,
+      "quit": 14.29955800085736
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 7,
+      "document_visible": 19.056919999457023,
+      "ready_to_edit": 30.75773399996251,
+      "quit": 4.981201999726181
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 7,
+      "document_visible": 18.237473999761278,
+      "ready_to_edit": 30.97715599960793,
+      "quit": 5.420395000328426
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 7,
+      "document_visible": 132.85630499922263,
+      "ready_to_edit": 140.19444799941994,
+      "quit": 5.836184999679972
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 7,
+      "document_visible": 13.525387000299816,
+      "ready_to_edit": 25.541572000292945,
+      "quit": 4.71772799937753
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 7,
+      "window_mapped": 44.515947999570926,
+      "document_visible": 66.9601909994526,
+      "ready_to_edit": 82.53182499993272,
+      "quit": 11.821170000075654
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 7,
+      "window_mapped": 40.819154999553575,
+      "document_visible": 66.44796999989921,
+      "ready_to_edit": 82.41073799945298,
+      "quit": 12.30789300007018
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 7,
+      "window_mapped": 42.31362800055649,
+      "document_visible": 97.667050000382,
+      "ready_to_edit": 112.80851700030325,
+      "quit": 13.60605699937878
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 8,
+      "document_visible": 23.841713999900094,
+      "ready_to_edit": 36.11690599973372,
+      "quit": 4.256322999935946
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 8,
+      "document_visible": 18.580767000457854,
+      "ready_to_edit": 30.52889600076014,
+      "quit": 5.183901999771479
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 8,
+      "document_visible": 103.53419299917732,
+      "ready_to_edit": 112.28212900005019,
+      "quit": 5.34498400065786
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 8,
+      "document_visible": 12.23188099993422,
+      "ready_to_edit": 28.588928000317537,
+      "quit": 4.6189819995561265
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 8,
+      "window_mapped": 45.372614999905636,
+      "document_visible": 64.79533099991386,
+      "ready_to_edit": 80.78612100052851,
+      "quit": 12.62209200012876
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 8,
+      "window_mapped": 47.19175599984737,
+      "document_visible": 72.30871100000513,
+      "ready_to_edit": 88.39053199972113,
+      "quit": 10.350521999498596
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 8,
+      "window_mapped": 42.48004900000524,
+      "document_visible": 97.34522599956108,
+      "ready_to_edit": 113.3496020001985,
+      "quit": 13.704912999855878
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 8,
+      "window_mapped": 35.59601899996778,
+      "document_visible": 60.591086000385985,
+      "ready_to_edit": 76.39290099996288,
+      "quit": 14.844069999526255
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 9,
+      "document_visible": 27.66298100050335,
+      "ready_to_edit": 38.30231400024786,
+      "quit": 5.044760999226128
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 9,
+      "document_visible": 71.05485000010958,
+      "ready_to_edit": 76.52919700012717,
+      "quit": 4.844955999942613
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 9,
+      "document_visible": 14.855610999802593,
+      "ready_to_edit": 31.357118999949307,
+      "quit": 4.544893999991473
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 9,
+      "window_mapped": 54.51063199961936,
+      "document_visible": 78.68503999998211,
+      "ready_to_edit": 94.76072899997234,
+      "quit": 11.510576999171462
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 9,
+      "window_mapped": 49.434391999966465,
+      "document_visible": 74.64994200017827,
+      "ready_to_edit": 90.41097099998296,
+      "quit": 10.885215000598691
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 9,
+      "window_mapped": 40.56698200020037,
+      "document_visible": 95.40705200015509,
+      "ready_to_edit": 110.75138900014281,
+      "quit": 14.829101000032097
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 9,
+      "window_mapped": 43.698284000129206,
+      "document_visible": 59.76248200022383,
+      "ready_to_edit": 76.31734999995388,
+      "quit": 14.658180999504111
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 9,
+      "document_visible": 19.96289999988221,
+      "ready_to_edit": 31.32316500068555,
+      "quit": 5.082652000055532
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 10,
+      "document_visible": 105.69128899987845,
+      "ready_to_edit": 114.24499100030516,
+      "quit": 4.497585000535764
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 10,
+      "document_visible": 12.170746000265353,
+      "ready_to_edit": 36.92984100052854,
+      "quit": 5.708476000108931
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 10,
+      "window_mapped": 46.8755929996405,
+      "document_visible": 71.70828600010282,
+      "ready_to_edit": 87.6371599997583,
+      "quit": 13.061014999948384
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 10,
+      "window_mapped": 46.07331900024292,
+      "document_visible": 70.926860000327,
+      "ready_to_edit": 87.11727500030975,
+      "quit": 12.3469460004344
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "medium.lua",
+      "round": 10,
+      "window_mapped": 44.316993999927945,
+      "document_visible": 86.78104400041775,
+      "ready_to_edit": 102.17709800053854,
+      "quit": 14.550998999766307
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "medium.lua",
+      "round": 10,
+      "window_mapped": 48.260870999911276,
+      "document_visible": 73.23169200026314,
+      "ready_to_edit": 89.60337700045784,
+      "quit": 13.964669999950274
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "medium.lua",
+      "round": 10,
+      "document_visible": 18.47694199932448,
+      "ready_to_edit": 30.042503000004217,
+      "quit": 4.060355000547133
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "medium.lua",
+      "round": 10,
+      "document_visible": 28.564530999574345,
+      "ready_to_edit": 37.159900999540696,
+      "quit": 6.1026350003885454
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 1,
+      "document_visible": 35.16932900038228,
+      "ready_to_edit": 50.03713200039783,
+      "quit": 10.081467000418343
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 1,
+      "document_visible": 77.48842599994532,
+      "ready_to_edit": 85.26143400013098,
+      "quit": 6.677112999568635
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 1,
+      "document_visible": 13.498735999746714,
+      "ready_to_edit": 30.59915700032434,
+      "quit": 5.0506019997555995
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 1,
+      "window_mapped": 51.30661300063366,
+      "document_visible": 71.4578060005806,
+      "ready_to_edit": 87.21471700027905,
+      "quit": 15.34720300060144
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 1,
+      "window_mapped": 40.78426900014165,
+      "document_visible": 56.34949100021913,
+      "ready_to_edit": 72.78974400014704,
+      "quit": 15.17224500003067
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 1,
+      "window_mapped": 35.40093299943692,
+      "document_visible": 71.92513199970563,
+      "ready_to_edit": 87.53098999932263,
+      "quit": 15.604574999997567
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 1,
+      "window_mapped": 40.09922400018695,
+      "document_visible": 61.03537899980438,
+      "ready_to_edit": 77.8618459999052,
+      "quit": 13.376898000387882
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 1,
+      "document_visible": 27.700501000254008,
+      "ready_to_edit": 40.14634200029832,
+      "quit": 8.483700999931898
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 2,
+      "document_visible": 98.86311299942463,
+      "ready_to_edit": 104.47854499943787,
+      "quit": 5.187058000046818
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 2,
+      "document_visible": 17.243528999642876,
+      "ready_to_edit": 25.613507000343816,
+      "quit": 5.1435159994071
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 2,
+      "window_mapped": 48.62802000025113,
+      "document_visible": 72.45502600017062,
+      "ready_to_edit": 88.56019100039703,
+      "quit": 14.359200000399142
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 2,
+      "window_mapped": 43.2463960005407,
+      "document_visible": 61.75988800077903,
+      "ready_to_edit": 77.74754199999734,
+      "quit": 13.97237400033191
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 2,
+      "window_mapped": 38.159065000400005,
+      "document_visible": 74.07315999989805,
+      "ready_to_edit": 90.06255799977225,
+      "quit": 13.949440999567742
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 2,
+      "window_mapped": 42.150461000346695,
+      "document_visible": 67.802971000674,
+      "ready_to_edit": 83.41241600010108,
+      "quit": 13.268063999930746
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 2,
+      "document_visible": 22.840456999801972,
+      "ready_to_edit": 28.97885899983521,
+      "quit": 9.97602999996161
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 2,
+      "document_visible": 35.49981800006208,
+      "ready_to_edit": 44.30132500056061,
+      "quit": 9.451335000449035
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 3,
+      "document_visible": 23.136611000154517,
+      "ready_to_edit": 31.160929999714426,
+      "quit": 5.7954690000769915
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 3,
+      "window_mapped": 50.26980899947375,
+      "document_visible": 69.44457000008697,
+      "ready_to_edit": 85.02948899968032,
+      "quit": 13.533913000173925
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 3,
+      "window_mapped": 44.21605500010628,
+      "document_visible": 69.31904399971245,
+      "ready_to_edit": 85.43271500002447,
+      "quit": 13.663896000252862
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 3,
+      "window_mapped": 41.11973799990665,
+      "document_visible": 79.89429799999925,
+      "ready_to_edit": 95.38412900019466,
+      "quit": 12.976386999980605
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 3,
+      "window_mapped": 43.12032999951043,
+      "document_visible": 68.44828099929146,
+      "ready_to_edit": 84.23758399931103,
+      "quit": 14.467312999840942
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 3,
+      "document_visible": 23.50484199996572,
+      "ready_to_edit": 33.06246700049087,
+      "quit": 8.248489999459707
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 3,
+      "document_visible": 22.986761000538536,
+      "ready_to_edit": 29.764392000288353,
+      "quit": 7.851474999370112
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 3,
+      "document_visible": 59.45225000050414,
+      "ready_to_edit": 64.53352000062296,
+      "quit": 5.958323999948334
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 4,
+      "window_mapped": 56.18617500022083,
+      "document_visible": 81.02103100009117,
+      "ready_to_edit": 96.72427199984668,
+      "quit": 15.064361999975517
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 4,
+      "window_mapped": 40.445833999910974,
+      "document_visible": 61.825860999306315,
+      "ready_to_edit": 77.66441599960672,
+      "quit": 14.242661000025691
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 4,
+      "window_mapped": 34.241338000356336,
+      "document_visible": 76.88963300006435,
+      "ready_to_edit": 92.60208100022282,
+      "quit": 13.869672000510036
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 4,
+      "window_mapped": 33.120154999778606,
+      "document_visible": 58.95415600025444,
+      "ready_to_edit": 74.64138599971193,
+      "quit": 12.466410000342876
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 4,
+      "document_visible": 18.566891000773467,
+      "ready_to_edit": 27.91310000066005,
+      "quit": 8.98554199920909
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 4,
+      "document_visible": 39.6081230001073,
+      "ready_to_edit": 52.342214999953285,
+      "quit": 8.947129999796744
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 4,
+      "document_visible": 61.77838300027361,
+      "ready_to_edit": 66.12141799996607,
+      "quit": 4.088097000021662
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 4,
+      "document_visible": 11.11207000030845,
+      "ready_to_edit": 21.913127000516397,
+      "quit": 5.350243999600934
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 5,
+      "window_mapped": 63.62889299998642,
+      "document_visible": 88.75889299997652,
+      "ready_to_edit": 104.6101109996016,
+      "quit": 16.06746400011616
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 5,
+      "window_mapped": 46.966494000116654,
+      "document_visible": 85.69515799990768,
+      "ready_to_edit": 101.33304600003612,
+      "quit": 12.331978000474919
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 5,
+      "window_mapped": 37.39973200026725,
+      "document_visible": 62.32730200008518,
+      "ready_to_edit": 78.23830199959048,
+      "quit": 13.6716510005499
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 5,
+      "document_visible": 19.685139000102936,
+      "ready_to_edit": 33.401263000087056,
+      "quit": 6.460386000071594
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 5,
+      "document_visible": 22.68046700010018,
+      "ready_to_edit": 30.395134999707807,
+      "quit": 6.540727000356128
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 5,
+      "document_visible": 63.859466000394605,
+      "ready_to_edit": 68.27370399969368,
+      "quit": 5.134809999617573
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 5,
+      "document_visible": 12.304787000175565,
+      "ready_to_edit": 25.642792000326153,
+      "quit": 7.671436999771686
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 5,
+      "window_mapped": 39.17404900039401,
+      "document_visible": 53.7010640000517,
+      "ready_to_edit": 69.9950420003006,
+      "quit": 16.83016399965709
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 6,
+      "window_mapped": 54.237891000411764,
+      "document_visible": 109.39664900070056,
+      "ready_to_edit": 124.66393200065795,
+      "quit": 14.588760999686201
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 6,
+      "window_mapped": 33.88379700027144,
+      "document_visible": 58.970857000531396,
+      "ready_to_edit": 75.14710500072397,
+      "quit": 12.22904499991273
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 6,
+      "document_visible": 26.33401799994317,
+      "ready_to_edit": 38.81590699984372,
+      "quit": 9.116216999245808
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 6,
+      "document_visible": 23.08601599997928,
+      "ready_to_edit": 29.657591000614048,
+      "quit": 9.487442999670748
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 6,
+      "document_visible": 59.77116800022486,
+      "ready_to_edit": 65.59162400026253,
+      "quit": 6.1906299997644965
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 6,
+      "document_visible": 9.863458999461727,
+      "ready_to_edit": 24.40676399965014,
+      "quit": 5.037877999711782
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 6,
+      "window_mapped": 45.95193999921321,
+      "document_visible": 64.04153699986637,
+      "ready_to_edit": 80.34020399918518,
+      "quit": 13.560803000473243
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 6,
+      "window_mapped": 36.06881500036252,
+      "document_visible": 54.42947000028653,
+      "ready_to_edit": 70.35307400019519,
+      "quit": 11.84769000064989
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 7,
+      "window_mapped": 36.482010000327136,
+      "document_visible": 61.802869000530336,
+      "ready_to_edit": 77.49372600028437,
+      "quit": 14.731367999957001
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 7,
+      "document_visible": 22.388237999621197,
+      "ready_to_edit": 55.06824799977039,
+      "quit": 9.089647999644512
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 7,
+      "document_visible": 31.93056400050409,
+      "ready_to_edit": 41.06901300019672,
+      "quit": 10.072770999613567
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 7,
+      "document_visible": 73.71481800055335,
+      "ready_to_edit": 78.38483700015786,
+      "quit": 6.361340000694327
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 7,
+      "document_visible": 12.196764999316656,
+      "ready_to_edit": 18.576540000140085,
+      "quit": 6.3964159999159165
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 7,
+      "window_mapped": 46.47497200039652,
+      "document_visible": 62.0558330001586,
+      "ready_to_edit": 77.52111700028763,
+      "quit": 14.900854999723379
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 7,
+      "window_mapped": 37.01099299996713,
+      "document_visible": 56.33016499996302,
+      "ready_to_edit": 72.58599200031313,
+      "quit": 14.234436000151618
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 7,
+      "window_mapped": 44.94520299977012,
+      "document_visible": 76.53996699991694,
+      "ready_to_edit": 92.77743999973609,
+      "quit": 13.089007999951718
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 8,
+      "document_visible": 34.153012999922794,
+      "ready_to_edit": 50.91122199974052,
+      "quit": 8.563691000745166
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 8,
+      "document_visible": 29.347339999731048,
+      "ready_to_edit": 39.50949799946102,
+      "quit": 7.450543000231846
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 8,
+      "document_visible": 68.37900199934666,
+      "ready_to_edit": 75.74299299994891,
+      "quit": 5.9559499995884835
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 8,
+      "document_visible": 14.017108000189182,
+      "ready_to_edit": 29.493834000277275,
+      "quit": 4.673555000408669
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 8,
+      "window_mapped": 39.7719809998307,
+      "document_visible": 58.91325900029187,
+      "ready_to_edit": 74.57552300002135,
+      "quit": 15.290887000446673
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 8,
+      "window_mapped": 38.73822199966526,
+      "document_visible": 58.09417300042696,
+      "ready_to_edit": 74.14870299999166,
+      "quit": 14.673038999717392
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 8,
+      "window_mapped": 39.16250800011767,
+      "document_visible": 74.66701500015915,
+      "ready_to_edit": 90.88621299997612,
+      "quit": 13.608411999484815
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 8,
+      "window_mapped": 45.10966199995892,
+      "document_visible": 67.05443800001376,
+      "ready_to_edit": 83.50111299932905,
+      "quit": 13.896292000026733
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 9,
+      "document_visible": 37.50065100030042,
+      "ready_to_edit": 56.920041000012134,
+      "quit": 8.525019000444445
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 9,
+      "document_visible": 67.58808799986582,
+      "ready_to_edit": 75.4988439994122,
+      "quit": 5.1953239999420475
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 9,
+      "document_visible": 18.205723999926704,
+      "ready_to_edit": 25.990645000092627,
+      "quit": 4.498186000091664
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 9,
+      "window_mapped": 47.90451299959386,
+      "document_visible": 69.2554850002125,
+      "ready_to_edit": 85.64397099962662,
+      "quit": 14.649533999545383
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 9,
+      "window_mapped": 37.92730099939945,
+      "document_visible": 52.18871799934277,
+      "ready_to_edit": 68.35166099972412,
+      "quit": 13.289614000314032
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 9,
+      "window_mapped": 34.47754100034217,
+      "document_visible": 70.71441100015363,
+      "ready_to_edit": 86.74662900011754,
+      "quit": 12.614316999133734
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 9,
+      "window_mapped": 37.059152999972866,
+      "document_visible": 61.83825500011153,
+      "ready_to_edit": 77.54299800035369,
+      "quit": 9.65346400062117
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 9,
+      "document_visible": 23.961599000358547,
+      "ready_to_edit": 32.24827099984395,
+      "quit": 8.842924000418861
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 10,
+      "document_visible": 78.47479499923793,
+      "ready_to_edit": 84.4630359997609,
+      "quit": 5.595554000137781
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 10,
+      "document_visible": 10.258569000143325,
+      "ready_to_edit": 22.150181999677443,
+      "quit": 5.788495999695442
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 10,
+      "window_mapped": 36.37123299995437,
+      "document_visible": 51.70531099975051,
+      "ready_to_edit": 67.50799800011009,
+      "quit": 15.033023999421857
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 10,
+      "window_mapped": 49.23212300036539,
+      "document_visible": 73.46529100050248,
+      "ready_to_edit": 89.37198300009186,
+      "quit": 14.49038600003405
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "long.lua",
+      "round": 10,
+      "window_mapped": 32.57974200005265,
+      "document_visible": 64.06557199989038,
+      "ready_to_edit": 80.3611239998645,
+      "quit": 12.312331999964954
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "long.lua",
+      "round": 10,
+      "window_mapped": 36.2778779999644,
+      "document_visible": 60.93288699958066,
+      "ready_to_edit": 76.86006799940515,
+      "quit": 13.632436999614583
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "long.lua",
+      "round": 10,
+      "document_visible": 24.7380949995204,
+      "ready_to_edit": 31.101769999622775,
+      "quit": 8.270129999800702
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "long.lua",
+      "round": 10,
+      "document_visible": 21.29370599959657,
+      "ready_to_edit": 30.34761599974445,
+      "quit": 9.097942000153125
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 1,
+      "document_visible": 103.37291100040602,
+      "ready_to_edit": 113.76025200024742,
+      "quit": 14.916385000105947
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 1,
+      "document_visible": 103.98871600045823,
+      "ready_to_edit": 109.7962780004309,
+      "quit": 5.021498000132851
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 1,
+      "document_visible": 13.129925000612275,
+      "ready_to_edit": 19.77824400000827,
+      "quit": 3.683378000459925
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 1,
+      "window_mapped": 43.2945259999542,
+      "document_visible": 107.03647100035596,
+      "ready_to_edit": 121.30870800046978,
+      "quit": 22.694141999636486
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 1,
+      "window_mapped": 41.110471000138205,
+      "document_visible": 122.65666700022848,
+      "ready_to_edit": 139.30758500009688,
+      "quit": 24.705923999135848
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 1,
+      "window_mapped": 40.033420999861846,
+      "document_visible": 157.452084000397,
+      "ready_to_edit": 174.15321600037714,
+      "quit": 13.704050999876927
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 1,
+      "window_mapped": 35.441729000012856,
+      "document_visible": 50.02769400016405,
+      "ready_to_edit": 65.70147999991605,
+      "quit": 11.951896000027773
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 1,
+      "document_visible": 99.43258099974628,
+      "ready_to_edit": 112.68736999954854,
+      "quit": 16.701261999514827
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 2,
+      "document_visible": 196.97006800015515,
+      "ready_to_edit": 201.12235600026906,
+      "quit": 4.703380999671936
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 2,
+      "document_visible": 12.247699999534234,
+      "ready_to_edit": 18.672719999813125,
+      "quit": 4.391946000396274
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 2,
+      "window_mapped": 39.22794000027352,
+      "document_visible": 112.53878099978465,
+      "ready_to_edit": 125.92978500015306,
+      "quit": 22.80656299990369
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 2,
+      "window_mapped": 37.166674000218336,
+      "document_visible": 120.49767799999245,
+      "ready_to_edit": 136.97456899990357,
+      "quit": 26.716516000306
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 2,
+      "window_mapped": 38.110644999505894,
+      "document_visible": 145.13758900011453,
+      "ready_to_edit": 161.44784799962508,
+      "quit": 13.396934999946097
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 2,
+      "window_mapped": 38.119351000204915,
+      "document_visible": 57.51155999951152,
+      "ready_to_edit": 73.43868099997053,
+      "quit": 11.23575199926563
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 2,
+      "document_visible": 115.84450099962851,
+      "ready_to_edit": 125.44367400005285,
+      "quit": 20.751959000335773
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 2,
+      "document_visible": 103.29970299972047,
+      "ready_to_edit": 115.19154600046022,
+      "quit": 20.431919000657217
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 3,
+      "document_visible": 11.893195000084233,
+      "ready_to_edit": 18.386744000054023,
+      "quit": 5.036756000663445
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 3,
+      "window_mapped": 37.84653899947443,
+      "document_visible": 105.63114599972323,
+      "ready_to_edit": 118.82528099977208,
+      "quit": 25.188549999256793
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 3,
+      "window_mapped": 38.638144000287866,
+      "document_visible": 120.00431200067396,
+      "ready_to_edit": 136.8455370002266,
+      "quit": 22.895059000802576
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 3,
+      "window_mapped": 35.33578099995793,
+      "document_visible": 147.95734700055618,
+      "ready_to_edit": 163.92072600046959,
+      "quit": 13.307858999723976
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 3,
+      "window_mapped": 35.63639399999374,
+      "document_visible": 54.468151999572,
+      "ready_to_edit": 70.48619299985148,
+      "quit": 11.478788000204077
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 3,
+      "document_visible": 80.7981429998108,
+      "ready_to_edit": 88.37796900024841,
+      "quit": 16.434773000582936
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 3,
+      "document_visible": 77.97999799913669,
+      "ready_to_edit": 84.17098899917619,
+      "quit": 17.46658799947909
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 3,
+      "document_visible": 113.2888180000009,
+      "ready_to_edit": 118.32251800024096,
+      "quit": 4.24292699972284
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 4,
+      "window_mapped": 49.50981299953128,
+      "document_visible": 121.01004899977852,
+      "ready_to_edit": 134.82788300007087,
+      "quit": 24.94077599931188
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 4,
+      "window_mapped": 40.662390999386844,
+      "document_visible": 128.12172699977964,
+      "ready_to_edit": 144.57804999983637,
+      "quit": 22.724188000211143
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 4,
+      "window_mapped": 38.782886000262806,
+      "document_visible": 153.6796090003918,
+      "ready_to_edit": 169.56286700042256,
+      "quit": 12.864878000073077
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 4,
+      "window_mapped": 39.733478000016476,
+      "document_visible": 58.006217000183824,
+      "ready_to_edit": 74.10587199956353,
+      "quit": 13.120526999955473
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 4,
+      "document_visible": 81.07438099978026,
+      "ready_to_edit": 86.40168199963227,
+      "quit": 15.10357600000134
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 4,
+      "document_visible": 108.65039899999829,
+      "ready_to_edit": 114.73537099936948,
+      "quit": 16.175096000552003
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 4,
+      "document_visible": 114.69428399959725,
+      "ready_to_edit": 119.59022599967284,
+      "quit": 5.194172000301478
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 4,
+      "document_visible": 18.979966000188142,
+      "ready_to_edit": 25.27589400051511,
+      "quit": 3.701591999742959
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 5,
+      "window_mapped": 55.015329000525526,
+      "document_visible": 125.43732199992519,
+      "ready_to_edit": 141.83100700029172,
+      "quit": 26.772170000185724
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 5,
+      "window_mapped": 33.59235100015212,
+      "document_visible": 118.75062099989009,
+      "ready_to_edit": 134.51606899980106,
+      "quit": 10.60588100062887
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 5,
+      "window_mapped": 39.17029200056277,
+      "document_visible": 58.152231000349275,
+      "ready_to_edit": 74.72239800063107,
+      "quit": 13.165119999939634
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 5,
+      "document_visible": 77.39736499934224,
+      "ready_to_edit": 86.4492219998283,
+      "quit": 14.868083999317605
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 5,
+      "document_visible": 80.53435799956787,
+      "ready_to_edit": 86.1825410001984,
+      "quit": 17.216007999195426
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 5,
+      "document_visible": 108.35675799989986,
+      "ready_to_edit": 112.53304999991087,
+      "quit": 4.979489000106696
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 5,
+      "document_visible": 13.331182000001718,
+      "ready_to_edit": 19.377251000150864,
+      "quit": 4.108404999897175
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 5,
+      "window_mapped": 34.06978699968022,
+      "document_visible": 109.04686300000321,
+      "ready_to_edit": 122.32916299944918,
+      "quit": 22.293940999588813
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 6,
+      "window_mapped": 46.90636999930575,
+      "document_visible": 161.5113259995269,
+      "ready_to_edit": 177.48760899939953,
+      "quit": 12.511745000665542
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 6,
+      "window_mapped": 38.91220799960138,
+      "document_visible": 56.50270800015278,
+      "ready_to_edit": 72.42194399987056,
+      "quit": 11.396232999686617
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 6,
+      "document_visible": 108.02781100028369,
+      "ready_to_edit": 114.8900500002128,
+      "quit": 17.70125800067035
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 6,
+      "document_visible": 80.13610099988,
+      "ready_to_edit": 88.31256600024062,
+      "quit": 21.23862200005533
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 6,
+      "document_visible": 112.10872399988148,
+      "ready_to_edit": 116.14436299987574,
+      "quit": 4.395283000121708
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 6,
+      "document_visible": 36.446452999371104,
+      "ready_to_edit": 42.26783099966269,
+      "quit": 3.7391830001070048
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 6,
+      "window_mapped": 37.76620899952832,
+      "document_visible": 100.57701799996721,
+      "ready_to_edit": 114.26041100003204,
+      "quit": 21.531059999688296
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 6,
+      "window_mapped": 36.8266860004951,
+      "document_visible": 118.4152220002943,
+      "ready_to_edit": 134.53582500005723,
+      "quit": 26.787828999658814
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 7,
+      "window_mapped": 33.8342039995041,
+      "document_visible": 52.85532799916837,
+      "ready_to_edit": 69.51900900003238,
+      "quit": 13.322245000381372
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 7,
+      "document_visible": 81.05543599958764,
+      "ready_to_edit": 88.61609499945189,
+      "quit": 18.001089999415854
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 7,
+      "document_visible": 80.19948000037402,
+      "ready_to_edit": 86.3487830001759,
+      "quit": 17.320273000223096
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 7,
+      "document_visible": 107.21851400012383,
+      "ready_to_edit": 112.59963600059564,
+      "quit": 4.379824000352528
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 7,
+      "document_visible": 13.215615000262915,
+      "ready_to_edit": 19.283435000033933,
+      "quit": 4.237107000335527
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 7,
+      "window_mapped": 39.27815400038526,
+      "document_visible": 97.9287510008362,
+      "ready_to_edit": 111.52101200059406,
+      "quit": 20.0613440001689
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 7,
+      "window_mapped": 34.62079000019003,
+      "document_visible": 118.7981809998746,
+      "ready_to_edit": 135.66078599978937,
+      "quit": 26.350438999543258
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 7,
+      "window_mapped": 34.74884000024758,
+      "document_visible": 142.6453150006637,
+      "ready_to_edit": 158.4067240000877,
+      "quit": 12.0970469997701
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 8,
+      "document_visible": 122.14848399980838,
+      "ready_to_edit": 131.34894899940264,
+      "quit": 14.855791000627505
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 8,
+      "document_visible": 78.168091000407,
+      "ready_to_edit": 86.61524299986922,
+      "quit": 17.553069999848958
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 8,
+      "document_visible": 105.66911799924128,
+      "ready_to_edit": 110.56410799938021,
+      "quit": 4.450295999959053
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 8,
+      "document_visible": 11.457268000413023,
+      "ready_to_edit": 17.473171000347065,
+      "quit": 4.580821000672586
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 8,
+      "window_mapped": 39.08203599985427,
+      "document_visible": 103.42408700034866,
+      "ready_to_edit": 117.20096499993815,
+      "quit": 22.108413999376353
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 8,
+      "window_mapped": 37.00609400038957,
+      "document_visible": 118.57238700031303,
+      "ready_to_edit": 135.41914300003555,
+      "quit": 23.051471999679052
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 8,
+      "window_mapped": 35.370255000088946,
+      "document_visible": 145.3297690004547,
+      "ready_to_edit": 161.00403600012214,
+      "quit": 14.86210300026869
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 8,
+      "window_mapped": 34.46626999993896,
+      "document_visible": 53.29292799979157,
+      "ready_to_edit": 69.58823999957531,
+      "quit": 13.417813999694772
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 9,
+      "document_visible": 110.87472000053822,
+      "ready_to_edit": 120.49637500058452,
+      "quit": 15.30032500068046
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 9,
+      "document_visible": 131.55394299974432,
+      "ready_to_edit": 136.3727600000857,
+      "quit": 4.925547999846458
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 9,
+      "document_visible": 18.096298999807914,
+      "ready_to_edit": 23.711369000011473,
+      "quit": 5.065229000138061
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 9,
+      "window_mapped": 37.09604199957539,
+      "document_visible": 105.19714199926966,
+      "ready_to_edit": 118.22731999927782,
+      "quit": 19.820462000097905
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 9,
+      "window_mapped": 37.2292620004373,
+      "document_visible": 93.12062400022114,
+      "ready_to_edit": 109.9108830003388,
+      "quit": 21.999689000040235
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 9,
+      "window_mapped": 35.298169999805395,
+      "document_visible": 123.34093999925244,
+      "ready_to_edit": 139.19094599987147,
+      "quit": 11.460925000392308
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 9,
+      "window_mapped": 35.13060600016615,
+      "document_visible": 49.60198700064211,
+      "ready_to_edit": 65.4300410005817,
+      "quit": 10.817907999808085
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 9,
+      "document_visible": 88.1714010001815,
+      "ready_to_edit": 95.13864800010197,
+      "quit": 16.755313999965438
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 10,
+      "document_visible": 142.76235399938741,
+      "ready_to_edit": 149.03477799998655,
+      "quit": 4.9487109999972745
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 10,
+      "document_visible": 13.863790999494086,
+      "ready_to_edit": 22.515216999636323,
+      "quit": 4.908025000077032
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 10,
+      "window_mapped": 37.42456800046057,
+      "document_visible": 96.9909519999419,
+      "ready_to_edit": 111.57085600007122,
+      "quit": 19.62121799988381
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 10,
+      "window_mapped": 34.02864899999258,
+      "document_visible": 116.59188300018286,
+      "ready_to_edit": 133.18543300010788,
+      "quit": 20.013074000416964
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-cold",
+      "fixture": "huge.lua",
+      "round": 10,
+      "window_mapped": 33.09951600022032,
+      "document_visible": 115.08484600017255,
+      "ready_to_edit": 131.21470700025384,
+      "quit": 13.622387999930652
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux-warm",
+      "fixture": "huge.lua",
+      "round": 10,
+      "window_mapped": 38.858777999848826,
+      "document_visible": 57.721002999642224,
+      "ready_to_edit": 73.92605499990168,
+      "quit": 11.967223999818088
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "fixture": "huge.lua",
+      "round": 10,
+      "document_visible": 115.22860600052809,
+      "ready_to_edit": 121.90436600030807,
+      "quit": 17.966394999348267
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "fixture": "huge.lua",
+      "round": 10,
+      "document_visible": 99.59122899999784,
+      "ready_to_edit": 106.67243900024914,
+      "quit": 19.188256000234105
+    }
+  ],
+  "idle": [
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "round": 1,
+      "cpu_percent": 0.0,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "round": 1,
+      "cpu_percent": 0.0624226007231239,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux",
+      "round": 1,
+      "cpu_percent": 0.0,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "round": 1,
+      "cpu_percent": 0.0,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "round": 1,
+      "cpu_percent": 0.06246755383717967,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux",
+      "round": 1,
+      "cpu_percent": 0.0,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "round": 2,
+      "cpu_percent": 0.0,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "round": 2,
+      "cpu_percent": 0.06237098672105101,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux",
+      "round": 2,
+      "cpu_percent": 0.12476018849207302,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "round": 2,
+      "cpu_percent": 0.0,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "round": 2,
+      "cpu_percent": 0.0,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux",
+      "round": 2,
+      "cpu_percent": 0.12489290310227184,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "round": 3,
+      "cpu_percent": 0.0,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "round": 3,
+      "cpu_percent": 0.062331188073248715,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux",
+      "round": 3,
+      "cpu_percent": 0.0,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "round": 3,
+      "cpu_percent": 0.06246100219610872,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "round": 3,
+      "cpu_percent": 0.06249058486774734,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux",
+      "round": 3,
+      "cpu_percent": 0.12484187994083153,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "round": 4,
+      "cpu_percent": 0.06239611621474754,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "round": 4,
+      "cpu_percent": 0.12477832049691327,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux",
+      "round": 4,
+      "cpu_percent": 0.0,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "round": 4,
+      "cpu_percent": 0.12496975225087537,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "round": 4,
+      "cpu_percent": 0.06249651245633516,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux",
+      "round": 4,
+      "cpu_percent": 0.12485797304119486,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "editor",
+      "round": 5,
+      "cpu_percent": 0.06241856626122028,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "ide",
+      "round": 5,
+      "cpu_percent": 0.0,
+      "writes": 0
+    },
+    {
+      "edition": "terminal",
+      "mode": "mux",
+      "round": 5,
+      "cpu_percent": 0.12464242121026316,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "editor",
+      "round": 5,
+      "cpu_percent": 0.062459498747020045,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "ide",
+      "round": 5,
+      "cpu_percent": 0.06246935739415722,
+      "writes": 0
+    },
+    {
+      "edition": "desktop",
+      "mode": "mux",
+      "round": 5,
+      "cpu_percent": 0.12496143153670196,
+      "writes": 0
+    }
+  ]
+}

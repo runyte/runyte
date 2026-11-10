@@ -10,6 +10,9 @@ that a change in Runyte's numbers can be separated from a change in the machine.
   how long it then takes to quit, and what it costs while sitting idle, with
   Neovim and Helix measured the same way. Recorded in
   [`context/reference/startup-performance.md`](../context/reference/startup-performance.md).
+- **`editions.py`** — readiness, quit and idle cost across the terminal and
+  desktop editions and the editor, ide and mux modes. See
+  [editions and modes](#editions-and-modes).
 - **`session_navigation.py`** — persistent attachment and unchanged-screen cost
   with one or several sessions, a hidden strip, and noisy output in another
   session. It uses the same fixed PTY geometry and capability replies, isolated
@@ -224,6 +227,65 @@ Verification:
 ```sh
 benchmarks/.work/venv/bin/python -m unittest discover -s benchmarks
 ```
+
+# Editions and modes
+
+```sh
+cargo build --release --locked -p runyte -p runyte-desktop
+TMPDIR=/tmp benchmarks/.work/venv/bin/python benchmarks/editions.py \
+  --runs 10 --idle-runs 5 --json benchmarks/.work/editions.json
+```
+
+Every cell applies the readiness contract above: from before the launch until a
+one-character edit is visible in a completed frame, with a later whole-file save
+proving it was a real edit. Quit is timed from the final key of `:q!`, or of
+`:detach` in mux, after that save.
+
+| Column | Launch | Measured path |
+| --- | --- | --- |
+| `editor` | `--editor FILE` | No workspace services |
+| `ide` | `--ide FILE` | Workspace services, which start after the first editable frame |
+| `mux-cold` | `--mux` | Starts a new host, waits for the About pane, then `:open FILE` |
+| `mux-warm` | `--mux` | Reattaches to a running host that already holds the document |
+
+`--mux` takes a workspace rather than a file, so a cold launch includes the
+command that opens the document. Each mux sample uses its own host, stopped
+afterwards. Editor and ide are measured separately because ide starts Git,
+plugins, the context endpoint and the session catalog; the readiness numbers
+may be close, but the background work is not the same.
+
+**Desktop display.** Windows open on an isolated `kwin_wayland --virtual
+--xwayland` compositor with its own D-Bus session and X display, so nothing
+appears on the person's desktop and a window cannot reach the real session bus.
+It needs KWin, Xwayland, libX11 and libXdamage on Linux. The window draws
+through the machine's real Vulkan driver, unlike the Xvfb and lavapipe setup of
+`tests/native_window.py`. The harness sends keys with `XSendEvent` and takes
+Shift from `XkbLockModifiers`. It must not use XTEST: KWin routes that through
+an input-capture portal needing interactive consent, and on the headless
+private bus the portal's backends abort repeatedly and leave coredumps.
+
+**Desktop observation.** The discarded launch for each cell learns the pixels of
+the edited document row before and after the edit. Later samples poll only that
+row with `XGetImage` and compare the shape of the glyphs, so highlighting that
+arrives after the first frame neither delays nor falsifies the match. Readback
+sees presented frames, so desktop readiness includes waiting for the display's
+next frame, and compositor cost is not included in CPU.
+
+**Idle.** Windows of 16 seconds span the 15-second session observation. CPU is
+the client's process tree plus any persistent host, as a percentage of one
+logical CPU. The last column counts PTY reads for the terminal edition and
+X Damage notifications, meaning repaints, for the desktop edition.
+
+**Shared machines.** Each round waits until no more than `--max-busy-cores`
+logical CPUs are in use across the machine, and the JSON records every wait and
+whether it timed out. This holds rounds back during builds; it does not make a
+loaded machine equivalent to an idle one, so prefer running when nothing else
+is scheduled.
+
+**Failed detaches.** A mux window that does not exit within three seconds of
+`:detach` is recorded as `detach_failed` and listed in the quit column instead
+of being dropped. That sample's readiness remains valid, because its save was
+already verified.
 
 # Startup, quit and idle
 
