@@ -8,8 +8,8 @@ name = "runyte"
 version = "0.4.4"
 edition = "2024"
 # Edition 2024 needs 1.85; the resolved dependency graph raises the floor to
-# 1.88. Declaring it turns an obscure build failure into a clear message.
-rust-version = "1.88"
+# 1.89. Declaring it turns an obscure build failure into a clear message.
+rust-version = "1.89"
 description = "Helix-style modal text editor with file management, persistent terminals, and MCP for AI agents to talk to each other"
 license = "MPL-2.0"
 repository = "https://github.com/runyte/runyte"
@@ -120,7 +120,7 @@ tree-sitter-xml = "=0.7.0"
 tree-sitter-zig = "=1.1.2"
 unicode-segmentation = "1.13"
 unicode-width = "0.2"
-rusqlite = { version = "0.38", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 
 [target.'cfg(windows)'.dependencies]
 png = "0.18"

@@ -23,7 +23,7 @@ provides the terminal frontend, so you can use one desktop installation for both
 | Platforms | Linux, macOS, Windows 11 | Linux, macOS |
 | Prebuilt archives | Linux/macOS x86-64 and ARM64; Windows x86-64 | Linux x86-64 and ARM64; macOS universal (Apple silicon and Intel) |
 | Linux archive requirement | glibc 2.35 or newer | glibc 2.39 or newer; Vulkan driver and desktop libraries |
-| Source-build toolchain | Rust 1.88 or newer and a C compiler | Current stable Rust, at least 1.92; platform dependencies below |
+| Source-build toolchain | Rust 1.89 or newer and a C compiler | Current stable Rust, at least 1.92; platform dependencies below |
 | Approximate executable size | 56 MB | 107 MB |
 
 Sizes are stripped Linux x86-64 release measurements, not download sizes. Linux
@@ -120,7 +120,7 @@ and unnotarized.
 ### Install with Cargo
 
 Install [Rust through rustup](https://rustup.rs/) and a C compiler. You need
-Rust 1.88 or newer. The C compiler builds the bundled Tree-sitter grammars. On
+Rust 1.89 or newer. The C compiler builds the bundled Tree-sitter grammars. On
 Windows, use the MSVC toolchain described [below](#windows).
 
 ```sh
@@ -143,7 +143,7 @@ The executables are unsigned. The ZIP includes `runyte.exe` and `runed.exe`, but
 does not bundle the x64 Microsoft Visual C++ runtime (`VCRUNTIME140.dll`). If
 needed, install the [x64 Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
 
-Source builds and Cargo installation need Rust 1.88 or newer with the MSVC
+Source builds and Cargo installation need Rust 1.89 or newer with the MSVC
 toolchain, Visual Studio Build Tools with C++ support, and the Windows SDK.
 From a source checkout:
 
@@ -269,7 +269,7 @@ cd runyte
 To build a particular release, check out its `vX.Y.Z` tag before building.
 The checkout's `rust-toolchain.toml` pins the development toolchain, which rustup
 selects automatically. The terminal package's minimum supported Rust version is
-1.88. Desktop builds require at least 1.92. Install the platform dependencies
+1.89. Desktop builds require at least 1.92. Install the platform dependencies
 below before building the desktop edition.
 
 Choose one build:

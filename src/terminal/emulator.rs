@@ -64,6 +64,7 @@ pub struct Emulator {
     alternate_active: bool,
     alternate_saved_cursor: bool,
     pen: Pen,
+    last_printed: Option<char>,
     pub modes: Modes,
     tab_stops: Vec<bool>,
     title: Option<String>,
@@ -88,6 +89,7 @@ impl Emulator {
             alternate_active: false,
             alternate_saved_cursor: false,
             pen: Pen::default(),
+            last_printed: None,
             modes: Modes::default(),
             tab_stops: default_tab_stops(columns),
             title: None,
@@ -194,7 +196,7 @@ impl Emulator {
         let mut completed_lines = 0usize;
         for action in actions {
             completed_lines = completed_lines.saturating_add(self.completed_lines(&action));
-            self.apply(action);
+            completed_lines = completed_lines.saturating_add(self.apply(action));
         }
         completed_lines
     }
@@ -227,7 +229,7 @@ impl Emulator {
         }
     }
 
-    fn apply(&mut self, action: Action) {
+    fn apply(&mut self, action: Action) -> usize {
         match action {
             Action::Print(character) => self.print(character),
             Action::Execute(byte) => self.execute(byte),
@@ -240,12 +242,14 @@ impl Emulator {
                 parameters,
                 intermediates,
                 final_byte,
-            } => self.csi(private, &parameters, &intermediates, final_byte),
+            } => return self.csi(private, &parameters, &intermediates, final_byte),
             Action::Osc(parameters) => self.osc(&parameters),
         }
+        0
     }
 
     fn print(&mut self, character: char) {
+        self.last_printed = Some(character);
         let pen = self.pen;
         let autowrap = self.modes.autowrap;
         let insert = self.modes.insert;
@@ -341,6 +345,7 @@ impl Emulator {
         self.alternate_active = false;
         self.alternate_saved_cursor = false;
         self.pen = Pen::default();
+        self.last_printed = None;
         self.modes = Modes::default();
         self.tab_stops = default_tab_stops(columns);
         self.title = None;
@@ -352,16 +357,17 @@ impl Emulator {
         parameters: &[Vec<u16>],
         intermediates: &[u8],
         final_byte: u8,
-    ) {
+    ) -> usize {
         // Intermediate bytes identify distinct control functions. None of
         // those functions are supported here; do not interpret their final
         // byte as an ordinary cursor, editing, or rendition command.
         if !intermediates.is_empty() {
-            return;
+            return 0;
         }
         let pen = self.pen;
         let first = usize::from(parameter(parameters, 0, 1));
         match (private, final_byte) {
+            (None, b'b') => return self.repeat(first),
             (None, b'@') => self.grid_mut().insert_characters(first, pen),
             (None, b'A') => self.grid_mut().move_up(first),
             (None, b'B' | b'e') => self.grid_mut().move_down(first),
@@ -428,6 +434,22 @@ impl Emulator {
             // may try are deliberately ignored rather than guessed at.
             _ => {}
         }
+        0
+    }
+
+    /// Repeat through the ordinary grid writer, capped at one screen-width
+    /// of scalars. A tiny PTY chunk must not expand into millions of writes
+    /// before the editor loop can yield. Wrapping still follows normal print.
+    fn repeat(&mut self, count: usize) -> usize {
+        let Some(character) = self.last_printed else {
+            return 0;
+        };
+        let mut completed = 0;
+        for _ in 0..count.min(self.columns()) {
+            completed += self.completed_lines(&Action::Print(character));
+            self.print(character);
+        }
+        completed
     }
 
     /// Translates a row given by the child into a screen row, honouring the
