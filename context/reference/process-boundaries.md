@@ -181,6 +181,20 @@ and layout mutation; bundled frontends render the rectangle and report lost
 pointer capture. Cancellation clears the gesture and outline without applying
 a drop. Matching client and host protocol versions are required.
 
+Private protocol version 96 adds an optional `working_directory` to the status
+frame, `arrive_in_working_directory` to `SwitchWorkspace`, and the
+interactive-only `SetWorkingDirectory` request that finishes a `:cd` across
+persistent sessions on Unix. The host accepts only a directory inside its own
+workspace. Windows native switching does not carry the directory.
+
+An ide `:cd` into another workspace is not a process boundary of its own: after
+the editor has ended, `cli/workspace_relaunch` replaces the process with the
+same executable and `--ide --project-root`, on Unix by `exec` so the launching
+shell and any `--cwd-file` handoff are undisturbed. Only launch options cross,
+never editor state, and the workspace it names was validated before the editor
+stopped. Windows waits on a successor for a console editor and hands over for a
+window.
+
 Private protocol version 92 adds a `workspace_open` boolean to `Hello`.
 Version 91 is used by the parallel preview change ([#78](https://github.com/runyte/runyte/pull/78));
 matching builds of this opening-intent contract require version 92.

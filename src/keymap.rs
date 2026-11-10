@@ -3284,6 +3284,12 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
         ),
         ContextAction::buffer(
             BindingScope::Directory,
+            Key::char('c'),
+            "cd",
+            EditorCommand::OpenExplorerWorkspace,
+        ),
+        ContextAction::buffer(
+            BindingScope::Directory,
             Key::char('t'),
             "terminal",
             EditorCommand::OpenTerminalDirectoryRoot,

@@ -6,7 +6,11 @@
 //! turns operating-system arguments into file identities and one-based text
 //! positions before the terminal is entered.
 
-use std::{ffi::OsString, num::NonZeroUsize, path::PathBuf};
+use std::{
+    ffi::OsString,
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result, bail, ensure};
 
@@ -105,7 +109,54 @@ pub struct LaunchArguments {
     pub log: Option<PathBuf>,
 }
 
+/// What an ide launch hands to the process that replaces it when the editor
+/// moves to another workspace. Its paths no longer depend on the launch
+/// directory, because the replacement starts in the destination.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RelaunchOptions {
+    pub window: bool,
+    config: Option<PathBuf>,
+    cwd_file: Option<PathBuf>,
+    log: Option<PathBuf>,
+    verbosity: u8,
+}
+
+impl RelaunchOptions {
+    /// Arguments that open an explorer on `directory` in the workspace `root`.
+    pub fn arguments(&self, root: &Path, directory: &Path) -> Vec<OsString> {
+        let mut arguments = vec![OsString::from("--ide")];
+        if self.window {
+            arguments.push("--window".into());
+        }
+        arguments.extend(["--project-root".into(), root.into()]);
+        for (flag, value) in [
+            ("--config", &self.config),
+            ("--cwd-file", &self.cwd_file),
+            ("--log", &self.log),
+        ] {
+            if let Some(value) = value {
+                arguments.extend([flag.into(), value.into()]);
+            }
+        }
+        arguments.extend((0..self.verbosity).map(|_| OsString::from("--verbose")));
+        arguments.push(directory.into());
+        arguments
+    }
+}
+
 impl LaunchArguments {
+    pub fn relaunch_options(&self, launch_directory: &Path) -> RelaunchOptions {
+        let absolute =
+            |path: &Option<PathBuf>| path.as_ref().map(|path| launch_directory.join(path));
+        RelaunchOptions {
+            window: self.window,
+            config: absolute(&self.config),
+            cwd_file: absolute(&self.cwd_file),
+            log: absolute(&self.log),
+            verbosity: self.verbosity,
+        }
+    }
+
     /// Whether this invocation asked for logging different from the default.
     ///
     /// An attachment cannot reconfigure a running host's logger, so the
@@ -1131,4 +1182,60 @@ mod tests {
     }
 
     use std::ffi::OsString;
+
+    #[test]
+    fn a_workspace_relaunch_keeps_the_launch_options_and_names_the_destination() {
+        let original = LaunchArguments::parse_from(
+            [
+                "--ide",
+                "--window",
+                "--config",
+                "conf/runyte.yaml",
+                "--cwd-file",
+                "/run/cwd",
+                "--log",
+                "trace.log",
+                "-v",
+                "-v",
+            ]
+            .map(OsString::from),
+        )
+        .unwrap();
+        let options = original.relaunch_options(Path::new("/launch"));
+
+        let replaced = LaunchArguments::parse_from(
+            options.arguments(Path::new("/work/other"), Path::new("/work/other/src")),
+        )
+        .unwrap();
+
+        assert_eq!(replaced.mode, LaunchMode::Standalone);
+        assert!(replaced.mode_explicit && replaced.window && !replaced.graphical_launch);
+        assert_eq!(
+            replaced.project_root.as_deref(),
+            Some(Path::new("/work/other"))
+        );
+        assert_eq!(
+            replaced.config.as_deref(),
+            Some(Path::new("/launch/conf/runyte.yaml"))
+        );
+        assert_eq!(replaced.cwd_file.as_deref(), Some(Path::new("/run/cwd")));
+        assert_eq!(
+            replaced.log.as_deref(),
+            Some(Path::new("/launch/trace.log"))
+        );
+        assert_eq!(replaced.verbosity, 2);
+        assert_eq!(replaced.targets.len(), 1);
+        assert_eq!(replaced.targets[0].path, Path::new("/work/other/src"));
+    }
+
+    #[test]
+    fn a_workspace_relaunch_of_a_bare_launch_adds_no_options() {
+        let options = LaunchArguments::parse_from(Vec::<OsString>::new())
+            .unwrap()
+            .relaunch_options(Path::new("/launch"));
+        assert_eq!(
+            options.arguments(Path::new("/work"), Path::new("/work")),
+            ["--ide", "--project-root", "/work", "/work"].map(OsString::from)
+        );
+    }
 }

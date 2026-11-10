@@ -211,9 +211,11 @@ impl WorkspaceRequirement {
     }
 }
 
-pub fn display_workspace_path(path: &Path, home: Option<&Path>) -> String {
+/// `path` as a person would write it: a Windows extended-length prefix from
+/// canonicalization is removed. Purely lexical, so it can run for every frame.
+pub(crate) fn ordinary_spelling(path: &Path) -> PathBuf {
     #[cfg(windows)]
-    fn ordinary(path: &Path) -> PathBuf {
+    {
         let spelling = path.to_string_lossy();
         if let Some(unc) = spelling.strip_prefix(r"\\?\UNC\") {
             PathBuf::from(format!(r"\\{unc}"))
@@ -221,8 +223,36 @@ pub fn display_workspace_path(path: &Path, home: Option<&Path>) -> String {
             PathBuf::from(spelling.strip_prefix(r"\\?\").unwrap_or(&spelling))
         }
     }
+    #[cfg(not(windows))]
+    {
+        path.to_path_buf()
+    }
+}
+
+/// How the status line names a working directory that differs from the
+/// workspace root: relative below it, whole otherwise. Lexical like
+/// [`ordinary_spelling`], and on Windows blind to the case differences its
+/// paths can carry between a canonical root and a launch directory.
+pub(crate) fn working_directory_label(root: &Path, working: &Path) -> Option<String> {
+    let (root, working) = (ordinary_spelling(root), ordinary_spelling(working));
+    let same = if cfg!(windows) {
+        root.to_string_lossy()
+            .eq_ignore_ascii_case(&working.to_string_lossy())
+    } else {
+        root == working
+    };
+    (!same).then(|| {
+        working
+            .strip_prefix(&root)
+            .unwrap_or(&working)
+            .to_string_lossy()
+            .into_owned()
+    })
+}
+
+pub fn display_workspace_path(path: &Path, home: Option<&Path>) -> String {
     #[cfg(windows)]
-    let (path, home) = (ordinary(path), home.map(ordinary));
+    let (path, home) = (ordinary_spelling(path), home.map(ordinary_spelling));
     #[cfg(windows)]
     let (path, home) = (path.as_path(), home.as_deref());
     match home.and_then(|home| path.strip_prefix(home).ok()) {
@@ -399,31 +429,14 @@ pub fn adopt_with_safety(
     let directory = directory
         .canonicalize()
         .with_context(|| format!("cannot resolve directory {}", directory.display()))?;
-    let is = |candidate: &Path| {
-        candidate
-            .canonicalize()
-            .is_ok_and(|candidate| candidate == directory)
-    };
-    let outside = targets
-        .iter()
-        .find(|target| !lexical(target).starts_with(&typed));
-    let refusal = if directory.parent().is_none() {
-        Some("the filesystem root is not made one automatically".to_owned())
-    } else if is(&std::env::temp_dir()) {
-        Some("the temporary directory is not made one automatically".to_owned())
-    } else if let Some(sharing) = shared_directory(&directory)? {
-        Some(format!("{sharing} is not made one automatically"))
-    } else if let Some(target) = outside {
-        Some(format!(
-            "{} is outside {}, so that directory is not made one automatically",
-            display_workspace_path(target, homes.first().map(PathBuf::as_path)),
-            display_workspace_path(&directory, homes.first().map(PathBuf::as_path))
-        ))
-    } else if !safety.is_home(&directory) && !is_usable_relative_marker(configured_state_root) {
-        Some("none is made automatically while workspace.state is an absolute path".to_owned())
-    } else {
-        None
-    };
+    let refusal = automatic_workspace_refusal(
+        &directory,
+        &typed,
+        configured_state_root,
+        safety,
+        homes,
+        targets,
+    )?;
     if let Some(refusal) = refusal {
         bail!(requirement.refusal(
             &directory,
@@ -438,6 +451,43 @@ pub fn adopt_with_safety(
             Some(&reason),
             homes.first().map(PathBuf::as_path),
         ))
+    })
+}
+
+/// Why `directory`, already canonical, must not become a workspace without
+/// being named outright. `typed` is its spelling for judging `targets`.
+pub(crate) fn automatic_workspace_refusal(
+    directory: &Path,
+    typed: &Path,
+    configured_state_root: &Path,
+    safety: &crate::workspace_state::StartupSafety,
+    homes: &[PathBuf],
+    targets: &[PathBuf],
+) -> io::Result<Option<String>> {
+    let is = |candidate: &Path| {
+        candidate
+            .canonicalize()
+            .is_ok_and(|candidate| candidate == directory)
+    };
+    let outside = targets
+        .iter()
+        .find(|target| !lexical(target).starts_with(typed));
+    Ok(if directory.parent().is_none() {
+        Some("the filesystem root is not made one automatically".to_owned())
+    } else if is(&std::env::temp_dir()) {
+        Some("the temporary directory is not made one automatically".to_owned())
+    } else if let Some(sharing) = shared_directory(directory)? {
+        Some(format!("{sharing} is not made one automatically"))
+    } else if let Some(target) = outside {
+        Some(format!(
+            "{} is outside {}, so that directory is not made one automatically",
+            display_workspace_path(target, homes.first().map(PathBuf::as_path)),
+            display_workspace_path(directory, homes.first().map(PathBuf::as_path))
+        ))
+    } else if !safety.is_home(directory) && !is_usable_relative_marker(configured_state_root) {
+        Some("none is made automatically while workspace.state is an absolute path".to_owned())
+    } else {
+        None
     })
 }
 
@@ -1263,6 +1313,21 @@ mod tests {
         assert!(project.join(".local-workspace").is_dir());
 
         fs::remove_dir_all(project).unwrap();
+    }
+
+    #[test]
+    fn a_working_directory_is_labelled_only_when_it_differs_from_the_root() {
+        use super::working_directory_label as label;
+        let root = Path::new("/work/project");
+        assert_eq!(label(root, root), None);
+        assert_eq!(
+            label(root, &root.join("src/app")).as_deref(),
+            Some("src/app")
+        );
+        assert_eq!(
+            label(root, Path::new("/elsewhere")).as_deref(),
+            Some("/elsewhere")
+        );
     }
 
     #[test]

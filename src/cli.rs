@@ -191,6 +191,7 @@ use crate::workspace::{
 
 mod graphical;
 pub mod window;
+mod workspace_relaunch;
 #[cfg(not(windows))]
 use window::Events;
 use window::{Surface, WindowFrontend};
@@ -281,10 +282,16 @@ fn cli_main(environment: Environment) -> Result<()> {
     // Keep it off the executor's by-value stack frames: in debug builds those
     // copies otherwise consume most of the Windows main thread's stack before
     // the selected frontend starts polling.
+    let mut relaunch = None;
     #[cfg(windows)]
-    let launch = Box::pin(run(&mut startup, &mut native_termination, environment));
+    let launch = Box::pin(run(
+        &mut startup,
+        &mut native_termination,
+        environment,
+        &mut relaunch,
+    ));
     #[cfg(not(windows))]
-    let launch = Box::pin(run(&mut startup, environment));
+    let launch = Box::pin(run(&mut startup, environment, &mut relaunch));
     let result = runtime.block_on(launch);
     #[cfg(windows)]
     let result = reconcile_pending_console_event(
@@ -328,6 +335,11 @@ fn cli_main(environment: Environment) -> Result<()> {
         // Rust's top-level Result reporter write it to a dead stderr. That
         // write panics and changes the intended failure into exit status 101.
         std::process::exit(1);
+    }
+    if result.is_ok()
+        && let Some(relaunch) = relaunch
+    {
+        return relaunch.replace_process();
     }
     result
 }
@@ -1307,6 +1319,7 @@ async fn run(
     startup: &mut StartupTrace,
     #[cfg(windows)] native_termination: &mut TerminationSignals,
     environment: Environment,
+    relaunch: &mut Option<workspace_relaunch::Relaunch>,
 ) -> Result<()> {
     let mut arguments = LaunchArguments::parse()?;
     if arguments.window {
@@ -1630,6 +1643,7 @@ async fn run(
         .cwd_file
         .take()
         .map(|path| resolve_cwd_file_path(&launch_directory, path));
+    let relaunch_options = arguments.relaunch_options(&launch_directory);
     // Only an editor that can perform the handoff admits the output path.
     // Pin its already-private parent before acquiring the terminal or editing.
     #[cfg(windows)]
@@ -2598,6 +2612,7 @@ async fn run(
     #[cfg(not(windows))]
     interactive_outcome?;
     let quit_directory = app.quit_directory().map(Path::to_path_buf);
+    let workspace_relaunch = app.app_mut().take_workspace_relaunch();
     services.language_servers.send(LspCommand::Shutdown);
     #[cfg(windows)]
     let context_shutdown = app.shutdown_context().await.map_err(anyhow::Error::from);
@@ -2628,6 +2643,11 @@ async fn run(
     if let Some(signal) = received_signal {
         return Err(terminated(signal));
     }
+    *relaunch = workspace_relaunch.map(|destination| workspace_relaunch::Relaunch {
+        arguments: relaunch_options.arguments(&destination.root, &destination.directory),
+        directory: destination.directory,
+        window: relaunch_options.window,
+    });
     Ok(())
 }
 
@@ -3412,6 +3432,15 @@ async fn run_host_server(
                                 // as a destination workspace it could not reach.
                                 // The editor on screen is the only surface it has.
                                 host.report_host_error(message);
+                                changed = true;
+                            }
+                            ClientRequest::SetWorkingDirectory { directory } => {
+                                if let Err(error) = decode_path(directory)
+                                    .map_err(anyhow::Error::from)
+                                    .and_then(|path| host.app_mut().arrive_in_directory(&path))
+                                {
+                                    host.report_host_error(format!("{error:#}"));
+                                }
                                 changed = true;
                             }
                             request @ (ClientRequest::NativeSwitchCommit { .. }
@@ -4373,6 +4402,7 @@ fn switch_attached_workspace(
                         }
                     },
                 }),
+            arrive_in_working_directory: request.arrive_in_working_directory,
         },
     );
     active.take().is_some()
@@ -4479,12 +4509,13 @@ async fn run_workspace_switcher(
     let mut history = AttachmentHistory::default();
     let mut parent_handoff: Option<ParentHandoff> = None;
     let mut pending_visit = None;
+    let mut pending_arrival = None;
     let mut quit_returns: Option<std::collections::VecDeque<LocalEndpoint>> = None;
     loop {
         let attachment = tokio::select! {
             attachment = run_attached(&current, &mut terminal, &mut terminal_events, &mut geometry,
                 AttachOptions { window, wait_token: None, cwd_file, notice: notice.take(), color_depth,
-                    history: Some(&mut history), parent_handoff: Some(&mut parent_handoff), visit: pending_visit.take(), launch_targets: std::mem::take(&mut launch_targets) }) => attachment,
+                    history: Some(&mut history), parent_handoff: Some(&mut parent_handoff), visit: pending_visit.take(), arrival: pending_arrival.take(), launch_targets: std::mem::take(&mut launch_targets) }) => attachment,
             signal = termination.recv() => return Err(terminated(signal)),
         };
         if let Some(handoff) = parent_handoff.take() {
@@ -4535,7 +4566,9 @@ async fn run_workspace_switcher(
                 running_only,
                 parent_receipt,
                 visit,
+                arrive_in_working_directory,
             } => {
+                let arrival = arrive_in_working_directory.then(|| working_directory.clone());
                 if let Some(receipt) = parent_receipt {
                     parent_handoff = Some(ParentHandoff {
                         source: current.clone(),
@@ -4575,6 +4608,7 @@ async fn run_workspace_switcher(
                 }
                 if prepared.is_ok() {
                     pending_visit = visit;
+                    pending_arrival = arrival;
                 }
                 apply_prepared_switch(prepared, &mut current, &mut previous, &mut notice);
             }
@@ -4876,6 +4910,7 @@ async fn attach_for_wait(
                 history: None,
                 parent_handoff: None,
                 visit: None,
+                arrival: None,
                 launch_targets: Vec::new(),
             },
         ) => (attachment, true),
@@ -5085,6 +5120,7 @@ enum AttachOutcome {
         running_only: bool,
         parent_receipt: Option<String>,
         visit: Option<crate::protocol::DestinationVisit>,
+        arrive_in_working_directory: bool,
     },
     /// The destination already has an interactive TUI. Routine once switching is
     /// a keystroke, so it is an outcome rather than a failure.
@@ -5136,6 +5172,7 @@ struct AttachOptions<'a> {
     history: Option<&'a mut AttachmentHistory>,
     parent_handoff: Option<&'a mut Option<ParentHandoff>>,
     visit: Option<crate::protocol::DestinationVisit>,
+    arrival: Option<PathBuf>,
     launch_targets: Vec<crate::protocol::LaunchTarget>,
 }
 
@@ -5162,6 +5199,7 @@ async fn run_attached(
         history,
         parent_handoff,
         visit,
+        arrival,
         launch_targets,
     } = options;
     if let Some(window) = window {
@@ -5247,6 +5285,13 @@ async fn run_attached(
             .send(&ClientRequest::VisitDestination {
                 incarnation: visit.incarnation,
                 destination: visit.destination,
+            })
+            .await?;
+    }
+    if let Some(directory) = arrival {
+        client
+            .send(&ClientRequest::SetWorkingDirectory {
+                directory: encode_path(&directory),
             })
             .await?;
     }
@@ -5508,6 +5553,7 @@ async fn run_attached(
                         working_directory_bytes,
                         running_only,
                         visit,
+                        arrive_in_working_directory,
                     }) => {
                         anyhow::ensure!(
                             wait_token.is_none(),
@@ -5519,6 +5565,7 @@ async fn run_attached(
                             running_only,
                             parent_receipt: None,
                             visit,
+                            arrive_in_working_directory,
                         });
                     }
                     Some(HostResponse::Refused { message } | HostResponse::Error { message }) => {
@@ -5531,7 +5578,7 @@ async fn run_attached(
                                 selector_bytes: selector,
                             },
                             working_directory: decode_path(directory)?, running_only: false,
-                            parent_receipt: Some(receipt), visit: None });
+                            parent_receipt: Some(receipt), visit: None, arrive_in_working_directory: false });
                     }
                     Some(HostResponse::Welcome { .. }) => {}
                     Some(_) => {}

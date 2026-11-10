@@ -696,7 +696,9 @@ jobs:
     # A failed source resolver must fail required checks, not skip them green.
     if: ${{ !cancelled() }}
     needs: source
-    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}MSRV (Rust 1.88)
+    # The main ruleset requires this check by name. Keep the Rust version out
+    # of it so an MSRV bump does not strand the required check.
+    name: ${{ github.event_name == 'schedule' && 'Nightly ' || '' }}MSRV
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -707,13 +709,13 @@ jobs:
 
       # rustup ships on the runner image, so pinning a toolchain needs no
       # third-party action.
-      - name: Install Rust 1.88
-        run: rustup toolchain install 1.88 --profile minimal
+      - name: Install Rust 1.89
+        run: rustup toolchain install 1.89 --profile minimal
 
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: msrv
 
-      # Keeps `rust-version = "1.88"` in Cargo.toml honest.
+      # Keeps `rust-version = "1.89"` in Cargo.toml honest.
       - name: Check
-        run: cargo +1.88 check -p runyte --all-targets --locked
+        run: cargo +1.89 check -p runyte --all-targets --locked
