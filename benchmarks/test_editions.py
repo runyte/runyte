@@ -7,6 +7,24 @@ from unittest import mock
 import editions
 
 
+class TargetedKeys(unittest.TestCase):
+    def test_control_event_and_xkb_state_agree_and_release_modifier(self):
+        display = editions.Display.__new__(editions.Display)
+        display.x = mock.Mock()
+        display.x.XKeysymToKeycode.return_value = 51
+        display.connection, display.root = 1, 2
+        events = []
+        def record(_connection, _window, _propagate, _mask, event):
+            value = editions.C.cast(event, editions.C.POINTER(editions.XKeyEvent)).contents
+            events.append((value.type, value.state, value.window))
+        display.x.XSendEvent.side_effect = record
+        display.key(3, 'backslash', ctrl=True)
+        self.assertEqual(events, [(editions.KEY_PRESS, 4, 3), (editions.KEY_RELEASE, 4, 3)])
+        self.assertEqual(display.x.XkbLockModifiers.call_args_list, [
+            mock.call(1, editions.XKB_USE_CORE_KEYBOARD, 4, 4),
+            mock.call(1, editions.XKB_USE_CORE_KEYBOARD, 4, 0)])
+
+
 class CompositorEnvironment(unittest.TestCase):
     def test_failed_window_spawn_cleans_its_temporary_directory(self):
         display = mock.Mock()

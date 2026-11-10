@@ -14,6 +14,7 @@ fn frame() -> FrameData {
         media: vec![],
         cursor: None,
         overlays: vec![],
+        pane_areas: vec![],
         media_input: false,
         pointer_bindings: Default::default(),
         window_bindings: Default::default(),
@@ -165,4 +166,68 @@ fn document_preview_hides_source_cells_but_preserves_overlay_cells() {
     assert!(!covered.hides(0));
     assert!(frame.under_media(1, 0));
     assert!(!frame.under_media(3, 0));
+}
+
+fn split(frame: &mut FrameData, at: u16) {
+    frame.pane_areas = vec![
+        runyte::layout::Rect {
+            x: 0,
+            y: 0,
+            width: at,
+            height: 2,
+        },
+        runyte::layout::Rect {
+            x: at,
+            y: 0,
+            width: 8 - at,
+            height: 2,
+        },
+    ];
+}
+
+#[test]
+fn unchanged_pane_segment_retains_scene_placement_after_neighbor_edit() {
+    let mut frame = frame();
+    split(&mut frame, 4);
+    frame.cells[(0, 0)].set_symbol("a");
+    frame.cells[(4, 0)].set_symbol("b");
+    let mut cache = GlyphCache::default();
+    cache.prepare(&frame);
+    let placement = Some((gpui::point(gpui::px(0.), gpui::px(0.)), false));
+    for segment in &mut cache.rows[0].as_mut().unwrap().segments {
+        segment.placement = placement;
+    }
+    frame.cells[(0, 0)].set_symbol("c");
+    cache.prepare(&frame);
+    let row = cache.rows[0].as_ref().unwrap();
+    assert_eq!(row.segments[0].placement, None);
+    assert_eq!(row.segments[1].placement, placement);
+    split(&mut frame, 3);
+    cache.prepare(&frame);
+    assert!(
+        cache.rows[0]
+            .as_ref()
+            .unwrap()
+            .segments
+            .iter()
+            .all(|s| s.placement.is_none())
+    );
+}
+
+#[test]
+fn wide_predecessor_invalidates_segment_even_when_its_source_slice_is_unchanged() {
+    let mut frame = frame();
+    split(&mut frame, 4);
+    frame.cells[(3, 0)].set_symbol("界");
+    frame.cells[(4, 0)].set_symbol("b");
+    let mut cache = GlyphCache::default();
+    cache.prepare(&frame);
+    assert_eq!(cache.rows[0].as_ref().unwrap().cells.len(), 1);
+    cache.rows[0].as_mut().unwrap().segments[1].placement =
+        Some((gpui::point(gpui::px(0.), gpui::px(0.)), false));
+    frame.cells[(3, 0)].set_symbol("a");
+    cache.prepare(&frame);
+    let row = cache.rows[0].as_ref().unwrap();
+    assert_eq!(row.cells.len(), 2);
+    assert_eq!(row.segments[1].placement, None);
 }

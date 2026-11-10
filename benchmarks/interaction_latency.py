@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MPL-2.0
-"""Settled desktop insertion/deletion latency beside text or a PDF.
+"""Settled desktop insertion/deletion latency beside text, a PDF, or a terminal updating at 1 Hz.
 
 Uses an isolated virtual KWin/Xwayland display and targeted XSendEvent only.
 The endpoint is XGetImage observing calibrated glyph pixels, not physical scanout.
@@ -43,6 +43,18 @@ def isolated_environment(root):
     (config / 'config.yaml').write_text(
         'lsp:\n  enable: false\nworkspace:\n  session_strip: hidden\n')
     return env
+
+
+def terminal_normal(session):
+    session.display.key(session.window, 'backslash', ctrl=True)
+    session.display.flush()
+
+
+def companion_pixels(session):
+    captured = session.display.capture(session.window, 600, 60, 400, 600)
+    if captured is None:
+        raise RuntimeError('Cannot capture companion terminal')
+    return captured[0]
 
 
 def calibration_band(before, after, stride):
@@ -118,6 +130,16 @@ def measure_case(display, binary, mode, side, samples, spacing, paint_timing):
         fixture.write_bytes(ORIGINAL)
         (project / 'side.txt').write_bytes(COMPANION)
         shutil.copyfile(PDF, project / 'side.pdf')
+        if side == 'terminal':
+            env['SHELL'] = '/bin/sh'
+            env['PS1'] = ''
+            (project / 'ticker.py').write_text(
+                "import sys, time\n"
+                "for tick in range(3600):\n"
+                "    sys.stdout.write('\\x1b[H' + ''.join("
+                "(f'{tick:08d} ' * 6) + '\\r\\n' for _ in range(30)))\n"
+                "    sys.stdout.flush()\n"
+                "    time.sleep(1)\n")
         session = None
         result = {'mode': mode, 'side': side, 'samples': [], 'complete': False}
         try:
@@ -140,6 +162,14 @@ def measure_case(display, binary, mode, side, samples, spacing, paint_timing):
                         raise TimeoutError('Known white PDF page did not appear in the right pane')
                     split_frame = settle(session)
                 result['pdf_white_page_pixels'] = white_page_pixels(split_frame)
+            if side == 'terminal':
+                session.command('terminal')
+                settle(session)
+                display.text(session.window, 'python3 ticker.py')
+                session.key('Return')
+                settle(session)
+                terminal_normal(session)
+                settle(session)
             for key in ('space', 'w', 'h'):
                 session.key(key)
             settle(session)
@@ -165,6 +195,7 @@ def measure_case(display, binary, mode, side, samples, spacing, paint_timing):
             session.key('i')
             wait_shape(session, band, references[0])
             result['band_pixels'] = band
+            companion_before = companion_pixels(session) if side == 'terminal' else None
             paint_start = (session.root / 'window.log').stat().st_size
             for index in range(samples):
                 pair = {'index': index + 1}
@@ -176,6 +207,14 @@ def measure_case(display, binary, mode, side, samples, spacing, paint_timing):
                     wait_shape(session, band, reference)
                     pair[name] = (time.perf_counter() - started) * 1000
                 result['samples'].append(pair)
+            if side == 'terminal':
+                companion_after = companion_pixels(session)
+                result['terminal_changed_pixels'] = sum(
+                    companion_before[x:x + 4] != companion_after[x:x + 4]
+                    for x in range(0, len(companion_before), 4))
+                if result['terminal_changed_pixels'] < 100:
+                    raise ValueError('Companion terminal did not visibly update during measurement')
+                result['terminal_update_interval_seconds'] = 1
             if paint_timing:
                 measured_log = (session.root / 'window.log').read_bytes()[paint_start:].decode(errors='replace')
                 result['native_paint_trace'] = [line for line in measured_log.splitlines()
@@ -201,7 +240,8 @@ def measure_case(display, binary, mode, side, samples, spacing, paint_timing):
             # q! closes just the active pane; this fixture owns two panes.
             session.key('Escape')
             time.sleep(0.08)
-            session.exit_after(lambda: session.command('detach' if mode == 'mux' else 'qa!'),
+            quit_command = 'detach' if mode == 'mux' else ('qa!!' if side == 'terminal' else 'qa!')
+            session.exit_after(lambda: session.command(quit_command),
                                editions.DETACH_TIMEOUT_SECONDS if mode == 'mux' else 10)
             result['complete'] = True
         except (OSError, ValueError, RuntimeError, TimeoutError, subprocess.SubprocessError) as error:
@@ -240,8 +280,8 @@ def main():
     if (args.samples < 1 or args.rounds < 1 or not math.isfinite(args.spacing) or args.spacing < 0.05
             or not math.isfinite(args.max_busy_cores) or args.max_busy_cores <= 0
             or not math.isfinite(args.quiet_timeout) or args.quiet_timeout <= 0
-            or set(modes) - {'ide', 'mux'} or set(sides) - {'text', 'pdf'}):
-        parser.error('positive counts, spacing >= .05, modes ide/mux and sides text/pdf required')
+            or set(modes) - {'ide', 'mux'} or set(sides) - {'text', 'pdf', 'terminal'}):
+        parser.error('positive counts, spacing >= .05, modes ide/mux and sides text/pdf/terminal required')
     binary = args.binary.resolve()
     if not binary.is_file():
         parser.error('Build the desktop release binary first')

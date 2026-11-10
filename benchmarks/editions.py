@@ -509,20 +509,21 @@ class Display:
         self.x.XDestroyImage(image)
         return data, stride
 
-    def key(self, window, name, shift=False):
+    def key(self, window, name, shift=False, ctrl=False):
         keycode = self.x.XKeysymToKeycode(self.connection, self.x.XStringToKeysym(name.encode()))
         if not keycode:
             raise ValueError(f"no keycode for {name}")
         # The window reads modifiers from XKB state notifications, which a sent
         # event's own state field does not produce.
-        if shift:
-            self.x.XkbLockModifiers(self.connection, XKB_USE_CORE_KEYBOARD, SHIFT_MASK, SHIFT_MASK)
+        modifiers = (SHIFT_MASK if shift else 0) | (4 if ctrl else 0)
+        if modifiers:
+            self.x.XkbLockModifiers(self.connection, XKB_USE_CORE_KEYBOARD, modifiers, modifiers)
         for kind, event_mask in ((KEY_PRESS, KEY_PRESS_MASK), (KEY_RELEASE, KEY_RELEASE_MASK)):
             event = XKeyEvent(type=kind, display=self.connection, window=window, root=self.root,
-                              keycode=keycode, state=SHIFT_MASK if shift else 0, same_screen=1)
+                              keycode=keycode, state=modifiers, same_screen=1)
             self.x.XSendEvent(self.connection, window, 1, event_mask, C.byref(event))
-        if shift:
-            self.x.XkbLockModifiers(self.connection, XKB_USE_CORE_KEYBOARD, SHIFT_MASK, 0)
+        if modifiers:
+            self.x.XkbLockModifiers(self.connection, XKB_USE_CORE_KEYBOARD, modifiers, 0)
 
     def text(self, window, text):
         for character in text:

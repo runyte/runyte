@@ -106,7 +106,7 @@ runs cannot be subtracted to allocate every millisecond of end-to-end latency.
 
 ### Interpretation and first optimization boundary
 
-Current media rows disable background run merging and use per-glyph layers
+At this baseline, media rows disable background run merging and use per-glyph layers
 for adjacent text. Cached scenes still replay those layers. These are
 source-confirmed costs; the diagnostic supports targeting cell painting first,
 without claiming that image compositing or presentation contributes nothing.
@@ -122,4 +122,112 @@ emoji, decoration and paint-acknowledgement behavior.
 Before accepting that change, compare pixels beside PDF/image/preview panes,
 including overlays across media boundaries and cached replay, then repeat this
 measurement. Existing text-only paint-style comparisons do not establish media
-split equivalence. No production rendering change is included in this record.
+split equivalence. No production rendering change was included in that initial measurement.
+
+
+## 2026-11-10 — Pane-row segmentation experiment
+
+The implementation carries drawable pane areas from both standalone and attached
+snapshots into the native frame. Each logical row is divided at pane and raw
+media/preview boundaries. Unchanged spans retain their GPUI scenes when another
+span changes, while the row retains only its current cell allocation. Styles
+still rebuild with one whole-row scan when the row changes, preserving wide-cell
+advancement across boundaries. The grid's row COW and host protocol are unchanged.
+
+Background merging and grouped glyph layers now apply outside raw media
+footprints. Overlay cells inside a media footprint retain per-cell painting;
+cursor-containing spans and oversized/zero-advance glyph spans retain their
+fallback. This measures the combined segmentation, cache reuse and localized
+batching change, not the independent contribution of each part.
+
+### Controlled comparison
+
+The [raw artifact](../../benchmarks/results/pane-rows-2026-11-10.json) contains
+all per-pass samples and summaries, source/binary hashes, quiet checks, document
+proofs, separate paint traces and pixel-comparison hashes. The baseline is the
+preserved release binary from the initial experiment. Production sources,
+manifests and vendor code are unchanged between its source `50644e33` and the
+new change's base `fcde99de`.
+
+After builds and tests completed, four sequential passes used baseline →
+optimized → optimized → baseline order. Each pass used fresh processes for
+IDE/mux × text/PDF/terminal, with 30 insertion/deletion pairs per case. This gives
+60 observations per operation/version/case and **1,440 accepted actions**.
+Every accepted case passed its quiet check and whole-document verification;
+no successful samples were removed. Earlier harness-development checks during
+builds are not part of these comparison passes.
+
+The display, geometry, font, input delivery and glyph-observation endpoint are
+the same as above. The terminal companion is a synthetic 30-row display refreshed
+once per second, with visible output changes verified during measurement. It is
+not htop, and keys are not synchronized to its refreshes. These results do not
+isolate latency specifically when input coincides with a terminal update.
+
+Milliseconds, pooled medians and nearest-rank p95. Per-pass values remain in the
+artifact because pooling can obscure run-to-run variation. With 60 observations,
+p99 equals the maximum and is not a useful independent tail estimate here.
+
+| Mode | Companion | Insert median before → after | Insert p95 before → after | Delete median before → after | Delete p95 before → after |
+| --- | --- | ---: | ---: | ---: | ---: |
+| ide | text | 3.79 → 3.33 | 4.55 → 4.35 | 3.50 → 3.68 | 4.75 → 4.78 |
+| ide | pdf | 10.21 → 3.09 | 12.08 → 4.38 | 10.26 → 3.36 | 12.33 → 4.43 |
+| ide | terminal | 3.47 → 3.69 | 4.77 → 6.14 | 3.50 → 3.67 | 5.12 → 6.22 |
+| mux | text | 4.43 → 4.81 | 6.36 → 6.20 | 4.22 → 4.85 | 5.97 → 6.35 |
+| mux | pdf | 9.00 → 4.13 | 11.86 → 5.32 | 9.01 → 4.27 | 11.93 → 5.82 |
+| mux | terminal | 5.88 → 6.19 | 8.50 → 8.04 | 6.33 → 6.39 | 8.59 → 8.68 |
+
+The PDF gain is repeatable in both passes: insertion medians fall **69.8% in IDE**
+and **54.1% in mux**; deletion medians fall 67.3% and 52.5%. IDE insertion pass
+medians are 10.462/10.011 ms before and 2.938/3.142 ms after; mux is
+10.819/7.982 ms before and 4.353/3.902 ms after.
+
+There is **no consistent text/terminal latency improvement**. IDE-terminal
+insertion p95 worsens in both optimized passes: 7.581/5.450 ms versus
+4.774/4.805 ms before. Its pooled insertion p95 rises from 4.77 to 6.14 ms;
+deletion p95 rises from 5.12 to 6.22 ms. Mux-text pooled medians rise 8.6% for
+insertion and 14.9% for deletion, but the baseline insertion pass medians also
+vary substantially, from 5.030 to 3.657 ms. These observations must not be
+presented as a general speedup or dismissed as proven measurement noise.
+
+### Separate CPU painting diagnostic
+
+Separate instrumented runs use eight pairs per case. All paint frames emitted
+during the editing loop are retained, including terminal-refresh frames. These
+are small diagnostic samples, not per-key attribution; their instrumented input
+timings are excluded from the latency comparison.
+
+| Mode | Companion | Frames before / after | Median paint CPU before → after, ms |
+| --- | --- | ---: | ---: |
+| ide | text | 20 / 19 | 0.348 → 0.534 |
+| ide | pdf | 19 / 19 | 5.330 → 0.457 |
+| ide | terminal | 22 / 23 | 0.458 → 0.543 |
+| mux | text | 18 / 18 | 0.456 → 0.538 |
+| mux | pdf | 18 / 18 | 4.790 → 0.364 |
+| mux | terminal | 22 / 22 | 0.385 → 0.312 |
+
+PDF-case median paint CPU falls roughly 91–92%. Text-only paint medians rise
+in this diagnostic. More segment layers and replay work are plausible costs of
+the general split, but these measurements do not isolate that mechanism or
+explain every millisecond of the terminal tail regression. The evidence favors
+localizing media's conservative painting rules; a universal pane-row speedup
+has not been established. Retaining the general split is a performance tradeoff,
+not an unconditional improvement.
+
+### Correctness and validation
+
+The final release binary matches the baseline exactly in 12 fixed-body pixel
+comparisons: styled terminal text, a finder overlay crossing both panes, and the
+restored scene, beside text, PDF, PNG and an HTML preview. The fixture includes
+italic icons, decorations, emoji and wide-cell placement near the pane divider,
+and proves media and the overlay appeared. Missing CJK fallback fonts still
+limit verification of actual CJK glyph appearance. Other font metrics, native
+Wayland, Windows and macOS rendering were not measured.
+
+Regression tests cover neighboring scene retention, geometry invalidation,
+wide-cell predecessors crossing a boundary, and distinct backgrounds for
+multiple overlay cells reopened inside media. Required formatting, default and
+desktop all-target Clippy, the full default Rust suite, and all desktop package
+tests passed. The 23 focused Python harness tests and exact pixel checks passed.
+No core Rust source or coverage threshold changed; canonical core coverage was
+not rerun for this native-only change. Astra Medium reviewed the implementation,
+measurement method and result interpretation.

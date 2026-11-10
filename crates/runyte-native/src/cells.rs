@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Cell-local shaping preserves grid placement and prevents cross-cell ligatures.
-//! Cache layouts and group ordinary rows into logical layers for GPUI batching.
+//! Cache layouts and group ordinary pane-row spans into logical layers.
 use super::{CellMetrics, FrameData, color};
 use gpui::*;
 use ratatui::style::Modifier;
@@ -104,6 +104,9 @@ impl GlyphCache {
 struct Coverage {
     media: bool,
     hidden: Vec<bool>,
+    // Overlays reveal media cells without removing their scene-depth constraint.
+    raw_media: Vec<bool>,
+    boundaries: Vec<u16>,
 }
 impl Coverage {
     fn row(frame: &FrameData, y: u16) -> Self {
@@ -113,6 +116,25 @@ impl Coverage {
         } else {
             Vec::new()
         };
+        let mut raw_media = hidden.clone();
+        let mut boundaries = vec![0, frame.cells.area.width];
+        for rect in frame
+            .pane_areas
+            .iter()
+            .chain(frame.media.iter().map(|pane| &pane.body))
+            .chain(frame.previews.iter().map(|pane| &pane.body))
+        {
+            if y >= rect.y && y < rect.y.saturating_add(rect.height) {
+                boundaries.push(rect.x.min(frame.cells.area.width));
+                boundaries.push(
+                    rect.x
+                        .saturating_add(rect.width)
+                        .min(frame.cells.area.width),
+                );
+            }
+        }
+        boundaries.sort_unstable();
+        boundaries.dedup();
         if media {
             for (rect, covered) in frame
                 .media
@@ -128,10 +150,21 @@ impl Coverage {
                         .saturating_add(rect.width)
                         .min(frame.cells.area.width) as usize;
                     hidden[start..end].fill(covered);
+                    if covered {
+                        raw_media[start..end].fill(true);
+                    }
                 }
             }
         }
-        Self { media, hidden }
+        Self {
+            media,
+            hidden,
+            raw_media,
+            boundaries,
+        }
+    }
+    fn over_media(&self, x: u16) -> bool {
+        self.raw_media.get(x as usize).copied().unwrap_or(false)
     }
     fn hides(&self, x: u16) -> bool {
         self.hidden.get(x as usize).copied().unwrap_or(false)
@@ -161,7 +194,8 @@ fn row_backgrounds(
         } else {
             resolved(colors, cell.bg, frame.background)
         };
-        if !coverage.media
+        if !coverage.over_media(x)
+            && !coverage.boundaries.contains(&x)
             && let Some((start, width, previous)) = runs.last_mut()
             && *start + *width == x
             && *previous == bg
@@ -184,6 +218,7 @@ fn backgrounds(frame: &FrameData, mut paint: impl FnMut(u16, u16, u16, Hsla)) {
     }
 }
 
+#[derive(PartialEq)]
 struct StyledCell {
     x: u16,
     width: usize,
@@ -196,6 +231,11 @@ struct PreparedRow {
     defaults: (u32, u32),
     backgrounds: Vec<(u16, u16, Hsla)>,
     cells: Vec<StyledCell>,
+    segments: Vec<PreparedSegment>,
+}
+struct PreparedSegment {
+    start: u16,
+    end: u16,
     scene: SceneCache,
     placement: Option<(Point<Pixels>, bool)>,
 }
@@ -248,14 +288,49 @@ impl GlyphCache {
                 }
                 x = (x as usize + width).min(frame.cells.area.width as usize) as u16;
             }
+            // Only this row owns source cells. Retained segment scenes never pin
+            // historical full-row allocations after changes in another pane.
+            let mut previous = self.rows[y as usize].take();
+            let segments = coverage
+                .boundaries
+                .windows(2)
+                .map(|bounds| {
+                    let (start, end) = (bounds[0], bounds[1]);
+                    if let Some(old) = previous.as_mut()
+                        && old.defaults == defaults
+                        && (start..end).all(|x| {
+                            old.coverage.hides(x) == coverage.hides(x)
+                                && old.coverage.over_media(x) == coverage.over_media(x)
+                        })
+                        && old
+                            .cells
+                            .iter()
+                            .filter(|cell| cell.x >= start && cell.x < end)
+                            .eq(cells.iter().filter(|cell| cell.x >= start && cell.x < end))
+                        && old.source.get(start as usize..end as usize)
+                            == source.get(start as usize..end as usize)
+                        && let Some(index) = old
+                            .segments
+                            .iter()
+                            .position(|segment| segment.start == start && segment.end == end)
+                    {
+                        return old.segments.remove(index);
+                    }
+                    PreparedSegment {
+                        start,
+                        end,
+                        scene: SceneCache::default(),
+                        placement: None,
+                    }
+                })
+                .collect();
             self.rows[y as usize] = Some(PreparedRow {
                 source: source.clone(),
                 coverage,
                 defaults,
                 backgrounds,
                 cells,
-                scene: SceneCache::default(),
-                placement: None,
+                segments,
             });
         }
     }
@@ -292,52 +367,61 @@ pub(super) fn paint_cells(
         // Layout retention stays bounded by the per-face glyph cache.
         let mut row = cache.rows[y].take().unwrap();
         let offset = origin + point(px(0.), px(y as f32 * metrics.height));
-        let cursor_row = frame.cursor.is_some_and(|cursor| cursor.y as usize == y);
-        let placement = (offset, cursor_row);
-        let reuse = row.placement == Some(placement);
-        window.paint_cached_scene(&mut row.scene, reuse, |window| {
-            painted.clear();
-            let mut separate = row.coverage.media || cursor_row;
-            for cell in &row.cells {
-                let layout = cache.layout(
-                    row.source[cell.x as usize].symbol(),
-                    cell.modifier,
-                    metrics,
-                    window,
-                );
-                separate |=
-                    layout.width <= px(0.) || layout.width > px(cell.width as f32 * metrics.width);
-                painted.push(PaintedCell {
-                    height: metrics.height,
-                    layout,
-                    fg: cell.fg,
-                    modifier: cell.modifier,
-                    position: point(px(cell.x as f32 * metrics.width), px(0.)),
-                });
-            }
-            if separate {
-                for cell in &painted {
-                    window
-                        .paint_layer(cell.bounds(offset), |window| cell.paint(offset, window, cx));
+        for segment in &mut row.segments {
+            let cursor_row = frame.cursor.is_some_and(|cursor| {
+                cursor.y as usize == y && cursor.x >= segment.start && cursor.x < segment.end
+            });
+            let placement = (offset, cursor_row);
+            let reuse = segment.placement == Some(placement);
+            window.paint_cached_scene(&mut segment.scene, reuse, |window| {
+                painted.clear();
+                let mut separate = row.coverage.over_media(segment.start) || cursor_row;
+                for cell in row
+                    .cells
+                    .iter()
+                    .filter(|cell| cell.x >= segment.start && cell.x < segment.end)
+                {
+                    let layout = cache.layout(
+                        row.source[cell.x as usize].symbol(),
+                        cell.modifier,
+                        metrics,
+                        window,
+                    );
+                    separate |= layout.width <= px(0.)
+                        || layout.width > px(cell.width as f32 * metrics.width);
+                    painted.push(PaintedCell {
+                        height: metrics.height,
+                        layout,
+                        fg: cell.fg,
+                        modifier: cell.modifier,
+                        position: point(px(cell.x as f32 * metrics.width), px(0.)),
+                    });
                 }
-            } else if let (Some(first), Some(last)) = (painted.first(), painted.last()) {
-                // Keep the original logical row bounds and layer ordering, including
-                // adjacent-row overhangs, emoji and decorated/oversized glyphs.
-                let bounds = Bounds::new(
-                    first.position + offset,
-                    size(
-                        last.position.x + last.layout.width - first.position.x,
-                        px(metrics.height),
-                    ),
-                );
-                window.paint_layer(bounds, |window| {
+                if separate {
                     for cell in &painted {
-                        cell.paint(offset, window, cx);
+                        window.paint_layer(cell.bounds(offset), |window| {
+                            cell.paint(offset, window, cx)
+                        });
                     }
-                });
-            }
-        });
-        row.placement = Some(placement);
+                } else if let (Some(first), Some(last)) = (painted.first(), painted.last()) {
+                    // Keep logical row-height bounds and layer ordering, including
+                    // adjacent-row overhangs, emoji and decorated/oversized glyphs.
+                    let bounds = Bounds::new(
+                        first.position + offset,
+                        size(
+                            last.position.x + last.layout.width - first.position.x,
+                            px(metrics.height),
+                        ),
+                    );
+                    window.paint_layer(bounds, |window| {
+                        for cell in &painted {
+                            cell.paint(offset, window, cx);
+                        }
+                    });
+                }
+            });
+            segment.placement = Some(placement);
+        }
         cache.rows[y] = Some(row);
     }
     if let Some(cursor) = frame.cursor.filter(|c| !frame.under_media(c.x, c.y)) {
@@ -473,6 +557,7 @@ mod tests {
             media: vec![],
             cursor: None,
             overlays: vec![],
+            pane_areas: vec![],
             media_input: false,
             pointer_bindings: Default::default(),
             window_bindings: Default::default(),
@@ -519,7 +604,7 @@ mod tests {
         frame.overlays.push(runyte::layout::Rect {
             x: 6,
             y: 0,
-            width: 1,
+            width: 2,
             height: 2,
         });
         runs.clear();
@@ -527,12 +612,12 @@ mod tests {
         assert_eq!(
             runs,
             vec![
-                (0, 0, 1, color(Color::Red, 0)),
-                (1, 0, 1, color(Color::Red, 0)),
+                (0, 0, 2, color(Color::Red, 0)),
                 (6, 0, 1, color(Color::Reset, 0x181818)),
-                (0, 1, 1, color(Color::Reset, 0x181818)),
-                (1, 1, 1, color(Color::Reset, 0x181818)),
-                (6, 1, 1, color(Color::Reset, 0x181818))
+                (7, 0, 1, color(Color::Reset, 0x181818)),
+                (0, 1, 2, color(Color::Reset, 0x181818)),
+                (6, 1, 1, color(Color::Reset, 0x181818)),
+                (7, 1, 1, color(Color::Reset, 0x181818))
             ]
         );
     }

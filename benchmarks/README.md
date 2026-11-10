@@ -117,7 +117,10 @@ and user-storage directories, disabled LSP, two side-by-side panes, and the
 same 100-line plain-text editing fixture. Each timed operation inserts one
 leading space or deletes it with BackSpace, with 200 ms before the next key.
 The native cases vary IDE/mux and a text/PDF companion; the PTY cases have a
-text companion. The PDF fixture must visibly render before timing begins.
+text companion. Add `--sides text,pdf,terminal` for a synthetic terminal that
+refreshes 30 rows once per second. That case verifies visible companion changes
+across the measured loop; its samples are not synchronized to terminal refreshes.
+The PDF fixture must visibly render before timing begins.
 Whole-file saves verify the edit and restored document outside timing.
 
 Native timing ends when `XGetImage` observes a calibrated glyph shape beyond
@@ -136,8 +139,24 @@ percentiles from small samples are descriptive, not stable population estimates.
 Use `--paint-timing` in a **separate** native run to retain CPU cell-paint traces.
 Those cover the timed editing loop, excluding setup and save verification;
 they do not identify per-key GPU or compositor costs. These settled plain-text
-tests do not establish burst-typing, syntax-update, busy-terminal, large-file,
+tests do not establish burst-typing, syntax-update, arbitrary terminal workloads, large-file,
 Wayland-native, or macOS latency.
+
+Compare pane-row pixels against a preserved baseline release binary:
+
+```sh
+benchmarks/.work/venv/bin/python benchmarks/pane_pixels.py \
+  --before /tmp/runyte-before --after target/release/runyte-desktop \
+  --json /tmp/pane-pixels.json
+```
+
+The fixture checks styled terminal text (including boundary-adjacent italic icons,
+emoji and decorations), a finder crossing the companion pane, and the restored
+scene, beside text, PDF, PNG and an HTML document preview. It compares fixed
+body pixels exactly and verifies media and the overlay appeared. Both binaries use the same fixture path;
+titles/status rows are excluded. Mismatches write diagnostic PNGs beside the
+JSON. This checks the available Linux fonts; it does not establish appearance
+with missing fallback fonts, other font metrics, or other platforms.
 
 # Startup milestones
 

@@ -134,6 +134,7 @@ struct FrameData {
     previews: Vec<preview::Pane>,
     cursor: Option<ratatui::layout::Position>,
     overlays: Vec<runyte::layout::Rect>,
+    pane_areas: Vec<runyte::layout::Rect>,
     media_input: bool,
     pointer_bindings: runyte::keymap::pointer_actions::Bindings,
     window_bindings: runyte::keymap::native_window::Bindings,
@@ -233,6 +234,7 @@ struct Bridge {
     painted_preview_bindings: Mutex<runyte::keymap::native_preview::Bindings>,
     painted_preview_target: Mutex<Option<preview::Target>>,
     overlays: Mutex<Vec<runyte::layout::Rect>>,
+    pane_areas: Mutex<Vec<runyte::layout::Rect>>,
     default_colors: Mutex<(u32, u32)>,
     media_input: AtomicBool,
     pointer_bindings: Mutex<runyte::keymap::pointer_actions::Bindings>,
@@ -367,6 +369,13 @@ pub(crate) fn capture_media(
 
 fn capture_snapshot_media(snapshot: &runyte::workspace::HostFrame, counts: &[media::PageCount]) {
     let Some(bridge) = BRIDGE.get() else { return };
+    *bridge.pane_areas.lock().unwrap() = snapshot
+        .editor
+        .panes
+        .iter()
+        .filter(|pane| pane.drawable)
+        .map(|pane| pane.area)
+        .collect();
     *bridge.pointer_bindings.lock().unwrap() = snapshot.editor.pointer_bindings.clone();
     *bridge.window_bindings.lock().unwrap() = snapshot.editor.window_bindings.clone();
     *bridge.preview_bindings.lock().unwrap() = snapshot.editor.preview_bindings.clone();
@@ -615,6 +624,7 @@ impl Surface {
                     media: bridge.media.lock().unwrap().clone(),
                     previews: bridge.previews.lock().unwrap().clone(),
                     overlays: bridge.overlays.lock().unwrap().clone(),
+                    pane_areas: bridge.pane_areas.lock().unwrap().clone(),
                     media_input: bridge.media_input.load(Ordering::Acquire),
                     pointer_bindings: bridge.pointer_bindings.lock().unwrap().clone(),
                     window_bindings: bridge.window_bindings.lock().unwrap().clone(),
@@ -843,6 +853,7 @@ pub(crate) fn launch(
         painted_preview_bindings: Mutex::new(Default::default()),
         painted_preview_target: Mutex::new(None),
         overlays: Mutex::new(Vec::new()),
+        pane_areas: Mutex::new(Vec::new()),
         default_colors: Mutex::new((FALLBACK_BACKGROUND, FALLBACK_FOREGROUND)),
         media_input: AtomicBool::new(true),
         pointer_bindings: Mutex::new(Default::default()),
