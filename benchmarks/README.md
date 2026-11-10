@@ -10,6 +10,14 @@ that a change in Runyte's numbers can be separated from a change in the machine.
   how long it then takes to quit, and what it costs while sitting idle, with
   Neovim and Helix measured the same way. Recorded in
   [`context/reference/startup-performance.md`](../context/reference/startup-performance.md).
+- **`editions.py`** — readiness, quit and idle cost across the terminal and
+  desktop editions and the editor, ide and mux modes. See
+  [editions and modes](#editions-and-modes).
+- **`interaction_latency.py`** — settled native editing in IDE/mux with a
+  text or PDF companion pane, measured through calibrated glyph pixels on an
+  isolated KWin/Xwayland display. **`interaction_pty.py`** supplies a separate
+  decoded-PTY baseline. See [interaction latency](#interaction-latency) and the
+  [measurement register](../context/reference/interaction-performance.md).
 - **`session_navigation.py`** — persistent attachment and unchanged-screen cost
   with one or several sessions, a hidden strip, and noisy output in another
   session. It uses the same fixed PTY geometry and capability replies, isolated
@@ -89,6 +97,66 @@ ignored by Git. Deleting `.work/` is safe; the next run rebuilds everything in i
 
 Recorded startup samples are retained under [`results/`](results/) so the
 published medians and ranges can be checked without repeating a timing run.
+
+# Interaction latency
+
+Build release binaries before measuring, and wait for builds and other CPU-heavy
+work to finish. The desktop harness requires Linux, KWin, Xwayland, D-Bus,
+libX11 and libXdamage. It creates its own virtual display and uses targeted
+`XSendEvent` input; it does not use XTEST or the person's desktop display.
+
+```sh
+benchmarks/.work/venv/bin/python benchmarks/interaction_latency.py \
+  --samples 40 --rounds 3 --json /tmp/interaction-native.json
+benchmarks/.work/venv/bin/python benchmarks/interaction_pty.py \
+  --runs 40 --json /tmp/interaction-pty.json
+```
+
+Run the commands sequentially. Both use 120×40 cells, an isolated workspace
+and user-storage directories, disabled LSP, two side-by-side panes, and the
+same 100-line plain-text editing fixture. Each timed operation inserts one
+leading space or deletes it with BackSpace, with 200 ms before the next key.
+The native cases vary IDE/mux and a text/PDF companion; the PTY cases have a
+text companion. Add `--sides text,pdf,terminal` for a synthetic terminal that
+refreshes 30 rows once per second. That case verifies visible companion changes
+across the measured loop; its samples are not synchronized to terminal refreshes.
+The PDF fixture must visibly render before timing begins.
+Whole-file saves verify the edit and restored document outside timing.
+
+Native timing ends when `XGetImage` observes a calibrated glyph shape beyond
+the caret. PTY timing ends at exact decoded cells in a completed synchronized
+frame, including Python decoding overhead. Neither measures physical display
+scanout, and the PTY endpoint excludes terminal-emulator rendering entirely.
+Do not subtract these endpoints to claim native rendering overhead.
+
+Native rounds rotate case order and retain all insertion/deletion samples,
+summary percentiles, binary hashes, and failures. A quiet-machine check precedes
+each case in both harnesses; by default it aborts if CPU usage does not fall below one
+logical core within 60 seconds. This is a precondition check, not continuous
+proof of an uncontended machine. Samples within a case share one process; tail
+percentiles from small samples are descriptive, not stable population estimates.
+
+Use `--paint-timing` in a **separate** native run to retain CPU cell-paint traces.
+Those cover the timed editing loop, excluding setup and save verification;
+they do not identify per-key GPU or compositor costs. These settled plain-text
+tests do not establish burst-typing, syntax-update, arbitrary terminal workloads, large-file,
+Wayland-native, or macOS latency.
+
+Compare pane-row pixels against a preserved baseline release binary:
+
+```sh
+benchmarks/.work/venv/bin/python benchmarks/pane_pixels.py \
+  --before /tmp/runyte-before --after target/release/runyte-desktop \
+  --json /tmp/pane-pixels.json
+```
+
+The fixture checks styled terminal text (including boundary-adjacent italic icons,
+emoji and decorations), a finder crossing the companion pane, and the restored
+scene, beside text, PDF, PNG and an HTML document preview. It compares fixed
+body pixels exactly and verifies media and the overlay appeared. Both binaries use the same fixture path;
+titles/status rows are excluded. Mismatches write diagnostic PNGs beside the
+JSON. This checks the available Linux fonts; it does not establish appearance
+with missing fallback fonts, other font metrics, or other platforms.
 
 # Startup milestones
 
@@ -224,6 +292,65 @@ Verification:
 ```sh
 benchmarks/.work/venv/bin/python -m unittest discover -s benchmarks
 ```
+
+# Editions and modes
+
+```sh
+cargo build --release --locked -p runyte -p runyte-desktop
+TMPDIR=/tmp benchmarks/.work/venv/bin/python benchmarks/editions.py \
+  --runs 10 --idle-runs 5 --json benchmarks/.work/editions.json
+```
+
+Every cell applies the readiness contract above: from before the launch until a
+one-character edit is visible in a completed frame, with a later whole-file save
+proving it was a real edit. Quit is timed from the final key of `:q!`, or of
+`:detach` in mux, after that save.
+
+| Column | Launch | Measured path |
+| --- | --- | --- |
+| `editor` | `--editor FILE` | No workspace services |
+| `ide` | `--ide FILE` | Workspace services, which start after the first editable frame |
+| `mux-cold` | `--mux` | Starts a new host, waits for the About pane, then `:open FILE` |
+| `mux-warm` | `--mux` | Reattaches to a running host that already holds the document |
+
+`--mux` takes a workspace rather than a file, so a cold launch includes the
+command that opens the document. Each mux sample uses its own host, stopped
+afterwards. Editor and ide are measured separately because ide starts Git,
+plugins, the context endpoint and the session catalog; the readiness numbers
+may be close, but the background work is not the same.
+
+**Desktop display.** Windows open on an isolated `kwin_wayland --virtual
+--xwayland` compositor with its own D-Bus session and X display, so nothing
+appears on the person's desktop and a window cannot reach the real session bus.
+It needs KWin, Xwayland, libX11 and libXdamage on Linux. The window draws
+through the machine's real Vulkan driver, unlike the Xvfb and lavapipe setup of
+`tests/native_window.py`. The harness sends keys with `XSendEvent` and takes
+Shift from `XkbLockModifiers`. It must not use XTEST: KWin routes that through
+an input-capture portal needing interactive consent, and on the headless
+private bus the portal's backends abort repeatedly and leave coredumps.
+
+**Desktop observation.** The discarded launch for each cell learns the pixels of
+the edited document row before and after the edit. Later samples poll only that
+row with `XGetImage` and compare the shape of the glyphs, so highlighting that
+arrives after the first frame neither delays nor falsifies the match. Readback
+sees presented frames, so desktop readiness includes waiting for the display's
+next frame, and compositor cost is not included in CPU.
+
+**Idle.** Windows of 16 seconds span the 15-second session observation. CPU is
+the client's process tree plus any persistent host, as a percentage of one
+logical CPU. The last column counts PTY reads for the terminal edition and
+X Damage notifications, meaning repaints, for the desktop edition.
+
+**Shared machines.** Each round waits until no more than `--max-busy-cores`
+logical CPUs are in use across the machine, and the JSON records every wait and
+whether it timed out. This holds rounds back during builds; it does not make a
+loaded machine equivalent to an idle one, so prefer running when nothing else
+is scheduled.
+
+**Failed detaches.** A mux window that does not exit within three seconds of
+`:detach` is recorded as `detach_failed` and listed in the quit column instead
+of being dropped. That sample's readiness remains valid, because its save was
+already verified.
 
 # Startup, quit and idle
 

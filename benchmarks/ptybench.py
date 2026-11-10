@@ -117,8 +117,9 @@ def clean_environment() -> dict[str, str]:
     return environment
 
 
-def _spawn(argv: list[str], env: dict[str, str], cwd: str | None) -> tuple[int, int]:
-    environment = clean_environment()
+def _spawn(argv: list[str], env: dict[str, str], cwd: str | None,
+           *, exact_environment: bool = False) -> tuple[int, int]:
+    environment = {} if exact_environment else clean_environment()
     environment.update(env)
     pid, fd = pty.fork()
     if pid == 0:

@@ -290,11 +290,23 @@ placing fallback glyphs at their cell origin. Foreground colours and decorations
 are applied at paint time, so theme changes do not invalidate glyph layouts.
 Glyphs use GPUI's public monochrome/emoji paint paths directly; decorations are
 submitted first to preserve the previous text layer's ordering over colour emoji.
-Ordinary rows share one logical text layer; the cursor row and rows with oversized
-or zero-width font advances keep per-cell layers to preserve ordering at overlaps. Backgrounds
-merge into horizontal colour runs, including root-coloured cells to preserve
-the same ordering floor on adjacent rows. Rows intersecting media retain the
-original per-cell backgrounds and layers because media has its own scene depth.
+Since 2026-11-10, ordinary pane-row spans share one logical text layer. Pane and raw media
+boundaries divide each row into independent cached scenes; cursor-containing
+spans and spans with oversized or zero-width font advances keep per-cell layers
+to preserve ordering at overlaps. A whole-row identity check avoids rebuilding
+unchanged rows. On a changed row, styles are recomputed in one left-to-right scan
+and unchanged spans retain their scenes after comparing source cells, derived
+styles, coverage and theme defaults. The scan preserves wide-cell advancement
+across boundaries; segments never clip glyphs or retain historical cell rows.
+Backgrounds merge into horizontal colour runs outside raw media footprints,
+including root-coloured cells to preserve the ordering floor on adjacent rows.
+Cells inside a media footprint retain per-cell backgrounds and layers even when
+an overlay reveals them. All backgrounds precede all glyphs, and glyph scenes
+remain ordered by row and then column. Both standalone and attached snapshots
+supply pane geometry locally; the host protocol and grid row COW are unchanged.
+The [pane-row experiment](interaction-performance.md#2026-11-10--pane-row-segmentation-experiment)
+records substantial PDF-case gains and mixed text/terminal results, including a
+terminal tail-latency regression; segmentation is not an unconditional speedup.
 Presentation acknowledgements and
 painted-frame admission retain their existing semantics.
 
