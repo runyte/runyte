@@ -59,12 +59,55 @@ class DistributionToolsTests(unittest.TestCase):
                 self.assertTrue((stage / "README.md").is_file())
                 self.assertTrue((stage / "INSTALLATION.md").is_file())
                 output.write_bytes(b"mock disk image")
+                return subprocess.CompletedProcess(command, 0, stderr="")
             with patch("package.subprocess.run", side_effect=create) as run:
                 package.disk_image(app, output)
                 with self.assertRaisesRegex(ValueError, "already exists"):
                     package.disk_image(app, output)
                 self.assertEqual(run.call_count, 1)
             self.assertFalse(stages[0].exists())
+
+    def test_disk_image_retries_only_resource_busy_and_bounds_attempts(self):
+        for failures, diagnostic, succeeds in (
+            (2, "hdiutil: Resource busy\n", True),
+            (5, "hdiutil: Resource busy\n", False),
+            (1, "hdiutil: Permission denied\n", False),
+        ):
+            with self.subTest(failures=failures, diagnostic=diagnostic), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                app = root / "Runyte.app"
+                (app / "Contents").mkdir(parents=True)
+                (app / "Contents/Info.plist").write_bytes(plistlib.dumps({"CFBundleShortVersionString": "1.0"}))
+                output = root / "Runyte.dmg"
+                stages = []
+
+                def create(command, **kwargs):
+                    self.assertEqual(kwargs, {"stderr": subprocess.PIPE, "text": True})
+                    self.assertFalse(output.exists(), "partial images must be removed before retry")
+                    stage = Path(command[command.index("-srcfolder") + 1])
+                    self.assertTrue((stage / "Runyte.app/Contents/Info.plist").is_file())
+                    stages.append(stage)
+                    failed = len(stages) <= failures
+                    output.write_bytes(b"partial" if failed else b"complete")
+                    return subprocess.CompletedProcess(command, 1 if failed else 0,
+                                                       stderr=diagnostic if failed else "")
+
+                with patch("package.subprocess.run", side_effect=create) as run, patch("package.time.sleep") as sleep, contextlib.redirect_stderr(io.StringIO()) as errors:
+                    if succeeds:
+                        self.assertEqual(package.disk_image(app, output), output)
+                        self.assertEqual(output.read_bytes(), b"complete")
+                    else:
+                        with self.assertRaises(subprocess.CalledProcessError) as raised:
+                            package.disk_image(app, output)
+                        self.assertEqual(raised.exception.returncode, 1)
+                        self.assertEqual(raised.exception.stderr, diagnostic)
+                    attempts = failures + 1 if succeeds else failures
+                    self.assertEqual(run.call_count, attempts)
+                    self.assertEqual([call.args[0] for call in sleep.call_args_list],
+                                     [attempt * 2 for attempt in range(1, attempts)])
+                    self.assertEqual(errors.getvalue(), diagnostic * failures)
+                self.assertEqual(len(set(stages)), 1)
+                self.assertFalse(stages[0].exists())
 
     def test_dry_run_prints_inside_out_signing_without_execution(self):
         output = io.StringIO()

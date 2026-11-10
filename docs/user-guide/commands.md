@@ -77,6 +77,10 @@ The working directory starts where Runyte was launched.
 - `:cd <path>` changes it. Relative paths start from the current working
   directory. In an explorer, `:cd` also moves that explorer. In a file, the
   file stays open.
+- `:cd` also follows the directory to its workspace, found the way a launch
+  finds one: the nearest Git, Jujutsu or Subversion root, then a `.runyte/`.
+  See [Changing workspace](workspaces-and-persistent-sessions.md#changing-workspace).
+- A bare `:cd` uses the directory the active explorer or terminal is showing.
 - `Space E` opens the working directory. `Space e` opens the active buffer's
   directory and selects its file, so Enter takes you back. On a rendered
   Markdown page it uses the source document. A buffer with no path uses the
@@ -102,7 +106,8 @@ The working directory starts where Runyte was launched.
 | `:buffer-new` | `new` | Open a new scratch buffer in the current pane |
 | `:reload` | | Reload the active local/provider file, or refresh the explorer or supported Git list |
 | `:path` | | Show the active buffer's absolute path in a wrapped popup; Tab offers copying it to the system clipboard (`s`) or the unnamed Runyte register (`r`) |
-| `:cd <path>` | | Change the working directory; retarget an active explorer |
+| `:cd [path]` | | Change directory, moving to its workspace when it belongs to another; retarget an active explorer |
+| `:init [directory]` | | Make the directory a workspace and move to it |
 | `:explorer [path]` | `files` | Open an editable directory explorer |
 | `:preview` | — | Native document preview of selected text or the complete buffer (up to 1 MiB / 1024 KiB) |
 | `:render` | `markdown` | Render a Markdown document, or return to its source |

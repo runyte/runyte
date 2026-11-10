@@ -752,6 +752,7 @@ pub(super) fn request_allowed_for_role(request: &ClientRequest, role: ClientRole
         | ClientRequest::Invoke { .. }
         | ClientRequest::VisitDestination { .. }
         | ClientRequest::Notify { .. }
+        | ClientRequest::SetWorkingDirectory { .. }
         | ClientRequest::AttachWait { .. }
         | ClientRequest::Pointer { .. }
         | ClientRequest::CancelPointer

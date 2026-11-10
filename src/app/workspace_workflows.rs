@@ -1005,6 +1005,7 @@ impl App {
         }
         self.invalidate_unsubmitted_merge_review();
         self.workspace_switch = Some(WorkspaceSwitchRequest {
+            arrive_in_working_directory: false,
             target: WorkspaceSwitchTarget::UserSelector(path),
             working_directory: self.working_directory.clone(),
             running_only: false,
@@ -1026,6 +1027,7 @@ impl App {
         }
         self.invalidate_unsubmitted_merge_review();
         self.workspace_switch = Some(WorkspaceSwitchRequest {
+            arrive_in_working_directory: false,
             target: WorkspaceSwitchTarget::Selected(selection),
             working_directory: self.working_directory.clone(),
             running_only: false,
@@ -1067,6 +1069,7 @@ impl App {
         let running_only = row.running;
         self.invalidate_unsubmitted_merge_review();
         self.workspace_switch = Some(WorkspaceSwitchRequest {
+            arrive_in_working_directory: false,
             target: WorkspaceSwitchTarget::Selected(selection),
             working_directory: self.working_directory.clone(),
             running_only,
@@ -2033,6 +2036,7 @@ impl App {
         }
         self.invalidate_unsubmitted_merge_review();
         self.workspace_switch = Some(WorkspaceSwitchRequest {
+            arrive_in_working_directory: false,
             target: WorkspaceSwitchTarget::Previous,
             working_directory: self.working_directory.clone(),
             running_only: true,

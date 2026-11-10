@@ -186,8 +186,8 @@ matching file patterns in their YAML order. The last matching rule that sets a
 field wins. Editing an existing rule keeps its position. A new rule is appended.
 There are no built-in language overrides or content-based indentation detection.
 
-Patterns match paths relative to the workspace root, which does not change with
-`:cd`. A pattern without `/` matches a filename at any depth. `*` matches within
+Patterns match paths relative to the workspace root, which does not change
+when `:cd` moves within the workspace. A pattern without `/` matches a filename at any depth. `*` matches within
 a directory, `?` matches one character, and `**` spans directories. `**/` also
 matches zero directories. Use `/` on every platform. Absolute paths, `..`,
 backslashes, character classes and brace expansion are not supported. A pattern

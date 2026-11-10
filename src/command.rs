@@ -225,6 +225,7 @@ impl CommandContext {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ColonCommand {
     ChangeDirectory,
+    InitializeWorkspace,
     CloseBuffer,
     DiffDisk,
     DiffRemote,
@@ -405,6 +406,7 @@ pub enum CommandExposure {
 impl ColonCommand {
     pub const ALL: &'static [Self] = &[
         Self::ChangeDirectory,
+        Self::InitializeWorkspace,
         Self::CloseBuffer,
         Self::DiffDisk,
         Self::DiffRemote,
@@ -485,6 +487,7 @@ impl ColonCommand {
         match self {
             Self::Pipe | Self::PipeCancel => CommandCategory::Editing,
             Self::ChangeDirectory
+            | Self::InitializeWorkspace
             | Self::CloseBuffer
             | Self::ForceCloseBuffer
             | Self::Open
@@ -1144,6 +1147,7 @@ editor_commands! {
     PreviousRunningSession => ("previous-running-session", "Visit the previous running persistent session"),
     OpenSessionDirectory => ("open-session-directory", "Open a directory as a persistent session"),
     OpenExplorerSession => ("open-explorer-session", "Open persistent session here"),
+    OpenExplorerWorkspace => ("open-explorer-workspace", "Change to this directory's workspace, making one if needed"),
     OpenBufferPicker => ("open-buffer-picker", "Open the buffer picker"),
     ListAccept => ("list-accept", "Activate the selected row"),
     ListOpenActions => ("list-open-actions", "Open actions or cycle the list"),
@@ -1274,6 +1278,7 @@ impl EditorCommand {
             | Self::PreviousRunningSession
             | Self::OpenSessionDirectory
             | Self::OpenExplorerSession => Some(CommandCapability::PersistentSession),
+            Self::OpenExplorerWorkspace => Some(CommandCapability::Workspace),
             Self::MatchBracket
             | Self::ExpandSyntaxSelection
             | Self::ShrinkSyntaxSelection
@@ -1578,6 +1583,7 @@ impl EditorCommand {
             | Self::PreviousRunningSession
             | Self::OpenSessionDirectory
             | Self::OpenExplorerSession
+            | Self::OpenExplorerWorkspace
             | Self::OpenSessionDestinations
             | Self::OpenBufferPicker => CommandCategory::File,
             Self::ListAccept
@@ -1790,7 +1796,8 @@ impl CommandId {
             }
             Self::Colon(ColonCommand::GitRefresh) => Some(CommandCapability::GitRefresh),
             Self::Colon(
-                ColonCommand::LspTrust
+                ColonCommand::InitializeWorkspace
+                | ColonCommand::LspTrust
                 | ColonCommand::ContextAccess
                 | ColonCommand::AgentChannel
                 | ColonCommand::Plugins
@@ -1828,7 +1835,8 @@ impl CommandId {
                 Editor::OpenTerminalDirectoryRoot
                 | Editor::OpenExplorerSystem
                 | Editor::OpenExplorerFinder
-                | Editor::OpenExplorerSession => Some(Context::Explorer),
+                | Editor::OpenExplorerSession
+                | Editor::OpenExplorerWorkspace => Some(Context::Explorer),
                 Editor::OpenTerminalSelectedDirectory => Some(Context::ExplorerDirectoryEntry),
                 Editor::OpenTerminalSessionDirectory
                 | Editor::OpenTerminalList
@@ -2002,6 +2010,13 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     editor_spec!(
+        Editor::OpenExplorerWorkspace,
+        "open-explorer-workspace",
+        [],
+        "open-explorer-workspace",
+        NoArguments
+    ),
+    editor_spec!(
         Editor::OpenExplorerSystem,
         "open-explorer-system",
         [],
@@ -2019,9 +2034,17 @@ pub const COMMANDS: &[CommandSpec] = &[
         ColonId(Colon::ChangeDirectory),
         "cd",
         [],
-        "cd <path>",
-        "Change the editor working directory",
-        Required(Path)
+        "cd [path]",
+        "Change directory, moving to its workspace when it belongs to another",
+        Optional(Path)
+    ),
+    spec!(
+        ColonId(Colon::InitializeWorkspace),
+        "init",
+        [],
+        "init [directory]",
+        "Make a directory a workspace and move to it",
+        Optional(Path)
     ),
     spec!(
         ColonId(Colon::SessionAttach),
@@ -3413,12 +3436,15 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             Colon::GitStashTracked | Colon::GitStashAll | Colon::GitStashUntracked,
             InvocationParameters::OptionalText(value),
         ) => value.as_ref().is_none_or(|value| !value.trim().is_empty()),
+        (Colon::Open | Colon::SessionAttach, InvocationParameters::Path(path)) => {
+            !path.as_os_str().is_empty()
+        }
         (
-            Colon::ChangeDirectory | Colon::Open | Colon::SessionAttach,
-            InvocationParameters::Path(path),
-        ) => !path.as_os_str().is_empty(),
-        (
-            Colon::SessionStop | Colon::WriteConfig | Colon::ForceWriteConfig,
+            Colon::ChangeDirectory
+            | Colon::InitializeWorkspace
+            | Colon::SessionStop
+            | Colon::WriteConfig
+            | Colon::ForceWriteConfig,
             InvocationParameters::OptionalPath(_),
         ) => true,
         (Colon::SessionRename, InvocationParameters::SessionRename { workspace, name }) => {
@@ -3697,6 +3723,7 @@ fn invocation_from_parts(
             | (EditorCommand::PreviousRunningSession, ParsedArgument::None)
             | (EditorCommand::OpenSessionDirectory, ParsedArgument::None)
             | (EditorCommand::OpenExplorerSession, ParsedArgument::None)
+            | (EditorCommand::OpenExplorerWorkspace, ParsedArgument::None)
             | (EditorCommand::OpenTerminalList, ParsedArgument::None)
             | (EditorCommand::CopyTerminalOutput, ParsedArgument::None) => {
                 Ok(CommandInvocation::new(id, InvocationParameters::None))
@@ -3760,7 +3787,11 @@ fn invocation_from_parts(
             _ => Err(invalid()),
         },
         CommandId::Colon(
-            ColonCommand::SessionStop | ColonCommand::WriteConfig | ColonCommand::ForceWriteConfig,
+            ColonCommand::ChangeDirectory
+            | ColonCommand::InitializeWorkspace
+            | ColonCommand::SessionStop
+            | ColonCommand::WriteConfig
+            | ColonCommand::ForceWriteConfig,
         ) => match argument {
             ParsedArgument::Path(path) => Ok(CommandInvocation::new(
                 id,
@@ -3769,10 +3800,9 @@ fn invocation_from_parts(
             _ => Err(invalid()),
         },
         CommandId::Colon(command) => match (command, argument) {
-            (
-                ColonCommand::ChangeDirectory | ColonCommand::SessionAttach,
-                ParsedArgument::Path(Some(path)),
-            ) => Ok(CommandInvocation::new(id, InvocationParameters::Path(path))),
+            (ColonCommand::SessionAttach, ParsedArgument::Path(Some(path))) => {
+                Ok(CommandInvocation::new(id, InvocationParameters::Path(path)))
+            }
             (
                 ColonCommand::CloseBuffer
                 | ColonCommand::DiffDisk

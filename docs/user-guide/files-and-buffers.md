@@ -661,6 +661,7 @@ are kept.
 | `Tab t` | Open a terminal in this pane, starting in the shown directory |
 | `Tab f` | Open the Finder rooted at the shown directory (`:open-explorer-finder`) |
 | `Tab e` | Open the shown directory in the system file manager (`:open-explorer-system`) |
+| `Tab c` | Change to this directory's workspace, making one if there is none (see [Changing workspace](workspaces-and-persistent-sessions.md#changing-workspace)) |
 | `Tab s` | Open a persistent session here (see [Session and destination navigation](workspaces-and-persistent-sessions.md#session-and-destination-navigation)) |
 
 `Tab t`, `Tab f`, and `Tab e` use the directory the explorer shows, not the row
@@ -785,7 +786,7 @@ pane or a buffer.
   editor can be revealed. A file outside the workspace, or a buffer with no
   file, selects the workspace-root row.
 - The `[dir tree]` title sits above the root row. The tree stays rooted at the
-  workspace root when `:cd` changes the working directory.
+  workspace root when `:cd` moves within the workspace.
 - Expansion, selection, scroll position, legend visibility, and a resized
   width survive hiding it.
 - Fullscreen and zen cover it temporarily. Terminals narrower than 36 columns

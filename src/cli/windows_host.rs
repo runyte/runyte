@@ -274,6 +274,7 @@ fn injected_switch_request(
         std::fs::remove_file(&directory_request)?;
         note_switch_fixture("consumed");
         return Ok(Some(crate::app::WorkspaceSwitchRequest {
+            arrive_in_working_directory: false,
             visit: None,
             running_only: false,
             target: crate::app::WorkspaceSwitchTarget::UserSelector(directory),
@@ -314,6 +315,7 @@ fn injected_switch_request(
     };
     note_switch_fixture("consumed");
     Ok(Some(crate::app::WorkspaceSwitchRequest {
+        arrive_in_working_directory: false,
         visit,
         running_only: true,
         target: crate::app::WorkspaceSwitchTarget::Selected(selection),

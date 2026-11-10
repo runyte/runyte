@@ -1256,6 +1256,85 @@ async fn standalone_terminal_input_edits_and_quits_through_the_real_event_loop()
     fs::remove_dir_all(root).unwrap();
 }
 
+/// The whole relaunch: the editor ends, the terminal is restored, and the same
+/// process comes back as an ide editor rooted in the other repository.
+#[tokio::test]
+async fn standalone_cd_into_another_repository_continues_as_an_editor_there() {
+    let root = project();
+    let destination = project();
+    fs::write(destination.join("only-in-destination.txt"), "x\n").unwrap();
+    let config = default_config(&root);
+    let (child, mut terminal) = spawn_in_pty(
+        bundled_runyte()
+            .args(["--ide", "--config"])
+            .arg(config)
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    );
+    let mut child = ChildGuard(Some(child));
+    let output = capture_terminal_output(&terminal);
+
+    wait_for_terminal_screen(&output, "Runyte").await;
+    type_colon_command(
+        &mut terminal,
+        &format!("cd {}", destination.canonicalize().unwrap().display()),
+    );
+    wait_for_terminal_screen(&output, "only-in-destination.txt").await;
+    assert!(child.0.as_mut().unwrap().try_wait().unwrap().is_none());
+    type_colon_command(&mut terminal, "quit-all!");
+
+    assert!(wait_child(child.0.as_mut().unwrap()).await.success());
+    child.0.take();
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(destination).unwrap();
+}
+
+/// `:cd` across persistent sessions finishes in the destination: the client
+/// attaches there and only then does the working directory arrive.
+#[cfg(unix)]
+#[tokio::test]
+async fn persistent_cd_into_another_repository_arrives_in_the_named_directory() {
+    let root = project();
+    let destination = project();
+    fs::create_dir(destination.join("deep")).unwrap();
+    let destination = destination.canonicalize().unwrap();
+    let config = default_config(&root);
+    let (child, mut terminal) = spawn_in_pty(
+        bundled_runyte()
+            .args(["-a", "--config"])
+            .arg(&config)
+            .current_dir(&root)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir()),
+    );
+    let mut child = ChildGuard(Some(child));
+    let output = capture_terminal_output(&terminal);
+
+    wait_for_terminal_screen(&output, "(Git root)").await;
+    type_colon_command(
+        &mut terminal,
+        &format!("cd {}", destination.join("deep").display()),
+    );
+    wait_for_terminal_screen(&output, "(cd: deep)").await;
+
+    type_colon_command(&mut terminal, "detach");
+    assert!(wait_child(child.0.as_mut().unwrap()).await.success());
+    child.0.take();
+    for directory in [&root, &destination] {
+        let status = bundled_runyte()
+            .args(["--session-stop", "--force"])
+            .current_dir(directory)
+            .env("XDG_RUNTIME_DIR", test_runtime_dir())
+            .env("XDG_CACHE_HOME", test_cache_dir())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(destination).unwrap();
+}
+
 /// Escape typed while the editor is still busy with earlier keys stays the Esc
 /// key rather than becoming an Alt chord with the key typed after it.
 ///

@@ -1158,7 +1158,8 @@ with `{ command: name, argument: text }`.
 
 | Command | Usage | Description |
 | --- | --- | --- |
-| `cd` | `cd <path>` | Change the editor working directory |
+| `cd` | `cd [path]` | Change directory, moving to its workspace when it belongs to another |
+| `init` | `init [directory]` | Make a directory a workspace and move to it |
 | `session-attach` | `session-attach <workspace>` | Attach to another workspace's persistent session |
 | `session-list` | `session-list` | Session manager and native controls |
 | `session-stop` | `session-stop [workspace]` | Stop a clean persistent session |
