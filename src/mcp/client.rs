@@ -26,6 +26,8 @@ const SUPPORTED_HOSTS: &str = ">=0.3.0, <0.5.0";
 pub(super) const HIDDEN_HELP: &str = "Running Runyte workspaces exist but were registered from a different environment: XDG_RUNTIME_DIR or XDG_CACHE_HOME here differs from the editor's. Configure the MCP client to pass both variables through to runyte mcp and restart it, or rerun with include_hidden=true.";
 struct Connection {
     durable: bool,
+    /// The host accepts `enter` on `terminal.input.write`.
+    submit: bool,
     socket: BufReader<Box<dyn Stream>>,
     scopes: BTreeSet<Scope>,
     generation: u64,
@@ -96,6 +98,7 @@ impl Connection {
         let socket = discovery::connect(record).await?;
         let mut connection = Self {
             durable: false,
+            submit: false,
             socket: BufReader::new(Box::new(socket)),
             scopes: BTreeSet::new(),
             generation: 0,
@@ -156,6 +159,10 @@ impl Connection {
         if offers(wire::TERMINAL_WRITE_FEATURE) {
             features.push(wire::TERMINAL_WRITE_FEATURE);
             capabilities.push(Scope::TerminalWrite.capability());
+        }
+        connection.submit = offers(wire::TERMINAL_SUBMIT_FEATURE);
+        if connection.submit {
+            features.push(wire::TERMINAL_SUBMIT_FEATURE);
         }
         connection.durable = hello["features"]
             .as_array()
@@ -271,6 +278,9 @@ impl Bridge {
     /// The connection generation for a workspace handle, while connected.
     pub(super) fn generation(&self, workspace: &str) -> Option<u64> {
         self.connections.get(workspace).map(|c| c.generation)
+    }
+    pub(super) fn submit_supported(&self, workspace: &str) -> bool {
+        self.connections.get(workspace).is_some_and(|c| c.submit)
     }
     pub(super) fn durable_supported(&self, workspace: &str) -> bool {
         self.connections.get(workspace).is_some_and(|c| c.durable)

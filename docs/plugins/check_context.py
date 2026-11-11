@@ -289,6 +289,9 @@ class ContextSchemaTests(unittest.TestCase):
                                             'changes': [{'from': 1, 'to': 3, 'text': 'x'}, {'from': 2, 'to': 3, 'text': 'y'}]})
         with self.assertRaises(ContextError):
             validate_request('terminal.input.write', {'terminal': 't:1', 'text': '\ud800'})
+        with self.assertRaises(ContextError):
+            validate_request('terminal.input.write', {'terminal': 't:1', 'text': 'ls', 'enter': 'yes'})
+        validate_request('terminal.input.write', {'terminal': 't:1', 'text': 'ls', 'enter': True})
 
     def test_ordinary_plugin_schema_does_not_admit_context_transport_messages(self):
         ordinary = json.loads((DIRECTORY / 'runyte-1.schema.json').read_text())

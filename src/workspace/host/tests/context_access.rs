@@ -452,6 +452,30 @@ async fn an_enter_is_dropped_by_output_typing_detachment_and_lost_write_access()
         .send_key(KeyStroke::plain(KeyCode::Char('n')));
     host.sync_context();
     assert_eq!(status(&mut host, "s2", &second), "stale");
+    // And while the person is typing there, nothing more is accepted, until
+    // they have stopped for long enough.
+    let revision = current(&host);
+    let typing = request(
+        &mut host,
+        1,
+        "e2b",
+        "terminal.input.enter",
+        json!({"terminal":handle,"expected_revision":revision}),
+    );
+    assert_eq!(typing["error"]["code"], "busy", "{typing}");
+    let typing = request(
+        &mut host,
+        1,
+        "w2b",
+        "terminal.input.write",
+        json!({"terminal":handle,"text":"ls","enter":true}),
+    );
+    assert_eq!(typing["error"]["code"], "busy", "{typing}");
+    host.app
+        .terminals
+        .get_mut(terminal)
+        .unwrap()
+        .backdate_typing(Duration::from_millis(wire::TYPING_QUIET_MILLIS));
 
     // Detaching the person's window cancels it.
     let third = enter(&mut host, "e3");
@@ -460,14 +484,11 @@ async fn an_enter_is_dropped_by_output_typing_detachment_and_lost_write_access()
     assert_eq!(status(&mut host, "s3", &third), "cancelled");
     host.note_plugin_frontend(true);
 
-    // Nothing changed, and the delay is over: Enter is pressed if it can
+    // Nothing changed: after one settling pass, Enter is pressed if it can
     // be. This fixture has no child, so the write itself fails.
     let fourth = enter(&mut host, "e4");
     host.sync_context();
-    assert_eq!(status(&mut host, "s4", &fourth), "waiting");
-    host.context_expire_enter_delays();
-    host.sync_context();
-    assert_eq!(status(&mut host, "s4b", &fourth), "waiting", "settling");
+    assert_eq!(status(&mut host, "s4", &fourth), "waiting", "settling");
     host.context_expire_enter_delays();
     host.sync_context();
     assert_eq!(status(&mut host, "s4c", &fourth), "stale");
@@ -734,7 +755,7 @@ async fn changing_a_grant_reconnects_its_readers_without_moving_the_endpoint() {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn a_written_line_waits_for_a_guarded_enter_which_submits_it_after_the_delay() {
+async fn a_written_line_waits_for_a_guarded_enter_which_submits_it() {
     let (_root, mut host, identity, _events) = fixture();
     grant(&mut host, &identity, write());
     authenticate(
@@ -791,12 +812,6 @@ async fn a_written_line_waits_for_a_guarded_enter_which_submits_it_after_the_del
             .unwrap()
             .agent_enter_pending()
     );
-    prompts.idle(&mut host, Duration::from_millis(100)).await;
-    assert!(
-        !prompts.text(terminal).contains("SUBMITTED"),
-        "still waiting"
-    );
-    host.context_expire_enter_delays();
     prompts
         .wait(
             &mut host,
@@ -813,6 +828,232 @@ async fn a_written_line_waits_for_a_guarded_enter_which_submits_it_after_the_del
             .unwrap()
             .agent_enter_pending()
     );
+    host.app.terminals.close(terminal);
+}
+
+#[tokio::test]
+async fn a_lines_enter_follows_its_delivery_and_gives_up_on_a_line_never_written() {
+    use crate::terminal::proposal::{Delivery, DeliveryState};
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, write());
+    authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_write"],
+    );
+    let terminal = host.app.terminals.insert_test_session(20, 3);
+    let schedule = |host: &mut WorkspaceHost, id: &str, line: &Delivery| {
+        let generation = host.app.terminals.get(terminal).unwrap().input_generation();
+        host.context_schedule_enter(id.into(), 1, terminal, None, Some(line.clone()), generation);
+    };
+
+    // While the line is still queued, the host polls for it rather than
+    // sleeping until a due time, and the Enter waits.
+    let line = Delivery::queued_for_test();
+    schedule(&mut host, "queued", &line);
+    assert_eq!(
+        host.context_delay(),
+        Some(super::super::context_input::DELIVERY_POLL)
+    );
+    host.sync_context();
+    assert_eq!(host.context_enter_state("queued"), Some("waiting"));
+    // The person's typing cancelled the line: its Enter goes with it.
+    line.cancel();
+    host.sync_context();
+    assert_eq!(host.context_enter_state("queued"), Some("cancelled"));
+
+    // A line never written in time is withdrawn, Enter and all.
+    let line = Delivery::queued_for_test();
+    schedule(&mut host, "late", &line);
+    host.context_expire_line_deadlines();
+    host.sync_context();
+    assert_eq!(host.context_enter_state("late"), Some("cancelled"));
+    assert_eq!(line.state(), DeliveryState::Cancelled);
+
+    // One still being written when time runs out may be partly on screen.
+    let line = Delivery::queued_for_test();
+    line.set_for_test(DeliveryState::Writing);
+    schedule(&mut host, "writing", &line);
+    host.sync_context();
+    assert_eq!(host.context_enter_state("writing"), Some("waiting"));
+    host.context_expire_line_deadlines();
+    host.sync_context();
+    assert_eq!(host.context_enter_state("writing"), Some("stale"));
+
+    // So may one whose write was lost.
+    let line = Delivery::queued_for_test();
+    line.set_for_test(DeliveryState::OutcomeUnknown);
+    schedule(&mut host, "unknown", &line);
+    host.sync_context();
+    assert_eq!(host.context_enter_state("unknown"), Some("stale"));
+
+    // A written line arms its Enter for one settling pass. Output, such as
+    // the line's own echo, does not drop it. This fixture has no child, so
+    // pressing it fails.
+    let line = Delivery::queued_for_test();
+    line.set_for_test(DeliveryState::Delivered);
+    schedule(&mut host, "written", &line);
+    host.app
+        .terminals
+        .apply(crate::terminal::TerminalOutput::Bytes {
+            id: terminal,
+            bytes: b"echo of the line".to_vec(),
+        });
+    host.sync_context();
+    assert_eq!(host.context_enter_state("written"), Some("waiting"));
+    host.context_expire_enter_delays();
+    host.sync_context();
+    assert_eq!(host.context_enter_state("written"), Some("stale"));
+
+    // Detaching the person's window cancels it while the line is queued.
+    let line = Delivery::queued_for_test();
+    schedule(&mut host, "detached", &line);
+    host.note_plugin_frontend(false);
+    host.sync_context();
+    assert_eq!(host.context_enter_state("detached"), Some("cancelled"));
+}
+
+#[tokio::test]
+async fn a_line_asked_to_be_submitted_is_not_typed_when_its_enter_is_refused() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, write());
+    authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_write"],
+    );
+    let terminal = host.app.terminals.insert_test_session(20, 3);
+    let list = request(
+        &mut host,
+        1,
+        "list",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    let handle = list["result"]["terminals"][0]["terminal"].clone();
+    let revision = format!(
+        "r:{}",
+        host.app.terminals.get(terminal).unwrap().read_revision()
+    );
+    let waiting = request(
+        &mut host,
+        1,
+        "enter",
+        "terminal.input.enter",
+        json!({"terminal":handle,"expected_revision":revision}),
+    );
+    assert_eq!(waiting["result"]["state"], "waiting", "{waiting}");
+    // Queueing text moves the input generation, so an unchanged one shows
+    // nothing was typed.
+    let generation = host.app.terminals.get(terminal).unwrap().input_generation();
+    let refused = request(
+        &mut host,
+        1,
+        "write",
+        "terminal.input.write",
+        json!({"terminal":handle,"text":"ls","enter":true}),
+    );
+    assert_eq!(refused["error"]["code"], "conflict", "{refused}");
+    assert_eq!(
+        host.app.terminals.get(terminal).unwrap().input_generation(),
+        generation
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_line_written_with_enter_is_submitted_once_written_but_never_while_the_person_types() {
+    let (_root, mut host, identity, _events) = fixture();
+    grant(&mut host, &identity, write());
+    authenticate(
+        &mut host,
+        &identity,
+        1,
+        &["terminal_read", "terminal_write", "agent_channel"],
+    );
+    let mut prompts = Prompts::new(&mut host);
+    let terminal = prompts.open(&mut host, 1, "codex", true).await;
+    let list = request(
+        &mut host,
+        1,
+        "list",
+        "terminal.list",
+        json!({"offset":0,"limit":10}),
+    );
+    let handle = list["result"]["terminals"][0]["terminal"].clone();
+    let write = |host: &mut WorkspaceHost, id: &str, text: &str| {
+        request(
+            host,
+            1,
+            id,
+            "terminal.input.write",
+            json!({"terminal":handle,"text":text,"enter":true}),
+        )
+    };
+    let written = write(&mut host, "w1", "review the parser");
+    assert_eq!(written["result"]["state"], "queued", "{written}");
+    let enter = written["result"]["enter"].as_str().unwrap().to_owned();
+    assert!(
+        host.app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
+    // The paste and its Enter arrive as one submitted line, the Enter after
+    // the closing paste marker rather than inside the paste.
+    prompts
+        .wait(
+            &mut host,
+            terminal,
+            "SUBMITTED:\x1b[200~review the parser\x1b[201~;",
+        )
+        .await;
+    assert_eq!(host.context_enter_state(&enter), Some("sent"));
+    assert!(
+        !host
+            .app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .agent_enter_pending()
+    );
+
+    // The person types: nothing is written there until they have stopped
+    // for long enough.
+    host.app
+        .terminals
+        .get_mut(terminal)
+        .unwrap()
+        .send_key(KeyStroke::char('x'));
+    let refused = write(&mut host, "w2", "run the tests");
+    assert_eq!(refused["error"]["code"], "busy", "{refused}");
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("read it again"),
+        "{refused}"
+    );
+    host.app
+        .terminals
+        .get_mut(terminal)
+        .unwrap()
+        .backdate_typing(Duration::from_millis(wire::TYPING_QUIET_MILLIS));
+    let written = write(&mut host, "w3", "run the tests");
+    let enter = written["result"]["enter"].as_str().unwrap().to_owned();
+    // A key pressed before the line's Enter falls due drops the Enter: it
+    // would submit a line the person changed.
+    host.app
+        .terminals
+        .get_mut(terminal)
+        .unwrap()
+        .send_key(KeyStroke::char('y'));
+    prompts.idle(&mut host, Duration::from_millis(300)).await;
+    assert_eq!(host.context_enter_state(&enter), Some("stale"));
+    assert!(!prompts.text(terminal).contains("run the tests"));
     host.app.terminals.close(terminal);
 }
 

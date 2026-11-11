@@ -345,6 +345,7 @@ fn advertised_context_limits_exclude_unavailable_plugin_resources() {
     assert_eq!(value["context"]["read_rows"], 1000);
     assert_eq!(value["context"]["terminal_text_bytes"], 4096);
     assert_eq!(value["context"]["enter_delay_ms"], ENTER_DELAY_MILLIS);
+    assert_eq!(value["context"]["typing_quiet_ms"], TYPING_QUIET_MILLIS);
     assert_eq!(value["context"]["enters"], MAX_ENTERS);
     assert_eq!(
         value["context"]["edit_replacement_bytes"],
@@ -390,9 +391,20 @@ fn buffer_append_is_a_strict_buffer_edit_request_with_advertised_bounds() {
 }
 
 #[test]
-fn terminal_input_carries_no_submit_or_approval_and_enter_needs_a_revision() {
+fn terminal_input_carries_only_its_own_enter_and_enter_needs_a_revision() {
+    // A line's Enter is a flag, never a byte in the text.
+    for enter in [true, false] {
+        assert!(
+            parse_request(&request(
+                "terminal.input.write",
+                json!({"terminal":"t:1","text":"ls","enter":enter})
+            ))
+            .is_ok()
+        );
+    }
     for params in [
-        json!({"terminal":"t:1","text":"ls","enter":true}),
+        json!({"terminal":"t:1","text":"ls\r","enter":true}),
+        json!({"terminal":"t:1","text":"ls","enter":"yes"}),
         json!({"terminal":"t:1","text":"ls","reason":"why"}),
     ] {
         assert!(parse_request(&request("terminal.input.write", params)).is_err());

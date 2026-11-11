@@ -27,6 +27,8 @@ struct State {
     channel: bool,
     /// The host advertises terminal writes.
     writes: bool,
+    /// The host advertises submitting a written line with `enter`.
+    submit: bool,
     /// What a status request reports for a scheduled Enter.
     enter_state: &'static str,
     joins: Vec<Value>,
@@ -107,9 +109,9 @@ impl Host {
                         .await;
                         return;
                     }
-                    let (channel, writes) = {
+                    let (channel, writes, submit) = {
                         let s = shared.lock().unwrap();
-                        (s.channel, s.writes)
+                        (s.channel, s.writes, s.submit)
                     };
                     let mut offered = vec![wire::FEATURE];
                     if channel {
@@ -117,6 +119,9 @@ impl Host {
                     }
                     if writes {
                         offered.push(wire::TERMINAL_WRITE_FEATURE);
+                    }
+                    if submit {
+                        offered.push(wire::TERMINAL_SUBMIT_FEATURE);
                     }
                     let features = json!(offered);
                     let hello = json!({"type":"hello","version":"runyte-1","host_version":"0.4.0","features":features,"workspace":record,"limits":{"line_bytes":wire::MAX_FRAME_BYTES}});
@@ -223,7 +228,15 @@ impl Host {
                                         json!({"buffer":"native:b","revision":format!("r:{}",s.revision)})
                                     }
                                     "terminal.input.write" => {
-                                        json!({"state":"queued","chars":params["text"].as_str().unwrap().chars().count()})
+                                        // A host without the feature refuses the field.
+                                        assert!(s.submit || params.get("enter").is_none());
+                                        let chars =
+                                            params["text"].as_str().unwrap().chars().count();
+                                        if params["enter"] == true {
+                                            json!({"state":"queued","chars":chars,"enter":"native:e"})
+                                        } else {
+                                            json!({"state":"queued","chars":chars})
+                                        }
                                     }
                                     "terminal.input.enter" => {
                                         assert_eq!(params["terminal"], "native:t");
@@ -834,7 +847,7 @@ async fn writing_and_enter_are_offered_only_with_write_and_enter_waits_for_its_o
         stale["next_step"]
             .as_str()
             .unwrap()
-            .starts_with("Nothing was sent")
+            .starts_with("Enter was not pressed")
     );
 
     // The connection ending while Enter waits leaves its outcome unknown.
@@ -855,6 +868,96 @@ async fn writing_and_enter_are_offered_only_with_write_and_enter_waits_for_its_o
             .count(),
         3,
         "never retried"
+    );
+}
+
+#[tokio::test]
+async fn a_line_is_submitted_in_one_call_only_by_a_host_that_offers_it() {
+    let host = Host::new();
+    grant_writes(&host);
+    let mut bridge = host.bridge();
+    let found = bridge
+        .call("find_resources", json!({"kind":"terminal"}))
+        .await
+        .unwrap();
+    let terminal = handle(&found, "terminal");
+    // A host without the feature would refuse the field, so nothing is sent.
+    let unsupported = bridge
+        .call(
+            "write_terminal",
+            json!({"terminal":terminal,"text":"ls","enter":true}),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(unsupported.code, "unsupported");
+    assert!(unsupported.message.contains("press_enter"));
+    // Without enter, the field is not passed on to it at all.
+    let plain = bridge
+        .call(
+            "write_terminal",
+            json!({"terminal":terminal,"text":"ls","enter":false}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(plain["data"]["state"], "queued");
+    assert!(
+        !host
+            .state
+            .lock()
+            .unwrap()
+            .methods
+            .contains(&"terminal.input.enter.status".to_owned())
+    );
+
+    host.state.lock().unwrap().submit = true;
+    let mut bridge = host.bridge();
+    let found = bridge
+        .call("find_resources", json!({"kind":"terminal"}))
+        .await
+        .unwrap();
+    let terminal = handle(&found, "terminal");
+    let sent = bridge
+        .call(
+            "write_terminal",
+            json!({"terminal":terminal,"text":"ls","enter":true}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(sent["data"]["state"], "sent", "{sent}");
+    assert_eq!(sent["data"]["chars"], 2);
+    assert!(
+        sent["next_step"]
+            .as_str()
+            .unwrap()
+            .starts_with("Enter was pressed")
+    );
+    let methods = host.state.lock().unwrap().methods.clone();
+    assert!(
+        !methods.contains(&"terminal.input.enter".to_owned()),
+        "one write, no separate Enter request"
+    );
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|m| m.as_str() == "terminal.input.write")
+            .count(),
+        2
+    );
+
+    host.state.lock().unwrap().enter_state = "cancelled";
+    let cancelled = bridge
+        .call(
+            "write_terminal",
+            json!({"terminal":terminal,"text":"ls","enter":true}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancelled["data"]["state"], "cancelled");
+    assert!(
+        cancelled["next_step"]
+            .as_str()
+            .unwrap()
+            .contains("cancelled before it was written")
     );
 }
 

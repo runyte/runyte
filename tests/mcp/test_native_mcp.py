@@ -70,6 +70,23 @@ class NativeMCPTests(unittest.TestCase):
         entered = self.call(client, 'press_enter', terminal=terminal['terminal'],
                             expected_revision=read['data']['revision'])
         self.assertEqual(entered['data']['state'], 'sent', entered)
+        # A line and its Enter in one call, after reading the screen again. The
+        # fixture's child reads nothing, so the terminal's own echo shows the
+        # Enter: the next line starts on a row of its own.
+        self.call(client, 'read_terminal', terminal=terminal['terminal'])
+        submitted = self.call(client, 'write_terminal', terminal=terminal['terminal'],
+                              text='SUBMITTED_IN_ONE_CALL', enter=True)
+        self.assertEqual(submitted['data']['state'], 'sent', submitted)
+        self.call(client, 'write_terminal', terminal=terminal['terminal'], text='AFTER_ENTER')
+        deadline = time.monotonic() + 10
+        while True:
+            read = self.call(client, 'read_terminal', terminal=terminal['terminal'])
+            rows = [row['text'] for row in read['data']['rows']]
+            if 'SUBMITTED_IN_ONE_CALL' in rows and 'AFTER_ENTER' in rows:
+                break
+            if time.monotonic() >= deadline:
+                self.fail('submitted line was not followed by Enter: ' + str(rows))
+            time.sleep(.05)
         found = self.find(client, workspace=str(self.projects[0]), query='note', kind='buffer')
         buffer = next(row for row in found['results'] if row['name'].endswith('note.txt'))
         self.call(client, 'append_buffer', buffer=buffer['buffer'], text='NATIVE_MCP_APPEND\n')

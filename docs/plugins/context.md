@@ -84,7 +84,10 @@ of it, Write. A reader negotiates capabilities within them:
 
 A host that offers terminal writes lists `runyte.context.terminal.write.v1` in
 its `hello` features and `terminal_write` among its capabilities. A client asks
-for the capability only when the `hello` names the feature. A registration may
+for the capability only when the `hello` names the feature. A host that also
+accepts `enter` on `terminal.input.write` lists
+`runyte.context.terminal.submit.v1`; a client sends the field only when the
+`hello` names it. A registration may
 still name `terminal_propose` as an optional capability, as earlier clients
 did. It is accepted but never granted, and the client keeps the rest of its
 access. A registration that requires it is refused with `capability_denied`.
@@ -261,24 +264,51 @@ paste when the terminal's program enabled bracketed paste, and as typed
 characters otherwise. A multiplexer such as tmux enables bracketed paste for
 itself, so that mode describes the multiplexer rather than its selected pane.
 Ordinary characters may trigger actions in arbitrary terminal applications, so
-writing is not an execution sandbox. The text is never followed by Enter. It
-queues behind any other pending text rather than cancelling it. Text that has
-not started writing is cancelled in three cases: the person types there, its
-reader disconnects (including for a malformed request), or the frontend
-detaches or changes. The reply is `{state:"queued", chars}`. Partial delivery
-or a lost acknowledgement is uncertain and is never retried automatically.
+writing is not an execution sandbox. It queues behind any other pending text
+rather than cancelling it. Text that has not started writing is cancelled in
+three cases: the person types there, its reader disconnects (including for a
+malformed request), or the frontend detaches or changes. The reply is
+`{state:"queued", chars}`. Partial delivery or a lost acknowledgement is
+uncertain and is never retried automatically.
+
+With `enter: true` (hosts naming `runyte.context.terminal.submit.v1` in their
+hello; an older host refuses the field as unknown), the line is followed by
+Enter. The text still carries no carriage return: the host schedules an Enter
+when it queues the line and answers `{state:"queued", chars, enter}`, `enter`
+being the handle `terminal.input.enter.status` reports on. The Enter is
+pressed once the line's delivery has been acknowledged in full and one
+settling pass has run, only if the terminal's input generation has not moved
+since the line was queued. Output, including the line's own echo, does not
+drop it. Any physical key or paste and any other reader's write drop it as
+`stale`, as does partial delivery; a line cancelled before it was written drops
+it as `cancelled`. A line not written within four seconds of the request, for
+example because the program stopped reading, is cancelled with its Enter if
+writing has not begun, and leaves the Enter `stale` if it has. Every check that
+could refuse the Enter at request time (`conflict`, `limit_exceeded`) runs
+before the line is queued, so such a refusal never types the line. A line can
+still be left without its Enter once queued: when the person or another reader
+types first, the frontend detaches, the grant changes, or the carriage return
+cannot be written.
+
+For `context.typing_quiet_ms` (ten seconds) after the person last typed,
+pasted, or undid a paste in a terminal, `terminal.input.write` and
+`terminal.input.enter` both fail with `busy` there, and the message says how
+long is left. Pointer reports do not count as typing; where the program asked
+for them, they are still input that cancels unwritten text and drops a waiting
+Enter.
 
 `terminal.input.enter` asks for one Enter. `expected_revision` is the revision
 of a `terminal.read` of that terminal, taken after the text the Enter submits
 appeared. If the terminal's read revision already differs, the request fails
 with `stale`. Otherwise it answers `{enter, state:"waiting", delay_ms}` at once;
 the host marks the pane title `[Enter pending]` and, after `delay_ms`
-(advertised as `context.enter_delay_ms`, five seconds), writes a carriage return
-only if the terminal's read revision and its input generation are both
-unchanged, the reader still holds `terminal_write` under the live grant, the
-same frontend is attached and the terminal is live. Any output, any physical key
+(advertised as `context.enter_delay_ms`, currently zero) and one settling pass
+of its event loop, writes a carriage return only if the terminal's read
+revision and its input generation are both unchanged. Any output, any physical key
 or paste and any other reader's write therefore drop it as `stale`; a detached
-frontend or an exited terminal drop it as `cancelled`. A grant change,
+frontend or an exited terminal drop it as `cancelled`. Either kind of Enter
+also needs the reader to still hold `terminal_write` under the live grant, the
+same frontend attached and the terminal live. A grant change,
 revocation or disconnect closes the reader, which cancels its waiting Enters
 and discards their records.
 `terminal.input.enter.status` reports `waiting`, `sent`, `stale` or `cancelled`
