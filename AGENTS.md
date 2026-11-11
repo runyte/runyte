@@ -226,6 +226,10 @@ and the order of the push. Do not infer any of those from the commit history.
   geometry. Presentation only: no offset in the buffer moves, so a row and a
   column mean the same thing at every pane size. Knows nothing about buffers,
   panes, or drawing.
+- `src/login_environment.rs`: the environment an interactive login shell
+  reports, captured once by the macOS application launcher before it starts
+  the editor, so a LaunchServices launch sees what a shell launch would.
+  Bounded, delimited, killed at a deadline, never logged, and non-fatal.
 - `src/hash.rs`: small stable SHA-256 utility used by core persistence and
   identity code.
 - `src/private_storage.rs`: descriptor-relative private runtime files for logs,

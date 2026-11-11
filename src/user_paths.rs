@@ -33,6 +33,21 @@ pub(crate) fn system_home_directory() -> Option<PathBuf> {
 
 #[cfg(unix)]
 fn resolve_system_home_directory() -> Option<PathBuf> {
+    account_path(|record| record.pw_dir)
+}
+
+/// The effective account's login shell from the account database.
+///
+/// A program started by the macOS window server may have no `$SHELL`; this is
+/// the shell a new Terminal.app window would run for the same account.
+#[cfg(unix)]
+pub(crate) fn system_login_shell() -> Option<PathBuf> {
+    account_path(|record| record.pw_shell)
+}
+
+/// One absolute path field of the effective account's `passwd` record.
+#[cfg(unix)]
+fn account_path(field: impl Fn(&libc::passwd) -> *mut libc::c_char) -> Option<PathBuf> {
     // SAFETY: `sysconf` reads one process configuration value and has no
     // pointer preconditions.
     let configured = unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) };
@@ -66,13 +81,14 @@ fn resolve_system_home_directory() -> Option<PathBuf> {
         }
         // SAFETY: a successful `getpwuid_r` initialized `record` and returned
         // its address through `result`.
-        if unsafe { (*result).pw_dir.is_null() } {
+        let value = field(unsafe { &*result });
+        if value.is_null() {
             return None;
         }
-        // SAFETY: the successful lookup placed a NUL-terminated directory
-        // string inside `storage`, which remains alive for this copy.
-        let directory = unsafe { CStr::from_ptr((*result).pw_dir) };
-        let path = PathBuf::from(std::ffi::OsString::from_vec(directory.to_bytes().to_vec()));
+        // SAFETY: the successful lookup placed a NUL-terminated string inside
+        // `storage`, which remains alive for this copy.
+        let value = unsafe { CStr::from_ptr(value) };
+        let path = PathBuf::from(std::ffi::OsString::from_vec(value.to_bytes().to_vec()));
         return (path.is_absolute() && !path.as_os_str().is_empty()).then_some(path);
     }
 }

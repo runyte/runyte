@@ -43,6 +43,16 @@ if it changed or became unreadable. All helper streams are piped, stderr is
 retained up to 4 KiB while excess bytes are drained, and process groups are
 killed before their leaders are reaped. PDF restart errors bypass Poppler fallback.
 
+The macOS application launcher runs one external program before the editor
+exists: the account's login shell, asked once for its environment
+(`src/login_environment.rs`). It is not a helper and has no wire beyond
+`env -0` output between random delimiters: null stdin and stderr, its own
+process group, 2 MiB of stdout and a 3-second deadline, after which the group
+is killed and the inherited environment stays in use. Its values are never
+logged. The packaging guide's
+[login shell environment](../../contrib/packaging/README.md#login-shell-environment)
+section records which variables keep their inherited value.
+
 ## Plugins: `runyte-1`
 
 This is a public extension surface. Runyte starts explicitly configured plugin

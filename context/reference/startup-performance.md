@@ -18,6 +18,32 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-11 — login shell environment in the macOS launcher
+
+[#104](https://github.com/runyte/runyte/issues/104): `Runyte.app` now asks the
+account's login shell for its environment before it starts the editor, so a
+Finder launch's window appears only after that shell has run its startup files.
+The cost is the person's own startup files, so it is bounded by a 3-second
+deadline rather than by Runyte; nothing else in startup changed.
+
+Measured on an Apple M2, macOS 26.6.2, zsh 5.9 with one account's ordinary
+dotfiles, using an unoptimized `runyte-app-launcher` started directly with a
+launchd-like environment (`HOME`, `USER`, `LOGNAME`, `TMPDIR`,
+`PATH=/usr/bin:/bin:/usr/sbin:/sbin`) and an `exec` target that exits at once.
+Twenty launches after one discarded launch, from start to the target's exit:
+
+| `SHELL` | Capture | Median ms (min–max) |
+| --- | --- | ---: |
+| `/bin/zsh` | runs `zsh -l -i -c` | 25.5 (24.6–26.8) |
+| `/bin/tcsh` | skipped as unsupported | 9.5 (9.1–10.0) |
+
+The capture added a 16 ms median here, against a window that appears 39–45 ms
+into a launch in the 2026-11-09 set (measured on Linux, so not directly
+comparable). Startup files that load a version manager or prompt framework can
+take hundreds of milliseconds; that time is now spent before the window rather
+than missing from terminals. Fixture-shell tests check that a hanging startup
+file is cut off at the deadline. No editor readiness benchmark was rerun.
+
 ## 2026-11-09 — Runyte 0.4.4, editions and modes
 
 Release `v0.4.4`, commit `50644e3`, built with

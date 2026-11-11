@@ -43,6 +43,8 @@ pub mod keymap;
 pub mod launch;
 pub mod layout;
 pub mod log;
+#[cfg(unix)]
+pub mod login_environment;
 pub mod lsp;
 pub mod lsp_trust;
 pub mod manual;
