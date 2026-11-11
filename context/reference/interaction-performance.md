@@ -1,5 +1,47 @@
 # Settled interaction performance
 
+## 2026-11-11 — Follow-up component investigation (in progress)
+
+Tracking: [transport and copies #111](https://github.com/runyte/runyte/issues/111),
+[scene replay #112](https://github.com/runyte/runyte/issues/112),
+[row preparation #113](https://github.com/runyte/runyte/issues/113), and
+[terminal typing tails #114](https://github.com/runyte/runyte/issues/114).
+The [component artifact](../../benchmarks/results/interaction-followup-2026-11-11.json)
+retains samples, quiet checks, stage traces and provenance. These are component
+measurements, not a final end-to-end comparison of the fixes.
+
+The terminal-damage shell comparison unnecessarily cloned both panes before
+discarding their terminal fields. An exhaustive borrowed comparison preserves
+fallback and title handling. In a same-binary release comparison, median shell
+cost fell from 44.932 to 0.419 microseconds for one 120×40 terminal, and from
+487.487 to 0.599 microseconds for four 240×80 terminals. Dimensions are per
+terminal; each fixture also contains an unchanged document sibling. Ordinary
+document typing rejects this delta path earlier. Its synthetic response clone
+cost was only 3.939–8.357 microseconds, so transport ownership is unchanged.
+
+Recorded GPUI primitives already passed clipping and retain their bounds and
+masks. Replaying them inside an active layer can reuse that layer's order without
+repeating the intersection. The experimental implementation passed semantic
+comparisons and reduced clear-plus-replay time for 4,800 synthetic glyphs from
+119.339/126.380/138.750 to 72.286/80.320/94.154 microseconds for 1/2/4 partitions
+per row. The production implementation shares primitive insertion code; its
+post-refactor measurements and renderer validation are still pending.
+
+Retaining a previous grid snapshot and changing one cell costs 0.709 microseconds
+at 120×40 and 2.083 microseconds at 240×80. Whole native preparation measured
+50–74 microseconds in separate traces; coverage construction is only part of
+that stage. These measurements do not justify a storage or coverage-cache
+redesign for the measured typing workload. Wider grids and sustained terminal
+output may warrant separate investigation.
+
+The first clean topology comparison stopped at a failed quiet check after a
+competing build began; it is retained as excluded data. A repeated ABBA
+comparison is in progress. No terminal-tail improvement is claimed yet.
+
+The core test suite and core/desktop Clippy passed before the replay promotion.
+The promoted replay implementation has received review; coverage, final desktop
+tests, pixel equivalence and final latency comparisons remain pending.
+
 ## 2026-11-10 — Runyte 0.4.4, text and PDF companion panes
 
 This measurement investigates input responsiveness after startup. It does not

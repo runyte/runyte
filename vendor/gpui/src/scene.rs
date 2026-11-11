@@ -1,3 +1,4 @@
+// Modified by the Runyte project; see vendor/gpui/RUNYTE-PATCH.md.
 // todo("windows"): remove
 #![cfg_attr(windows, allow(dead_code))]
 
@@ -65,7 +66,7 @@ impl Scene {
     }
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
-        let mut primitive = primitive.into();
+        let primitive = primitive.into();
         let clipped_bounds = primitive
             .bounds()
             .intersect(&primitive.content_mask().bounds);
@@ -79,6 +80,10 @@ impl Scene {
             .last()
             .copied()
             .unwrap_or_else(|| self.primitive_bounds.insert(clipped_bounds));
+        self.insert_primitive_at_order(primitive, order);
+    }
+
+    fn insert_primitive_at_order(&mut self, mut primitive: Primitive, order: DrawOrder) {
         match &mut primitive {
             Primitive::Shadow(shadow) => {
                 shadow.order = order;
@@ -117,7 +122,18 @@ impl Scene {
     pub fn replay(&mut self, range: Range<usize>, prev_scene: &Scene) {
         for operation in &prev_scene.paint_operations[range] {
             match operation {
-                PaintOperation::Primitive(primitive) => self.insert_primitive(primitive.clone()),
+                PaintOperation::Primitive(primitive) => {
+                    if let Some(order) = self.layer_stack.last().copied() {
+                        // Recorded primitives already passed clipping, and replay
+                        // retains their bounds and content masks. An active layer
+                        // supplies the new order, so neither intersection nor a
+                        // bounds-tree lookup is needed. Still assign fresh path
+                        // IDs and record the operation for subsequent replay.
+                        self.insert_primitive_at_order(primitive.clone(), order);
+                    } else {
+                        self.insert_primitive(primitive.clone());
+                    }
+                }
                 PaintOperation::StartLayer(bounds) => self.push_layer(*bounds),
                 PaintOperation::EndLayer => self.pop_layer(),
             }
@@ -821,6 +837,10 @@ pub(crate) struct PathVertex<P: Clone + Debug + Default + PartialEq> {
     pub(crate) st_position: Point<f32>,
     pub(crate) content_mask: ContentMask<P>,
 }
+
+#[cfg(test)]
+#[path = "scene/replay_tests.rs"]
+mod replay_tests;
 
 impl PathVertex<Pixels> {
     pub fn scale(&self, factor: f32) -> PathVertex<ScaledPixels> {

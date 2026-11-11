@@ -349,6 +349,59 @@ pub struct TerminalRowDamage {
     pub line_id: Option<u64>,
 }
 
+// Compare pane metadata without cloning terminal grids or sibling document rows.
+// Destructure exhaustively so newly added fields cannot silently bypass fallback.
+fn same_terminal_shell(old: &PaneSnapshot, new: &PaneSnapshot) -> bool {
+    let PaneSnapshot {
+        preview,
+        media,
+        pane_id,
+        area,
+        body,
+        active,
+        jump_active,
+        dimmed,
+        drawable,
+        line_numbers,
+        relative_line_origin,
+        line_digits,
+        signs,
+        changes,
+        text_width,
+        gutter_width,
+        content_indent,
+        scroll_row,
+        scroll_wrap,
+        wrap_width,
+        cursor_screen_row,
+        rows,
+        title: _,
+        terminal: _,
+    } = old;
+    preview == &new.preview
+        && media == &new.media
+        && pane_id == &new.pane_id
+        && area == &new.area
+        && body == &new.body
+        && active == &new.active
+        && jump_active == &new.jump_active
+        && dimmed == &new.dimmed
+        && drawable == &new.drawable
+        && line_numbers == &new.line_numbers
+        && relative_line_origin == &new.relative_line_origin
+        && line_digits == &new.line_digits
+        && signs == &new.signs
+        && changes == &new.changes
+        && text_width == &new.text_width
+        && gutter_width == &new.gutter_width
+        && content_indent == &new.content_indent
+        && scroll_row == &new.scroll_row
+        && scroll_wrap == &new.scroll_wrap
+        && wrap_width == &new.wrap_width
+        && cursor_screen_row == &new.cursor_screen_row
+        && rows == &new.rows
+}
+
 impl TerminalDamageFrame {
     /// Produces a compact revision advance when at least one terminal pane is
     /// present and the editor panes otherwise stayed identical. Changed
@@ -386,12 +439,7 @@ impl TerminalDamageFrame {
         let mut panes = Vec::new();
         let mut terminal_present = false;
         for (old, new) in base.editor.panes.iter().zip(&next.editor.panes) {
-            let mut old_shell = old.clone();
-            let mut new_shell = new.clone();
-            old_shell.title = new_shell.title.clone();
-            old_shell.terminal = None;
-            new_shell.terminal = None;
-            if old_shell != new_shell {
+            if !same_terminal_shell(old, new) {
                 return None;
             }
             match (&old.terminal, &new.terminal) {
@@ -1238,10 +1286,14 @@ impl TryFrom<OverlayRow> for core::OverlayRow {
 }
 
 #[cfg(test)]
+#[path = "tests/frame_damage.rs"]
+mod damage_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    fn terminal_frame(id: u64, revision: u64, character: char) -> HostFrame {
+    pub(super) fn terminal_frame(id: u64, revision: u64, character: char) -> HostFrame {
         let (_, theme) = crate::config::Config::default().startup_theme().unwrap();
         let status = StatusSnapshot {
             mode: Mode::Normal,
@@ -1789,7 +1841,7 @@ mod tests {
         assert_eq!(applied, next);
     }
 
-    fn editor_frame(id: u64) -> HostFrame {
+    pub(super) fn editor_frame(id: u64) -> HostFrame {
         let mut frame = terminal_frame(id, 1, 'x');
         let pane = &mut frame.editor.panes[0];
         pane.terminal = None;

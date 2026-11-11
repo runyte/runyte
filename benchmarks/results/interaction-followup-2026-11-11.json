@@ -1,0 +1,2674 @@
+{
+  "date": "2026-11-11",
+  "source_base": "8390bac47bcb01abb5ef3efe268e0ee0b3a6cf03",
+  "status": "Investigation in progress. Core copy fix validated; promoted replay implementation and clean end-to-end comparisons still require validation.",
+  "method": "Serialized release microbenchmarks; one warmup then six alternating samples; no concurrent builds. Synthetic fixture, not end-to-end latency.",
+  "quiet": {
+    "busy_cores": 0.5,
+    "waited_seconds": 5.0,
+    "quiet": true
+  },
+  "platform": "Linux 7.2.14-arch1-1",
+  "measurements": {
+    "terminal_damage_shell_benchmark": [
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "1",
+        "borrowed": "true",
+        "us_per_frame": "0.416120"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "1",
+        "borrowed": "false",
+        "us_per_frame": "44.841718"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "2",
+        "borrowed": "false",
+        "us_per_frame": "44.841176"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "2",
+        "borrowed": "true",
+        "us_per_frame": "0.416020"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "3",
+        "borrowed": "true",
+        "us_per_frame": "0.431348"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "3",
+        "borrowed": "false",
+        "us_per_frame": "44.868868"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "4",
+        "borrowed": "false",
+        "us_per_frame": "45.008892"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "4",
+        "borrowed": "true",
+        "us_per_frame": "0.419468"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "5",
+        "borrowed": "true",
+        "us_per_frame": "0.419066"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "5",
+        "borrowed": "false",
+        "us_per_frame": "45.048106"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "6",
+        "borrowed": "false",
+        "us_per_frame": "44.995988"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "1",
+        "sample": "6",
+        "borrowed": "true",
+        "us_per_frame": "0.419786"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "1",
+        "borrowed": "true",
+        "us_per_frame": "0.457920"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "1",
+        "borrowed": "false",
+        "us_per_frame": "156.051394"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "2",
+        "borrowed": "false",
+        "us_per_frame": "146.923840"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "2",
+        "borrowed": "true",
+        "us_per_frame": "0.356308"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "3",
+        "borrowed": "true",
+        "us_per_frame": "0.363100"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "3",
+        "borrowed": "false",
+        "us_per_frame": "111.772512"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "4",
+        "borrowed": "false",
+        "us_per_frame": "110.214792"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "4",
+        "borrowed": "true",
+        "us_per_frame": "0.315572"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "5",
+        "borrowed": "true",
+        "us_per_frame": "0.317716"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "5",
+        "borrowed": "false",
+        "us_per_frame": "110.378498"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "6",
+        "borrowed": "false",
+        "us_per_frame": "110.530462"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "terminals": "4",
+        "sample": "6",
+        "borrowed": "true",
+        "us_per_frame": "0.321862"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "1",
+        "borrowed": "true",
+        "us_per_frame": "0.600606"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "1",
+        "borrowed": "false",
+        "us_per_frame": "116.035704"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "2",
+        "borrowed": "false",
+        "us_per_frame": "115.612390"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "2",
+        "borrowed": "true",
+        "us_per_frame": "0.582030"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "3",
+        "borrowed": "true",
+        "us_per_frame": "0.581270"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "3",
+        "borrowed": "false",
+        "us_per_frame": "115.132450"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "4",
+        "borrowed": "false",
+        "us_per_frame": "115.716066"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "4",
+        "borrowed": "true",
+        "us_per_frame": "0.582070"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "5",
+        "borrowed": "true",
+        "us_per_frame": "0.592130"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "5",
+        "borrowed": "false",
+        "us_per_frame": "115.718530"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "6",
+        "borrowed": "false",
+        "us_per_frame": "115.224884"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "1",
+        "sample": "6",
+        "borrowed": "true",
+        "us_per_frame": "0.585018"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "1",
+        "borrowed": "true",
+        "us_per_frame": "0.600024"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "1",
+        "borrowed": "false",
+        "us_per_frame": "462.007674"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "2",
+        "borrowed": "false",
+        "us_per_frame": "465.567790"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "2",
+        "borrowed": "true",
+        "us_per_frame": "0.598782"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "3",
+        "borrowed": "true",
+        "us_per_frame": "0.620062"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "3",
+        "borrowed": "false",
+        "us_per_frame": "477.353026"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "4",
+        "borrowed": "false",
+        "us_per_frame": "508.658844"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "4",
+        "borrowed": "true",
+        "us_per_frame": "0.598702"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "5",
+        "borrowed": "true",
+        "us_per_frame": "0.597240"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "5",
+        "borrowed": "false",
+        "us_per_frame": "498.413894"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "6",
+        "borrowed": "false",
+        "us_per_frame": "497.621448"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "terminals": "4",
+        "sample": "6",
+        "borrowed": "true",
+        "us_per_frame": "0.617958"
+      }
+    ],
+    "typing_frame_pipeline_benchmark": [
+      {
+        "columns": "120",
+        "rows": "40",
+        "payload_bytes": "32256"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "1",
+        "stage": "json_encode",
+        "us_per_frame": "18.254980"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "1",
+        "stage": "json_decode",
+        "us_per_frame": "102.945170"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "1",
+        "stage": "wire_to_core",
+        "us_per_frame": "6.089115"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "1",
+        "stage": "response_clone",
+        "us_per_frame": "3.887590"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "2",
+        "stage": "json_decode",
+        "us_per_frame": "102.987800"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "2",
+        "stage": "wire_to_core",
+        "us_per_frame": "6.146375"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "2",
+        "stage": "response_clone",
+        "us_per_frame": "3.957070"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "2",
+        "stage": "json_encode",
+        "us_per_frame": "18.078950"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "3",
+        "stage": "wire_to_core",
+        "us_per_frame": "5.799625"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "3",
+        "stage": "response_clone",
+        "us_per_frame": "3.940390"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "3",
+        "stage": "json_encode",
+        "us_per_frame": "18.215100"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "3",
+        "stage": "json_decode",
+        "us_per_frame": "103.998090"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "4",
+        "stage": "response_clone",
+        "us_per_frame": "3.927315"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "4",
+        "stage": "json_encode",
+        "us_per_frame": "18.041530"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "4",
+        "stage": "json_decode",
+        "us_per_frame": "103.940685"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "4",
+        "stage": "wire_to_core",
+        "us_per_frame": "5.820565"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "5",
+        "stage": "json_encode",
+        "us_per_frame": "17.956670"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "5",
+        "stage": "json_decode",
+        "us_per_frame": "104.186950"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "5",
+        "stage": "wire_to_core",
+        "us_per_frame": "5.858285"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "5",
+        "stage": "response_clone",
+        "us_per_frame": "4.000300"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "6",
+        "stage": "json_decode",
+        "us_per_frame": "104.078845"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "6",
+        "stage": "wire_to_core",
+        "us_per_frame": "6.139660"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "6",
+        "stage": "response_clone",
+        "us_per_frame": "3.938435"
+      },
+      {
+        "columns": "120",
+        "rows": "40",
+        "sample": "6",
+        "stage": "json_encode",
+        "us_per_frame": "18.136555"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "payload_bytes": "70666"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "1",
+        "stage": "json_encode",
+        "us_per_frame": "38.242855"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "1",
+        "stage": "json_decode",
+        "us_per_frame": "195.173395"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "1",
+        "stage": "wire_to_core",
+        "us_per_frame": "9.937635"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "1",
+        "stage": "response_clone",
+        "us_per_frame": "8.366535"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "2",
+        "stage": "json_decode",
+        "us_per_frame": "191.058580"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "2",
+        "stage": "wire_to_core",
+        "us_per_frame": "11.051820"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "2",
+        "stage": "response_clone",
+        "us_per_frame": "9.045060"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "2",
+        "stage": "json_encode",
+        "us_per_frame": "39.124205"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "3",
+        "stage": "wire_to_core",
+        "us_per_frame": "9.956920"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "3",
+        "stage": "response_clone",
+        "us_per_frame": "8.179035"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "3",
+        "stage": "json_encode",
+        "us_per_frame": "41.593285"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "3",
+        "stage": "json_decode",
+        "us_per_frame": "189.477815"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "4",
+        "stage": "response_clone",
+        "us_per_frame": "8.178885"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "4",
+        "stage": "json_encode",
+        "us_per_frame": "38.806865"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "4",
+        "stage": "json_decode",
+        "us_per_frame": "188.409410"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "4",
+        "stage": "wire_to_core",
+        "us_per_frame": "10.140565"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "5",
+        "stage": "json_encode",
+        "us_per_frame": "38.311935"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "5",
+        "stage": "json_decode",
+        "us_per_frame": "189.017450"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "5",
+        "stage": "wire_to_core",
+        "us_per_frame": "9.975100"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "5",
+        "stage": "response_clone",
+        "us_per_frame": "9.058385"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "6",
+        "stage": "json_decode",
+        "us_per_frame": "189.834735"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "6",
+        "stage": "wire_to_core",
+        "us_per_frame": "9.968990"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "6",
+        "stage": "response_clone",
+        "us_per_frame": "8.347150"
+      },
+      {
+        "columns": "240",
+        "rows": "80",
+        "sample": "6",
+        "stage": "json_encode",
+        "us_per_frame": "40.748400"
+      }
+    ]
+  },
+  "grid_cow": {
+    "quiet": {
+      "busy_cores": 0.72,
+      "waited_seconds": 1.0,
+      "quiet": true
+    },
+    "samples": [
+      {
+        "cols": "120",
+        "rows": "40",
+        "changed_rows": "1",
+        "cells_per_row": "1",
+        "samples": "15",
+        "iterations": "200",
+        "median_us": "0.709",
+        "min_us": "0.690",
+        "max_us": "1.240"
+      },
+      {
+        "cols": "120",
+        "rows": "40",
+        "changed_rows": "1",
+        "cells_per_row": "120",
+        "samples": "15",
+        "iterations": "200",
+        "median_us": "3.440",
+        "min_us": "3.390",
+        "max_us": "5.797"
+      },
+      {
+        "cols": "120",
+        "rows": "40",
+        "changed_rows": "30",
+        "cells_per_row": "1",
+        "samples": "15",
+        "iterations": "200",
+        "median_us": "20.311",
+        "min_us": "19.778",
+        "max_us": "21.832"
+      },
+      {
+        "cols": "120",
+        "rows": "40",
+        "changed_rows": "30",
+        "cells_per_row": "120",
+        "samples": "15",
+        "iterations": "200",
+        "median_us": "144.311",
+        "min_us": "144.039",
+        "max_us": "144.527"
+      },
+      {
+        "cols": "240",
+        "rows": "80",
+        "changed_rows": "1",
+        "cells_per_row": "1",
+        "samples": "15",
+        "iterations": "200",
+        "median_us": "2.083",
+        "min_us": "2.073",
+        "max_us": "2.113"
+      },
+      {
+        "cols": "240",
+        "rows": "80",
+        "changed_rows": "1",
+        "cells_per_row": "240",
+        "samples": "15",
+        "iterations": "200",
+        "median_us": "10.339",
+        "min_us": "10.325",
+        "max_us": "10.404"
+      },
+      {
+        "cols": "240",
+        "rows": "80",
+        "changed_rows": "30",
+        "cells_per_row": "1",
+        "samples": "15",
+        "iterations": "200",
+        "median_us": "58.422",
+        "min_us": "57.842",
+        "max_us": "59.511"
+      },
+      {
+        "cols": "240",
+        "rows": "80",
+        "changed_rows": "30",
+        "cells_per_row": "240",
+        "samples": "15",
+        "iterations": "200",
+        "median_us": "208.925",
+        "min_us": "207.868",
+        "max_us": "279.526"
+      }
+    ],
+    "scope": "Includes backend diff writes, publishing and prior snapshot release; excludes Ratatui diff generation and native painting. Summary of 15 retained batches after warmup, 200 iterations each."
+  },
+  "native_stage_diagnostics": [
+    {
+      "complete": true,
+      "metric": "XSendEvent to calibrated glyphs observed by XGetImage; not physical scanout",
+      "platform": "Linux-7.2.14-arch1-1-x86_64-with-glibc2.44",
+      "geometry_cells": [
+        120,
+        40
+      ],
+      "spacing_seconds": 0.2,
+      "paint_timing": true,
+      "full_width_text_rows": false,
+      "samples_per_case": 12,
+      "binary_sha256": "92f33ca470c5939a0c66c7eda63bde05855a259a096599cdb01b76153f513cd0",
+      "cases": [
+        {
+          "round": 1,
+          "quiet_before": {
+            "busy_cores": 0.72,
+            "waited_seconds": 24.0,
+            "quiet": true
+          },
+          "mode": "ide",
+          "side": "text",
+          "samples": [
+            {
+              "index": 1,
+              "insert_ms": 2.3336450001352205,
+              "delete_ms": 3.245866000042952
+            },
+            {
+              "index": 2,
+              "insert_ms": 2.8815729999678297,
+              "delete_ms": 3.286492000142971
+            },
+            {
+              "index": 3,
+              "insert_ms": 2.9078330001084396,
+              "delete_ms": 3.4762180000598164
+            },
+            {
+              "index": 4,
+              "insert_ms": 3.3158370001729054,
+              "delete_ms": 3.72198899981413
+            },
+            {
+              "index": 5,
+              "insert_ms": 3.18477099995107,
+              "delete_ms": 2.8964309999537363
+            },
+            {
+              "index": 6,
+              "insert_ms": 2.949709999938932,
+              "delete_ms": 2.9663520001577126
+            },
+            {
+              "index": 7,
+              "insert_ms": 2.687948999891887,
+              "delete_ms": 2.9539180000028864
+            },
+            {
+              "index": 8,
+              "insert_ms": 4.336650999903213,
+              "delete_ms": 2.9375679998793203
+            },
+            {
+              "index": 9,
+              "insert_ms": 3.359209000109331,
+              "delete_ms": 3.381761000127881
+            },
+            {
+              "index": 10,
+              "insert_ms": 3.3056580000447866,
+              "delete_ms": 3.741535000017393
+            },
+            {
+              "index": 11,
+              "insert_ms": 2.5501009999970847,
+              "delete_ms": 4.256831000020611
+            },
+            {
+              "index": 12,
+              "insert_ms": 3.002310000056241,
+              "delete_ms": 3.6220810000031634
+            }
+          ],
+          "complete": true,
+          "drm_devices": [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:62:00.0"
+          ],
+          "band_pixels": [
+            90,
+            20,
+            216,
+            20
+          ],
+          "native_paint_trace": [
+            "native-paint 120x40 193us",
+            "native-paint 120x40 346us",
+            "native-paint 120x40 117us",
+            "native-paint 120x40 189us",
+            "native-paint 120x40 464us",
+            "native-paint 120x40 231us",
+            "native-paint 120x40 241us",
+            "native-paint 120x40 408us",
+            "native-paint 120x40 356us",
+            "native-paint 120x40 520us",
+            "native-paint 120x40 344us",
+            "native-paint 120x40 239us",
+            "native-paint 120x40 355us",
+            "native-paint 120x40 348us",
+            "native-paint 120x40 458us",
+            "native-paint 120x40 482us",
+            "native-paint 120x40 341us",
+            "native-paint 120x40 357us",
+            "native-paint 120x40 348us",
+            "native-paint 120x40 520us",
+            "native-paint 120x40 542us",
+            "native-paint 120x40 588us",
+            "native-paint 120x40 536us",
+            "native-paint 120x40 363us",
+            "native-paint 120x40 550us",
+            "native-paint 120x40 356us",
+            "native-paint 120x40 505us"
+          ],
+          "native_stage_trace": [
+            "native-paint-stages prepare_us=41 background_us=18 glyph_us=132 rows=40 segments=78 rebuilt=3 replayed=75 backgrounds=81 styled_cells=2885",
+            "native-paint-stages prepare_us=26 background_us=49 glyph_us=270 rows=40 segments=78 rebuilt=0 replayed=78 backgrounds=81 styled_cells=2885",
+            "native-paint-stages prepare_us=8 background_us=16 glyph_us=91 rows=40 segments=78 rebuilt=0 replayed=78 backgrounds=81 styled_cells=2885",
+            "native-paint-stages prepare_us=36 background_us=18 glyph_us=135 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=110 background_us=45 glyph_us=307 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=61 background_us=23 glyph_us=146 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=49 background_us=24 glyph_us=167 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=94 background_us=45 glyph_us=268 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=76 background_us=35 glyph_us=244 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=107 background_us=56 glyph_us=356 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=49 background_us=25 glyph_us=269 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=48 background_us=25 glyph_us=164 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=76 background_us=34 glyph_us=244 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=73 background_us=36 glyph_us=238 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=100 background_us=49 glyph_us=308 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=112 background_us=58 glyph_us=311 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=74 background_us=34 glyph_us=232 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=69 background_us=37 glyph_us=251 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=72 background_us=34 glyph_us=240 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=108 background_us=57 glyph_us=354 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=109 background_us=54 glyph_us=378 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=134 background_us=93 glyph_us=361 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=111 background_us=53 glyph_us=371 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=69 background_us=36 glyph_us=257 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=110 background_us=53 glyph_us=387 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=70 background_us=37 glyph_us=249 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=111 background_us=53 glyph_us=340 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=2895"
+          ],
+          "native_grid_trace": [
+            "native-grid-diff cols=120 rows=40 changed_cells=55 changed_rows=3 elapsed_us=74",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=38",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=29",
+            "native-grid-diff cols=120 rows=40 changed_cells=62 changed_rows=4 elapsed_us=35",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=64",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=76",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=59",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=49",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=77",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=73",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=49",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=47",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=51",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=82",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=56",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=58",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=49",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=70",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=66",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=72",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=74",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=72",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=114",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=72",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=65"
+          ],
+          "verified_restored_and_inserted": true,
+          "insert_ms": {
+            "count": 12,
+            "median": 2.9760099999975864,
+            "min": 2.3336450001352205,
+            "max": 4.336650999903213,
+            "p95": 4.336650999903213,
+            "p99": 4.336650999903213
+          },
+          "delete_ms": {
+            "count": 12,
+            "median": 3.334126500135426,
+            "min": 2.8964309999537363,
+            "max": 4.256831000020611,
+            "p95": 4.256831000020611,
+            "p99": 4.256831000020611
+          }
+        },
+        {
+          "round": 1,
+          "quiet_before": {
+            "busy_cores": 0.72,
+            "waited_seconds": 1.0,
+            "quiet": true
+          },
+          "mode": "ide",
+          "side": "pdf",
+          "samples": [
+            {
+              "index": 1,
+              "insert_ms": 2.5733749998835265,
+              "delete_ms": 3.0140210001263767
+            },
+            {
+              "index": 2,
+              "insert_ms": 3.9353780000510596,
+              "delete_ms": 5.247037999879467
+            },
+            {
+              "index": 3,
+              "insert_ms": 3.179832000114402,
+              "delete_ms": 3.1196789998375607
+            },
+            {
+              "index": 4,
+              "insert_ms": 2.8262289999929635,
+              "delete_ms": 3.5812350001833693
+            },
+            {
+              "index": 5,
+              "insert_ms": 3.1573500000376953,
+              "delete_ms": 2.980879000006098
+            },
+            {
+              "index": 6,
+              "insert_ms": 2.926437000041915,
+              "delete_ms": 2.8364080001210823
+            },
+            {
+              "index": 7,
+              "insert_ms": 2.9908980000072916,
+              "delete_ms": 2.8357969999888155
+            },
+            {
+              "index": 8,
+              "insert_ms": 2.9580570001144224,
+              "delete_ms": 2.4852399999417685
+            },
+            {
+              "index": 9,
+              "insert_ms": 2.025837999781288,
+              "delete_ms": 2.0998669999698905
+            },
+            {
+              "index": 10,
+              "insert_ms": 2.9173199998240307,
+              "delete_ms": 2.7433839998138865
+            },
+            {
+              "index": 11,
+              "insert_ms": 2.521227999977782,
+              "delete_ms": 2.5680250000732485
+            },
+            {
+              "index": 12,
+              "insert_ms": 2.616235000004963,
+              "delete_ms": 2.7085990000159654
+            }
+          ],
+          "complete": true,
+          "drm_devices": [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:62:00.0"
+          ],
+          "pdf_white_page_pixels": 28360,
+          "band_pixels": [
+            90,
+            20,
+            216,
+            20
+          ],
+          "native_paint_trace": [
+            "native-paint 120x40 172us",
+            "native-paint 120x40 168us",
+            "native-paint 120x40 118us",
+            "native-paint 120x40 152us",
+            "native-paint 120x40 414us",
+            "native-paint 120x40 397us",
+            "native-paint 120x40 452us",
+            "native-paint 120x40 631us",
+            "native-paint 120x40 316us",
+            "native-paint 120x40 400us",
+            "native-paint 120x40 323us",
+            "native-paint 120x40 375us",
+            "native-paint 120x40 480us",
+            "native-paint 120x40 485us",
+            "native-paint 120x40 388us",
+            "native-paint 120x40 308us",
+            "native-paint 120x40 231us",
+            "native-paint 120x40 244us",
+            "native-paint 120x40 234us",
+            "native-paint 120x40 229us",
+            "native-paint 120x40 186us",
+            "native-paint 120x40 181us",
+            "native-paint 120x40 172us",
+            "native-paint 120x40 223us",
+            "native-paint 120x40 217us",
+            "native-paint 120x40 231us",
+            "native-paint 120x40 220us",
+            "native-paint 120x40 221us"
+          ],
+          "native_stage_trace": [
+            "native-paint-stages prepare_us=40 background_us=35 glyph_us=97 rows=40 segments=150 rebuilt=1 replayed=149 backgrounds=117 styled_cells=1672",
+            "native-paint-stages prepare_us=37 background_us=21 glyph_us=109 rows=40 segments=150 rebuilt=3 replayed=147 backgrounds=117 styled_cells=1678",
+            "native-paint-stages prepare_us=11 background_us=22 glyph_us=84 rows=40 segments=150 rebuilt=0 replayed=150 backgrounds=117 styled_cells=1678",
+            "native-paint-stages prepare_us=12 background_us=23 glyph_us=115 rows=40 segments=150 rebuilt=0 replayed=150 backgrounds=117 styled_cells=1678",
+            "native-paint-stages prepare_us=79 background_us=81 glyph_us=253 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=81 background_us=56 glyph_us=259 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=72 background_us=63 glyph_us=317 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=137 background_us=100 glyph_us=393 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=67 background_us=40 glyph_us=207 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=87 background_us=63 glyph_us=250 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=67 background_us=42 glyph_us=213 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=67 background_us=42 glyph_us=266 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=99 background_us=67 glyph_us=313 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=101 background_us=67 glyph_us=315 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=74 background_us=50 glyph_us=264 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=80 background_us=69 glyph_us=158 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=57 background_us=29 glyph_us=143 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=53 background_us=31 glyph_us=160 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=48 background_us=29 glyph_us=155 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=48 background_us=31 glyph_us=149 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=41 background_us=24 glyph_us=120 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=38 background_us=23 glyph_us=119 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=38 background_us=22 glyph_us=110 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=46 background_us=30 glyph_us=146 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=46 background_us=29 glyph_us=141 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=47 background_us=37 glyph_us=147 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=46 background_us=29 glyph_us=144 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=48 background_us=30 glyph_us=142 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688"
+          ],
+          "native_grid_trace": [
+            "native-grid-diff cols=120 rows=40 changed_cells=49 changed_rows=1 elapsed_us=40",
+            "native-grid-diff cols=120 rows=40 changed_cells=37 changed_rows=3 elapsed_us=29",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=36",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=25",
+            "native-grid-diff cols=120 rows=40 changed_cells=62 changed_rows=4 elapsed_us=45",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=41",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=94",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=46",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=55",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=47",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=83",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=92",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=48",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=48",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=79",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=52",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=57",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=46",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=56",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=46",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=34",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=33",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=32",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=47",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=56",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=45",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=82",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=83"
+          ],
+          "verified_restored_and_inserted": true,
+          "insert_ms": {
+            "count": 12,
+            "median": 2.9218784999329728,
+            "min": 2.025837999781288,
+            "max": 3.9353780000510596,
+            "p95": 3.9353780000510596,
+            "p99": 3.9353780000510596
+          },
+          "delete_ms": {
+            "count": 12,
+            "median": 2.836102500054949,
+            "min": 2.0998669999698905,
+            "max": 5.247037999879467,
+            "p95": 5.247037999879467,
+            "p99": 5.247037999879467
+          }
+        },
+        {
+          "round": 1,
+          "quiet_before": {
+            "busy_cores": 0.74,
+            "waited_seconds": 2.0,
+            "quiet": true
+          },
+          "mode": "ide",
+          "side": "terminal",
+          "samples": [
+            {
+              "index": 1,
+              "insert_ms": 3.497216999903685,
+              "delete_ms": 3.7213470000097004
+            },
+            {
+              "index": 2,
+              "insert_ms": 3.524968999954581,
+              "delete_ms": 3.2225429999925836
+            },
+            {
+              "index": 3,
+              "insert_ms": 3.1195389999538747,
+              "delete_ms": 3.469294999831618
+            },
+            {
+              "index": 4,
+              "insert_ms": 3.811957999914739,
+              "delete_ms": 4.016871999965588
+            },
+            {
+              "index": 5,
+              "insert_ms": 3.103709000015442,
+              "delete_ms": 3.3337300001221593
+            },
+            {
+              "index": 6,
+              "insert_ms": 3.7549099999978353,
+              "delete_ms": 3.4879199999977573
+            },
+            {
+              "index": 7,
+              "insert_ms": 2.5020010000389448,
+              "delete_ms": 2.7992789998734224
+            },
+            {
+              "index": 8,
+              "insert_ms": 10.800791000065146,
+              "delete_ms": 2.561012000114715
+            },
+            {
+              "index": 9,
+              "insert_ms": 2.7628699999695527,
+              "delete_ms": 2.5631359999351844
+            },
+            {
+              "index": 10,
+              "insert_ms": 2.5529970000661706,
+              "delete_ms": 3.845530000035069
+            },
+            {
+              "index": 11,
+              "insert_ms": 3.9798320001409593,
+              "delete_ms": 4.3568589999267715
+            },
+            {
+              "index": 12,
+              "insert_ms": 3.919058000064979,
+              "delete_ms": 3.8768790000176523
+            }
+          ],
+          "complete": true,
+          "drm_devices": [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:62:00.0"
+          ],
+          "band_pixels": [
+            90,
+            20,
+            216,
+            20
+          ],
+          "terminal_changed_pixels": 10220,
+          "terminal_update_interval_seconds": 1,
+          "native_paint_trace": [
+            "native-paint 120x40 214us",
+            "native-paint 120x40 934us",
+            "native-paint 120x40 200us",
+            "native-paint 120x40 589us",
+            "native-paint 120x40 370us",
+            "native-paint 120x40 143us",
+            "native-paint 120x40 529us",
+            "native-paint 120x40 286us",
+            "native-paint 120x40 260us",
+            "native-paint 120x40 488us",
+            "native-paint 120x40 265us",
+            "native-paint 120x40 452us",
+            "native-paint 120x40 537us",
+            "native-paint 120x40 253us",
+            "native-paint 120x40 259us",
+            "native-paint 120x40 506us",
+            "native-paint 120x40 420us",
+            "native-paint 120x40 434us",
+            "native-paint 120x40 284us",
+            "native-paint 120x40 259us",
+            "native-paint 120x40 484us",
+            "native-paint 120x40 350us",
+            "native-paint 120x40 264us",
+            "native-paint 120x40 244us",
+            "native-paint 120x40 269us",
+            "native-paint 120x40 262us",
+            "native-paint 120x40 593us",
+            "native-paint 120x40 567us",
+            "native-paint 120x40 543us",
+            "native-paint 120x40 558us",
+            "native-paint 120x40 565us",
+            "native-paint 120x40 366us"
+          ],
+          "native_stage_trace": [
+            "native-paint-stages prepare_us=43 background_us=20 glyph_us=149 rows=40 segments=78 rebuilt=3 replayed=75 backgrounds=81 styled_cells=3118",
+            "native-paint-stages prepare_us=474 background_us=43 glyph_us=416 rows=40 segments=78 rebuilt=30 replayed=48 backgrounds=81 styled_cells=3118",
+            "native-paint-stages prepare_us=43 background_us=19 glyph_us=137 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=145 background_us=71 glyph_us=372 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=29 background_us=49 glyph_us=291 rows=40 segments=78 rebuilt=0 replayed=78 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=10 background_us=19 glyph_us=112 rows=40 segments=78 rebuilt=0 replayed=78 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=137 background_us=69 glyph_us=322 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=54 background_us=24 glyph_us=208 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=55 background_us=26 glyph_us=178 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=249 background_us=20 glyph_us=217 rows=40 segments=78 rebuilt=30 replayed=48 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=56 background_us=27 glyph_us=181 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=94 background_us=45 glyph_us=312 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=98 background_us=59 glyph_us=379 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=54 background_us=26 glyph_us=173 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=55 background_us=26 glyph_us=176 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=250 background_us=20 glyph_us=235 rows=40 segments=78 rebuilt=30 replayed=48 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=71 background_us=36 glyph_us=313 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=77 background_us=38 glyph_us=319 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=71 background_us=31 glyph_us=182 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=49 background_us=26 glyph_us=184 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=247 background_us=21 glyph_us=216 rows=40 segments=78 rebuilt=30 replayed=48 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=73 background_us=34 glyph_us=243 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=51 background_us=25 glyph_us=187 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=47 background_us=25 glyph_us=171 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=49 background_us=25 glyph_us=193 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=49 background_us=25 glyph_us=188 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=312 background_us=22 glyph_us=258 rows=40 segments=78 rebuilt=30 replayed=48 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=113 background_us=56 glyph_us=398 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=111 background_us=56 glyph_us=375 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=113 background_us=56 glyph_us=388 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=109 background_us=56 glyph_us=399 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=73 background_us=36 glyph_us=256 rows=40 segments=78 rebuilt=4 replayed=74 backgrounds=81 styled_cells=3128"
+          ],
+          "native_grid_trace": [
+            "native-grid-diff cols=120 rows=40 changed_cells=55 changed_rows=3 elapsed_us=65",
+            "native-grid-diff cols=120 rows=40 changed_cells=180 changed_rows=30 elapsed_us=99",
+            "native-grid-diff cols=120 rows=40 changed_cells=62 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=68",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=58",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=58",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=180 changed_rows=30 elapsed_us=89",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=69",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=69",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=68",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=71",
+            "native-grid-diff cols=120 rows=40 changed_cells=180 changed_rows=30 elapsed_us=119",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=87",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=49",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=47",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=47",
+            "native-grid-diff cols=120 rows=40 changed_cells=180 changed_rows=30 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=53",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=45",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=46",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=50",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=46",
+            "native-grid-diff cols=120 rows=40 changed_cells=180 changed_rows=30 elapsed_us=94",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=68",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=71",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=73",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=87"
+          ],
+          "verified_restored_and_inserted": true,
+          "insert_ms": {
+            "count": 12,
+            "median": 3.511092999929133,
+            "min": 2.5020010000389448,
+            "max": 10.800791000065146,
+            "p95": 10.800791000065146,
+            "p99": 10.800791000065146
+          },
+          "delete_ms": {
+            "count": 12,
+            "median": 3.4786074999146877,
+            "min": 2.561012000114715,
+            "max": 4.3568589999267715,
+            "p95": 4.3568589999267715,
+            "p99": 4.3568589999267715
+          }
+        }
+      ]
+    },
+    {
+      "complete": true,
+      "metric": "XSendEvent to calibrated glyphs observed by XGetImage; not physical scanout",
+      "platform": "Linux-7.2.14-arch1-1-x86_64-with-glibc2.44",
+      "geometry_cells": [
+        120,
+        40
+      ],
+      "spacing_seconds": 0.2,
+      "paint_timing": true,
+      "full_width_text_rows": true,
+      "samples_per_case": 12,
+      "binary_sha256": "92f33ca470c5939a0c66c7eda63bde05855a259a096599cdb01b76153f513cd0",
+      "cases": [
+        {
+          "round": 1,
+          "quiet_before": {
+            "busy_cores": 0.59,
+            "waited_seconds": 1.0,
+            "quiet": true
+          },
+          "mode": "ide",
+          "side": "text",
+          "samples": [
+            {
+              "index": 1,
+              "insert_ms": 2.525855000158117,
+              "delete_ms": 2.7790310000455065
+            },
+            {
+              "index": 2,
+              "insert_ms": 1.90037300012591,
+              "delete_ms": 1.8092129998876771
+            },
+            {
+              "index": 3,
+              "insert_ms": 2.6779009999700065,
+              "delete_ms": 2.623688999847218
+            },
+            {
+              "index": 4,
+              "insert_ms": 1.7877320001389307,
+              "delete_ms": 2.6829800001451076
+            },
+            {
+              "index": 5,
+              "insert_ms": 2.7272130000710604,
+              "delete_ms": 1.9598940000378207
+            },
+            {
+              "index": 6,
+              "insert_ms": 2.814576999981,
+              "delete_ms": 3.177718000188179
+            },
+            {
+              "index": 7,
+              "insert_ms": 2.493514999969193,
+              "delete_ms": 3.1540640000002895
+            },
+            {
+              "index": 8,
+              "insert_ms": 3.921573000070566,
+              "delete_ms": 2.8566459998273785
+            },
+            {
+              "index": 9,
+              "insert_ms": 2.886391999936677,
+              "delete_ms": 3.8073579999036156
+            },
+            {
+              "index": 10,
+              "insert_ms": 2.651902000025075,
+              "delete_ms": 3.529839000066204
+            },
+            {
+              "index": 11,
+              "insert_ms": 3.3540489998813428,
+              "delete_ms": 3.7109079999027017
+            },
+            {
+              "index": 12,
+              "insert_ms": 2.98583900007543,
+              "delete_ms": 3.6158289999548288
+            }
+          ],
+          "complete": true,
+          "drm_devices": [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:62:00.0"
+          ],
+          "band_pixels": [
+            90,
+            20,
+            216,
+            20
+          ],
+          "native_paint_trace": [
+            "native-paint 120x40 135us",
+            "native-paint 120x40 159us",
+            "native-paint 120x40 184us",
+            "native-paint 120x40 163us",
+            "native-paint 120x40 184us",
+            "native-paint 120x40 190us",
+            "native-paint 120x40 206us",
+            "native-paint 120x40 184us",
+            "native-paint 120x40 209us",
+            "native-paint 120x40 283us",
+            "native-paint 120x40 168us",
+            "native-paint 120x40 174us",
+            "native-paint 120x40 359us",
+            "native-paint 120x40 178us",
+            "native-paint 120x40 408us",
+            "native-paint 120x40 407us",
+            "native-paint 120x40 174us",
+            "native-paint 120x40 231us",
+            "native-paint 120x40 424us",
+            "native-paint 120x40 398us",
+            "native-paint 120x40 278us",
+            "native-paint 120x40 493us",
+            "native-paint 120x40 299us",
+            "native-paint 120x40 434us",
+            "native-paint 120x40 306us",
+            "native-paint 120x40 495us",
+            "native-paint 120x40 314us",
+            "native-paint 120x40 397us"
+          ],
+          "native_stage_trace": [
+            "native-paint-stages prepare_us=16 background_us=19 glyph_us=99 rows=40 segments=40 rebuilt=1 replayed=39 backgrounds=81 styled_cells=2879",
+            "native-paint-stages prepare_us=32 background_us=18 glyph_us=108 rows=40 segments=40 rebuilt=3 replayed=37 backgrounds=81 styled_cells=2885",
+            "native-paint-stages prepare_us=11 background_us=29 glyph_us=143 rows=40 segments=40 rebuilt=0 replayed=40 backgrounds=81 styled_cells=2885",
+            "native-paint-stages prepare_us=10 background_us=26 glyph_us=126 rows=40 segments=40 rebuilt=0 replayed=40 backgrounds=81 styled_cells=2885",
+            "native-paint-stages prepare_us=36 background_us=19 glyph_us=128 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=35 background_us=18 glyph_us=136 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=35 background_us=19 glyph_us=151 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=34 background_us=18 glyph_us=131 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=48 background_us=28 glyph_us=132 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=52 background_us=26 glyph_us=204 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=33 background_us=18 glyph_us=115 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=35 background_us=19 glyph_us=120 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=42 background_us=22 glyph_us=294 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=34 background_us=19 glyph_us=123 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=90 background_us=52 glyph_us=264 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=88 background_us=45 glyph_us=272 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=34 background_us=19 glyph_us=120 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=51 background_us=25 glyph_us=154 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=81 background_us=52 glyph_us=290 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=92 background_us=44 glyph_us=260 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=54 background_us=29 glyph_us=194 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=106 background_us=55 glyph_us=332 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=66 background_us=34 glyph_us=199 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=99 background_us=51 glyph_us=282 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=68 background_us=35 glyph_us=203 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=111 background_us=62 glyph_us=321 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895",
+            "native-paint-stages prepare_us=67 background_us=34 glyph_us=212 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2860",
+            "native-paint-stages prepare_us=88 background_us=47 glyph_us=260 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=2895"
+          ],
+          "native_grid_trace": [
+            "native-grid-diff cols=120 rows=40 changed_cells=49 changed_rows=1 elapsed_us=36",
+            "native-grid-diff cols=120 rows=40 changed_cells=37 changed_rows=3 elapsed_us=33",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=37",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=40",
+            "native-grid-diff cols=120 rows=40 changed_cells=62 changed_rows=4 elapsed_us=45",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=57",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=38",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=35",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=78",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=42",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=39",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=41",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=59",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=43",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=43",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=34",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=80",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=70",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=55",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=52",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=61",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=45",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=51",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=91",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=54",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=89",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=49",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=56"
+          ],
+          "verified_restored_and_inserted": true,
+          "insert_ms": {
+            "count": 12,
+            "median": 2.7025570000205335,
+            "min": 1.7877320001389307,
+            "max": 3.921573000070566,
+            "p95": 3.921573000070566,
+            "p99": 3.921573000070566
+          },
+          "delete_ms": {
+            "count": 12,
+            "median": 3.005354999913834,
+            "min": 1.8092129998876771,
+            "max": 3.8073579999036156,
+            "p95": 3.8073579999036156,
+            "p99": 3.8073579999036156
+          }
+        },
+        {
+          "round": 1,
+          "quiet_before": {
+            "busy_cores": 0.77,
+            "waited_seconds": 1.0,
+            "quiet": true
+          },
+          "mode": "ide",
+          "side": "pdf",
+          "samples": [
+            {
+              "index": 1,
+              "insert_ms": 2.739846999929796,
+              "delete_ms": 4.07835700002579
+            },
+            {
+              "index": 2,
+              "insert_ms": 3.345803000001979,
+              "delete_ms": 3.197604999968462
+            },
+            {
+              "index": 3,
+              "insert_ms": 2.658174000089275,
+              "delete_ms": 3.897788000131186
+            },
+            {
+              "index": 4,
+              "insert_ms": 3.2879750001484354,
+              "delete_ms": 3.322349999962171
+            },
+            {
+              "index": 5,
+              "insert_ms": 2.915716999950746,
+              "delete_ms": 3.2729469999139837
+            },
+            {
+              "index": 6,
+              "insert_ms": 3.0595959999573097,
+              "delete_ms": 3.127203000076406
+            },
+            {
+              "index": 7,
+              "insert_ms": 4.926787999920634,
+              "delete_ms": 3.9027279999572784
+            },
+            {
+              "index": 8,
+              "insert_ms": 3.319304000115153,
+              "delete_ms": 3.1414100001256884
+            },
+            {
+              "index": 9,
+              "insert_ms": 3.277956000147242,
+              "delete_ms": 3.25221700018119
+            },
+            {
+              "index": 10,
+              "insert_ms": 3.589500000089174,
+              "delete_ms": 4.849933000059536
+            },
+            {
+              "index": 11,
+              "insert_ms": 3.631729000062478,
+              "delete_ms": 3.8915960001304484
+            },
+            {
+              "index": 12,
+              "insert_ms": 3.221029999849634,
+              "delete_ms": 3.1912340000417316
+            }
+          ],
+          "complete": true,
+          "drm_devices": [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:62:00.0"
+          ],
+          "pdf_white_page_pixels": 28360,
+          "band_pixels": [
+            90,
+            20,
+            216,
+            20
+          ],
+          "native_paint_trace": [
+            "native-paint 120x40 169us",
+            "native-paint 120x40 250us",
+            "native-paint 120x40 282us",
+            "native-paint 120x40 185us",
+            "native-paint 120x40 358us",
+            "native-paint 120x40 402us",
+            "native-paint 120x40 272us",
+            "native-paint 120x40 219us",
+            "native-paint 120x40 388us",
+            "native-paint 120x40 348us",
+            "native-paint 120x40 222us",
+            "native-paint 120x40 238us",
+            "native-paint 120x40 488us",
+            "native-paint 120x40 304us",
+            "native-paint 120x40 251us",
+            "native-paint 120x40 492us",
+            "native-paint 120x40 490us",
+            "native-paint 120x40 431us",
+            "native-paint 120x40 481us",
+            "native-paint 120x40 486us",
+            "native-paint 120x40 224us",
+            "native-paint 120x40 477us",
+            "native-paint 120x40 383us",
+            "native-paint 120x40 300us",
+            "native-paint 120x40 483us",
+            "native-paint 120x40 375us",
+            "native-paint 120x40 387us"
+          ],
+          "native_stage_trace": [
+            "native-paint-stages prepare_us=36 background_us=23 glyph_us=109 rows=40 segments=150 rebuilt=3 replayed=147 backgrounds=117 styled_cells=1678",
+            "native-paint-stages prepare_us=16 background_us=47 glyph_us=186 rows=40 segments=150 rebuilt=0 replayed=150 backgrounds=117 styled_cells=1678",
+            "native-paint-stages prepare_us=11 background_us=50 glyph_us=221 rows=40 segments=150 rebuilt=0 replayed=150 backgrounds=117 styled_cells=1678",
+            "native-paint-stages prepare_us=47 background_us=23 glyph_us=114 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=73 background_us=56 glyph_us=228 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=96 background_us=56 glyph_us=250 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=39 background_us=23 glyph_us=209 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=46 background_us=30 glyph_us=143 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=79 background_us=53 glyph_us=255 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=81 background_us=55 glyph_us=211 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=48 background_us=30 glyph_us=143 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=48 background_us=30 glyph_us=160 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=123 background_us=68 glyph_us=297 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=67 background_us=41 glyph_us=195 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=79 background_us=29 glyph_us=142 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=104 background_us=74 glyph_us=313 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=102 background_us=67 glyph_us=320 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=102 background_us=64 glyph_us=264 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=104 background_us=66 glyph_us=309 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=108 background_us=66 glyph_us=312 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=48 background_us=31 glyph_us=144 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=101 background_us=66 glyph_us=310 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=66 background_us=42 glyph_us=275 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=64 background_us=42 glyph_us=193 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=98 background_us=66 glyph_us=318 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688",
+            "native-paint-stages prepare_us=80 background_us=52 glyph_us=242 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1653",
+            "native-paint-stages prepare_us=85 background_us=53 glyph_us=247 rows=40 segments=150 rebuilt=4 replayed=146 backgrounds=117 styled_cells=1688"
+          ],
+          "native_grid_trace": [
+            "native-grid-diff cols=120 rows=40 changed_cells=55 changed_rows=3 elapsed_us=94",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=60",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=53",
+            "native-grid-diff cols=120 rows=40 changed_cells=62 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=81",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=86",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=65",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=44",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=78",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=81",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=84",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=84",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=54",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=55",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=85",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=59",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=46",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=55",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=47",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=48",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=56",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=91",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=110",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=75",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=64",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=73"
+          ],
+          "verified_restored_and_inserted": true,
+          "insert_ms": {
+            "count": 12,
+            "median": 3.2829655001478386,
+            "min": 2.658174000089275,
+            "max": 4.926787999920634,
+            "p95": 4.926787999920634,
+            "p99": 4.926787999920634
+          },
+          "delete_ms": {
+            "count": 12,
+            "median": 3.2976484999380773,
+            "min": 3.127203000076406,
+            "max": 4.849933000059536,
+            "p95": 4.849933000059536,
+            "p99": 4.849933000059536
+          }
+        },
+        {
+          "round": 1,
+          "quiet_before": {
+            "busy_cores": 0.53,
+            "waited_seconds": 1.0,
+            "quiet": true
+          },
+          "mode": "ide",
+          "side": "terminal",
+          "samples": [
+            {
+              "index": 1,
+              "insert_ms": 3.642528999989736,
+              "delete_ms": 2.83711899987793
+            },
+            {
+              "index": 2,
+              "insert_ms": 3.4779109998908098,
+              "delete_ms": 3.780718000143679
+            },
+            {
+              "index": 3,
+              "insert_ms": 2.9277099999944767,
+              "delete_ms": 3.8404399999762973
+            },
+            {
+              "index": 4,
+              "insert_ms": 4.398367000021608,
+              "delete_ms": 4.052879000028042
+            },
+            {
+              "index": 5,
+              "insert_ms": 4.042178999952739,
+              "delete_ms": 3.630887999861443
+            },
+            {
+              "index": 6,
+              "insert_ms": 3.140668000014557,
+              "delete_ms": 3.1001729998934024
+            },
+            {
+              "index": 7,
+              "insert_ms": 3.9058929999100656,
+              "delete_ms": 3.650143999948341
+            },
+            {
+              "index": 8,
+              "insert_ms": 3.6592920000657614,
+              "delete_ms": 3.8533039996764273
+            },
+            {
+              "index": 9,
+              "insert_ms": 4.7727490000397665,
+              "delete_ms": 3.5302490000503894
+            },
+            {
+              "index": 10,
+              "insert_ms": 3.6411270002645324,
+              "delete_ms": 16.637835999972594
+            },
+            {
+              "index": 11,
+              "insert_ms": 4.209602999708295,
+              "delete_ms": 4.069120000167459
+            },
+            {
+              "index": 12,
+              "insert_ms": 3.0186099997990823,
+              "delete_ms": 3.504802000406926
+            }
+          ],
+          "complete": true,
+          "drm_devices": [
+            "drm-driver:\tamdgpu",
+            "drm-pdev:\t0000:62:00.0"
+          ],
+          "band_pixels": [
+            90,
+            20,
+            216,
+            20
+          ],
+          "terminal_changed_pixels": 10220,
+          "terminal_update_interval_seconds": 1,
+          "native_paint_trace": [
+            "native-paint 120x40 140us",
+            "native-paint 120x40 382us",
+            "native-paint 120x40 968us",
+            "native-paint 120x40 455us",
+            "native-paint 120x40 209us",
+            "native-paint 120x40 294us",
+            "native-paint 120x40 306us",
+            "native-paint 120x40 430us",
+            "native-paint 120x40 404us",
+            "native-paint 120x40 267us",
+            "native-paint 120x40 920us",
+            "native-paint 120x40 406us",
+            "native-paint 120x40 440us",
+            "native-paint 120x40 517us",
+            "native-paint 120x40 529us",
+            "native-paint 120x40 520us",
+            "native-paint 120x40 768us",
+            "native-paint 120x40 321us",
+            "native-paint 120x40 329us",
+            "native-paint 120x40 322us",
+            "native-paint 120x40 323us",
+            "native-paint 120x40 351us",
+            "native-paint 120x40 922us",
+            "native-paint 120x40 416us",
+            "native-paint 120x40 505us",
+            "native-paint 120x40 320us",
+            "native-paint 120x40 368us",
+            "native-paint 120x40 903us",
+            "native-paint 120x40 222us",
+            "native-paint 120x40 374us",
+            "native-paint 120x40 466us",
+            "native-paint 120x40 234us",
+            "native-paint 120x40 234us"
+          ],
+          "native_stage_trace": [
+            "native-paint-stages prepare_us=16 background_us=18 glyph_us=104 rows=40 segments=40 rebuilt=1 replayed=39 backgrounds=81 styled_cells=3112",
+            "native-paint-stages prepare_us=71 background_us=43 glyph_us=267 rows=40 segments=40 rebuilt=3 replayed=37 backgrounds=81 styled_cells=3118",
+            "native-paint-stages prepare_us=445 background_us=41 glyph_us=482 rows=40 segments=40 rebuilt=30 replayed=10 backgrounds=81 styled_cells=3118",
+            "native-paint-stages prepare_us=84 background_us=45 glyph_us=326 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=35 background_us=20 glyph_us=153 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=22 background_us=42 glyph_us=230 rows=40 segments=40 rebuilt=0 replayed=40 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=22 background_us=41 glyph_us=242 rows=40 segments=40 rebuilt=0 replayed=40 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=85 background_us=51 glyph_us=294 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=84 background_us=44 glyph_us=275 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=44 background_us=25 glyph_us=197 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=430 background_us=39 glyph_us=450 rows=40 segments=40 rebuilt=30 replayed=10 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=84 background_us=43 glyph_us=278 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=68 background_us=35 glyph_us=336 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=108 background_us=53 glyph_us=355 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=106 background_us=53 glyph_us=369 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=108 background_us=53 glyph_us=358 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=384 background_us=30 glyph_us=352 rows=40 segments=40 rebuilt=30 replayed=10 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=71 background_us=34 glyph_us=215 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=69 background_us=34 glyph_us=225 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=68 background_us=34 glyph_us=218 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=67 background_us=34 glyph_us=222 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=50 background_us=24 glyph_us=276 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=444 background_us=38 glyph_us=440 rows=40 segments=40 rebuilt=30 replayed=10 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=93 background_us=42 glyph_us=279 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=113 background_us=53 glyph_us=338 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=66 background_us=34 glyph_us=219 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=79 background_us=39 glyph_us=249 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=606 background_us=29 glyph_us=267 rows=40 segments=40 rebuilt=30 replayed=10 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=47 background_us=22 glyph_us=152 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=64 background_us=35 glyph_us=275 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=87 background_us=57 glyph_us=322 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128",
+            "native-paint-stages prepare_us=46 background_us=27 glyph_us=161 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3093",
+            "native-paint-stages prepare_us=45 background_us=25 glyph_us=163 rows=40 segments=40 rebuilt=4 replayed=36 backgrounds=81 styled_cells=3128"
+          ],
+          "native_grid_trace": [
+            "native-grid-diff cols=120 rows=40 changed_cells=49 changed_rows=1 elapsed_us=33",
+            "native-grid-diff cols=120 rows=40 changed_cells=37 changed_rows=3 elapsed_us=30",
+            "native-grid-diff cols=120 rows=40 changed_cells=180 changed_rows=30 elapsed_us=52",
+            "native-grid-diff cols=120 rows=40 changed_cells=62 changed_rows=4 elapsed_us=39",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=33",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=60",
+            "native-grid-diff cols=120 rows=40 changed_cells=0 changed_rows=0 elapsed_us=31",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=36",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=49",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=49",
+            "native-grid-diff cols=120 rows=40 changed_cells=180 changed_rows=30 elapsed_us=65",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=74",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=46",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=45",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=46",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=48",
+            "native-grid-diff cols=120 rows=40 changed_cells=180 changed_rows=30 elapsed_us=68",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=49",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=46",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=66",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=69",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=180 changed_rows=30 elapsed_us=93",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=66",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=67",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=65",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=73",
+            "native-grid-diff cols=120 rows=40 changed_cells=180 changed_rows=30 elapsed_us=97",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=64",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=66",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=66",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=51",
+            "native-grid-diff cols=120 rows=40 changed_cells=72 changed_rows=4 elapsed_us=84"
+          ],
+          "verified_restored_and_inserted": true,
+          "insert_ms": {
+            "count": 12,
+            "median": 3.6509105000277486,
+            "min": 2.9277099999944767,
+            "max": 4.7727490000397665,
+            "p95": 4.7727490000397665,
+            "p99": 4.7727490000397665
+          },
+          "delete_ms": {
+            "count": 12,
+            "median": 3.71543100004601,
+            "min": 2.83711899987793,
+            "max": 16.637835999972594,
+            "p95": 16.637835999972594,
+            "p99": 16.637835999972594
+          }
+        }
+      ]
+    }
+  ],
+  "binaries": {
+    "baseline-diagnostic-desktop": {
+      "bytes": 111910424,
+      "sha256": "92f33ca470c5939a0c66c7eda63bde05855a259a096599cdb01b76153f513cd0"
+    },
+    "baseline-diagnostic-core": {
+      "bytes": 61112328,
+      "sha256": "498adb98ed308bdd5b24d4c6c3849ef5b883db30edb264ce656076c38425f25b"
+    }
+  },
+  "scene_replay": {
+    "quiet": {
+      "busy_cores": 1.0,
+      "waited_seconds": 9.0,
+      "quiet": true
+    },
+    "source_sha256": {
+      "Cargo.toml": "64a819d3d0c49d24e27ddaa6eb8fdb2424e65173c9b5efab3d1e26f8d5114b31",
+      "Cargo.lock": "f5944ec66c74861e1a59660a6d4cb2d1ddaad39459f6b299f409e028dee08a07",
+      "vendor/gpui/Cargo.toml": "72ae6ecf1b194ea8bb463b4ff964325f75fcd7b9db0ee3a388dfd60892db2ca6",
+      "vendor/gpui/src/scene.rs": "036586d78c7010525d40806853985630ddbdb649884c3a18ffcd1d366addf021",
+      "vendor/gpui/src/scene/replay_tests.rs": "028f0d1520cf5f0b1b80a752004a05273ec56e63ba2e5db546aae0447692e468",
+      "vendor/gpui/src/bounds_tree.rs": "34d942b65da306c4fe2ce21751d76091e810e57aaa388f14ccfd480cd11c7e4e",
+      "vendor/gpui/src/geometry.rs": "fc21881db122d979db4d50c718ae36ac52749c2746345de261089a80c8ec8055"
+    },
+    "binary_sha256": "f07b2e74d38c3be3baf75c3004cc2a74d55bba24acf068cfd5da169c570524aa",
+    "samples": [
+      {
+        "partitions": "1",
+        "round": "0",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "11746274"
+      },
+      {
+        "partitions": "1",
+        "round": "0",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "7135479"
+      },
+      {
+        "partitions": "1",
+        "round": "0",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "7228042"
+      },
+      {
+        "partitions": "1",
+        "round": "0",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "11947602"
+      },
+      {
+        "partitions": "1",
+        "round": "1",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "11891978"
+      },
+      {
+        "partitions": "1",
+        "round": "1",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "7202274"
+      },
+      {
+        "partitions": "1",
+        "round": "1",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "7229205"
+      },
+      {
+        "partitions": "1",
+        "round": "1",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "12032481"
+      },
+      {
+        "partitions": "1",
+        "round": "2",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "11897468"
+      },
+      {
+        "partitions": "1",
+        "round": "2",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "7208195"
+      },
+      {
+        "partitions": "1",
+        "round": "2",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "7254943"
+      },
+      {
+        "partitions": "1",
+        "round": "2",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "12067957"
+      },
+      {
+        "partitions": "1",
+        "round": "3",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "11920241"
+      },
+      {
+        "partitions": "1",
+        "round": "3",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "7250244"
+      },
+      {
+        "partitions": "1",
+        "round": "3",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "7341746"
+      },
+      {
+        "partitions": "1",
+        "round": "3",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "12062667"
+      },
+      {
+        "partitions": "2",
+        "round": "0",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "12547436"
+      },
+      {
+        "partitions": "2",
+        "round": "0",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "7973280"
+      },
+      {
+        "partitions": "2",
+        "round": "0",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "8056717"
+      },
+      {
+        "partitions": "2",
+        "round": "0",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "12727243"
+      },
+      {
+        "partitions": "2",
+        "round": "1",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "12654808"
+      },
+      {
+        "partitions": "2",
+        "round": "1",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "8529092"
+      },
+      {
+        "partitions": "2",
+        "round": "1",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "8033212"
+      },
+      {
+        "partitions": "2",
+        "round": "1",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "12731161"
+      },
+      {
+        "partitions": "2",
+        "round": "2",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "12621204"
+      },
+      {
+        "partitions": "2",
+        "round": "2",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "8030797"
+      },
+      {
+        "partitions": "2",
+        "round": "2",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "8019447"
+      },
+      {
+        "partitions": "2",
+        "round": "2",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "12675576"
+      },
+      {
+        "partitions": "2",
+        "round": "3",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "12474320"
+      },
+      {
+        "partitions": "2",
+        "round": "3",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "7938143"
+      },
+      {
+        "partitions": "2",
+        "round": "3",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "8053450"
+      },
+      {
+        "partitions": "2",
+        "round": "3",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "12582783"
+      },
+      {
+        "partitions": "4",
+        "round": "0",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "13821706"
+      },
+      {
+        "partitions": "4",
+        "round": "0",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "9464435"
+      },
+      {
+        "partitions": "4",
+        "round": "0",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "9447013"
+      },
+      {
+        "partitions": "4",
+        "round": "0",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "13935709"
+      },
+      {
+        "partitions": "4",
+        "round": "1",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "13801678"
+      },
+      {
+        "partitions": "4",
+        "round": "1",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "9300077"
+      },
+      {
+        "partitions": "4",
+        "round": "1",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "9349661"
+      },
+      {
+        "partitions": "4",
+        "round": "1",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "13919058"
+      },
+      {
+        "partitions": "4",
+        "round": "2",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "13830852"
+      },
+      {
+        "partitions": "4",
+        "round": "2",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "9284608"
+      },
+      {
+        "partitions": "4",
+        "round": "2",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "9428198"
+      },
+      {
+        "partitions": "4",
+        "round": "2",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "13994309"
+      },
+      {
+        "partitions": "4",
+        "round": "3",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "13814983"
+      },
+      {
+        "partitions": "4",
+        "round": "3",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "9499952"
+      },
+      {
+        "partitions": "4",
+        "round": "3",
+        "candidate": "true",
+        "iterations": "100",
+        "elapsed_ns": "9402610"
+      },
+      {
+        "partitions": "4",
+        "round": "3",
+        "candidate": "false",
+        "iterations": "100",
+        "elapsed_ns": "13956188"
+      }
+    ],
+    "scope": "Synthetic 4,800 glyphs at 120x40, 1/2/4 partitions per row; includes clear plus replay; same-binary ABBA, eight samples per implementation after warmup. Semantic equivalence checked first. These samples precede production helper extraction."
+  },
+  "excluded_topology_passes": [
+    {
+      "reason": "Stopped after the machine failed its quiet check; competing compilation in another checkout. Excluded from comparisons.",
+      "data": {
+        "complete": false,
+        "metric": "XSendEvent to calibrated glyphs observed by XGetImage; not physical scanout",
+        "platform": "Linux-7.2.14-arch1-1-x86_64-with-glibc2.44",
+        "geometry_cells": [
+          120,
+          40
+        ],
+        "spacing_seconds": 0.2,
+        "paint_timing": false,
+        "full_width_text_rows": false,
+        "samples_per_case": 40,
+        "binary_sha256": "92f33ca470c5939a0c66c7eda63bde05855a259a096599cdb01b76153f513cd0",
+        "cases": [
+          {
+            "round": 1,
+            "quiet_before": {
+              "busy_cores": 0.92,
+              "waited_seconds": 1.0,
+              "quiet": true
+            },
+            "mode": "ide",
+            "side": "text",
+            "samples": [
+              {
+                "index": 1,
+                "insert_ms": 2.9542389997914142,
+                "delete_ms": 2.2190199997567106
+              },
+              {
+                "index": 2,
+                "insert_ms": 3.0750760001865274,
+                "delete_ms": 2.604733999760356
+              },
+              {
+                "index": 3,
+                "insert_ms": 2.967063000141934,
+                "delete_ms": 2.8774949996659416
+              },
+              {
+                "index": 4,
+                "insert_ms": 2.515506999770878,
+                "delete_ms": 2.402804999746877
+              },
+              {
+                "index": 5,
+                "insert_ms": 2.058790000319277,
+                "delete_ms": 2.7554160001272976
+              },
+              {
+                "index": 6,
+                "insert_ms": 2.311593999820616,
+                "delete_ms": 3.0346300000019255
+              },
+              {
+                "index": 7,
+                "insert_ms": 3.6770040001101734,
+                "delete_ms": 2.9582359998130414
+              },
+              {
+                "index": 8,
+                "insert_ms": 3.1206010003188567,
+                "delete_ms": 3.7829230000170355
+              },
+              {
+                "index": 9,
+                "insert_ms": 2.7452780000203347,
+                "delete_ms": 4.182001000117452
+              },
+              {
+                "index": 10,
+                "insert_ms": 3.103079000084108,
+                "delete_ms": 2.9908880001130456
+              },
+              {
+                "index": 11,
+                "insert_ms": 3.8839520002511563,
+                "delete_ms": 2.9085040000609297
+              },
+              {
+                "index": 12,
+                "insert_ms": 3.349790999891411,
+                "delete_ms": 2.913712999998097
+              },
+              {
+                "index": 13,
+                "insert_ms": 3.672837000067375,
+                "delete_ms": 2.967984999941109
+              },
+              {
+                "index": 14,
+                "insert_ms": 2.537126999868633,
+                "delete_ms": 2.9853870000806637
+              },
+              {
+                "index": 15,
+                "insert_ms": 3.5518199997568445,
+                "delete_ms": 3.363545999945927
+              },
+              {
+                "index": 16,
+                "insert_ms": 3.5701540000445675,
+                "delete_ms": 2.6394890001029125
+              },
+              {
+                "index": 17,
+                "insert_ms": 3.2272409998768126,
+                "delete_ms": 3.238382000290585
+              },
+              {
+                "index": 18,
+                "insert_ms": 4.21647600023789,
+                "delete_ms": 3.9247790000445093
+              },
+              {
+                "index": 19,
+                "insert_ms": 3.3972189999076363,
+                "delete_ms": 3.383634000329039
+              },
+              {
+                "index": 20,
+                "insert_ms": 3.59483000011096,
+                "delete_ms": 2.9214080000201648
+              },
+              {
+                "index": 21,
+                "insert_ms": 3.8473440004054282,
+                "delete_ms": 2.917650000199501
+              },
+              {
+                "index": 22,
+                "insert_ms": 3.440290999606077,
+                "delete_ms": 3.1933379996189615
+              },
+              {
+                "index": 23,
+                "insert_ms": 3.5267629996269534,
+                "delete_ms": 3.1917049996081914
+              },
+              {
+                "index": 24,
+                "insert_ms": 4.090029000053619,
+                "delete_ms": 3.966556999785098
+              },
+              {
+                "index": 25,
+                "insert_ms": 3.9388549998875533,
+                "delete_ms": 3.924197000287677
+              },
+              {
+                "index": 26,
+                "insert_ms": 3.406205999908707,
+                "delete_ms": 4.290755000056379
+              },
+              {
+                "index": 27,
+                "insert_ms": 4.407584000091447,
+                "delete_ms": 3.1732400002510985
+              },
+              {
+                "index": 28,
+                "insert_ms": 5.128135000177281,
+                "delete_ms": 4.758701999890036
+              },
+              {
+                "index": 29,
+                "insert_ms": 4.278141000213509,
+                "delete_ms": 5.429589999948803
+              },
+              {
+                "index": 30,
+                "insert_ms": 3.670621999845025,
+                "delete_ms": 4.4683890000669635
+              },
+              {
+                "index": 31,
+                "insert_ms": 4.6305930000016815,
+                "delete_ms": 4.643366999971477
+              },
+              {
+                "index": 32,
+                "insert_ms": 4.62883900036104,
+                "delete_ms": 4.392667000047368
+              },
+              {
+                "index": 33,
+                "insert_ms": 3.7270080001690076,
+                "delete_ms": 3.9567790004184644
+              },
+              {
+                "index": 34,
+                "insert_ms": 3.997735000211833,
+                "delete_ms": 4.323576999922807
+              },
+              {
+                "index": 35,
+                "insert_ms": 4.0524890000597225,
+                "delete_ms": 4.107892000320135
+              },
+              {
+                "index": 36,
+                "insert_ms": 2.834675000030984,
+                "delete_ms": 3.5312009999870497
+              },
+              {
+                "index": 37,
+                "insert_ms": 2.782597999612335,
+                "delete_ms": 3.5372729998925934
+              },
+              {
+                "index": 38,
+                "insert_ms": 4.205234999972163,
+                "delete_ms": 2.881812999930844
+              },
+              {
+                "index": 39,
+                "insert_ms": 3.3683859996926913,
+                "delete_ms": 2.91131799986033
+              },
+              {
+                "index": 40,
+                "insert_ms": 2.9257350001898885,
+                "delete_ms": 3.053043999898364
+              }
+            ],
+            "complete": true,
+            "drm_devices": [
+              "drm-driver:\tamdgpu",
+              "drm-pdev:\t0000:62:00.0"
+            ],
+            "band_pixels": [
+              90,
+              20,
+              216,
+              20
+            ],
+            "verified_restored_and_inserted": true,
+            "insert_ms": {
+              "count": 40,
+              "median": 3.539291499691899,
+              "min": 2.058790000319277,
+              "max": 5.128135000177281,
+              "p95": 4.62883900036104,
+              "p99": 5.128135000177281
+            },
+            "delete_ms": {
+              "count": 40,
+              "median": 3.1925214996135765,
+              "min": 2.2190199997567106,
+              "max": 5.429589999948803,
+              "p95": 4.643366999971477,
+              "p99": 5.429589999948803
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
