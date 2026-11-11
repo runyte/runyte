@@ -110,6 +110,12 @@ struct Coverage {
 }
 impl Coverage {
     fn row(frame: &FrameData, y: u16) -> Self {
+        let full_width_text_rows = *FULL_WIDTH_TEXT_ROWS
+            .get_or_init(|| std::env::var_os("RUNYTE_NATIVE_FULL_WIDTH_TEXT_ROWS").is_some());
+        Self::row_with_policy(frame, y, full_width_text_rows)
+    }
+
+    fn row_with_policy(frame: &FrameData, y: u16, full_width_text_rows: bool) -> Self {
         let media = media_row(frame, y);
         let mut hidden = if media {
             vec![false; frame.cells.area.width as usize]
@@ -118,9 +124,14 @@ impl Coverage {
         };
         let mut raw_media = hidden.clone();
         let mut boundaries = vec![0, frame.cells.area.width];
+        // Temporary diagnostic A/B: restore the full-row text topology only
+        // when no media or preview exists anywhere in the frame.
+        let skip_panes =
+            full_width_text_rows && frame.media.is_empty() && frame.previews.is_empty();
         for rect in frame
             .pane_areas
             .iter()
+            .filter(|_| !skip_panes)
             .chain(frame.media.iter().map(|pane| &pane.body))
             .chain(frame.previews.iter().map(|pane| &pane.body))
         {
@@ -347,8 +358,18 @@ pub(super) fn paint_cells(
     let timing = *TIMING.get_or_init(|| std::env::var_os("RUNYTE_NATIVE_PAINT_TIMING").is_some());
     let started = timing.then(std::time::Instant::now);
     cache.prepare(frame);
+    let prepared = timing.then(std::time::Instant::now);
+    let mut background_count = 0usize;
+    let mut styled_cell_count = 0usize;
+    let mut segment_count = 0usize;
+    let mut rebuilt_segments = 0usize;
     for (y, row) in cache.rows.iter().enumerate() {
         let row = row.as_ref().unwrap();
+        if timing {
+            background_count += row.backgrounds.len();
+            styled_cell_count += row.cells.len();
+            segment_count += row.segments.len();
+        }
         for &(x, width, bg) in &row.backgrounds {
             let position =
                 origin + point(px(x as f32 * metrics.width), px(y as f32 * metrics.height));
@@ -361,6 +382,7 @@ pub(super) fn paint_cells(
             ));
         }
     }
+    let backgrounds_painted = timing.then(std::time::Instant::now);
     let mut painted = Vec::with_capacity(frame.cells.area.width as usize);
     for y in 0..cache.rows.len() {
         // Prepared rows retain styles and source cells, not shaped layouts.
@@ -374,6 +396,12 @@ pub(super) fn paint_cells(
             let placement = (offset, cursor_row);
             let reuse = segment.placement == Some(placement);
             window.paint_cached_scene(&mut segment.scene, reuse, |window| {
+                // The caller's reuse request can still miss GPUI's window,
+                // generation, scale, clipping or opacity checks. Count actual
+                // execution rather than treating the request as a cache hit.
+                if timing {
+                    rebuilt_segments += 1;
+                }
                 painted.clear();
                 let mut separate = row.coverage.over_media(segment.start) || cursor_row;
                 for cell in row
@@ -436,11 +464,26 @@ pub(super) fn paint_cells(
         ));
     }
     if let Some(started) = started {
+        let finished = std::time::Instant::now();
+        let prepared = prepared.expect("timed preparation");
+        let backgrounds_painted = backgrounds_painted.expect("timed backgrounds");
         eprintln!(
             "native-paint {}x{} {}us",
             frame.cells.area.width,
             frame.cells.area.height,
-            started.elapsed().as_micros()
+            finished.duration_since(started).as_micros()
+        );
+        eprintln!(
+            "native-paint-stages prepare_us={} background_us={} glyph_us={} rows={} segments={} rebuilt={} replayed={} backgrounds={} styled_cells={}",
+            prepared.duration_since(started).as_micros(),
+            backgrounds_painted.duration_since(prepared).as_micros(),
+            finished.duration_since(backgrounds_painted).as_micros(),
+            cache.rows.len(),
+            segment_count,
+            rebuilt_segments,
+            segment_count - rebuilt_segments,
+            background_count,
+            styled_cell_count,
         );
     }
 }
@@ -536,6 +579,7 @@ impl PaintedCell {
 }
 
 static TIMING: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static FULL_WIDTH_TEXT_ROWS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 #[cfg(test)]
 mod tests {
@@ -568,6 +612,45 @@ mod tests {
             routing_serial: 0,
             metadata_paths: vec![],
         }
+    }
+
+    #[test]
+    fn full_width_diagnostic_keeps_media_boundaries_and_default_pane_topology() {
+        let mut frame = frame();
+        frame.pane_areas.push(runyte::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 3,
+            height: 2,
+        });
+        assert_eq!(
+            super::Coverage::row_with_policy(&frame, 0, false).boundaries,
+            [0, 3, 8]
+        );
+        assert_eq!(
+            super::Coverage::row_with_policy(&frame, 0, true).boundaries,
+            [0, 8]
+        );
+        frame.media.push(super::super::MediaPane {
+            pane: 0,
+            path: "image.png".into(),
+            page: 1,
+            body: runyte::layout::Rect {
+                x: 4,
+                y: 1,
+                width: 4,
+                height: 1,
+            },
+        });
+        // A media pane on another row still disables the text-only experiment.
+        assert_eq!(
+            super::Coverage::row_with_policy(&frame, 0, true).boundaries,
+            [0, 3, 8]
+        );
+        assert_eq!(
+            super::Coverage::row_with_policy(&frame, 1, true).boundaries,
+            [0, 3, 4, 8]
+        );
     }
 
     #[test]

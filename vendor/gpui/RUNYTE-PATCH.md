@@ -102,3 +102,18 @@ with a fork if further GPUI changes accumulate.
 The scheduling patch and the draw-only replay API are independent. Removing the
 Linux scheduling changes after an upstream update must retain the replay API
 until Runyte's cell painter has an equivalent upstream interface.
+
+## Layered scene replay
+
+- `src/scene.rs`: recorded primitives inside an active destination layer reuse
+  their existing nonempty clipping result. Their stored bounds and content mask
+  are unchanged; the layer supplies the new draw order. Unlayered primitives and
+  layer starts retain bounds-tree insertion. A shared insertion helper still
+  assigns fresh path IDs, populates typed draw arrays, and records operations
+  for subsequent frames. This does not reuse old draw-order values.
+- `src/scene/replay_tests.rs`: compare production replay with the original replay
+  algorithm for masks, nested/empty layers, destination depth, every Linux
+  primitive type, path IDs, and subsequent-frame semantics. An ignored CPU-only
+  release benchmark alternates both implementations in one binary. The temporary
+  standalone runner is prepared by `benchmarks/gpui_replay.py`; it does not add
+  GPUI or its test dependencies to the Runyte workspace.
