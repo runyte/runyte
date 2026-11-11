@@ -1,7 +1,7 @@
 {
   "date": "2026-11-11",
   "source_base": "8390bac47bcb01abb5ef3efe268e0ee0b3a6cf03",
-  "status": "Component investigation and correctness validation; final end-to-end latency measurements deferred.",
+  "status": "Component investigation and correctness validation complete. Later production timing and end-to-end comparison are recorded in interaction-production-2026-11-11.json; historical deferred/interrupted measurement notes below describe the earlier investigation.",
   "method": "Core benchmarks: serialized release microbenchmarks; one warmup then six alternating samples; no concurrent builds. Replay and grid COW schedules are documented in their respective sections. Synthetic fixtures, not end-to-end latency.",
   "quiet": {
     "busy_cores": 0.5,
@@ -5017,5 +5017,6 @@
       }
     },
     "limitations": "Linux validation only. Final production component timing and end-to-end latency deferred; no terminal-tail improvement established."
-  }
+  },
+  "later_measurements": "interaction-production-2026-11-11.json"
 }
