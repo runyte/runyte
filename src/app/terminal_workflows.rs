@@ -141,8 +141,10 @@ impl App {
             return Ok(TerminalRequest {
                 program,
                 // A login shell would re-read the person's profile inside an
-                // editor that already inherited it. An interactive one is what
-                // a terminal pane is for.
+                // editor that already inherited it: from the shell it was
+                // started in, or, for a LaunchServices launch, from the login
+                // shell the macOS launcher asked (`login_environment`). An
+                // interactive one is what a terminal pane is for.
                 arguments: Vec::new(),
                 directory,
                 label,

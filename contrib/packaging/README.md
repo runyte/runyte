@@ -96,9 +96,10 @@ libraries with `otool`, including accidental Homebrew links.
 The helper refuses to replace an existing bundle. It copies the editor into `Contents/MacOS`, alongside the
 native `RunyteLauncher` launcher, relative `runed` link, ICNS icon and project/dependency/font notices. The launcher changes to the account home, selects
 `--window --graphical-launch`, forwards its original directory for relative file
-arguments, and preserves `PATH`, adding `/opt/homebrew/bin` and
-`/usr/local/bin` so the usual Poppler installations remain discoverable from
-Finder. Fonts are embedded in the binary. The bundle has identifier
+arguments, and starts the editor with the account's
+[login shell environment](#login-shell-environment). It then appends
+`/opt/homebrew/bin` and `/usr/local/bin` to `PATH` when they are absent, so the
+usual Poppler installations remain discoverable from Finder. Fonts are embedded in the binary. The bundle has identifier
 `com.runyte.Runyte`, `CFBundleExecutable = RunyteLauncher`, a macOS 11 minimum, and
 declares its icon through `CFBundleIconFile`. A leading Finder `-psn_*` argument
 is discarded; other arguments remain intact.
@@ -112,6 +113,40 @@ the executable name in the menu bar and switcher; the executable file's Finder
 icon is unchanged. Manual acceptance must check the Dock and Cmd-Tab icons for
 these launch forms and for `Runyte.app`. Finder file-open events are not
 integrated; open documents inside the editor or pass paths when invoking the bundled binary from a terminal.
+
+## Login shell environment
+
+LaunchServices starts an application with launchd's environment, which no
+login startup file has touched: `~/.zprofile`, `/etc/zprofile` (and with it
+`path_helper`), `~/.bash_profile` and the like never ran. Before it starts the
+editor, the launcher therefore runs the account's shell as an interactive login
+shell (`-l -i -c`) in the account home and takes its environment. Everything
+the editor starts inherits it: integrated terminals, a persistent session host,
+language servers and Git discovery. A terminal then shows what a new
+Terminal.app window would.
+
+- The shell is `$SHELL` when it names an executable, otherwise the account's
+  shell from the user database; `SHELL` is set to it when it was missing.
+  `sh`, `bash`, `zsh`, `ksh`, `mksh`, `oksh`, `dash`, `yash` and `fish` are
+  asked. The C shells and unrecognized shells are not, and keep the inherited
+  environment.
+- Startup files run with stdin and stderr closed, in a process group of their
+  own, with `RUNYTE_RESOLVING_ENVIRONMENT=1` set so they can skip work only an
+  interactive session needs. Only output between two random delimiters is
+  read, at most 2 MiB of it.
+- A shell that has not reported its environment within 3 seconds is killed
+  with its process group. Any failure leaves the inherited environment in use
+  and notes the reason on the launcher's stderr; no value is ever logged.
+- `TERM`, `COLORTERM`, `XDG_RUNTIME_DIR`, the shell's own `PWD`, `OLDPWD`,
+  `SHLVL` and `_`, and any `RUNYTE_*` variable the launcher inherited keep
+  their inherited value, set or unset. A `RUNYTE_*` variable only a startup
+  file sets is kept.
+- The window appears only after the capture, so a slow startup file delays it
+  by as long as the shell takes, up to the timeout. See the
+  [startup register](../../context/reference/startup-performance.md).
+- A running persistent session host keeps the environment it started with;
+  `:session-stop` or `runyte --session-restart` picks up changed startup files.
+  Launches from a shell, and the Linux desktop entry, are unchanged.
 
 ## Graphical startup
 
@@ -136,7 +171,8 @@ window, the diagnostic remains on stderr. Finder file-open Apple Events remain
 outside this integration.
 
 Manual macOS acceptance remains required: launch from Finder into the account
-home in each configured mode, check an integrated terminal’s directory, close
+home in each configured mode, check an integrated terminal’s directory and
+that a variable exported only from `~/.zprofile` reaches it, close
 and relaunch mux to verify the same retained host, and verify editor mode and a
 retained startup refusal. Headless bundle checks do not establish these results.
 
