@@ -59,13 +59,14 @@ def prepare(destination):
     scene.write_text(contents.replace(original,
         '#[path = "scene/replay_tests.rs"]\npub(crate) mod replay_tests;'))
     with (target / 'src/gpui.rs').open('a') as file:
-        file.write('\n/// Run the temporary CPU-only replay equality check and timing experiment.\n'
-                   'pub fn runyte_scene_replay_experiment() {\n')
-        for name in FUNCTIONS:
-            file.write(f'    scene::replay_tests::{name}();\n')
+        file.write('\n/// Run the temporary CPU-only replay equality check, optionally with timings.\n'
+                   'pub fn runyte_scene_replay_experiment(check_only: bool) {\n')
+        file.write(f'    scene::replay_tests::{FUNCTIONS[0]}();\n')
+        file.write(f'    if !check_only {{ scene::replay_tests::{FUNCTIONS[1]}(); }}\n')
         file.write('}\n')
     (target / 'runyte_scene_replay.rs').write_text(
-        'fn main() { gpui::runyte_scene_replay_experiment(); }\n')
+        'fn main() { gpui::runyte_scene_replay_experiment('
+        'std::env::args().any(|arg| arg == "--check-only")); }\n')
     paths = ['Cargo.toml', 'Cargo.lock', 'vendor/gpui/Cargo.toml',
              'vendor/gpui/src/scene.rs', 'vendor/gpui/src/scene/replay_tests.rs',
              'vendor/gpui/src/bounds_tree.rs', 'vendor/gpui/src/geometry.rs']
@@ -86,7 +87,9 @@ def main():
     print(f'cargo metadata --offline --format-version 1 --manifest-path {manifest} > /dev/null')
     print(f'CARGO_TARGET_DIR={target_dir} cargo build --offline --locked --release '
           f'--manifest-path {manifest} --bin runyte-scene-replay')
-    print(shlex.quote(str(REPO / 'target/release/runyte-scene-replay')))
+    executable = shlex.quote(str(REPO / 'target/release/runyte-scene-replay'))
+    print(executable + ' --check-only')
+    print(executable)
     print(f'Source hashes: {destination / "source-hashes.json"}')
 
 

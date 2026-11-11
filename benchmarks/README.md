@@ -142,6 +142,35 @@ they do not identify per-key GPU or compositor costs. These settled plain-text
 tests do not establish burst-typing, syntax-update, arbitrary terminal workloads, large-file,
 Wayland-native, or macOS latency.
 
+The paint trace also reports preparation, backgrounds and glyph-stage time,
+actual segment cache rebuilds/replays, and grid-diff time. The glyph stage includes
+cursor painting and loop overhead; segment counts are not glyph or layer counts.
+Grid timing includes the enabled diagnostic's bookkeeping. Keep these runs
+separate from clean input-latency samples.
+
+For a same-binary topology experiment, `--full-width-text-rows` sets the
+development-only `RUNYTE_NATIVE_FULL_WIDTH_TEXT_ROWS` switch. It combines text
+scenes across pane boundaries only when the entire frame has no media or preview.
+The default remains pane-row segmentation. This changes cache work, background
+merging and cursor fallback extent together; it does not isolate layer cost.
+
+CPU component measurements must also run serially, in release mode, after all
+builds and other tests finish:
+
+```sh
+cargo test --release --lib terminal_damage_shell_benchmark -- --ignored --nocapture --test-threads=1
+cargo test --release --lib typing_frame_pipeline_benchmark -- --ignored --nocapture --test-threads=1
+cargo test --release -p runyte-native retained_snapshot_cow_draw_measurement -- --ignored --nocapture --test-threads=1
+python3 benchmarks/gpui_replay.py
+```
+
+The GPUI helper prepares a temporary standalone copy and prints build/run commands.
+It preserves real scene/geometry code and the release profile, removing only the
+unused upstream test dependency graph. Its binary checks scene equivalence before
+timing clear plus replay against the original algorithm. It does not replace the
+upstream test suite or rendered-pixel checks. Component costs must not be added or
+subtracted from separate end-to-end runs to attribute all input latency.
+
 Compare pane-row pixels against a preserved baseline release binary:
 
 ```sh

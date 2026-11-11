@@ -1,6 +1,6 @@
 # Settled interaction performance
 
-## 2026-11-11 — Follow-up component investigation (in progress)
+## 2026-11-11 — Component fixes and validation
 
 Tracking: [transport and copies #111](https://github.com/runyte/runyte/issues/111),
 [scene replay #112](https://github.com/runyte/runyte/issues/112),
@@ -25,7 +25,8 @@ repeating the intersection. The experimental implementation passed semantic
 comparisons and reduced clear-plus-replay time for 4,800 synthetic glyphs from
 119.339/126.380/138.750 to 72.286/80.320/94.154 microseconds for 1/2/4 partitions
 per row. The production implementation shares primitive insertion code; its
-post-refactor measurements and renderer validation are still pending.
+post-refactor timing remains deferred. Production semantic equivalence and all
+12 exact pixel comparisons passed.
 
 Retaining a previous grid snapshot and changing one cell costs 0.709 microseconds
 at 120×40 and 2.083 microseconds at 240×80. Whole native preparation measured
@@ -36,11 +37,17 @@ output may warrant separate investigation.
 
 The first clean topology comparison stopped at a failed quiet check after a
 competing build began; it is retained as excluded data. A repeated ABBA
-comparison is in progress. No terminal-tail improvement is claimed yet.
+comparison was also interrupted by competing compilation. Its partial passes
+are retained for diagnostics only. Final end-to-end measurements are deferred;
+no terminal-tail improvement is claimed.
 
-The core test suite and core/desktop Clippy passed before the replay promotion.
-The promoted replay implementation has received review; coverage, final desktop
-tests, pixel equivalence and final latency comparisons remain pending.
+Formatting, core and desktop all-target Clippy, 5,362 core tests, 172 desktop
+tests, and 23 Python harness tests passed. Canonical Linux core line coverage is
+92.58%, above the 89% floor. The production replay semantic check and all 12
+text/PDF/PNG/HTML pixel comparisons passed. Astra Medium reviewed the changes
+and measurement interpretation. Other operating systems were not validated
+locally. Final production component timing and end-to-end latency remain
+deferred; these correctness checks do not establish a typing-latency gain.
 
 ## 2026-11-10 — Runyte 0.4.4, text and PDF companion panes
 
