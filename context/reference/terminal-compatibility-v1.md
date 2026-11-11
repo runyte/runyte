@@ -267,17 +267,24 @@ otherwise. Arbitrary child programs may react to printable input without Enter.
 The mode is the emulator's, which inside a multiplexer belongs to the
 multiplexer rather than to the program in its pane.
 
-Enter is a separate request and the only key a reader can send. The host
-captures the reader's terminal read revision and the session's input
-generation, shows `[Enter pending]` for five seconds, and writes one carriage
-return only if both are unchanged; output, native input, pastes and other
-readers' text all move one of them. A program that redraws continuously
-therefore never receives an agent Enter.
+Enter is the only key a reader can send, and never a byte of its text. A
+line's own Enter is written as a separate carriage return once the line's
+delivery has been acknowledged in full and one settling pass of the event
+loop has run, so a prompt that reads the paste and the Enter separately does
+not take the Enter as part of the paste. It is dropped if the session's input
+generation moves after the line was queued; the line's own echo is output and
+does not move it. A separate Enter captures the reader's terminal read
+revision and the input generation, and writes one carriage return after the
+settling pass only if both are unchanged; output, native input, pastes and
+other readers' text all move one of them, so a program that redraws
+continuously never receives one. Neither is accepted while the person typed in
+the terminal during the last ten seconds; keys, pastes and undone pastes
+count, pointer reports do not.
 
 The internal boundary is covered by `terminal::read::tests` in
 `src/terminal/tests/read.rs` and `terminal::proposal::tests` in
 `src/terminal/tests/proposal.rs`. Cancellable delivery, full-write acknowledgments
-and the real-PTY delayed Enter are covered in
+and the real-PTY guarded and line-submitting Enters are covered in
 `src/terminal/tests/proposal_delivery.rs` and
 `src/workspace/host/tests/context_access.rs`. The separately authenticated
 [context profile](../../docs/plugins/context.md) exposes bounded reads, line

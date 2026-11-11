@@ -187,6 +187,7 @@ impl TerminalPreparation {
                 number: None,
                 channel_unread: 0,
                 agent_enter_pending: false,
+                last_typed: None,
                 label: self.request.label,
                 user_name: None,
                 directory: self.request.directory.clone(),

@@ -92,12 +92,14 @@ With Write, follow these steps every time:
    or an agent's empty input box. If it shows a dialog, an approval prompt, a
    pager, an editor, or someone's half-typed text, do not write; tell the person
    or the peer through the channel instead.
-2. `write_terminal` types one line, without Enter. No newlines or controls.
-3. `read_terminal` again and check the line arrived as intended.
-4. `press_enter` with the `revision` from that read. Runyte waits five
-   seconds, shown to the person, and presses Enter only if nothing changed in
-   the terminal meanwhile. `stale` means something did, and nothing was sent:
-   read again and decide afresh; never press Enter blindly to retry.
+2. `write_terminal` with `enter=true` types one line and submits it in the
+   same call. No newlines or controls. `sent` means Enter was pressed after
+   the line was written; `stale` or `cancelled` means it was not: read again
+   and decide afresh. Use `press_enter` alone, with the `revision` from your
+   latest read, only for a line that is already there.
+3. If the reply is `busy`, the person is typing in that terminal. Wait as long
+   as the error says, read it again, and write only if it is still the right
+   place; never retry blindly.
 
 Enter answers whatever is on screen, so never press it to dismiss or accept a
 dialog the person has not asked you to answer. Never automatically retry a

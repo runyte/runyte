@@ -21,6 +21,10 @@ pub const CHANNEL_FEATURE: &str = "runyte.context.channel.v1";
 /// this in their hello, so a client asks for `terminal_write` only from a host
 /// that will not refuse it as unknown.
 pub const TERMINAL_WRITE_FEATURE: &str = "runyte.context.terminal.write.v1";
+/// Hosts that accept `enter` on `terminal.input.write`, submitting the line
+/// once it has been written, name this in their hello. An older host refuses
+/// the field as unknown.
+pub const TERMINAL_SUBMIT_FEATURE: &str = "runyte.context.terminal.submit.v1";
 pub const MAX_FRAME_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_READERS: usize = 8;
 pub const MAX_REQUESTS: usize = 16;
@@ -33,8 +37,12 @@ pub const SNAPSHOT_IDLE_SECONDS: u64 = 30;
 /// Enters one reader, and all readers together, may have waiting.
 pub const MAX_ENTERS: usize = 4;
 pub const MAX_HOST_ENTERS: usize = 16;
-/// How long a requested Enter waits, visibly, before it is pressed.
-pub const ENTER_DELAY_MILLIS: u64 = 5000;
+/// How long a requested Enter waits, visibly, before it is pressed. Zero:
+/// the guard is the read revision and the person's typing, not a pause.
+pub const ENTER_DELAY_MILLIS: u64 = 0;
+/// How long after the person last typed in a terminal before a reader may
+/// type or press Enter there.
+pub const TYPING_QUIET_MILLIS: u64 = 10_000;
 /// How long a finished Enter's outcome stays readable.
 pub const ENTER_RECORD_SECONDS: u64 = 120;
 pub const MAX_IDENTIFIER_BYTES: usize = 256;
@@ -79,6 +87,7 @@ pub fn limits() -> serde_json::Value {
         "terminal_snapshot_bytes":MAX_TERMINAL_SNAPSHOT_BYTES,"retained_bytes":MAX_RETAINED_BYTES,
         "host_retained_bytes":MAX_HOST_RETAINED_BYTES,"snapshot_idle_seconds":SNAPSHOT_IDLE_SECONDS,
         "enters":MAX_ENTERS,"host_enters":MAX_HOST_ENTERS,"enter_delay_ms":ENTER_DELAY_MILLIS,
+        "typing_quiet_ms":TYPING_QUIET_MILLIS,
         "terminal_text_bytes":crate::terminal::proposal::MAX_TEXT_BYTES,
         "edit_changes":editor::MAX_CHANGES,"edit_replacement_bytes":editor::MAX_REPLACEMENT_BYTES,
         "request_ids":MAX_DEDUPLICATED_REQUESTS,"append_tail_bytes":MAX_EXPECTED_TAIL_BYTES,
@@ -95,8 +104,8 @@ pub enum Scope {
     TerminalRead,
     EditorContextRead,
     BufferEdit,
-    /// Type a line into a terminal, and press Enter there after a visible
-    /// delay that any output or other input cancels.
+    /// Type a line into a terminal and press Enter there, never while the
+    /// person is typing in it.
     TerminalWrite,
     /// Join the workspace's agent channel, read it and post to it.
     AgentChannel,
@@ -276,6 +285,7 @@ pub fn parse_registration(raw: &str) -> Result<Registration, Error> {
             CHANNEL_FEATURE,
             DURABLE_FEATURE,
             TERMINAL_WRITE_FEATURE,
+            TERMINAL_SUBMIT_FEATURE,
         ],
     )
     .map_err(|_| Error::new(ErrorCode::Unsupported, "Unsupported context features"))?;
@@ -425,12 +435,17 @@ pub enum Request {
     },
     #[serde(rename = "terminal.snapshot.close")]
     TerminalSnapshotClose { snapshot: String },
-    /// One line typed into a terminal, never followed by Enter.
+    /// One line typed into a terminal, followed by Enter once it has been
+    /// written when `enter` asks for it.
     #[serde(rename = "terminal.input.write")]
-    TerminalInputWrite { terminal: String, text: String },
-    /// One Enter, pressed after a visible delay only if the terminal still
-    /// shows the read revision the agent looked at and nothing else was
-    /// typed there meanwhile.
+    TerminalInputWrite {
+        terminal: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        enter: bool,
+    },
+    /// One Enter, pressed only if the terminal still shows the read revision
+    /// the agent looked at and nothing else was typed there meanwhile.
     #[serde(rename = "terminal.input.enter")]
     TerminalInputEnter {
         terminal: String,
@@ -615,7 +630,7 @@ impl Request {
                 identifier(snapshot)?;
                 page(*offset, *limit, crate::terminal::read::MAX_ROWS)?;
             }
-            Self::TerminalInputWrite { terminal, text } => {
+            Self::TerminalInputWrite { terminal, text, .. } => {
                 identifier(terminal)?;
                 crate::terminal::proposal::Text::new(text).map_err(|_| {
                     invalid("Terminal text must be bounded single-line text without controls")

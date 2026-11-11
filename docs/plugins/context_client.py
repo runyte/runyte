@@ -41,7 +41,7 @@ METHODS = {
     'terminal.snapshot.open': ('terminal_read', 'terminal region max_rows max_bytes max_cells', 'expected_revision'),
     'terminal.snapshot.read': ('terminal_read', 'snapshot offset limit', ''),
     'terminal.snapshot.close': ('terminal_read', 'snapshot', ''),
-    'terminal.input.write': ('terminal_write', 'terminal text', ''),
+    'terminal.input.write': ('terminal_write', 'terminal text', 'enter'),
     'terminal.input.enter': ('terminal_write', 'terminal expected_revision', ''),
     'terminal.input.enter.status': ('terminal_write', 'enter', ''),
 }
@@ -134,8 +134,13 @@ def validate_request(method, params):
     required, optional = set(required.split()), set(optional.split())
     if not isinstance(params, dict) or not required <= params.keys() or params.keys() - required - optional:
         _fail('Missing or unknown context parameter')
+    if method == 'terminal.input.write' and 'enter' in params:
+        if not isinstance(params['enter'], bool):
+            _fail('Invalid terminal enter flag')
     for key in ('buffer', 'pane', 'terminal', 'snapshot', 'enter', 'expected_revision'):
         if key not in params or key == 'expected_revision' and key in optional and params[key] is None:
+            continue
+        if key == 'enter' and method == 'terminal.input.write':
             continue
         if not isinstance(params[key], str) or not IDENTIFIER.fullmatch(params[key]):
             _fail('Invalid context identifier')

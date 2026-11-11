@@ -416,6 +416,19 @@ async fn an_enter_is_dropped_by_typing_detachment_and_revocation() {
         .send_text("changed");
     host.sync_context();
     assert_eq!(host.context_enter_state(&typed), Some("stale"));
+    // Nothing more is accepted while the person types; let that pass.
+    let revision = current(&host);
+    assert_eq!(
+        host.context_request_enter(7, terminal, &revision)
+            .unwrap_err()
+            .code,
+        Code::Busy
+    );
+    host.app
+        .terminals
+        .get_mut(terminal)
+        .unwrap()
+        .backdate_typing(Duration::from_millis(wire::TYPING_QUIET_MILLIS));
     assert!(
         !host
             .app
