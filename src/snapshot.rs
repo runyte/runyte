@@ -566,6 +566,10 @@ pub struct MediaSnapshot {
 /// One pane's owned title, geometry, viewport anchor, and visible rows.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneSnapshot {
+    /// Compact title strip instead of a full frame.
+    pub compact: bool,
+    /// This tile owns the shared separator on its left edge.
+    pub left_separator: bool,
     pub preview: Option<crate::document_preview::DocumentPreview>,
     pub media: Option<MediaSnapshot>,
     pub pane_id: usize,
@@ -1167,6 +1171,8 @@ impl App {
                 pane_id: prepared.pane_id,
                 area: prepared.area,
                 body: prepared.body,
+                compact: prepared.compact,
+                left_separator: prepared.left_separator,
                 active: prepared.pane_id == self.active_pane && !self.directory_tree.focused,
                 jump_active,
                 // A terminal under review is frozen: the child has stopped
@@ -1242,6 +1248,8 @@ impl App {
             pane_id: prepared.pane_id,
             area: prepared.area,
             body: prepared.body,
+            compact: prepared.compact,
+            left_separator: prepared.left_separator,
             active: prepared.pane_id == self.active_pane && !self.directory_tree.focused,
             jump_active,
             dimmed: jump_active || self.command_prompt_dims_panes(),

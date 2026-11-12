@@ -1080,14 +1080,14 @@ impl App {
     pub(super) fn viewport_height(&self) -> usize {
         self.areas
             .get(&self.active_pane)
-            .map_or(20, |area| area.height.saturating_sub(2) as usize)
+            .map_or(20, |area| usize::from(self.pane_chrome(*area).2.height))
             .max(1)
     }
 
     fn viewport_width(&self) -> usize {
         self.areas
             .get(&self.active_pane)
-            .map_or(80, |area| area.width.saturating_sub(2) as usize)
+            .map_or(80, |area| usize::from(self.pane_chrome(*area).2.width))
             .max(1)
     }
 

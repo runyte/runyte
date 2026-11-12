@@ -17,6 +17,8 @@ fn borrowed_terminal_shell_matches_clone_comparison_and_rejects_content_changes(
     let base = terminal_frame(1, 1, 'a');
     let old = &base.editor.panes[0];
     let mutations: &[fn(&mut PaneSnapshot)] = &[
+        |p| p.compact = !p.compact,
+        |p| p.left_separator = !p.left_separator,
         |p| {
             p.preview = Some(DocumentPreview {
                 generation: 1,

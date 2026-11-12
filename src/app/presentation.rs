@@ -379,6 +379,21 @@ impl App {
             .map_or((0, 0), |held| (held.matches, held.candidates))
     }
 
+    /// Tile decoration is measured independently of Zen's content centering.
+    pub(super) fn pane_chrome(&self, area: Rect) -> (bool, bool, Rect) {
+        let compact = self.config.editor.pane_style == crate::config::PaneStyle::Compact;
+        let left = self.areas.values().map(|r| r.x).min().unwrap_or(area.x);
+        let separator = compact && area.x > left;
+        let inset = if compact { u16::from(separator) } else { 1 };
+        let body = Rect {
+            x: area.x.saturating_add(inset),
+            y: area.y.saturating_add(1),
+            width: area.width.saturating_sub(if compact { inset } else { 2 }),
+            height: area.height.saturating_sub(if compact { 1 } else { 2 }),
+        };
+        (compact, separator, body)
+    }
+
     /// Prepares layout, gutter, wrapping, and scroll state before rendering.
     ///
     /// This is the only frame lifecycle step allowed to mutate view state.
@@ -490,9 +505,12 @@ impl App {
                 .terminal
                 .filter(|id| self.terminals.get(*id).is_some());
             self.panes.get_mut(&pane_id).unwrap().terminal = terminal;
-            if area.width < 3 || area.height < 3 {
+            let (compact, left_separator, body) = self.pane_chrome(area);
+            if body.width == 0 || body.height == 0 {
                 let pane = &self.panes[&pane_id];
                 prepared.push(PreparedPane {
+                    compact,
+                    left_separator,
                     pane_id,
                     area,
                     body: Rect::default(),
@@ -518,19 +536,23 @@ impl App {
                 continue;
             }
 
-            let body = Rect {
-                x: area.x + 1,
-                y: area.y + 1,
-                width: area.width - 2,
-                height: area.height - 2,
-            };
             let body_width = body.width as usize;
             let body_height = body.height as usize;
             if let Some(id) = terminal {
-                // The pane's inside is the child's screen, whole: no gutter,
-                // no line numbers, no content indent. This is also the one
-                // place that knows the pane's new shape, so it is where the
-                // child is told about it.
+                // The terminal body is its screen and input coordinate space.
+                // Centre that whole rectangle in Zen so both frontends and
+                // pointer handling use the same origin as the resized child.
+                let body = if self.maximized_view(pane_id) == Some(MaximizedView::Zen) {
+                    let layout = ContentLayout::viewport(self.config.editor.zen_width);
+                    Rect {
+                        x: body.x + layout.indent(body_width) as u16,
+                        width: layout.width(body_width) as u16,
+                        ..body
+                    }
+                } else {
+                    body
+                };
+                let body_width = usize::from(body.width);
                 let resized = self
                     .terminals
                     .get_mut(id)
@@ -546,6 +568,8 @@ impl App {
                     self.note_terminal_finder_change(id);
                 }
                 prepared.push(PreparedPane {
+                    compact,
+                    left_separator,
                     pane_id,
                     area,
                     body,
@@ -783,6 +807,8 @@ impl App {
                 }
             }
             prepared.push(PreparedPane {
+                compact,
+                left_separator,
                 pane_id,
                 area,
                 body,
@@ -3292,6 +3318,7 @@ impl App {
                         | SettingType::Theme
                         | SettingType::SessionStrip
                         | SettingType::RunMode
+                        | SettingType::PaneStyle
                         | SettingType::ExplorerSort => setting.descriptor().key.to_owned(),
                         SettingType::Indent => setting.descriptor().key.to_owned(),
                     },

@@ -1036,6 +1036,7 @@ fn draw_setting_prompt(frame: &mut Frame<'_>, app: &TuiApp<'_>, editor_area: Rec
         | crate::settings::SettingType::Theme
         | crate::settings::SettingType::SessionStrip
         | crate::settings::SettingType::RunMode
+        | crate::settings::SettingType::PaneStyle
         | crate::settings::SettingType::ExplorerSort => "choice".to_owned(),
         crate::settings::SettingType::Indent => "choice".to_owned(),
     };
@@ -2684,25 +2685,67 @@ fn draw_pane(frame: &mut Frame<'_>, theme: &TuiTheme, mode: Mode, pane: &PaneSna
     let area = to_tui_rect(pane.area);
     let body = to_tui_rect(pane.body);
     let background = theme.pane_background(pane.active);
+    let title_area = TuiRect {
+        x: area.x.saturating_add(u16::from(pane.left_separator)),
+        y: area.y,
+        width: area.width.saturating_sub(u16::from(pane.left_separator)),
+        height: 1,
+    };
     let title = pane_title_text(
         &pane.title.name,
         pane.title.dirty,
         pane.title.external_file_status.is_stale(),
         pane.title.read_only,
         pane.title.maximized,
-        usize::from(area.width),
-    );
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Plain)
-        .border_style(Style::default().fg(if pane.active {
-            theme.accent
+        // The legacy title helper reserves two frame cells.
+        if pane.compact {
+            usize::from(title_area.width) + 2
         } else {
-            theme.muted
-        }))
-        .title(title)
-        .style(Style::default().fg(theme.foreground).bg(background));
-    frame.render_widget(block, area);
+            usize::from(area.width)
+        },
+    );
+    if pane.compact {
+        frame.render_widget(
+            Block::default().style(Style::default().bg(background)),
+            area,
+        );
+        let mut title_style = Style::default()
+            .fg(if pane.active {
+                theme.accent
+            } else {
+                theme.foreground
+            })
+            .bg(theme.overlay_background);
+        if pane.active {
+            title_style = title_style.add_modifier(Modifier::BOLD);
+        }
+        frame.render_widget(Paragraph::new(title).style(title_style), title_area);
+        if pane.left_separator {
+            for y in area.y..area.y.saturating_add(area.height) {
+                frame.render_widget(
+                    Paragraph::new("│").style(Style::default().fg(theme.muted).bg(background)),
+                    TuiRect {
+                        x: area.x,
+                        y,
+                        width: 1,
+                        height: 1,
+                    },
+                );
+            }
+        }
+    } else {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Plain)
+            .border_style(Style::default().fg(if pane.active {
+                theme.accent
+            } else {
+                theme.muted
+            }))
+            .title(title)
+            .style(Style::default().fg(theme.foreground).bg(background));
+        frame.render_widget(block, area);
+    }
 
     if let Some(terminal) = pane.terminal.as_ref() {
         draw_terminal(frame, theme, mode, pane.active, pane.dimmed, terminal, body);
@@ -6927,6 +6970,8 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            compact: false,
+            left_separator: false,
             preview: None,
             media: None,
             pane_id: 0,
@@ -6997,6 +7042,8 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            compact: false,
+            left_separator: false,
             preview: None,
             media: None,
             pane_id: 0,
@@ -7084,6 +7131,8 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            compact: false,
+            left_separator: false,
             preview: None,
             media: None,
             pane_id: 0,
@@ -7173,6 +7222,8 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            compact: false,
+            left_separator: false,
             preview: None,
             media: None,
             pane_id: 0,
@@ -7247,6 +7298,8 @@ mod tests {
         let app = App::new(Config::default(), None).unwrap();
         let theme = TuiTheme::new(&app.theme);
         let pane = PaneSnapshot {
+            compact: false,
+            left_separator: false,
             preview: None,
             media: None,
             pane_id: 0,

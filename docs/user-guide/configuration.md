@@ -334,6 +334,7 @@ definitions, which are file-only.
 | Setting | Default | Values | What it does |
 | --- | --- | --- | --- |
 | `editor.grammar` | `runyte` | `runyte` (`helix` is an alias) | Editing grammar. The alias is for compatibility, not a promise of full Helix behavior. |
+| `editor.pane_style` | `framed` | `framed`, `compact` | Full pane frames, or title strips with one shared vertical separator and no outer/bottom borders. Applies immediately. |
 | `editor.line_numbers` | `true` | boolean | Show line numbers beside editable buffers. |
 | `editor.relative_line_numbers` | `false` | boolean | Show document-line distances from each pane's cursor, keeping the cursor line absolute. Requires `editor.line_numbers`. Wrapped continuations keep their arrows; folded lines still count in distances. |
 | `editor.tab_width` | `4` | 1–16 | Display and indentation width of a tab. |

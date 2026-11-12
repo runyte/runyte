@@ -165,7 +165,7 @@ fn native_link_click_obeys_overlays_and_rejects_stale_panes() {
 
 #[test]
 fn native_link_click_terminal_links_preserves_live_or_frozen_state_and_owns_release() {
-    for review in [false, true] {
+    for (review, zen) in [(false, false), (true, false), (false, true), (true, true)] {
         let (_root, mut app, opened) = fixture();
         let terminal = app.terminals.insert_test_session(20, 8);
         app.active_mut().terminal = Some(terminal);
@@ -184,7 +184,11 @@ fn native_link_click_terminal_links_preserves_live_or_frozen_state_and_owns_rele
             });
         }
         app.mode = if review { Mode::Select } else { Mode::Insert };
-        let view = app.prepare_view(geometry(22));
+        if zen {
+            app.config.editor.zen_width = 20;
+            app.toggle_maximized(MaximizedView::Zen);
+        }
+        let view = app.prepare_view(geometry(if zen { 62 } else { 22 }));
         let body = view.pane(app.active_pane).unwrap().body;
         let session = app.terminals.get(terminal).unwrap();
         let revision = session.revision();
@@ -536,4 +540,132 @@ fn remapped_pointer_link_captures_button_and_uses_effective_feedback() {
     }
     assert_eq!(app.active().selection, selection);
     assert!(app.pointer_link_pressed.is_none());
+}
+
+#[test]
+fn terminal_zen_centres_resizes_and_restores_the_screen() {
+    for alternate in [false, true] {
+        let (_root, mut app, _) = fixture();
+        let terminal = app.terminals.insert_test_session(60, 8);
+        app.active_mut().terminal = Some(terminal);
+        app.mode = Mode::Insert;
+        app.config.editor.zen_width = 20;
+        if alternate {
+            app.apply_terminal_output(TerminalOutput::Bytes {
+                id: terminal,
+                bytes: b"\x1b[?1049h".to_vec(),
+            });
+        }
+        app.toggle_maximized(MaximizedView::Zen);
+        for (width, x, columns) in [(62, 21, 20), (17, 1, 15), (63, 21, 20)] {
+            let view = app.prepare_view(geometry(width));
+            let pane = view.pane(app.active_pane).unwrap();
+            assert_eq!(pane.area.width, width);
+            assert_eq!(
+                pane.body,
+                Rect {
+                    x,
+                    y: 1,
+                    width: columns,
+                    height: 8
+                }
+            );
+            assert_eq!(
+                app.terminals.get(terminal).unwrap().columns(),
+                usize::from(columns)
+            );
+            app.apply_terminal_output(TerminalOutput::Bytes {
+                id: terminal,
+                bytes: b"\x1b[2J\x1b[Hzen".to_vec(),
+            });
+            let snapshot = app.snapshot(&view);
+            let terminal_pane = snapshot.pane(app.active_pane).unwrap();
+            assert_eq!(terminal_pane.body, pane.body);
+            assert_eq!(
+                terminal_pane.terminal.as_ref().unwrap().cursor,
+                Some((0, 3))
+            );
+            let mut display =
+                ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, 12)).unwrap();
+            display
+                .draw(|frame| {
+                    crate::ui::render_exact_colors_for_test(
+                        frame,
+                        &app,
+                        &snapshot,
+                        &crate::key_hints::KeyHintState::default(),
+                    )
+                })
+                .unwrap();
+            let cells = display.backend().buffer();
+            assert_eq!(cells[(x, 1)].symbol(), "z");
+            assert_eq!(cells[(x + 1, 1)].symbol(), "e");
+            assert_eq!(cells[(x + 2, 1)].symbol(), "n");
+            for column in 1..x {
+                assert_eq!(cells[(column, 1)].symbol(), " ");
+            }
+            for column in x + columns..width - 1 {
+                assert_eq!(cells[(column, 1)].symbol(), " ");
+            }
+            assert_eq!(app.mode, Mode::Insert);
+        }
+        app.toggle_maximized(MaximizedView::Zen);
+        let view = app.prepare_view(geometry(62));
+        assert_eq!(
+            view.pane(app.active_pane).unwrap().body,
+            Rect {
+                x: 1,
+                y: 1,
+                width: 60,
+                height: 8
+            }
+        );
+        assert_eq!(app.terminals.get(terminal).unwrap().columns(), 60);
+    }
+}
+
+#[test]
+fn terminal_zen_margins_do_not_forward_mouse_input() {
+    let (_root, mut app, _) = fixture();
+    let terminal = app.terminals.insert_test_session(20, 8);
+    app.active_mut().terminal = Some(terminal);
+    app.config.editor.zen_width = 20;
+    app.mode = Mode::Insert;
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"\x1b[?1000h\x1b[?1006h".to_vec(),
+    });
+    app.toggle_maximized(MaximizedView::Zen);
+    let view = app.prepare_view(geometry(62));
+    let generation = app.terminals.get(terminal).unwrap().input_generation();
+    for column in [1, 20, 41, 60] {
+        app.handle_pointer(
+            PointerEvent {
+                kind: PointerEventKind::Down(PointerButton::Left),
+                column,
+                row: 1,
+                modifiers: Modifiers::NONE,
+            },
+            &view,
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        app.terminals.get(terminal).unwrap().input_generation(),
+        generation
+    );
+    app.handle_pointer(
+        PointerEvent {
+            kind: PointerEventKind::Down(PointerButton::Left),
+            column: 21,
+            row: 1,
+            modifiers: Modifiers::NONE,
+        },
+        &view,
+    )
+    .unwrap();
+    assert_eq!(
+        app.terminals.get(terminal).unwrap().input_generation(),
+        generation + 1
+    );
 }

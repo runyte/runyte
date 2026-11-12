@@ -33,7 +33,16 @@ them, regardless of which extensibility direction is chosen.
   tree with `:q`, `:wc`, or `:close` hides the sidebar and restores pane focus.
   `gw` dims tree rows and replaces visible entry markers with jump labels;
   completing a label selects its path without opening it.
-- **Pane border** — the frame delimiting a pane.
+- **Pane border** — the frame delimiting a pane in `editor.pane_style: framed`
+  (the default). `compact` replaces it with a tinted title strip, no outer or
+  bottom borders, and one shared vertical separator owned by the tile on its
+  right. A lower pane's title strip separates stacked panes and is their resize
+  target; reclaimed body cells never resize a boundary. The directory tree
+  owns its existing right separator. Active titles are bold and accent-colored;
+  body focus colors are unchanged. Overlay frames are independent.
+  Private bundled protocol version 97 carries compact chrome and separator
+  ownership explicitly, independently of the body rectangle (which Zen may
+  center). Both frontends use the same prepared body geometry.
 - **Pane drop outline** — a temporary thick accent outline during an Alt-left-drag
   or Shift-Alt-left-drag,
   showing the area the dragged pane would occupy on release. The interior stays
@@ -55,7 +64,7 @@ them, regardless of which extensibility direction is chosen.
   until Enter. Escape, a geometry/layout change or attachment change discards
   the draft. Private bundled-client protocol version 95 carries the draft
   tiles, selected edge and effective legend in `EditorSnapshot.resize`.
-- **Pane title** — structural buffer identity in the pane's top border, such as
+- **Pane title** — structural buffer identity in the pane's top border or compact title strip, such as
   `[file] path`, `[explorer] path`, `[notifications]`, or `[log]`, plus `[+]`,
   `[STALE]`, and `[RO]`, in that order, and finally `[zen]` or `[fullscreen]`
   while the pane is the maximized one. `[STALE]` means the path a buffer
@@ -67,7 +76,9 @@ them, regardless of which extensibility direction is chosen.
   explorer titles show ordinary drive or UNC spelling for ordinary names;
   verbatim spelling stays visible for names that need it. This affects
   presentation only, not the stored path identity.
-- **Pane body** — the complete drawable interior of a pane border.
+- **Pane body** — the drawable content below the title, excluding any frame or shared separator. For terminals in
+  Zen, this is the horizontally centred terminal screen, capped at
+  `editor.zen_width`; the remaining interior cells are blank margins.
 - **Gutter** — the left part of a pane body reserved for line numbers,
   soft-wrap continuation markers, syntax-fold markers, Git change marks, and
   its separator rule.

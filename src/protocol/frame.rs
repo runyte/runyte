@@ -353,6 +353,8 @@ pub struct TerminalRowDamage {
 // Destructure exhaustively so newly added fields cannot silently bypass fallback.
 fn same_terminal_shell(old: &PaneSnapshot, new: &PaneSnapshot) -> bool {
     let PaneSnapshot {
+        compact,
+        left_separator,
         preview,
         media,
         pane_id,
@@ -378,7 +380,9 @@ fn same_terminal_shell(old: &PaneSnapshot, new: &PaneSnapshot) -> bool {
         title: _,
         terminal: _,
     } = old;
-    preview == &new.preview
+    compact == &new.compact
+        && left_separator == &new.left_separator
+        && preview == &new.preview
         && media == &new.media
         && pane_id == &new.pane_id
         && area == &new.area
@@ -1340,6 +1344,8 @@ mod tests {
                 preview_theme_colors: true,
                 mode: Mode::Normal,
                 panes: vec![PaneSnapshot {
+                    compact: false,
+                    left_separator: false,
                     preview: None,
                     media: None,
                     pane_id: 1,
@@ -2335,6 +2341,10 @@ impl TryFrom<MediaSnapshot> for core::MediaSnapshot {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PaneSnapshot {
+    /// Compact title strip instead of a full frame.
+    pub compact: bool,
+    /// This tile owns the shared separator on its left edge.
+    pub left_separator: bool,
     pub preview: Option<DocumentPreview>,
     pub media: Option<MediaSnapshot>,
     pub pane_id: usize,
@@ -2568,6 +2578,8 @@ impl From<core::PaneSnapshot> for PaneSnapshot {
             pane_id: value.pane_id,
             area: value.area.into(),
             body: value.body.into(),
+            compact: value.compact,
+            left_separator: value.left_separator,
             active: value.active,
             jump_active: value.jump_active,
             dimmed: value.dimmed,
@@ -2599,6 +2611,8 @@ impl TryFrom<PaneSnapshot> for core::PaneSnapshot {
             pane_id: value.pane_id,
             area: value.area.into(),
             body: value.body.into(),
+            compact: value.compact,
+            left_separator: value.left_separator,
             active: value.active,
             jump_active: value.jump_active,
             dimmed: value.dimmed,

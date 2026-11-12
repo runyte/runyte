@@ -503,6 +503,11 @@ impl App {
                 .copied()
                 .map(SettingValue::ExplorerSort)
                 .collect(),
+            SettingType::PaneStyle => crate::config::PaneStyle::ALL
+                .iter()
+                .copied()
+                .map(SettingValue::PaneStyle)
+                .collect(),
             SettingType::Indent => crate::config::IndentStyle::ALL
                 .iter()
                 .copied()
@@ -659,6 +664,7 @@ impl App {
             | SettingValue::Integer(_)
             | SettingValue::RunMode(_)
             | SettingValue::SessionStrip(_)
+            | SettingValue::PaneStyle(_)
             | SettingValue::ExplorerSort(_)
             | SettingValue::Indent(_)
             | SettingValue::Text(_) => {}
@@ -771,6 +777,7 @@ impl App {
             | SettingValue::Integer(_)
             | SettingValue::RunMode(_)
             | SettingValue::SessionStrip(_)
+            | SettingValue::PaneStyle(_)
             | SettingValue::ExplorerSort(_)
             | SettingValue::Indent(_)
             | SettingValue::Text(_) => {}

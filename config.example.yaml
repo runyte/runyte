@@ -15,6 +15,7 @@
 # project's host and attach to it; launches naming a file stay in ide.
 mode: ide
 editor:
+  pane_style: framed # compact keeps title strips and single shared separators
   font_size: 15 # native window logical pixels, 8–48; reopen window to apply
   line_numbers: true
   # Distances from the cursor; its own line keeps its absolute number.
