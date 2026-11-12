@@ -10,7 +10,7 @@ use ratatui::{
 use std::{
     convert::Infallible,
     ops::{Index, IndexMut},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 #[derive(Clone)]
@@ -89,8 +89,28 @@ impl Backend for GridBackend {
     where
         I: Iterator<Item = (u16, u16, &'a Cell)>,
     {
+        static TIMING: OnceLock<bool> = OnceLock::new();
+        let timing =
+            *TIMING.get_or_init(|| std::env::var_os("RUNYTE_NATIVE_PAINT_TIMING").is_some());
+        let started = timing.then(std::time::Instant::now);
+        let mut changed_rows = timing.then(|| vec![false; self.grid.area.height as usize]);
+        let mut changed_cells = 0usize;
         for (x, y, cell) in content {
+            if let Some(rows) = &mut changed_rows {
+                rows[(y - self.grid.area.y) as usize] = true;
+                changed_cells += 1;
+            }
             self.grid[(x, y)].clone_from(cell);
+        }
+        if let Some(started) = started {
+            let elapsed = started.elapsed().as_micros();
+            let rows = changed_rows
+                .as_ref()
+                .map_or(0, |rows| rows.iter().filter(|changed| **changed).count());
+            eprintln!(
+                "native-grid-diff cols={} rows={} changed_cells={} changed_rows={} elapsed_us={}",
+                self.grid.area.width, self.grid.area.height, changed_cells, rows, elapsed
+            );
         }
         Ok(())
     }

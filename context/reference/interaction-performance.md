@@ -1,5 +1,111 @@
 # Settled interaction performance
 
+## 2026-11-11 — Component fixes and validation
+
+Tracking: [transport and copies #111](https://github.com/runyte/runyte/issues/111),
+[scene replay #112](https://github.com/runyte/runyte/issues/112),
+[row preparation #113](https://github.com/runyte/runyte/issues/113), and
+[terminal typing tails #114](https://github.com/runyte/runyte/issues/114).
+The [component artifact](../../benchmarks/results/interaction-followup-2026-11-11.json)
+retains samples, quiet checks, stage traces and provenance. These are component
+measurements. The production comparison below supplies the later end-to-end results.
+
+The terminal-damage shell comparison unnecessarily cloned both panes before
+discarding their terminal fields. An exhaustive borrowed comparison preserves
+fallback and title handling. In a same-binary release comparison, median shell
+cost fell from 44.932 to 0.419 microseconds for one 120×40 terminal, and from
+487.487 to 0.599 microseconds for four 240×80 terminals. Dimensions are per
+terminal; each fixture also contains an unchanged document sibling. Ordinary
+document typing rejects this delta path earlier. Its synthetic response clone
+cost was only 3.939–8.357 microseconds, so transport ownership is unchanged.
+
+Recorded GPUI primitives already passed clipping and retain their bounds and
+masks. Replaying them inside an active layer can reuse that layer's order without
+repeating the intersection. The experimental implementation passed semantic
+comparisons and reduced clear-plus-replay time for 4,800 synthetic glyphs from
+119.339/126.380/138.750 to 72.286/80.320/94.154 microseconds for 1/2/4 partitions
+per row. The production implementation shares primitive insertion code; its
+post-refactor clear-plus-replay medians are 153.230 → 100.297,
+114.789 → 78.688, and 128.544 → 95.021 microseconds for 1/2/4 partitions
+(26–35% less CPU time). These within-case comparisons are not a scaling
+comparison between partition counts. Production semantic equivalence and all
+12 exact pixel comparisons passed.
+
+Retaining a previous grid snapshot and changing one cell costs 0.709 microseconds
+at 120×40 and 2.083 microseconds at 240×80. Whole native preparation measured
+50–74 microseconds in separate traces; coverage construction is only part of
+that stage. These measurements do not justify a storage or coverage-cache
+redesign for the measured typing workload. Wider grids and sustained terminal
+output may warrant separate investigation.
+
+The first clean topology comparison stopped at a failed quiet check after a
+competing build began; it is retained as excluded data. A repeated ABBA
+comparison was also interrupted by competing compilation. Its partial passes
+are retained for diagnostics only. The later production comparison below does
+not establish a consistent terminal-tail improvement.
+
+Formatting, core and desktop all-target Clippy, 5,362 core tests, 172 desktop
+tests, and 23 Python harness tests passed. Canonical Linux core line coverage is
+92.58%, above the 89% floor. The production replay semantic check and all 12
+text/PDF/PNG/HTML pixel comparisons passed. Astra Medium reviewed the changes
+and measurement interpretation. Other operating systems were not validated
+locally. Correctness checks alone do not establish a typing-latency gain.
+
+### Production latency comparison
+
+The [production artifact](../../benchmarks/results/interaction-production-2026-11-11.json)
+retains all samples, per-pass medians, binary hashes, quiet checks and exclusions.
+The accepted sequence is before/after/after/before, 40 insertion/deletion pairs
+per case per pass: 80 samples per action, variant and case. Paint diagnostics
+are disabled. The baseline includes diagnostic hooks but precedes the two fixes;
+the fixed binary contains the implementation in `2814e1f0`. Both retain default
+pane-row grouping. The endpoint is XSendEvent to calibrated glyphs observed by
+XGetImage on an isolated KWin/Xwayland display, not physical scanout.
+
+An initial two-pass attempt was excluded after the fixed binary failed its
+post-measurement shutdown check. The later final baseline pass had the same
+failure and was replaced. All edits and terminal updates were verified in those
+failed cases, but their timings are excluded anyway. The artifact retains these
+attempts; shutdown failures remain unexplained and occurred with both variants.
+Per-case CPU quiet checks passed. A five-second compiler-process monitor began
+during the initial excluded attempt; it observed no competing compiler processes
+during the accepted runs. This does not prove absence of all machine interference.
+
+Milliseconds, pooled medians and nearest-rank p95:
+
+| Mode | Companion | Insert median before → after | Insert p95 before → after | Delete median before → after | Delete p95 before → after |
+| --- | --- | ---: | ---: | ---: | ---: |
+| ide | text | 3.76 → 3.58 | 4.54 → 4.32 | 3.65 → 3.57 | 4.60 → 4.41 |
+| ide | pdf | 3.64 → 3.49 | 4.60 → 4.27 | 3.72 → 3.62 | 4.82 → 4.43 |
+| ide | terminal | 3.88 → 3.88 | 5.37 → 5.31 | 3.87 → 3.97 | 5.15 → 4.72 |
+| mux | text | 4.83 → 5.18 | 6.04 → 7.70 | 5.03 → 5.60 | 6.09 → 7.39 |
+| mux | pdf | 4.31 → 4.07 | 5.91 → 5.88 | 4.48 → 4.17 | 5.96 → 5.79 |
+| mux | terminal | 8.00 → 6.71 | 9.53 → 9.84 | 7.99 → 7.03 | 9.32 → 8.99 |
+
+Persistent-mode terminal insertion medians improve in both fixed passes
+(7.13/6.44 ms versus baseline 8.13/7.77 ms), but pooled insertion p95 rises
+slightly. Standalone terminal insertion is essentially unchanged. Persistent
+text results are unstable: fixed insertion pass medians are 6.34/4.10 ms versus
+baseline 4.77/4.89 ms, and pooled median/p95 worsen. Standalone text/PDF fixed
+passes also differ substantially. These results support lower replay CPU cost
+and suggest a benefit for the measured persistent terminal workload, but do
+not establish a general typing speedup or resolve the terminal-tail regression.
+The two fixes were measured together, so their individual end-to-end effects
+cannot be separated. Two process runs per variant and correlated within-process
+samples limit tail inference; p95 values are descriptive.
+
+### Same-binary grouping diagnostic
+
+The fixed-binary pane/full/full/pane experiment used 40 pairs per case for
+IDE/mux with text/terminal companions. Both pane-row control passes and the
+first full-row pass completed. The second full-row pass failed persistent
+terminal shutdown after verified edits; its replacement failed persistent text
+shutdown after verified edits instead. The complete raw attempts are retained
+in the production artifact, marked incomplete and excluded from latency claims.
+No default grouping change follows from this experiment. The recurring
+post-measurement shutdown failure needs diagnosis before another clean topology
+comparison; it is not evidence that either grouping policy causes typing delay.
+
 ## 2026-11-10 — Runyte 0.4.4, text and PDF companion panes
 
 This measurement investigates input responsiveness after startup. It does not

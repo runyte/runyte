@@ -116,12 +116,14 @@ def drm_devices(pid):
     return sorted(fields)
 
 
-def measure_case(display, binary, mode, side, samples, spacing, paint_timing):
+def measure_case(display, binary, mode, side, samples, spacing, paint_timing, full_width_text_rows=False):
     with tempfile.TemporaryDirectory(prefix='ri-') as temporary:
         root = Path(temporary)
         env = isolated_environment(root)
         if paint_timing:
             env['RUNYTE_NATIVE_PAINT_TIMING'] = '1'
+        if full_width_text_rows:
+            env['RUNYTE_NATIVE_FULL_WIDTH_TEXT_ROWS'] = '1'
         project = root / 'project'
         project.mkdir()
         subprocess.run(['git', 'init', '-q', str(project)], env=display.environment(env),
@@ -219,6 +221,10 @@ def measure_case(display, binary, mode, side, samples, spacing, paint_timing):
                 measured_log = (session.root / 'window.log').read_bytes()[paint_start:].decode(errors='replace')
                 result['native_paint_trace'] = [line for line in measured_log.splitlines()
                                                 if line.startswith('native-paint ')]
+                result['native_stage_trace'] = [line for line in measured_log.splitlines()
+                                                if line.startswith('native-paint-stages ')]
+                result['native_grid_trace'] = [line for line in measured_log.splitlines()
+                                               if line.startswith('native-grid-diff ')]
             session.key('Escape')
             settle(session)
             save_and_verify(session, project / 'restored.txt', ORIGINAL)
@@ -272,6 +278,7 @@ def main():
     parser.add_argument('--modes', default='ide,mux')
     parser.add_argument('--sides', default='text,pdf')
     parser.add_argument('--paint-timing', action='store_true', help='diagnostic timing adds stderr overhead')
+    parser.add_argument('--full-width-text-rows', action='store_true', help='diagnostic A/B: whole-row scenes for media-free frames')
     parser.add_argument('--max-busy-cores', type=float, default=1.0)
     parser.add_argument('--quiet-timeout', type=float, default=60.0)
     parser.add_argument('--json', type=Path, required=True)
@@ -289,7 +296,7 @@ def main():
     output = {'complete': False, 'metric': 'XSendEvent to calibrated glyphs observed by XGetImage; not physical scanout',
               'platform': platform.platform(),
               'geometry_cells': [120, 40], 'spacing_seconds': args.spacing,
-              'paint_timing': args.paint_timing, 'samples_per_case': args.samples,
+              'paint_timing': args.paint_timing, 'full_width_text_rows': args.full_width_text_rows, 'samples_per_case': args.samples,
               'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'cases': []}
     try:
         with tempfile.TemporaryDirectory(prefix='ri-display-') as temporary:
@@ -304,7 +311,7 @@ def main():
                             raise RuntimeError(f'Machine did not become quiet: {quiet}')
                         print(f'Measuring {mode}/{side}, round {round_index + 1}', file=sys.stderr, flush=True)
                         result = measure_case(display, binary, mode, side, args.samples,
-                                              args.spacing, args.paint_timing)
+                                              args.spacing, args.paint_timing, args.full_width_text_rows)
                         output['cases'].append({'round': round_index + 1, 'quiet_before': quiet, **result})
                         args.json.write_text(json.dumps(output, indent=2) + '\n')
             finally:
