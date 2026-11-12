@@ -67,7 +67,9 @@ them, regardless of which extensibility direction is chosen.
   explorer titles show ordinary drive or UNC spelling for ordinary names;
   verbatim spelling stays visible for names that need it. This affects
   presentation only, not the stored path identity.
-- **Pane body** — the complete drawable interior of a pane border.
+- **Pane body** — the drawable interior of a pane border. For terminals in
+  Zen, this is the horizontally centred terminal screen, capped at
+  `editor.zen_width`; the remaining interior cells are blank margins.
 - **Gutter** — the left part of a pane body reserved for line numbers,
   soft-wrap continuation markers, syntax-fold markers, Git change marks, and
   its separator rule.

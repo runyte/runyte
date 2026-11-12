@@ -147,6 +147,10 @@ below is levelled.
 
 - The buffer, selections, undo history, and split tree are unchanged. Toggling
   again restores the exact previous layout.
+- Terminal panes use the same centred width and retain the full available
+  height. The running program receives the new terminal size, including in
+  alternate-screen apps. Leaving Zen restores the pane dimensions. Existing
+  terminal output is not reflowed when resized.
 - Soft wrap keeps the same settings, including the rendered Markdown override.
 - With several panes, the two views share one state. Asking for the other view
   switches to it. Only the view currently showing toggles off.

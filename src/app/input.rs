@@ -1416,10 +1416,14 @@ impl App {
                     // captured them, however, they are an immutable
                     // Runyte-owned surface and accept the same character-cell
                     // selection gesture as a document.
-                    let rows = usize::from(view.pane(pane_id).unwrap().body.height);
-                    let screen_row = usize::from(event.row - view.pane(pane_id).unwrap().body.y);
-                    let screen_column =
-                        usize::from(event.column - view.pane(pane_id).unwrap().body.x);
+                    let body = view.pane(pane_id).unwrap().body;
+                    if !rect_contains(body, event.column, event.row) {
+                        self.pointer_drag = None;
+                        return Ok(PointerOutcome::Changed);
+                    }
+                    let rows = usize::from(body.height);
+                    let screen_row = usize::from(event.row - body.y);
+                    let screen_column = usize::from(event.column - body.x);
                     let extend = press(PointerAction::Extend);
                     let Some(offset) = self.terminals.get(terminal).and_then(|session| {
                         session.review_offset_at_view_cell(rows, screen_row, screen_column)

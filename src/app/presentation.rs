@@ -527,10 +527,20 @@ impl App {
             let body_width = body.width as usize;
             let body_height = body.height as usize;
             if let Some(id) = terminal {
-                // The pane's inside is the child's screen, whole: no gutter,
-                // no line numbers, no content indent. This is also the one
-                // place that knows the pane's new shape, so it is where the
-                // child is told about it.
+                // The terminal body is its screen and input coordinate space.
+                // Centre that whole rectangle in Zen so both frontends and
+                // pointer handling use the same origin as the resized child.
+                let body = if self.maximized_view(pane_id) == Some(MaximizedView::Zen) {
+                    let layout = ContentLayout::viewport(self.config.editor.zen_width);
+                    Rect {
+                        x: body.x + layout.indent(body_width) as u16,
+                        width: layout.width(body_width) as u16,
+                        ..body
+                    }
+                } else {
+                    body
+                };
+                let body_width = usize::from(body.width);
                 let resized = self
                     .terminals
                     .get_mut(id)
