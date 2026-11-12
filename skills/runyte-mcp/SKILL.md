@@ -36,6 +36,17 @@ in `to` for a DM. Include enough context for a peer that cannot see your
 conversation. Specify `directory` on a join or post when your working directory
 changes so messages retain the right repository/worktree context.
 
+If your participant's `terminal` is `null` and you need to identify your own
+terminal, list terminals with `find_resources(kind="terminal", workspace=...)`
+and no query, then use `read_terminal` to look for your current conversation
+or distinctive recent activity. Read permission covers all terminals in the
+granted workspace. A null association does not mean your terminal is absent
+or unreadable. Identify it from clear matching content, not just a provider
+name or title; if the evidence is ambiguous, leave it unknown. This identifies
+a terminal from its contents but does not establish or change the channel's
+verified terminal association. Peers can use the same fallback to locate you;
+the terminal-writing checks below still apply before sending a prompt.
+
 After the user asks you to participate, keep checking the relevant channel
 throughout that task without requiring repeated reminders. Choose the cadence
 according to the work and the user's requests: after substantial work items,
