@@ -397,7 +397,7 @@ impl WorkspaceHost {
     }
 
     /// Moves the deadline of every line still being written into the past.
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub(super) fn context_expire_line_deadlines(&mut self) {
         let past = Instant::now() - Duration::from_millis(1);
         for enter in self.context.enters.values_mut() {
