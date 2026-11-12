@@ -273,33 +273,46 @@ one shared buffer without refusing each other.
 
 ### Terminal writes
 
-With Write, an agent can type one line into a terminal and, separately, press
-Enter there. Nothing asks you first. Instead you see both happen.
+With Write, an agent can type one line into a terminal and press Enter there,
+in one step or two. Nothing asks you first. Instead you see both happen.
 
 **Typing.** A line holds at most 4 KiB, with no line breaks, control
 characters, escape sequences, or Unicode line or paragraph separators. It lands
 at the program's current input position, as a paste if the program asked for
-pastes (shells and agent prompts do), and as typed characters otherwise. Enter
-is never included. The line queues behind other text still being written. Your
-own typing cancels text that has not started arriving. Some programs act on
-printable input at once, so text alone can still do something.
+pastes (shells and agent prompts do), and as typed characters otherwise. The
+line queues behind other text still being written. Your own typing cancels
+text that has not started arriving. Some programs act on printable input at
+once, so text alone can still do something.
 
-**Enter.** An agent asks for Enter after reading the terminal, naming what it
-read. The pane title then shows `[Enter pending]` for five seconds. Runyte
-presses Enter only if, after those five seconds, nothing new has appeared in
-the terminal and nothing has been typed or pasted there. A dialog, a line of
-output, a key you press, or another agent's text all cancel the Enter. So do
-your window detaching and the terminal exiting. The agent is told it was not
-sent. Changing or revoking Write, or the agent disconnecting, discards a
-waiting Enter along with the agent's connection, and nothing is sent. One Enter
-can wait per terminal. Each agent can have four waiting. A program that redraws
-constantly, such as a spinner, never receives one.
+**Enter.** An agent can ask for Enter with the line itself. Runyte presses it
+as soon as the line has been written, and the pane title shows
+`[Enter pending]` for that moment. A key you press first, or another agent's
+text, cancels the Enter. A line the program does not take within four seconds
+is withdrawn. An agent can also press Enter alone, naming what it
+read in the terminal. Then anything new in the terminal, such as a dialog or a
+line of output, cancels it as well. A program that redraws constantly, such as
+a spinner, never receives that kind.
+
+**While you type.** For ten seconds after you last typed, pasted, or undid a
+paste in a terminal, agents cannot type or press Enter there. The agent is told
+to wait, read the terminal again, and decide whether it is still the right
+place. Moving or scrolling the pointer does not count, though in a program that
+reacts to the pointer it still cancels an agent's line not yet written and its
+Enter. Agents are told to read
+a terminal before every write and to write only where a prompt is waiting, but
+that is the agent's discipline, not something Runyte can check.
+
+Your window detaching or the terminal exiting cancels any waiting Enter, and
+the agent is told it was not sent. Changing or revoking Write, or the agent
+disconnecting, discards a waiting Enter along with the agent's connection, and
+nothing is sent. One Enter can wait per terminal. Each agent can have four
+waiting.
 
 **Limits.**
 
 - Terminal writes and Enter need your window attached. A detached workspace
   refuses them. They also reach terminals that no pane shows, where you cannot
-  see `[Enter pending]`.
+  see them happen.
 - A program that has not asked for pastes, such as a pager or a single-key
   `[y/n]` prompt, gets the line as keystrokes. It may act on the first
   character without any Enter.

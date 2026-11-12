@@ -174,8 +174,8 @@ explicit private profile (see below).
 | `read_terminal` | Read the live terminal screen, or recent history with it. |
 | `append_buffer` | Append in one unsaved, undoable transaction. |
 | `edit_buffer` | Replace character ranges at an expected revision. |
-| `write_terminal` | Type one literal line into a terminal, without Enter. |
-| `press_enter` | Press Enter in a terminal after a visible delay, only if nothing changed there. |
+| `write_terminal` | Type one literal line into a terminal, and submit it with `enter=true`. |
+| `press_enter` | Press Enter alone in a terminal, only if nothing changed there since the agent read it. |
 | `join_channel` | Join the workspace's agent channel, stating provider and task. |
 | `post_message` | Post to the channel, or directly to one participant. |
 | `read_messages` | Read what arrived since the last read, optionally waiting for it. |
@@ -267,46 +267,64 @@ edits and terminal writes. Buffer and terminal text is untrusted source data.
 
 With Write, an agent can type into any terminal in the workspace and press
 Enter there. That can be a shell, a test runner, or another agent's prompt. The
-person sees both happen, and Runyte guards the Enter, because Enter answers
-whatever the terminal is showing at that moment.
+person sees both happen. Runyte does not let an agent type where the person is
+typing, because Enter answers whatever the terminal is showing at that moment
+and a line typed into the middle of someone else's would be both of theirs.
 
 1. **Read first.** `read_terminal` shows what is on screen: a shell prompt, an
    agent's input box, or a dialog asking for approval. Its pane title,
-   `[terminal #N] ...`, tells agents apart.
-2. **Write.** `write_terminal` types one line of at most 4 KiB, with no
-   newlines or other controls, where the cursor is. It arrives as a bracketed
-   paste when the program asked for pastes, as shells and agent prompts do,
-   and as typed characters otherwise. It is never followed by Enter, and it
-   queues behind any other text still being written. The reply is `queued`.
-3. **Read again**, and check the line arrived where it should.
-4. **`press_enter`** with the `revision` from that read. Runyte shows
-   `[Enter pending]` in the pane title and waits five seconds. It then presses
-   Enter only if the terminal still shows that revision and nothing was typed
-   or pasted there meanwhile. Any output, such as a dialog appearing, any key
-   the person presses, and any other agent's text drop it. So do the person's
-   window detaching and the terminal exiting. The call takes about five seconds
-   and returns the outcome:
+   `[terminal #N] ...`, tells agents apart. Write only where a prompt is
+   waiting for this input.
+2. **Write and submit.** `write_terminal` with `enter=true` types one line of
+   at most 4 KiB, with no newlines or other controls, where the cursor is, and
+   presses Enter as soon as the line has been written. It arrives as a
+   bracketed paste when the program asked for pastes, as shells and agent
+   prompts do, and as typed characters otherwise. It queues behind any other
+   text still being written. The call returns the outcome of its Enter, shown
+   below. Without `enter`, the line is typed and left there; the reply is
+   `queued`.
+
+`press_enter` presses Enter alone, for a line that is already there. It takes
+the `revision` from the agent's latest `read_terminal`, which is refused at
+once as `stale` if the terminal has changed since. Otherwise Enter is pressed
+straight away, after one pass of the editor's event loop, if nothing new
+appeared and nothing was typed or pasted there meanwhile.
+
+**While the person types.** For ten seconds after the person last typed,
+pasted, or undid a paste in a terminal, both tools refuse it as `busy`, and
+the error says how long is left. The agent waits that long, reads the terminal
+again, and decides whether it is still safe to write there. Moving or scrolling
+the pointer over the pane does not count as typing, though in a program that
+asked for pointer reports those reports are input: they still cancel a line
+not yet written and drop a waiting Enter.
 
 | State | Meaning |
 | --- | --- |
 | `sent` | Enter was pressed |
-| `stale` | The terminal changed or someone typed there; nothing was sent |
-| `cancelled` | The person's window detached or the terminal exited; nothing was sent |
+| `stale` | Someone typed there before the Enter, the terminal changed since `press_enter`'s revision, or the line was only partly written; Enter was not pressed |
+| `cancelled` | The person's window detached, the terminal exited, or the line was cancelled before it was written; Enter was not pressed |
+
+A key the person presses before a line's Enter drops it, and with it any of the
+line not yet written. Another agent's text does too. The line's own echo does
+not: it is expected output. A line the program has not taken within four
+seconds, because it stopped reading its input, is withdrawn with its Enter, or
+left without one if writing had begun. `[Enter pending]` shows in the pane
+title while an Enter waits.
 
 If Write is changed or revoked, or the connection drops, while an Enter waits,
-the Enter is discarded and `press_enter` fails with `outcome_unknown`. The
-change may have come just after Enter was pressed. The agent finds the terminal
-again with `find_resources` and reads it. It must not retry.
+the Enter is discarded and the tool fails with `outcome_unknown`. The change
+may have come just after Enter was pressed. The agent finds the terminal again
+with `find_resources` and reads it. It must not retry.
 
-A revision that is already out of date is refused at once as `stale`. One
-Enter may wait per terminal. Each reader may have four waiting, the host
-sixteen. A program that redraws constantly, such as a spinner, never receives
-an Enter this way. That is deliberate. Terminal writes and Enter work only while
-the person's window is attached, and text still queued when it detaches is
-cancelled.
+One Enter may wait per terminal. Each reader may have four waiting, the host
+sixteen. Terminal writes and Enter work only while the person's window is
+attached, and text still queued when it detaches is cancelled. A host from an
+earlier release cannot submit a line with `enter=true`, and the tool says so
+rather than typing the line alone; there, write the line, read the terminal,
+and call `press_enter`.
 
 Writes reach every terminal in the workspace, including ones no pane shows,
-where the person cannot see `[Enter pending]`. A program that has not asked for
+where the person cannot see them happen. A program that has not asked for
 pastes, such as a pager or a single-key `[y/n]` prompt, gets the line as
 keystrokes. It may act on the first character without any Enter.
 
@@ -361,8 +379,8 @@ when you ask it to, or when another agent with Write tells it in its terminal.
 To do that, the agent reads the terminals to find the recipient's
 (`list_participants` shows the terminal where Runyte verified it). It checks
 that the prompt is waiting for input and not showing a dialog. It writes a
-short line such as `Read the Runyte agent channel: codex-1 sent you a review`,
-reads again and calls `press_enter`. Do this only for an agent that must act
+short line such as `Read the Runyte agent channel: codex-1 sent you a review`
+with `enter=true`. Do this only for an agent that must act
 and is idle at its prompt. A busy agent reads when it next checks.
 
 ## Migrating from Python

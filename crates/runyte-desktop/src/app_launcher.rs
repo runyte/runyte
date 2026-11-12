@@ -23,30 +23,68 @@ fn arguments(
     .collect()
 }
 
+/// `PATH` with the usual package-manager directories appended when absent,
+/// so Poppler and other tools remain discoverable even when no login shell
+/// environment could be read.
 #[cfg(any(target_os = "macos", test))]
-fn search_path(path: Option<std::ffi::OsString>) -> std::ffi::OsString {
+fn search_path(path: Option<&std::ffi::OsStr>) -> std::ffi::OsString {
     let mut path = path
         .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| "/usr/bin:/bin:/usr/sbin:/sbin".into());
-    path.push(":/opt/homebrew/bin:/usr/local/bin");
+        .unwrap_or("/usr/bin:/bin:/usr/sbin:/sbin".as_ref())
+        .to_owned();
+    for directory in ["/opt/homebrew/bin", "/usr/local/bin"] {
+        if !std::env::split_paths(&path).any(|entry| entry == std::path::Path::new(directory)) {
+            path.push(":");
+            path.push(directory);
+        }
+    }
     path
+}
+
+/// The environment the editor starts with: the account's login shell
+/// environment, or the inherited one when it cannot be read, with `PATH`
+/// extended as [`search_path`] describes.
+#[cfg(any(target_os = "macos", test))]
+fn editor_environment(
+    mut environment: runyte::login_environment::Variables,
+) -> runyte::login_environment::Variables {
+    let path = environment
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "PATH")
+        .map(|(_, value)| search_path(Some(value)))
+        .unwrap_or_else(|| search_path(None));
+    environment.retain(|(name, _)| name != "PATH");
+    environment.push(("PATH".into(), path));
+    environment
 }
 
 #[cfg(target_os = "macos")]
 fn main() -> std::io::Result<()> {
+    use runyte::login_environment::{Outcome, graphical_environment};
     use std::os::unix::process::CommandExt;
     let executable = std::env::current_exe()?;
     let editor = executable
         .parent()
         .ok_or_else(|| std::io::Error::other("launcher has no parent directory"))?
         .join("runyte");
+    let home = runyte::launch::graphical_home_directory()?;
+    // LaunchServices starts this launcher with launchd's environment, which
+    // no login startup file has touched. Everything the editor starts —
+    // terminals, a persistent session host, language servers, Git — inherits
+    // what is decided here, once, before any thread exists.
+    let (environment, outcome) = graphical_environment(std::env::vars_os().collect(), &home);
+    if let Outcome::Unavailable(error) = outcome {
+        eprintln!("runyte: using the inherited environment: {error}");
+    }
     Err(std::process::Command::new(editor)
         .args(arguments(
             std::env::args_os().skip(1),
             std::env::current_dir()?.into_os_string(),
         ))
-        .current_dir(runyte::launch::graphical_home_directory()?)
-        .env("PATH", search_path(std::env::var_os("PATH")))
+        .current_dir(home)
+        .env_clear()
+        .envs(editor_environment(environment))
         .exec())
 }
 
@@ -116,16 +154,50 @@ mod tests {
     }
 
     #[test]
-    fn path_preserves_user_priority_and_adds_package_managers() {
+    fn path_preserves_user_priority_and_adds_missing_package_managers() {
         assert_eq!(
-            search_path(Some("/custom/bin:/usr/bin".into())),
+            search_path(Some("/custom/bin:/usr/bin".as_ref())),
             "/custom/bin:/usr/bin:/opt/homebrew/bin:/usr/local/bin"
         );
-        for missing in [None, Some(OsString::new())] {
+        assert_eq!(
+            search_path(Some(
+                "/opt/homebrew/bin:/usr/bin:/bin:/usr/local/bin".as_ref()
+            )),
+            "/opt/homebrew/bin:/usr/bin:/bin:/usr/local/bin"
+        );
+        for missing in [None, Some("".as_ref())] {
             assert_eq!(
                 search_path(missing),
                 "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin"
             );
         }
+    }
+
+    #[test]
+    fn editor_environment_keeps_every_variable_and_one_path() {
+        let environment = editor_environment(vec![
+            ("HOME".into(), "/home".into()),
+            ("PATH".into(), "/profile/bin:/usr/bin".into()),
+            ("EMPTY".into(), OsString::new()),
+        ]);
+        assert_eq!(
+            environment,
+            [
+                ("HOME", "/home"),
+                ("EMPTY", ""),
+                (
+                    "PATH",
+                    "/profile/bin:/usr/bin:/opt/homebrew/bin:/usr/local/bin"
+                ),
+            ]
+            .map(|(name, value)| (OsString::from(name), OsString::from(value)))
+        );
+        assert_eq!(
+            editor_environment(Vec::new()),
+            [(
+                OsString::from("PATH"),
+                OsString::from("/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin")
+            )]
+        );
     }
 }

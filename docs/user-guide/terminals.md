@@ -24,6 +24,17 @@ it goes away.
   local OSC 7 `file:` URL. Remote hosts, control characters, non-file schemes,
   and paths that are not existing absolute directories are rejected.
 
+#### Terminal environment
+
+A terminal inherits the editor's environment. `:terminal` starts `$SHELL` as an
+interactive shell, not a login shell, because the editor has normally inherited
+the login environment already: from the shell it was started in, or, for
+`Runyte.app` opened from Finder, the Dock or `open`, from the account's login
+shell, which the [application launcher](../../contrib/packaging/README.md#login-shell-environment)
+asks for its environment once at launch. A persistent session host keeps the
+environment it started with. Stop it with `:session-stop` (or run
+`runyte --session-restart`) to pick up changes to your startup files.
+
 #### Windows terminals
 
 Windows terminals use ConPTY and need no Bash.

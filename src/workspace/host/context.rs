@@ -593,7 +593,7 @@ impl WorkspaceHost {
                     "Read covers every buffer and terminal here, unsaved text and terminal history included, and the agent channel.",
                 ),
                 Detail::note(
-                    "Write lets agents edit buffers and type into any terminal here, shells and other agents' prompts included, and press Enter there. Enter waits 5 seconds, shown in the pane title, and is dropped if anything appears or is typed meanwhile. Grant it for a job, then turn it off.",
+                    "Write lets agents edit buffers and type into any terminal here, shells and other agents' prompts included, and press Enter there. Agents cannot type where you typed in the last 10 seconds, and an Enter is dropped if you type first. Grant it for a job, then turn it off.",
                 ),
             ];
             if let Some(recent) = self.context.recent.back() {
@@ -946,6 +946,7 @@ impl WorkspaceHost {
                 wire::FEATURE,
                 wire::CHANNEL_FEATURE,
                 wire::TERMINAL_WRITE_FEATURE,
+                wire::TERMINAL_SUBMIT_FEATURE,
             ];
             if self.context.durable_root.is_some() {
                 features.push(wire::DURABLE_FEATURE);
@@ -1014,6 +1015,13 @@ impl WorkspaceHost {
                     .any(|feature| feature == wire::TERMINAL_WRITE_FEATURE)
                 {
                     features.push(wire::TERMINAL_WRITE_FEATURE);
+                }
+                if registration
+                    .required_features
+                    .union(&registration.optional_features)
+                    .any(|feature| feature == wire::TERMINAL_SUBMIT_FEATURE)
+                {
+                    features.push(wire::TERMINAL_SUBMIT_FEATURE);
                 }
                 if registration
                     .required_features
@@ -1130,10 +1138,13 @@ impl WorkspaceHost {
             ))
         } else {
             match envelope.request {
-                Request::TerminalInputWrite { terminal, text } => reader
-                    .reads
-                    .terminal(&terminal)
-                    .and_then(|terminal| self.context_write_terminal(&mut reader, terminal, &text)),
+                Request::TerminalInputWrite {
+                    terminal,
+                    text,
+                    enter,
+                } => reader.reads.terminal(&terminal).and_then(|terminal| {
+                    self.context_write_terminal(id, &mut reader, terminal, &text, enter)
+                }),
                 Request::TerminalInputEnter {
                     terminal,
                     expected_revision,

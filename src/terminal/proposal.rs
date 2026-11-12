@@ -41,6 +41,10 @@ impl Delivery {
     pub(crate) fn queued_for_test() -> Self {
         Self::queued()
     }
+    #[cfg(test)]
+    pub(crate) fn set_for_test(&self, state: DeliveryState) {
+        self.0.store(state as u8, Ordering::Release);
+    }
 
     pub fn state(&self) -> DeliveryState {
         match self.0.load(Ordering::Acquire) {

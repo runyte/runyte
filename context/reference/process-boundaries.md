@@ -43,6 +43,16 @@ if it changed or became unreadable. All helper streams are piped, stderr is
 retained up to 4 KiB while excess bytes are drained, and process groups are
 killed before their leaders are reaped. PDF restart errors bypass Poppler fallback.
 
+The macOS application launcher runs one external program before the editor
+exists: the account's login shell, asked once for its environment
+(`src/login_environment.rs`). It is not a helper and has no wire beyond
+`env -0` output between random delimiters: null stdin and stderr, its own
+process group, 2 MiB of stdout and a 3-second deadline, after which the group
+is killed and the inherited environment stays in use. Its values are never
+logged. The packaging guide's
+[login shell environment](../../contrib/packaging/README.md#login-shell-environment)
+section records which variables keep their inherited value.
+
 ## Plugins: `runyte-1`
 
 This is a public extension surface. Runyte starts explicitly configured plugin
@@ -107,17 +117,31 @@ terminal cannot be verified has none; nothing binds one by hand.
 Terminal writes (`terminal_write`, feature `runyte.context.terminal.write.v1`)
 are the one path by which a reader's bytes reach a terminal, and the only key
 they can press is Enter. Text is one bounded line without controls, queued
-behind other input and never followed by Enter. Enter is a separate request
-naming the terminal read revision the agent looked at; the host refuses a stale
-revision, shows `[Enter pending]` in the pane title for five seconds, and then
-writes a carriage return only if the read revision and the input generation are
-both unchanged, the reader still holds Write, the same frontend is attached and
-the terminal is live. Any output (such as an approval dialog appearing), any
-physical input and any other reader's text therefore drop it. This replaced
-channel nudges and native terminal bindings (removed together with reviewed
-terminal proposals; see
+behind other input. Nothing is typed, and no Enter accepted, while the person
+has typed, pasted or undone a paste in that terminal during the last ten
+seconds (`context.typing_quiet_ms`); the request fails as `busy`, and the
+agent is told to wait, read the terminal again and decide afresh. Pointer
+reports do not count as typing. A line may carry its own Enter (`enter`,
+feature `runyte.context.terminal.submit.v1`): the host writes a carriage
+return once the line's delivery is acknowledged in full and one settling pass
+has run, only if the input generation captured after queueing the line is
+unchanged. The line's own echo is output and does not drop it; any physical
+input (pointer reports included, where the program asked for them) or other
+reader's text does. A line not written within four seconds is withdrawn with
+its Enter, or leaves it `stale` if writing had begun. A separate Enter names the terminal read
+revision the agent looked at; the host refuses a stale revision, shows
+`[Enter pending]` in the pane title, and after one settling pass writes a
+carriage return only if the read revision and the input generation are both
+unchanged. Either kind also needs the reader to still hold Write, the same
+frontend to be attached and the terminal to be live. This replaced channel
+nudges and native terminal bindings (removed together with reviewed terminal
+proposals; see
 [the plan](../plans/active/PLAN_MCP_READ_WRITE_PERMISSIONS.md)): the earlier
-rule that terminal text never submits Enter is now that it never carries Enter.
+rule that terminal text never submits Enter is now that it never carries Enter
+as a byte. A five-second visible delay before every Enter preceded the
+typing rule; the read-before-write discipline is now the agent's, stated in
+the MCP tool descriptions, and the host enforces only that it does not type
+over the person.
 Write lets an agent run commands in shells and answer other agents' prompts; it
 is meant to be granted for a job and revoked afterwards, and the grant dialog
 says so. Implementation: `src/workspace/host/context_input.rs` and the input

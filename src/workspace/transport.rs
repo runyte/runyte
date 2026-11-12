@@ -2120,7 +2120,7 @@ impl BufferedLocalClient {
         Self::from_connected_stream(stream)
     }
 
-    fn from_connected_stream(stream: UnixStream) -> Result<Self> {
+    pub(crate) fn from_connected_stream(stream: UnixStream) -> Result<Self> {
         let reader = stream.into_std()?;
         let shutdown = reader
             .try_clone()

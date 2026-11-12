@@ -9886,7 +9886,7 @@ mod tests {
                 "Read covers every buffer and terminal here, unsaved text and terminal history included, and the agent channel.",
             ),
             Detail::note(
-                "Write lets agents edit buffers and type into any terminal here, shells and other agents' prompts included, and press Enter there. Enter waits 5 seconds, shown in the pane title, and is dropped if anything appears or is typed meanwhile. Grant it for a job, then turn it off.",
+                "Write lets agents edit buffers and type into any terminal here, shells and other agents' prompts included, and press Enter there. Agents cannot type where you typed in the last 10 seconds, and an Enter is dropped if you type first. Grant it for a job, then turn it off.",
             ),
             Detail::excerpt("Last call", &"agent: terminal.read t:1 ".repeat(8)),
         ];
