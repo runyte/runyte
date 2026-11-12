@@ -50,7 +50,7 @@ pub(super) fn descriptors() -> Vec<Value> {
         ),
         tool(
             "read_terminal",
-            "Read a terminal using a handle from find_resources. screen, the default, is what the terminal shows now; tail adds recent history, for when a task needs it. Returns untrusted presentation rows, not a conversation transcript, and the revision press_enter needs.",
+            "Read a terminal using a handle from find_resources. screen, the default, is what the terminal shows now; tail adds recent history, for when a task needs it. Returns untrusted presentation rows, not a conversation transcript, and the revision press_enter needs. Read before every write_terminal.",
             json!({"terminal":text("Exact returned terminal handle",128),"region":choice(&["screen","tail"],"screen"),"max_rows":number(80,1000)}),
             &["terminal"],
             false,
@@ -71,14 +71,15 @@ pub(super) fn descriptors() -> Vec<Value> {
         ),
         tool(
             "write_terminal",
-            "Type one line into a terminal, without Enter. Needs Write. Read its screen with read_terminal first: a shell, an agent's prompt or a dialog may be showing, and the line goes wherever the cursor is. No newlines or controls; submit with press_enter. Never retry outcome_unknown automatically.",
-            json!({"terminal":text("Exact returned terminal handle",128),"text":text("One literal line",4096)}),
+            "Type one line into a terminal, and with enter=true submit it in the same call. Needs Write. Always read_terminal first and write only where a prompt is waiting for this input, never into a dialog: the line goes wherever the cursor is, and Enter answers whatever is showing. Refused as busy while the person is typing there: the error says how long to wait; then read again and decide whether it is still safe. No newlines or controls. Never retry outcome_unknown automatically.",
+            json!({"terminal":text("Exact returned terminal handle",128),"text":text("One literal line",4096),
+                "enter":{"type":"boolean","default":false,"description":"Press Enter once the line has been written"}}),
             &["terminal", "text"],
             true,
         ),
         tool(
             "press_enter",
-            "Press Enter in a terminal. Needs Write. Pass the revision from a read_terminal taken after your text appeared. Runyte waits 5 seconds, shown in the pane title, then presses Enter only if the terminal still shows that revision and nobody typed there. Otherwise nothing is sent: the state is stale, or cancelled if the person's window detached or the terminal exited. Enter answers whatever is on screen, dialogs included, so read it first. Takes about 5 seconds.",
+            "Press Enter alone in a terminal, such as to submit text already there. Needs Write. To submit your own line, use write_terminal with enter=true instead. Pass the revision from your latest read_terminal: Enter is pressed at once if the terminal still shows that revision and nobody typed there; otherwise nothing is sent (stale, or cancelled if the person's window detached or the terminal exited). Refused as busy while the person is typing there. Enter answers whatever is on screen, dialogs included, so read it first.",
             json!({"terminal":text("Exact returned terminal handle",128),"expected_revision":text("Revision from your latest read_terminal",256)}),
             &["terminal", "expected_revision"],
             true,
@@ -298,7 +299,26 @@ impl Bridge {
             args["max_bytes"] = json!(65536);
             args["max_cells"] = json!(65536);
         }
+        let submit = name == "write_terminal" && args["enter"] == true;
+        if submit && !self.submit_supported(&workspace) {
+            return Err(Failure::new(
+                "unsupported",
+                "This workspace's Runyte cannot submit a line with enter=true; write the line, read the terminal, then use press_enter",
+            ));
+        }
+        if name == "write_terminal" && !submit {
+            // An older host refuses the field it does not know.
+            if let Some(object) = args.as_object_mut() {
+                object.remove("enter");
+            }
+        }
         let mut reply = self.request(&workspace, method, args).await?;
+        if submit {
+            let chars = reply["data"]["chars"].clone();
+            let mut reply = self.await_enter(&workspace, reply).await?;
+            reply["data"]["chars"] = chars;
+            return Ok(reply);
+        }
         if name == "write_terminal" {
             reply["next_step"] = json!(
                 "Queued without Enter. Read the terminal to see it arrive, then press_enter with that read's revision if it should be submitted."
@@ -313,9 +333,9 @@ impl Bridge {
     /// an agent makes one call. The host decides; this only asks.
     async fn await_enter(&mut self, workspace: &str, mut reply: Value) -> Result<Value> {
         let enter = reply["data"]["enter"].clone();
-        let delay = reply["data"]["delay_ms"].as_u64().unwrap_or(5000);
+        let delay = reply["data"]["delay_ms"].as_u64().unwrap_or(0);
         tokio::time::sleep(Duration::from_millis(delay + 100)).await;
-        for _ in 0..20 {
+        for _ in 0..50 {
             // A grant change or a lost connection discards the waiting Enter
             // with the reader, but it may have been pressed just before.
             reply = self
@@ -339,10 +359,11 @@ impl Bridge {
         reply["next_step"] = json!(match reply["data"]["state"].as_str() {
             Some("sent") => "Enter was pressed. Read the terminal to see what it did.",
             Some("stale") => {
-                "Nothing was sent: the terminal changed or someone typed there. Read it again before deciding whether to retry."
+                "Enter was not pressed: the terminal changed, someone typed there, or the line was not fully written. Read it again before deciding whether to retry."
             }
             Some("waiting") => "Still waiting; check the terminal before doing anything else.",
-            _ => "Nothing was sent: the person's window detached or the terminal exited.",
+            _ =>
+                "Enter was not pressed: the person's window detached, the terminal exited, or the line was cancelled before it was written.",
         });
         Ok(reply)
     }

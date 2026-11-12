@@ -744,6 +744,9 @@ pub struct TerminalSession {
     channel_unread: usize,
     /// An agent's Enter waits out its delay, shown in the pane title.
     agent_enter_pending: bool,
+    /// When the person last typed, pasted or undid a paste here. Agents may
+    /// not type into a terminal the person is typing in.
+    last_typed: Option<std::time::Instant>,
     label: String,
     user_name: Option<String>,
     directory: PathBuf,
@@ -801,6 +804,26 @@ impl TerminalSession {
 
     pub fn set_agent_enter_pending(&mut self, pending: bool) {
         self.agent_enter_pending = pending;
+    }
+
+    /// How long ago the person last typed, pasted or undid a paste here;
+    /// `None` if they never have. Pointer reports do not count: moving or
+    /// scrolling over a pane is not typing in it.
+    pub fn since_typed(&self) -> Option<std::time::Duration> {
+        self.last_typed.map(|typed| typed.elapsed())
+    }
+
+    /// Moves the person's last keystroke here `by` into the past.
+    #[cfg(test)]
+    pub(crate) fn backdate_typing(&mut self, by: std::time::Duration) {
+        if let Some(typed) = self.last_typed.as_mut() {
+            *typed -= by;
+        }
+    }
+
+    /// Records that the person's own keys or paste reached the child.
+    fn note_typing(&mut self) {
+        self.last_typed = Some(std::time::Instant::now());
     }
 
     pub fn set_channel_unread(&mut self, count: usize) {
@@ -1931,6 +1954,7 @@ impl TerminalSession {
         let Some(bytes) = keys::encode(key, self.emulator.modes) else {
             return false;
         };
+        self.note_typing();
         // Whatever this key does to the child's input area, the pasted text is
         // no longer the last thing at the cursor, so deletes counted from its
         // length would land on the wrong characters.
@@ -1946,6 +1970,7 @@ impl TerminalSession {
         if text.is_empty() {
             return true;
         }
+        self.note_typing();
         let bracketed = self.emulator.modes.bracketed_paste;
         let bytes = keys::encode_paste(text, self.emulator.modes);
         self.scroll = 0;
@@ -1989,6 +2014,7 @@ impl TerminalSession {
         }
         self.scroll = 0;
         self.discard_review();
+        self.note_typing();
         if !self.write(vec![DELETE; sent.characters]) {
             return SentTextUndo::Refused;
         }
@@ -3014,6 +3040,7 @@ impl TerminalSessions {
                 number,
                 channel_unread: 0,
                 agent_enter_pending: false,
+                last_typed: None,
                 label: request.label,
                 user_name: None,
                 directory: request.directory.clone(),
@@ -3208,6 +3235,7 @@ mod tests {
             number: None,
             channel_unread: 0,
             agent_enter_pending: false,
+            last_typed: None,
             label: "test".to_owned(),
             user_name: None,
             directory: PathBuf::from("/"),
@@ -4130,6 +4158,38 @@ mod tests {
         let read = session.read_revision();
         let _ = session.queue_agent_text(&proposal::Text::new("ls").unwrap());
         assert_ne!(session.read_revision(), read, "an agent's line");
+    }
+
+    #[test]
+    fn only_the_persons_keys_and_pastes_that_reach_the_child_count_as_typing() {
+        let mut session = session(8, 2);
+        assert_eq!(session.since_typed(), None);
+        let _ = session.queue_agent_text(&proposal::Text::new("ls").unwrap());
+        session.send_mouse_repeated(
+            crate::input::PointerEvent {
+                kind: crate::input::PointerEventKind::ScrollDown,
+                column: 1,
+                row: 1,
+                modifiers: Default::default(),
+            },
+            1,
+            1,
+            1,
+        );
+        assert_eq!(session.since_typed(), None, "agent text and the pointer");
+        let _ = session.undo_sent_text();
+        assert_eq!(session.since_typed(), None, "an undo with nothing to undo");
+        session.send_key(KeyStroke::char('x'));
+        let typed = session.since_typed().unwrap();
+        assert!(typed < Duration::from_secs(1));
+        session.backdate_typing(Duration::from_secs(60));
+        assert!(session.since_typed().unwrap() >= Duration::from_secs(60));
+        session.send_text("pasted");
+        assert!(session.since_typed().unwrap() < Duration::from_secs(1));
+        // Without a child, nothing was sent, so there is nothing to undo.
+        session.backdate_typing(Duration::from_secs(60));
+        let _ = session.undo_sent_text();
+        assert!(session.since_typed().unwrap() >= Duration::from_secs(60));
     }
 
     #[test]

@@ -135,6 +135,14 @@ saw no dialog cannot have its Enter land on one that appeared afterwards,
 because the dialog's output changes the revision. A program that redraws
 constantly never receives an Enter this way, which fails safe.
 
+Later refined (2026-11-11): the five-second delay proved too strict in use and
+is now zero, leaving the settling pass. `terminal.input.write` takes `enter`
+(feature `runyte.context.terminal.submit.v1`), pressing Enter once the line
+has been written, guarded by the input generation alone because the line's
+own echo is output. Instead of the delay, the host refuses writes and Enters
+in a terminal the person typed in during the last ten seconds, as `busy`.
+`context/reference/process-boundaries.md` records the current rule.
+
 Write grants are powerful: an agent can run commands in a shell or answer
 another agent's approval prompt. The grant dialog says so, and the person is
 expected to grant Write for the duration of a job and revoke it afterwards.

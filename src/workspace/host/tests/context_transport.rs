@@ -325,14 +325,11 @@ async fn a_waiting_enter_times_the_loop_and_a_finished_one_stops_it() {
         .to_owned();
     let delay = host.context_delay().unwrap();
     assert!(
-        delay <= Duration::from_millis(wire::ENTER_DELAY_MILLIS)
-            && delay > Duration::from_millis(wire::ENTER_DELAY_MILLIS / 2),
+        delay <= Duration::from_millis(wire::ENTER_DELAY_MILLIS),
         "{delay:?}"
     );
-    host.sync_context();
-    assert_eq!(host.context_enter_state(&enter), Some("waiting"));
-    // Due, it waits one settling pass so output already queued is seen.
-    host.context_expire_enter_delays();
+    // Due at once, it waits one settling pass so output already queued is
+    // seen.
     host.sync_context();
     assert_eq!(host.context_enter_state(&enter), Some("waiting"));
     assert!(host.context_delay().unwrap() <= Duration::from_millis(100));
