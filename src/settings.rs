@@ -39,6 +39,7 @@ const COLUMN_GAP: &str = "  ";
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SettingId {
     EditorGrammar,
+    EditorPaneStyle,
     EditorLineNumbers,
     EditorRelativeLineNumbers,
     EditorTabWidth,
@@ -81,6 +82,7 @@ pub enum SettingId {
 /// A setting value after parsing, independent of a menu or frontend widget.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SettingValue {
+    PaneStyle(crate::config::PaneStyle),
     Grammar(GrammarKind),
     Boolean(bool),
     Integer(usize),
@@ -93,6 +95,7 @@ pub enum SettingValue {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SettingType {
+    PaneStyle,
     Grammar,
     Boolean,
     Integer {
@@ -137,6 +140,15 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         title: "Editing grammar",
         description: "Input grammar used for editing commands",
         value_type: SettingType::Grammar,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
+        id: SettingId::EditorPaneStyle,
+        key: "editor.pane_style",
+        title: "Pane style",
+        description: "Full frames or compact title strips with shared separators",
+        value_type: SettingType::PaneStyle,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
     },
@@ -516,6 +528,7 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
 impl SettingId {
     pub const ALL: &'static [Self] = &[
         Self::EditorGrammar,
+        Self::EditorPaneStyle,
         Self::EditorLineNumbers,
         Self::EditorRelativeLineNumbers,
         Self::EditorTabWidth,
@@ -587,6 +600,7 @@ impl SettingId {
                 SettingValue::Boolean(config.editor.relative_line_numbers)
             }
             Self::EditorTabWidth => SettingValue::Integer(config.editor.tab_width),
+            Self::EditorPaneStyle => SettingValue::PaneStyle(config.editor.pane_style),
             Self::EditorIndent => SettingValue::Indent(config.editor.indent),
             Self::EditorAutoClose => SettingValue::Boolean(config.editor.auto_close),
             Self::EditorSmartNewline => SettingValue::Boolean(config.editor.smart_newline),
@@ -675,6 +689,10 @@ impl SettingId {
             SettingType::ExplorerSort => {
                 ExplorerSort::ALL.iter().map(ToString::to_string).collect()
             }
+            SettingType::PaneStyle => crate::config::PaneStyle::ALL
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
             SettingType::Indent => IndentStyle::ALL.iter().map(ToString::to_string).collect(),
             SettingType::Integer { .. } | SettingType::Text => Vec::new(),
         }
@@ -691,6 +709,7 @@ impl SettingId {
             | (SettingType::RunMode, SettingValue::RunMode(_))
             | (SettingType::SessionStrip, SettingValue::SessionStrip(_))
             | (SettingType::ExplorerSort, SettingValue::ExplorerSort(_)) => Ok(()),
+            (SettingType::PaneStyle, SettingValue::PaneStyle(_)) => Ok(()),
             (SettingType::Indent, SettingValue::Indent(_)) => Ok(()),
             (SettingType::Integer { minimum, maximum }, SettingValue::Integer(value)) => {
                 if (minimum..=maximum).contains(value) {
@@ -730,6 +749,9 @@ impl SettingId {
             }
             (Self::EditorTabWidth, SettingValue::Integer(value)) => {
                 config.editor.tab_width = *value;
+            }
+            (Self::EditorPaneStyle, SettingValue::PaneStyle(value)) => {
+                config.editor.pane_style = *value;
             }
             (Self::EditorIndent, SettingValue::Indent(value)) => {
                 config.editor.indent = *value;
@@ -845,6 +867,7 @@ impl fmt::Display for SettingType {
             Self::RunMode => formatter.write_str("a mode"),
             Self::SessionStrip => formatter.write_str("a session-strip visibility"),
             Self::ExplorerSort => formatter.write_str("an explorer order"),
+            Self::PaneStyle => formatter.write_str("a pane style"),
             Self::Indent => formatter.write_str("an indent style"),
             Self::Text => formatter.write_str("text"),
         }
@@ -860,6 +883,7 @@ impl fmt::Display for SettingValue {
             Self::RunMode(value) => value.fmt(formatter),
             Self::SessionStrip(value) => value.fmt(formatter),
             Self::ExplorerSort(value) => formatter.write_str(value.label()),
+            Self::PaneStyle(value) => value.fmt(formatter),
             Self::Indent(value) => value.fmt(formatter),
             Self::Text(value) => formatter.write_str(value),
         }
@@ -1565,6 +1589,7 @@ fn yaml_scalar(value: &SettingValue) -> String {
         SettingValue::RunMode(value) => value.to_string(),
         SettingValue::SessionStrip(value) => value.to_string(),
         SettingValue::ExplorerSort(value) => value.to_string(),
+        SettingValue::PaneStyle(value) => value.to_string(),
         SettingValue::Indent(value) => value.to_string(),
         SettingValue::Text(value) => format!("'{}'", value.replace('\'', "''")),
     }

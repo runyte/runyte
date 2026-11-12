@@ -182,6 +182,7 @@ fn production_source() -> String {
 mod async_syntax;
 mod command_discovery;
 mod commands;
+mod compact_panes;
 mod comparisons;
 mod config_reload;
 mod config_write;

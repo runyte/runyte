@@ -347,6 +347,10 @@ pub struct FrameGeometry {
 /// Immutable geometry and viewport values for one prepared pane.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedPane {
+    /// Compact title strip instead of a full frame.
+    pub compact: bool,
+    /// This tile owns the shared separator on its left edge.
+    pub left_separator: bool,
     pub pane_id: usize,
     pub area: Rect,
     pub body: Rect,
@@ -4984,24 +4988,30 @@ fn pointer_resize_pair(view: &PreparedView, column: u16, row: u16) -> Option<(us
                 column >= first.area.x.max(second.area.x) && column < first_right.min(second_right);
 
             if vertical_overlap && row_is_on_shared_edge && first_right == second.area.x {
-                if column == second.area.x || column.saturating_add(1) == second.area.x {
+                if column == second.area.x
+                    || (!second.compact && column.saturating_add(1) == second.area.x)
+                {
                     return Some((first.pane_id, second.pane_id, Axis::Horizontal));
                 }
             } else if vertical_overlap
                 && row_is_on_shared_edge
                 && second_right == first.area.x
-                && (column == first.area.x || column.saturating_add(1) == first.area.x)
+                && (column == first.area.x
+                    || (!first.compact && column.saturating_add(1) == first.area.x))
             {
                 return Some((second.pane_id, first.pane_id, Axis::Horizontal));
             }
             if horizontal_overlap && column_is_on_shared_edge && first_bottom == second.area.y {
-                if row == second.area.y || row.saturating_add(1) == second.area.y {
+                if row == second.area.y
+                    || (!second.compact && row.saturating_add(1) == second.area.y)
+                {
                     return Some((first.pane_id, second.pane_id, Axis::Vertical));
                 }
             } else if horizontal_overlap
                 && column_is_on_shared_edge
                 && second_bottom == first.area.y
-                && (row == first.area.y || row.saturating_add(1) == first.area.y)
+                && (row == first.area.y
+                    || (!first.compact && row.saturating_add(1) == first.area.y))
             {
                 return Some((second.pane_id, first.pane_id, Axis::Vertical));
             }

@@ -57,6 +57,13 @@ fn other_value(setting: SettingId, current: &SettingValue, config: &Config) -> S
                     .expect("a second explorer order"),
             )
         }
+        (SettingType::PaneStyle, SettingValue::PaneStyle(value)) => {
+            SettingValue::PaneStyle(if *value == runyte::config::PaneStyle::Framed {
+                runyte::config::PaneStyle::Compact
+            } else {
+                runyte::config::PaneStyle::Framed
+            })
+        }
         (SettingType::Indent, SettingValue::Indent(value)) => {
             SettingValue::Indent(if *value == IndentStyle::Spaces {
                 IndentStyle::Tabs
@@ -89,6 +96,7 @@ fn wrong_typed_value(setting: SettingId) -> SettingValue {
         | SettingType::Theme
         | SettingType::SessionStrip
         | SettingType::RunMode
+        | SettingType::PaneStyle
         | SettingType::ExplorerSort
         | SettingType::Indent
         | SettingType::Text => SettingValue::Boolean(true),
@@ -233,6 +241,7 @@ fn only_the_enumerated_setting_types_offer_values_to_choose_from() {
                     .collect::<Vec<_>>();
                 assert_eq!(allowed, orders, "{key}");
             }
+            SettingType::PaneStyle => assert_eq!(allowed, ["framed", "compact"], "{key}"),
             SettingType::Indent => assert_eq!(allowed, ["spaces", "tabs"], "{key}"),
             SettingType::Theme => {
                 assert!(!allowed.is_empty(), "{key} offered no theme");

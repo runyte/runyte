@@ -5470,6 +5470,7 @@ impl App {
                         | SettingType::Theme
                         | SettingType::SessionStrip
                         | SettingType::RunMode
+                        | SettingType::PaneStyle
                         | SettingType::ExplorerSort
                         | SettingType::Indent => {
                             self.action_failed("this setting must be chosen from its list");

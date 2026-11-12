@@ -225,7 +225,8 @@ use crate::workspace::{
 // Version 93 adds bounded, one-shot graphical launch targets on native attachments.
 // Version 94 admits 1 MiB document captures and larger bounded host responses.
 // Version 95 carries keyboard pane-layout previews.
-pub const VERSION: u32 = 96;
+// Version 97 carries compact pane chrome and separator ownership.
+pub const VERSION: u32 = 97;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -1637,7 +1638,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 96);
+        assert_eq!(VERSION, 97);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

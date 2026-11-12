@@ -241,9 +241,9 @@ impl App {
     }
 
     fn comparison_width(&self) -> usize {
-        self.areas
-            .get(&self.active_pane)
-            .map_or(100, |area| usize::from(area.width.saturating_sub(8)))
+        self.areas.get(&self.active_pane).map_or(100, |area| {
+            usize::from(self.pane_chrome(*area).2.width.saturating_sub(6))
+        })
     }
 
     /// Whether the active revision comparison's caret row names a file, or
@@ -445,7 +445,7 @@ impl App {
             {
                 continue;
             }
-            let width = usize::from(area.width.saturating_sub(8));
+            let width = usize::from(self.pane_chrome(*area).2.width.saturating_sub(6));
             widths
                 .entry(pane.buffer)
                 .and_modify(|old| *old = (*old).min(width))

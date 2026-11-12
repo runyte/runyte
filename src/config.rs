@@ -602,10 +602,33 @@ impl fmt::Display for IndentStyle {
     }
 }
 
+/// Pane decoration and the space reserved around its body.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneStyle {
+    #[default]
+    Framed,
+    Compact,
+}
+
+impl PaneStyle {
+    pub const ALL: &'static [Self] = &[Self::Framed, Self::Compact];
+}
+
+impl std::fmt::Display for PaneStyle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Framed => "framed",
+            Self::Compact => "compact",
+        })
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct EditorConfig {
     pub grammar: GrammarKind,
+    pub pane_style: PaneStyle,
     pub line_numbers: bool,
     pub relative_line_numbers: bool,
     pub tab_width: usize,
@@ -1235,6 +1258,7 @@ impl Default for EditorConfig {
     fn default() -> Self {
         Self {
             grammar: GrammarKind::Runyte,
+            pane_style: PaneStyle::Framed,
             line_numbers: true,
             relative_line_numbers: false,
             tab_width: 4,

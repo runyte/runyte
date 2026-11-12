@@ -1,5 +1,23 @@
 ## Panes
 
+### Compact panes
+
+Set `editor.pane_style: compact` in the configuration file, or choose **Pane
+style** in the settings page, to reclaim the outer and bottom frame cells.
+The default, `framed`, keeps full borders.
+
+Compact panes keep a tinted title strip with all existing title markers. The
+active title is bold and accent-colored. Side-by-side panes share one vertical
+separator column; stacked panes are separated by the lower pane's title strip.
+The directory tree keeps its own right separator. A single pane uses the full
+width and all rows below its title.
+
+Drag a shared vertical separator to resize side-by-side panes. Drag the lower
+pane's title strip to resize a stacked boundary; a title without a pane above
+it focuses that pane. Shared resize boundaries keep precedence over Alt-drag
+rearrangement. Keyboard resizing, drop outlines, Zen, and fullscreen remain
+available. Overlay frames are independent of this setting.
+
 ### Pane keys
 
 Pane commands live under `Space w`, with `Ctrl-w` as the compatibility

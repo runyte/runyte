@@ -73,8 +73,16 @@ impl App {
     /// arrives before the child has drawn anything.
     pub(super) fn pane_cells(&self, pane_id: usize) -> (usize, usize) {
         match self.areas.get(&pane_id) {
-            Some(area) if area.width >= 3 && area.height >= 3 => {
-                (usize::from(area.width - 2), usize::from(area.height - 2))
+            Some(area) => {
+                let (_, _, body) = self.pane_chrome(*area);
+                let width = usize::from(body.width).max(1);
+                let width = if self.maximized_view(pane_id) == Some(crate::app::MaximizedView::Zen)
+                {
+                    width.min(self.config.editor.zen_width)
+                } else {
+                    width
+                };
+                (width, usize::from(body.height).max(1))
             }
             _ => (80, 24),
         }
