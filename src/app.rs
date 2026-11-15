@@ -3306,6 +3306,9 @@ pub struct App {
     line_select: Option<Mode>,
     selection_action_depth: usize,
     selection_history_epoch: u64,
+    /// Selection history of each terminal's review, which belongs to the
+    /// terminal rather than to the pane showing it.
+    terminal_selection_history: BTreeMap<TerminalId, selection_history::History>,
     selection_drag_origin: Option<selection_history::Origin>,
     selection_prompt_origin: Option<selection_history::PromptOrigin>,
     pub(crate) pipe: pipe::State,
@@ -4036,6 +4039,7 @@ impl App {
             line_select: None,
             selection_action_depth: 0,
             selection_history_epoch: 0,
+            terminal_selection_history: BTreeMap::new(),
             selection_drag_origin: None,
             selection_prompt_origin: None,
             keymap,

@@ -114,7 +114,10 @@ commands.
 - Restoring never enters Insert/Replace mode or reopens a prompt.
 - Limits: 128 states and 4,096 total ranges per history, for up to 32 buffers
   per pane. An oversized selection ends that history.
-- Terminal review is not supported.
+- Terminal review has the same history. It belongs to the terminal rather than
+  the pane, starts with the first change after review begins, and ends when
+  the terminal returns to live output, because the next review is a new
+  snapshot.
 
 #### Selecting motions
 

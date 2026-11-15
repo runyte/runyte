@@ -241,6 +241,8 @@ const TERMINAL: &[C] = &[
     C::SelectLine,
     C::SelectLineUp,
     C::SelectRegister,
+    C::SelectionRedo,
+    C::SelectionUndo,
     C::StopMacroRecording,
     C::Undo,
     C::Yank,
