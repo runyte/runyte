@@ -18,7 +18,7 @@ fn pasting_many_search_matches_selects_each_unicode_replacement_and_undoes_once(
         text: "λλ".into(),
         ..Register::default()
     };
-    app.paste_register(&register, false, false);
+    app.paste_register(&register, crate::app::editing::Paste::AfterOrReplace, false);
     assert_eq!(text(&app), "λλ ".repeat(count));
     assert_eq!(app.active().selection.primary_index(), count / 2);
     assert_eq!(app.active().selection.len(), count);

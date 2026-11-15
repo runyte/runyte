@@ -141,6 +141,199 @@ fn without_defaults_a_terminal_can_still_be_left() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+fn register(app: &mut App, text: &str, linewise: bool) {
+    app.registers.insert(
+        '"',
+        Register {
+            text: text.into(),
+            linewise,
+            directory: None,
+        },
+    );
+}
+
+fn select(app: &mut App, range: Range) {
+    app.mode = Mode::Select;
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(range);
+}
+
+#[test]
+fn paste_after_pastes_past_a_range_without_replacing_it_or_leaving_select_mode() {
+    let mut app = configured("bind:\n  select:\n    F5: paste-after\n");
+    seed(&mut app, "abc def\nghi\njkl");
+    register(&mut app, "XY", false);
+    select(&mut app, Range::new(0, 2));
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(text(&app), "abcXY def\nghi\njkl");
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.active().selection.primary(), Range::new(0, 2));
+
+    // Whole lines go after the last row the range touches, not the head's.
+    let mut app = configured("bind:\n  select:\n    F5: paste-after\n");
+    seed(&mut app, "abc def\nghi\njkl");
+    register(&mut app, "L\n", true);
+    select(&mut app, Range::new(9, 0));
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(text(&app), "abc def\nghi\nL\njkl");
+    assert_eq!(app.active().selection.primary(), Range::new(9, 0));
+
+    // `p` still replaces the same range and ends in Normal mode.
+    let mut app = configured("");
+    seed(&mut app, "abc def\nghi\njkl");
+    register(&mut app, "XY", false);
+    select(&mut app, Range::new(0, 2));
+    press(&mut app, 'p');
+    assert_eq!(text(&app), "XY def\nghi\njkl");
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
+fn paste_after_stays_on_an_empty_last_row_and_pastes_after_every_range() {
+    // A range ending on an empty row pastes on that row, as a caret there
+    // would, rather than at the start of the next row.
+    let mut app = configured("bind:\n  select:\n    F5: paste-after\n");
+    seed(&mut app, "abc\n\ndef");
+    register(&mut app, "XY", false);
+    select(&mut app, Range::new(0, 4));
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(text(&app), "abc\nXY\ndef");
+
+    // Every range gets its own paste, adjacent ranges included.
+    let mut app = configured("bind:\n  select:\n    F5: paste-after\n");
+    seed(&mut app, "ab cd");
+    register(&mut app, "X", false);
+    app.mode = Mode::Select;
+    app.panes.get_mut(&0).unwrap().selection = Selection::new(
+        vec![Range::new(0, 0), Range::new(1, 1), Range::new(3, 4)],
+        0,
+    );
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(text(&app), "aXbX cdX");
+    // Each range stays on its own characters, the pasted text beside it.
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::new(0, 0), Range::new(2, 2), Range::new(5, 6)]
+    );
+
+    // A count repeats the paste after the same range.
+    let mut app = configured("bind:\n  select:\n    F5: paste-after\n");
+    seed(&mut app, "abc def");
+    register(&mut app, "XY", false);
+    select(&mut app, Range::new(0, 2));
+    press(&mut app, '3');
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(text(&app), "abcXYXYXY def");
+    assert_eq!(app.active().selection.primary(), Range::new(0, 2));
+}
+
+#[test]
+fn replace_with_register_replaces_whole_lines_and_an_empty_rows_break() {
+    let mut app = configured(
+        "bind:\n  select:\n    F6: replace-with-register\n  normal:\n    F6: replace-with-register\n",
+    );
+    seed(&mut app, "abc\ndef\n");
+    register(&mut app, "L\n", true);
+    press(&mut app, 'x');
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(text(&app), "L\ndef\n");
+
+    // On a caret on an empty row the span is the row's break, as for `d`.
+    let mut app = configured("bind:\n  normal:\n    F6: replace-with-register\n");
+    seed(&mut app, "abc\n\ndef");
+    register(&mut app, "Z", false);
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::point(4));
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(text(&app), "abc\nZdef");
+}
+
+#[test]
+fn a_search_step_that_finds_nothing_ends_its_sequence() {
+    let mut app = configured(
+        "bind:\n  normal:\n    F8: [search-next, delete-selection]\n    F9: [search-previous, delete-selection]\n",
+    );
+    seed(&mut app, "abc def");
+    app.search.pattern = "zzz".into();
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(app.status.contains("pattern not found"), "{}", app.status);
+    assert_eq!(text(&app), "abc def");
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    assert_eq!(text(&app), "abc def");
+
+    // A step that finds its match lets the sequence go on.
+    app.search.pattern = "def".into();
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(text(&app), "abc ");
+}
+
+#[test]
+fn paste_after_a_half_open_range_keeps_the_range_off_the_pasted_text() {
+    let mut app = configured("bind:\n  select:\n    F5: paste-after\n");
+    seed(&mut app, "abc def");
+    register(&mut app, "XY", false);
+    select(&mut app, Range::new(0, 3));
+    app.active_mut()
+        .mark_selection_semantics(SelectionSemantics::HalfOpen);
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(text(&app), "abcXY def");
+    assert_eq!(app.active().selection.primary(), Range::new(0, 3));
+}
+
+#[test]
+fn replace_with_register_replaces_a_caret_or_range_and_keeps_the_mode() {
+    let mut app = configured(
+        "bind:\n  normal:\n    F6: replace-with-register\n  select:\n    F6: replace-with-register\n",
+    );
+    seed(&mut app, "abc def");
+    register(&mut app, "Z", false);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    // A bare caret stands for the character under it, as it does for `d`;
+    // `p` there would have pasted after it instead.
+    assert_eq!(text(&app), "Zbc def");
+    assert_eq!(app.mode, Mode::Normal);
+
+    // It takes no count: repeating a replacement would only replace the copy,
+    // so a count would look accepted while doing nothing.
+    assert!(!crate::command::EditorCommand::ReplaceWithRegister.accepts_count());
+    assert!(crate::command::EditorCommand::PasteAfter.accepts_count());
+
+    select(&mut app, Range::new(4, 6));
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(text(&app), "Zbc Z");
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.active().selection.primary(), Range::new(4, 4));
+    // The register is left alone, so it can replace one range after another.
+    assert_eq!(app.registers[&'"'].text, "Z");
+}
+
+#[test]
+fn set_search_from_selection_sets_the_pattern_and_search_next_continues_from_it() {
+    let mut app = configured(
+        "bind:\n  normal:\n    F7: set-search-from-selection\n    F8: [set-search-from-selection, search-next]\n    F9: [set-search-from-selection, search-previous, yank]\n",
+    );
+    seed(&mut app, "foo bar foo baz bar");
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::point(4));
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert_eq!(app.search.pattern, "bar");
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.active().selection.primary(), Range::point(4));
+    press(&mut app, 'n');
+    assert_eq!(app.active().selection.primary(), Range::new(16, 18));
+
+    app.mode = Mode::Normal;
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::point(0));
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.search.pattern, "foo");
+    assert_eq!(app.active().selection.primary(), Range::new(8, 10));
+    assert_eq!(app.mode, Mode::Select);
+
+    // `search-previous` continues too: the yank after it copies the match.
+    app.mode = Mode::Normal;
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::point(16));
+    key(&mut app, KeyCode::Function(9), Modifiers::NONE);
+    assert_eq!(app.active().selection.primary(), Range::new(4, 6));
+    assert_eq!(app.registers[&'"'].text, "bar");
+}
+
 #[test]
 fn yank_and_yank_line_keep_the_selection_and_mode_while_y_and_y_line_collapse() {
     let mut app =
