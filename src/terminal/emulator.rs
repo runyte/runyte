@@ -607,6 +607,13 @@ impl Emulator {
                     index += consumed;
                 }
                 49 => self.pen.background = Color::Default,
+                58 => {
+                    // Underline colours are not represented by terminal cells
+                    // yet. Consume the whole colour so its channels cannot
+                    // become independent rendition commands.
+                    let (_, consumed) = extended_color(parameters, index, values);
+                    index += consumed;
+                }
                 value @ 90..=97 => self.pen.foreground = Color::Indexed((value - 90 + 8) as u8),
                 value @ 100..=107 => self.pen.background = Color::Indexed((value - 100 + 8) as u8),
                 _ => {}
@@ -661,7 +668,7 @@ fn is_single_query(parameters: &[Vec<u8>]) -> bool {
     matches!(parameters, [_, query] if query.as_slice() == b"?")
 }
 
-/// Reads a `38`/`48` extended colour, reporting how many further parameters it
+/// Reads a `38`/`48`/`58` extended colour, reporting how many further parameters it
 /// consumed when written with semicolons rather than colons.
 fn extended_color(parameters: &[Vec<u16>], index: usize, values: &[u16]) -> (Option<Color>, usize) {
     // Colon form: everything is inside this one parameter.
@@ -813,6 +820,32 @@ mod tests {
             emulator.grid().line(0).unwrap()[2].foreground,
             Color::Indexed(200)
         );
+    }
+
+    #[test]
+    fn unsupported_underline_colours_do_not_change_other_rendition() {
+        for sequence in [
+            "58;2;31;42;7",
+            "58;5;31",
+            "58:2::31:42:7",
+            "58:5:31",
+            "58;2;999;42;7",
+            "58;2;31;42",
+        ] {
+            let mut emulator = Emulator::new(4, 1);
+            emulator.feed(b"\x1b[38;2;100;110;120;48;2;20;30;40m");
+            emulator.feed(format!("\x1b[{sequence}ma").as_bytes());
+            let cell = &emulator.grid().line(0).unwrap()[0];
+            assert_eq!(cell.foreground, Color::Rgb(100, 110, 120), "{sequence}");
+            assert_eq!(cell.background, Color::Rgb(20, 30, 40), "{sequence}");
+            assert_eq!(cell.attributes, Attributes::default(), "{sequence}");
+            emulator.feed(b"\x1b[58;2;31;42;7;4mb\x1b[59mc");
+            for cell in &emulator.grid().line(0).unwrap()[1..3] {
+                assert_eq!(cell.foreground, Color::Rgb(100, 110, 120));
+                assert_eq!(cell.background, Color::Rgb(20, 30, 40));
+                assert_eq!(cell.attributes, Attributes::UNDERLINE);
+            }
+        }
     }
 
     #[test]

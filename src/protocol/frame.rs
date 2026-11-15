@@ -204,6 +204,7 @@ impl EditorDamageFrame {
             || base.editor.theme != next.editor.theme
             || base.editor.terminal_theme_colors != next.editor.terminal_theme_colors
             || base.editor.preview_theme_colors != next.editor.preview_theme_colors
+            || base.editor.focus != next.editor.focus
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.resize != next.editor.resize
@@ -421,6 +422,7 @@ impl TerminalDamageFrame {
             || base.editor.theme != next.editor.theme
             || base.editor.terminal_theme_colors != next.editor.terminal_theme_colors
             || base.editor.preview_theme_colors != next.editor.preview_theme_colors
+            || base.editor.focus != next.editor.focus
             || base.editor.mode != next.editor.mode
             || base.editor.session_strip != next.editor.session_strip
             || base.editor.resize != next.editor.resize
@@ -701,6 +703,7 @@ impl From<ResizeSnapshot> for core::ResizeSnapshot {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EditorSnapshot {
+    pub focus: Option<(u16, u16, u8, u8)>,
     pub geometry: FrameGeometry,
     pub theme: Theme,
     pub terminal_theme_colors: bool,
@@ -785,6 +788,14 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
         Self {
             geometry: value.geometry.into(),
             theme: value.theme.into(),
+            focus: value.focus.map(|f| {
+                (
+                    f.radius,
+                    f.fade_distance,
+                    f.minimum_opacity,
+                    f.inactive_opacity,
+                )
+            }),
             terminal_theme_colors: value.terminal_theme_colors,
             preview_theme_colors: value.preview_theme_colors,
             mode: value.mode.into(),
@@ -844,6 +855,11 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
 impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
     type Error = String;
     fn try_from(value: EditorSnapshot) -> Result<Self, Self::Error> {
+        if value.focus.is_some_and(|(_, distance, minimum, inactive)| {
+            distance == 0 || minimum > 100 || inactive > 100
+        }) {
+            return Err("invalid focus settings".into());
+        }
         use crate::keymap::native_preview::Bindings as Preview;
         if value.preview_bindings.len() > Preview::MAX_ENTRIES
             || value.preview_fallback.len() > Preview::MAX_FALLBACK
@@ -915,6 +931,18 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
             window_bindings,
             geometry: value.geometry.into(),
             theme: value.theme.into(),
+            focus: value.focus.map(
+                |(radius, fade_distance, minimum_opacity, inactive_opacity)| {
+                    // Only an enabled focus configuration is sent at all.
+                    crate::config::FocusConfig {
+                        enabled: true,
+                        radius,
+                        fade_distance,
+                        minimum_opacity,
+                        inactive_opacity,
+                    }
+                },
+            ),
             terminal_theme_colors: value.terminal_theme_colors,
             preview_theme_colors: value.preview_theme_colors,
             mode: value.mode.into(),
@@ -1340,6 +1368,7 @@ mod tests {
                 preview_unavailable: false,
                 geometry: FrameGeometry::default(),
                 theme: theme.into(),
+                focus: None,
                 terminal_theme_colors: true,
                 preview_theme_colors: true,
                 mode: Mode::Normal,
@@ -1431,6 +1460,21 @@ mod tests {
         next.editor.theme.terminal[1] = Color::Rgb(1, 2, 3);
         assert!(EditorDamageFrame::between(&base, &next).is_none());
         assert!(TerminalDamageFrame::between(&base, &next).is_none());
+    }
+
+    #[test]
+    fn focus_settings_round_trip_and_invalidate_damage() {
+        let base = terminal_frame(1, 1, 'x');
+        let mut next = base.clone();
+        next.editor.focus = Some((2, 12, 25, 15));
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        let core: crate::workspace::HostFrame = next.clone().try_into().unwrap();
+        assert_eq!(HostFrame::from(core).editor.focus, next.editor.focus);
+        for settings in [(2, 0, 25, 15), (2, 12, 101, 15), (2, 12, 25, 101)] {
+            next.editor.focus = Some(settings);
+            assert!(crate::workspace::HostFrame::try_from(next.clone()).is_err());
+        }
     }
 
     #[test]

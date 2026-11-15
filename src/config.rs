@@ -62,6 +62,7 @@ pub struct Config {
     pub plugins: Vec<crate::plugin::PluginConfig>,
     pub editor: EditorConfig,
     pub terminal: TerminalConfig,
+    pub focus: FocusConfig,
     pub indentation: crate::indentation::Overrides,
     pub workspace: WorkspaceConfig,
     pub lsp: LspConfig,
@@ -87,6 +88,32 @@ pub struct Config {
         skip_serializing_if = "only_built_in_themes"
     )]
     pub themes: HashMap<String, ThemeDefinition>,
+}
+
+/// Experimental pane fading. Opacity is a percentage; distances are display rows.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(default)]
+pub struct FocusConfig {
+    /// Whether fading starts enabled. `:focus` flips the running value for
+    /// this session without writing it back, as `Space p s` does for
+    /// `editor.soft_wrap`.
+    pub enabled: bool,
+    pub radius: u16,
+    pub fade_distance: u16,
+    pub minimum_opacity: u8,
+    pub inactive_opacity: u8,
+}
+
+impl Default for FocusConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            radius: 2,
+            fade_distance: 30,
+            minimum_opacity: 50,
+            inactive_opacity: 50,
+        }
+    }
 }
 
 fn deserialize_present_yaml_value<'de, D>(
@@ -1188,6 +1215,7 @@ impl Default for Config {
             mode: None,
             editor: EditorConfig::default(),
             terminal: TerminalConfig::default(),
+            focus: FocusConfig::default(),
             indentation: crate::indentation::Overrides::default(),
             workspace: WorkspaceConfig::default(),
             lsp: LspConfig::default(),
@@ -1511,6 +1539,12 @@ impl Config {
 
     pub(crate) fn validate_settings(&self) -> std::result::Result<(), String> {
         self.indentation.validate()?;
+        if self.focus.fade_distance == 0
+            || self.focus.minimum_opacity > 100
+            || self.focus.inactive_opacity > 100
+        {
+            return Err("focus.fade_distance must be positive and focus opacities must be between 0 and 100".into());
+        }
         if self.terminal.scrollback_lines > MAX_TERMINAL_SCROLLBACK_LINES {
             return Err(format!(
                 "terminal.scrollback_lines must be between 0 and {MAX_TERMINAL_SCROLLBACK_LINES}"
