@@ -648,6 +648,7 @@ macro_rules! editor_commands {
                         | Self::SelectLineUp
                         | Self::ExtendLineAbove
                         | Self::ExtendLineBelow
+                        | Self::PasteAfterOrReplace
                         | Self::PasteAfter
                         | Self::PasteBefore
                         | Self::ClipboardPasteAfter
@@ -729,7 +730,9 @@ editor_commands! {
     YankLine => ("yank-line", "Yank the lines the selection touches"),
     YankCollapseNormalMode => ("yank-collapse-normal-mode", "Yank, then leave a caret in normal mode"),
     YankLineCollapseNormalMode => ("yank-line-collapse-normal-mode", "Yank lines, then leave a normal-mode caret"),
-    PasteAfter => ("paste-after", "Replace the selection, or paste after the caret"),
+    PasteAfterOrReplace => ("paste-after-or-replace", "Replace the selection, or paste after the caret"),
+    PasteAfter => ("paste-after", "Paste after the selection or caret"),
+    ReplaceWithRegister => ("replace-with-register", "Replace the selection or character"),
     PasteBefore => ("paste-before", "Paste before the selection"),
     Indent => ("indent", "Indent the selected lines"),
     Unindent => ("unindent", "Unindent the selected lines"),
@@ -885,6 +888,7 @@ editor_commands! {
     SearchNext => ("search-next", "Select only the next search match"),
     SearchPrevious => ("search-previous", "Select only the previous search match"),
     SearchSelection => ("search-selection", "Select every match of the selection or word"),
+    SetSearchFromSelection => ("set-search-from-selection", "Use the selection or word as the search"),
 
     MediaShowPage => ("media-show-page", "Display the selected PDF page"),
     MediaZoomIn => ("media-zoom-in", "Zoom into the image or PDF"),
@@ -1223,7 +1227,9 @@ impl EditorCommand {
                 | Self::ToggleCase
                 | Self::Undo
                 | Self::Redo
+                | Self::PasteAfterOrReplace
                 | Self::PasteAfter
+                | Self::ReplaceWithRegister
                 | Self::PasteBefore
                 | Self::ClipboardPasteAfter
                 | Self::ClipboardPasteBefore
@@ -1394,7 +1400,9 @@ impl EditorCommand {
             | Self::YankLine
             | Self::YankCollapseNormalMode
             | Self::YankLineCollapseNormalMode
+            | Self::PasteAfterOrReplace
             | Self::PasteAfter
+            | Self::ReplaceWithRegister
             | Self::PasteBefore
             | Self::Indent
             | Self::Unindent
@@ -1497,6 +1505,7 @@ impl EditorCommand {
             | Self::SearchNext
             | Self::SearchPrevious
             | Self::SearchSelection
+            | Self::SetSearchFromSelection
             | Self::OpenFuzzyGrep
             | Self::OpenDirectoryFuzzyGrep
             | Self::GlobalSearch

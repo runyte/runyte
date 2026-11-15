@@ -783,6 +783,7 @@ const fn runyte_repeats_for_count(command: EditorCommand) -> bool {
             | Command::ScrollViewUp
             | Command::SelectLine
             | Command::SelectLineUp
+            | Command::PasteAfterOrReplace
             | Command::PasteAfter
             | Command::PasteBefore
             | Command::ClipboardPasteAfter
@@ -2191,7 +2192,7 @@ impl VimGrammar {
                 GrammarOutput::one(Self::command(EditorCommand::Redo, count, None)?)
             }
             (KeyCode::Char('p'), modifiers, Mode::Normal) if modifiers.is_empty() => {
-                self.command_with_register(EditorCommand::PasteAfter, count)?
+                self.command_with_register(EditorCommand::PasteAfterOrReplace, count)?
             }
             (KeyCode::Char('P'), modifiers, Mode::Normal) if modifiers.is_empty() => {
                 self.command_with_register(EditorCommand::PasteBefore, count)?

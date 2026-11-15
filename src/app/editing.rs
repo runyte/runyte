@@ -18,6 +18,19 @@ use super::{
     transform_selection, visual_column, without_trailing_line_terminator,
 };
 
+/// Which edit a register paste makes at each range.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Paste {
+    /// Before every range; never replaces. `P`.
+    Before,
+    /// After every range, a range that holds text included; never replaces.
+    After,
+    /// Over every range, a bare caret's character included.
+    Replace,
+    /// Over a range that holds text, otherwise after the caret. `p`.
+    AfterOrReplace,
+}
+
 #[derive(Clone, Copy)]
 enum ListKind<'a> {
     Bullet(char),
@@ -3700,31 +3713,42 @@ impl App {
         }
     }
 
-    pub(super) fn paste(&mut self, before: bool, transient_line_selection: bool) {
+    pub(super) fn paste(&mut self, paste: Paste, transient_line_selection: bool) {
         let register = self.read_selected_register();
         if register.text.is_empty() {
             return;
         }
-        self.paste_register(&register, before, transient_line_selection);
+        self.paste_register(&register, paste, transient_line_selection);
     }
 
-    /// Pastes the register beside every caret and over every selection.
+    /// Pastes the register beside every caret, over every selection, or both,
+    /// as `paste` says.
     ///
     /// `p` on a range that holds text replaces it, because with something
     /// selected "paste here" means "put this there instead"; the register is
     /// left alone, so the same content can be pasted over one range after
     /// another. `P` never replaces, which is how text still reaches the edge
-    /// of a selection without consuming it.
+    /// of a selection without consuming it. [`Paste::After`] and
+    /// [`Paste::Replace`] are the two halves of `p` on their own: each makes
+    /// one kind of edit whatever is selected, and leaves the mode alone so a
+    /// bound sequence can go on from where it left the selection.
     pub(super) fn paste_register(
         &mut self,
         register: &Register,
-        before: bool,
+        paste: Paste,
         transient_line_selection: bool,
     ) {
+        let before = paste == Paste::Before;
         if self.active_buffer().is_directory()
             && let Some(directory) = &register.directory
         {
-            if let Err(error) = self.paste_directory_register(directory, before) {
+            // Entries are transferred beside the caret's row; there is no
+            // span of a directory listing for them to replace.
+            if paste == Paste::Replace {
+                self.action_failed("directory entries cannot replace a selection; paste them");
+                return;
+            }
+            if let Err(error) = self.paste_directory_register(directory, paste) {
                 self.action_failed(error.to_string());
             }
             return;
@@ -3751,18 +3775,33 @@ impl App {
             .ranges()
             .iter()
             .map(|range| {
-                let replace = !before
-                    && (!range.is_empty()
-                        || replace_point_ranges
-                        || (line_selection && register.linewise));
+                let replace = match paste {
+                    Paste::Before | Paste::After => false,
+                    Paste::Replace => true,
+                    Paste::AfterOrReplace => {
+                        !range.is_empty()
+                            || replace_point_ranges
+                            || (line_selection && register.linewise)
+                    }
+                };
                 if replace {
                     let (from, to, text) =
                         replaced_span(buffer, range, register, half_open, line_selection);
                     return (from, to, text, true);
                 }
                 let mut text = clipboard.clone();
+                // After a range is after its last character. Only a range that
+                // holds text gets here for `Paste::After`; before it, a caret
+                // was the only thing pasted after, and its head is that end.
+                let last = if before {
+                    range.head
+                } else if half_open && !range.is_empty() {
+                    range.to() - 1
+                } else {
+                    range.to()
+                };
                 let at = if register.linewise {
-                    let row = buffer.offset_to_row(range.head);
+                    let row = buffer.offset_to_row(last);
                     if before {
                         buffer.line_to_offset(row)
                     } else {
@@ -3783,7 +3822,12 @@ impl App {
                     }
                 } else if before {
                     range.from()
+                } else if half_open && !range.is_empty() {
+                    range.to()
                 } else {
+                    // The end of the span `d` and `c` act on. It stays on the
+                    // range's last row, so text pasted after a range that ends
+                    // on an empty row goes on that row, as it would at a caret.
                     let row = buffer.offset_to_row(range.to());
                     let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
                     buffer.next_grapheme(range.to()).min(row_end)
@@ -3813,7 +3857,20 @@ impl App {
             .selection
             .ranges()
             .iter()
-            .map(|range| range.map(&transaction))
+            .map(|range| {
+                // A half-open range ends where text pasted after it begins,
+                // and that end must stay before the text rather than take it in.
+                if paste == Paste::After && half_open && !range.is_empty() {
+                    let end = transaction.map_offset(range.to(), Assoc::Before);
+                    let start = transaction.map_offset(range.from(), Assoc::After);
+                    return if range.anchor <= range.head {
+                        Range::new(start, end)
+                    } else {
+                        Range::new(end, start)
+                    };
+                }
+                range.map(&transaction)
+            })
             .collect();
         // Where the replacements land has to come from the transaction rather
         // than from adding up what each span changed: two line selections
@@ -3860,17 +3917,24 @@ impl App {
             self.active_mut()
                 .replace_selection(Selection::new(ranges, primary));
         }
-        self.mode = Mode::Normal;
+        if matches!(paste, Paste::Before | Paste::AfterOrReplace) {
+            self.mode = Mode::Normal;
+        }
         self.normalize_buffer(buffer_id);
     }
 
     fn paste_directory_register(
         &mut self,
         register: &DirectoryRegister,
-        before: bool,
+        paste: Paste,
     ) -> Result<()> {
+        let before = paste == Paste::Before;
         let buffer_id = self.active().buffer;
         let buffer = &self.buffers[buffer_id];
+        let half_open = matches!(
+            self.active().selection_semantics(),
+            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+        );
         let mut clipboard = register
             .entries
             .iter()
@@ -3885,7 +3949,18 @@ impl App {
             .ranges()
             .iter()
             .map(|range| {
-                let row = buffer.offset_to_row(range.head);
+                // `p` has always gone by the head's row; `paste-after` goes
+                // after the last row the range touches, as it does for text.
+                let row = if paste == Paste::After {
+                    let last = if half_open && !range.is_empty() {
+                        range.to() - 1
+                    } else {
+                        range.to()
+                    };
+                    buffer.offset_to_row(last)
+                } else {
+                    buffer.offset_to_row(range.head)
+                };
                 if before {
                     buffer.line_to_offset(row)
                 } else {
@@ -3910,7 +3985,9 @@ impl App {
                 register.mode,
             )?;
         }
-        self.mode = Mode::Normal;
+        if paste != Paste::After {
+            self.mode = Mode::Normal;
+        }
         self.normalize_buffer(buffer_id);
         self.status(format!(
             "pasted {} entr{}; :write to review filesystem changes",

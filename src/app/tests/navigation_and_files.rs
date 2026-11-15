@@ -1368,6 +1368,44 @@ fn explorer_yank_of_a_bare_caret_takes_the_whole_entry() {
 }
 
 #[test]
+fn explorer_refuses_to_replace_a_selection_with_directory_entries() {
+    let parent = temporary("explorer-replace-register");
+    let source = parent.join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("note.txt"), "copied content").unwrap();
+    let config = Config {
+        keys: Some(
+            serde_yaml::from_str(
+                "bind:\n  normal:\n    F5: replace-with-register\n  select:\n    F6: paste-after\n",
+            )
+            .unwrap(),
+        ),
+        ..Config::default()
+    };
+    let mut app = App::new(config, Some(source)).unwrap();
+    press(&mut app, 'y');
+    assert!(app.registers[&'"'].directory.is_some());
+    let before = app.active_buffer().text().to_string();
+
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert!(app.status_error);
+    assert!(app.status.contains("cannot replace"), "{}", app.status);
+    assert_eq!(app.active_buffer().text().to_string(), before);
+
+    // `paste-after` transfers the entries and, unlike `p`, keeps Select mode.
+    press(&mut app, 'v');
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(!app.status_error, "{}", app.status);
+    assert_eq!(
+        app.active_buffer().text().to_string(),
+        format!("{before}note.txt\n")
+    );
+    assert_eq!(app.mode, Mode::Select);
+
+    fs::remove_dir_all(parent).unwrap();
+}
+
+#[test]
 fn explorer_d_records_a_cut_and_delete_selection_records_nothing() {
     let parent = temporary("explorer-delete-register");
     let source = parent.join("source");

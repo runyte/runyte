@@ -771,6 +771,36 @@ fn right_click_uses_viewport_relative_tab_stops_after_horizontal_scroll() {
 
 #[cfg(unix)]
 #[test]
+fn terminal_paste_after_sends_the_register_and_keeps_the_mode_while_p_enters_insert() {
+    let config = Config {
+        keys: Some(serde_yaml::from_str("bind:\n  normal:\n    F5: paste-after\n").unwrap()),
+        ..Config::default()
+    };
+    let mut app = App::new(config, None).unwrap();
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    let terminal = app.active_terminal().unwrap();
+    app.terminals.get_mut(terminal).unwrap().begin_review();
+    app.mode = Mode::Normal;
+    app.registers.insert(
+        '"',
+        Register {
+            text: "hi".into(),
+            ..Register::default()
+        },
+    );
+
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(app.status, "pasted Runyte register to terminal");
+    assert_eq!(app.mode, Mode::Normal);
+
+    app.status.clear();
+    press(&mut app, 'p');
+    assert_eq!(app.status, "pasted Runyte register to terminal");
+    assert_eq!(app.mode, Mode::Insert);
+}
+
+#[cfg(unix)]
+#[test]
 fn right_click_yanks_a_wide_terminal_review_caret_from_its_second_cell() {
     let shared = Arc::new(Mutex::new(String::new()));
     let mut app = App::new(Config::default(), None).unwrap();

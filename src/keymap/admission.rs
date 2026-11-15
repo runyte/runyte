@@ -55,6 +55,7 @@ fn addresses_text(command: C) -> bool {
             | C::SearchNext
             | C::SearchPrevious
             | C::SearchSelection
+            | C::SetSearchFromSelection
     ) || matches!(
         command.category(),
         CommandCategory::Editing
@@ -223,6 +224,7 @@ const TERMINAL: &[C] = &[
     C::OpenLineBelow,
     C::PageDown,
     C::PageUp,
+    C::PasteAfterOrReplace,
     C::PasteAfter,
     C::PasteBefore,
     C::RecordDefaultMacro,
