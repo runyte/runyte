@@ -644,6 +644,10 @@ keys:
       F6: [select-all, yank]
 ```
 
+`yank` leaves the selection and mode alone, so the buffer stays selected
+afterwards. Use `yank-collapse-normal-mode`, what `y` runs, to end on a caret
+in Normal mode instead.
+
 **Sort the selected lines:**
 
 ```yaml
@@ -911,6 +915,8 @@ This is the list `:help key-actions` shows, grouped by topic.
 | `redo` | N S | continue | Redo the last change |
 | `yank` | N S | continue | Yank the selection or character |
 | `yank-line` | N S | continue | Yank the lines the selection touches |
+| `yank-collapse-normal-mode` | N S | continue | Yank, then leave a caret in normal mode |
+| `yank-line-collapse-normal-mode` | N S | continue | Yank lines, then leave a normal-mode caret |
 | `paste-after` | N S | continue | Replace the selection, or paste after the caret |
 | `paste-before` | N S | continue | Paste before the selection |
 | `indent` | N S | continue | Indent the selected lines |
