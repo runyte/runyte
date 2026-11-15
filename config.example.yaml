@@ -87,7 +87,7 @@ notifications:
 #     normal:
 #       X: extend-line-above
 #       Alt-x: select-line-up
-#       F6: [select-all, yank]
+#       F6: [select-all, yank]       # stays selected; yank-collapse-normal-mode ends on a caret
 #       F7: { command: pipe, argument: sort }
 #       F8: null
 #     select:
