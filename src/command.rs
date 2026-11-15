@@ -727,6 +727,8 @@ editor_commands! {
     Redo => ("redo", "Redo the last change"),
     Yank => ("yank", "Yank the selection or character"),
     YankLine => ("yank-line", "Yank the lines the selection touches"),
+    YankCollapseNormalMode => ("yank-collapse-normal-mode", "Yank, then leave a caret in normal mode"),
+    YankLineCollapseNormalMode => ("yank-line-collapse-normal-mode", "Yank lines, then leave a normal-mode caret"),
     PasteAfter => ("paste-after", "Replace the selection, or paste after the caret"),
     PasteBefore => ("paste-before", "Paste before the selection"),
     Indent => ("indent", "Indent the selected lines"),
@@ -1391,6 +1393,8 @@ impl EditorCommand {
             | Self::Redo
             | Self::Yank
             | Self::YankLine
+            | Self::YankCollapseNormalMode
+            | Self::YankLineCollapseNormalMode
             | Self::PasteAfter
             | Self::PasteBefore
             | Self::Indent

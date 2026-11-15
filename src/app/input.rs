@@ -3448,7 +3448,9 @@ impl App {
             }
             VimOperator::Change => self.delete_selection_or_char(true, false, true),
             VimOperator::Yank => {
-                self.yank(false);
+                if self.yank(false) {
+                    self.collapse_after_yank();
+                }
                 let selection = self
                     .active()
                     .selection
@@ -4971,8 +4973,22 @@ impl App {
             Command::SelectionRedo => self.restore_selection_history(true),
             Command::Undo => self.undo(),
             Command::Redo => self.redo(),
-            Command::Yank => self.yank(transient_line_selection),
-            Command::YankLine => self.yank_line(),
+            Command::Yank => {
+                self.yank(transient_line_selection);
+            }
+            Command::YankLine => {
+                self.yank_line();
+            }
+            Command::YankCollapseNormalMode => {
+                if self.yank(transient_line_selection) {
+                    self.collapse_after_yank();
+                }
+            }
+            Command::YankLineCollapseNormalMode => {
+                if self.yank_line() {
+                    self.collapse_after_yank();
+                }
+            }
             Command::PasteAfter => self.paste(false, transient_line_selection),
             Command::PasteBefore => self.paste(true, transient_line_selection),
             Command::Indent => self.indent(false),
