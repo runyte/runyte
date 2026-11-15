@@ -747,13 +747,39 @@ fn terminal_scrollback_applies_at_start_reload_and_persist_without_replacing_rev
 }
 
 #[test]
-fn focus_reload_updates_tuning_without_changing_toggle_and_rejects_invalid_values() {
+fn focus_enabled_sets_the_startup_state_that_the_toggle_flips() {
+    let (mut app, path) = editor("focus-enabled.yaml", "focus:\n  enabled: true\n");
+    assert!(app.config.focus.enabled);
+    app.execute_command("focus").unwrap();
+    assert!(!app.config.focus.enabled);
+    assert!(app.status.contains("focus mode disabled"), "{}", app.status);
+    // The toggle is session state, like `Space p s`: the saved value is untouched.
+    assert!(app.persisted_config.focus.enabled);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "focus:\n  enabled: true\n"
+    );
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn focus_reload_adopts_the_file_toggle_and_tuning_and_rejects_invalid_values() {
     let (mut app, path) = editor("focus.yaml", "focus:\n  radius: 3\n");
     app.execute_command("focus").unwrap();
-    assert!(app.focus_enabled);
-    fs::write(&path, "focus:\n  fade_distance: 8\n  minimum_opacity: 40\n").unwrap();
+    assert!(app.config.focus.enabled);
+    fs::write(&path, "focus:\n  radius: 3\n").unwrap();
     app.execute_command("config-reload").unwrap();
-    assert!(app.focus_enabled);
+    assert!(
+        !app.config.focus.enabled,
+        "a reload replaces the toggle with the file's value"
+    );
+    fs::write(
+        &path,
+        "focus:\n  enabled: true\n  fade_distance: 8\n  minimum_opacity: 40\n",
+    )
+    .unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert!(app.config.focus.enabled);
     assert_eq!(app.config.focus.fade_distance, 8);
     assert_eq!(app.config.focus.minimum_opacity, 40);
     for invalid in [

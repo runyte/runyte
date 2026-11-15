@@ -5177,8 +5177,8 @@ impl App {
             Command::PreviewDocument => self.preview_document(),
             Command::ToggleMarkdownRender => self.toggle_markdown_render(),
             Command::ToggleFocus => {
-                self.focus_enabled = !self.focus_enabled;
-                self.status(if self.focus_enabled {
+                self.config.focus.enabled = !self.config.focus.enabled;
+                self.status(if self.config.focus.enabled {
                     "focus mode enabled"
                 } else {
                     "focus mode disabled"

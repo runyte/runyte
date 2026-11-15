@@ -238,6 +238,7 @@ mod surround;
 mod terminal_input;
 mod terminal_previews;
 mod tutorial;
+mod view_scrolling;
 #[cfg(windows)]
 mod windows_session_manager;
 mod workspace;

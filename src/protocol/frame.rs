@@ -933,7 +933,9 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
             theme: value.theme.into(),
             focus: value.focus.map(
                 |(radius, fade_distance, minimum_opacity, inactive_opacity)| {
+                    // Only an enabled focus configuration is sent at all.
                     crate::config::FocusConfig {
+                        enabled: true,
                         radius,
                         fade_distance,
                         minimum_opacity,

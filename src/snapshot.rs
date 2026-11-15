@@ -951,7 +951,7 @@ impl App {
             Default::default()
         };
         EditorSnapshot {
-            focus: self.focus_enabled.then_some(self.config.focus),
+            focus: self.config.focus.enabled.then_some(self.config.focus),
             geometry: prepared.geometry,
             directory_tree: prepared.tree_area.map(|area| {
                 let rows = self.directory_tree.rows();
@@ -2977,7 +2977,7 @@ mod tests {
     }
 
     #[test]
-    fn scrolling_a_pane_away_from_the_cursor_leaves_progress_alone() {
+    fn keyboard_view_scrolling_updates_progress_with_the_clamped_cursor() {
         // The row and column beside it read the cursor; the percentage is
         // another reading of the same position, not of the viewport.
         let mut app = App::new(Config::default(), None).unwrap();
@@ -2994,8 +2994,8 @@ mod tests {
         }
         let snapshot = prepared_snapshot(&mut app, 80, 24);
 
-        assert_eq!(snapshot.status.cursor.row, 0);
-        assert_eq!(snapshot.status.progress_percent(), 0);
+        assert_eq!(snapshot.status.cursor.row, 43);
+        assert_eq!(snapshot.status.progress_percent(), 22);
     }
 
     #[test]

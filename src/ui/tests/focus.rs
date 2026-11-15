@@ -5,6 +5,7 @@ use crate::config::FocusConfig;
 #[test]
 fn focus_curve_is_symmetric_bounded_and_smooth() {
     let config = FocusConfig::default();
+    assert!(!config.enabled);
     assert_eq!(config.radius, 2);
     assert_eq!(config.fade_distance, 30);
     assert_eq!(config.minimum_opacity, 50);
@@ -42,7 +43,7 @@ fn focus_toggles_and_restores_buffer_rendering() {
     }
     app.handle_key(crate::input::KeyStroke::plain(crate::input::KeyCode::Enter))
         .unwrap();
-    assert!(app.focus_enabled);
+    assert!(app.config.focus.enabled);
     let focused = terminal
         .draw(|frame| render_test_frame(frame, &mut app, &hints))
         .unwrap()
@@ -62,7 +63,7 @@ fn focus_toggles_and_restores_buffer_rendering() {
     }
     app.handle_key(crate::input::KeyStroke::plain(crate::input::KeyCode::Enter))
         .unwrap();
-    assert!(!app.focus_enabled);
+    assert!(!app.config.focus.enabled);
     let restored = terminal
         .draw(|frame| render_test_frame(frame, &mut app, &hints))
         .unwrap()
@@ -101,6 +102,7 @@ fn focus_preserves_active_terminals_and_fades_inactive_terminal_colors() {
     });
     let mut terminal = Terminal::new(TestBackend::new(30, 12)).unwrap();
     let config = FocusConfig {
+        enabled: true,
         radius: 0,
         fade_distance: 1,
         minimum_opacity: 0,
@@ -153,7 +155,7 @@ fn focus_uses_wrapped_screen_rows_and_matches_attached_and_native_renderers() {
     config.focus.fade_distance = 2;
     let mut app = App::new(config, None).unwrap();
     app.buffers[0].apply(&Transaction::insert(0, "word ".repeat(100)));
-    app.focus_enabled = true;
+    app.config.focus.enabled = true;
     let mut terminal = Terminal::new(TestBackend::new(30, 12)).unwrap();
     let direct = terminal
         .draw(|f| render_test_frame(f, &mut app, &KeyHintState::default()))

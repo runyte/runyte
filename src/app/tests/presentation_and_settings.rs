@@ -2339,6 +2339,70 @@ fn focused_theme_setting_previews_without_remembering_and_saves_on_enter() {
 }
 
 #[test]
+fn focus_setting_previews_fading_live_and_saves_the_startup_state() {
+    let path = temporary("focus-settings.yaml");
+    let source = "focus:\n  radius: 3\n";
+    fs::write(&path, source).unwrap();
+    let (config, _) = Config::load(Some(&path)).unwrap();
+    let mut app = App::new(config, None).unwrap();
+    app.note_loaded_config(&path);
+    let fading = |app: &mut App| {
+        let prepared = app.prepare_view(crate::ui::frame_geometry(ratatui::layout::Rect::new(
+            0, 0, 60, 20,
+        )));
+        app.snapshot(&prepared).focus
+    };
+    let select_enabled = |app: &mut App| {
+        app.open_setting_values(SettingId::FocusEnabled);
+        let enabled = app
+            .list_actions
+            .iter()
+            .position(|action| {
+                matches!(
+                    action,
+                    ListAction::SettingValue {
+                        value: SettingValue::Boolean(true),
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        app.list.as_mut().unwrap().selected = enabled;
+        app.preview_selected_setting_value();
+    };
+    assert_eq!(fading(&mut app), None);
+
+    select_enabled(&mut app);
+    assert!(app.config.focus.enabled, "the preview fades immediately");
+    assert_eq!(fading(&mut app).map(|focus| focus.radius), Some(3));
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert!(
+        !app.config.focus.enabled,
+        "cancelling rolls the preview back"
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), source);
+
+    select_enabled(&mut app);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.config.focus.enabled);
+    assert!(app.persisted_config.focus.enabled);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "focus:\n  radius: 3\n  enabled: true\n"
+    );
+
+    // `:focus` still only changes this session.
+    app.execute_command("focus").unwrap();
+    assert_eq!(fading(&mut app), None);
+    assert!(app.persisted_config.focus.enabled);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "focus:\n  radius: 3\n  enabled: true\n"
+    );
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn restart_required_setting_is_saved_without_claiming_a_live_transition() {
     let mut disabled_config = Config::default();
     disabled_config.lsp.enable = false;

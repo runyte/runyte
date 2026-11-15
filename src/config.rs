@@ -94,6 +94,10 @@ pub struct Config {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(default)]
 pub struct FocusConfig {
+    /// Whether fading starts enabled. `:focus` flips the running value for
+    /// this session without writing it back, as `Space p s` does for
+    /// `editor.soft_wrap`.
+    pub enabled: bool,
     pub radius: u16,
     pub fade_distance: u16,
     pub minimum_opacity: u8,
@@ -103,6 +107,7 @@ pub struct FocusConfig {
 impl Default for FocusConfig {
     fn default() -> Self {
         Self {
+            enabled: false,
             radius: 2,
             fade_distance: 30,
             minimum_opacity: 50,

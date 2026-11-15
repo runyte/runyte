@@ -183,8 +183,10 @@ themes:
 #     'Makefile':
 #       indent: tabs
 
-# Experimental :focus fading (disabled until toggled); opacity is percent.
+# Experimental fading; `enabled` sets the startup state that :focus toggles.
+# Opacity is percent.
 focus:
+  enabled: false
   radius: 2
   fade_distance: 30
   minimum_opacity: 50

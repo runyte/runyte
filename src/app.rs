@@ -2880,7 +2880,6 @@ pub enum PersistentExitRequest {
 }
 
 pub struct App {
-    pub(crate) focus_enabled: bool,
     pub config: Config,
     /// Last successfully loaded or settings-written configuration. Runtime
     /// state stays separate so restart-required settings remain truthful.
@@ -3817,7 +3816,6 @@ impl App {
         status = status.replace(configured_help, &live_help);
         let startup_notification = startup_notification_error.then(|| status.clone());
         let mut app = Self {
-            focus_enabled: false,
             config,
             persisted_config,
             theme,

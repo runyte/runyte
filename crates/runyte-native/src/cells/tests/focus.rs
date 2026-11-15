@@ -19,6 +19,7 @@ fn focus_zero_opacity_dim_glyphs_match_the_native_background() {
     let mut host = WorkspaceHost::new(app);
     let mut snapshot = host.prepare_frame(runyte::ui::frame_geometry(Rect::new(0, 0, 30, 12)));
     snapshot.editor.focus = Some(FocusConfig {
+        enabled: true,
         radius: 0,
         fade_distance: 1,
         minimum_opacity: 0,

@@ -15,7 +15,7 @@ use super::{
     SearchQuery, SearchRegion, SearchSelectionPresentation, Selection, SelectionSemantics,
     Transaction, ViewAlignment, buffer_language, buffer_matches, move_projected_start_backward,
     next_offset, next_visible_row, offsets_after, offsets_before, operative_span, previous_offset,
-    previous_visible_row, primary_match, region_spans, word_bounds,
+    previous_visible_row, primary_match, project_visible_rows, region_spans, word_bounds,
 };
 
 impl App {
@@ -1142,6 +1142,104 @@ impl App {
 
     pub(super) fn scroll_view(&mut self, direction: i32) {
         self.scroll_pane(self.active_pane, direction);
+        // Keyboard view scrolling keeps the primary caret inside the scroll
+        // margin. Wheel scrolling deliberately leaves selections untouched.
+        let pane = self.active();
+        let buffer = &self.buffers[pane.buffer];
+        let height = self.viewport_height();
+        let margin = self
+            .config
+            .editor
+            .scroll_offset
+            .min(height.saturating_sub(1) / 2);
+        let width = pane.wrap_width.max(1);
+        let tab_width = self.indentation_for(pane.buffer).tab_width;
+        let rows = project_visible_rows(
+            buffer,
+            &self.resolved_folds(self.active_pane),
+            pane.scroll_row,
+            pane.scroll_wrap,
+            height,
+            width,
+            tab_width,
+            self.pane_soft_wrap(self.active_pane),
+            self.diff_projection(self.active_pane).map(|mut diff| {
+                // Scroll state leads the shared diff alignment until the next
+                // prepared frame settles both panes.
+                diff.start = diff.alignment.aligned_row(diff.side, pane.scroll_row);
+                diff
+            }),
+        );
+        let boundary = if direction > 0 {
+            margin.min(rows.len().saturating_sub(1))
+        } else {
+            height
+                .saturating_sub(margin + 1)
+                .min(rows.len().saturating_sub(1))
+        };
+        // Diff filler and rendered table rules have no document caret.
+        let targets = rows
+            .iter()
+            .enumerate()
+            .filter_map(|(index, visual)| {
+                let row = visual.document_row?;
+                if let Some(table) = visual.segment.and_then(|segment| segment.table)
+                    && crate::wrap::table_layout(buffer, row, width, tab_width)
+                        .is_some_and(|layout| layout.is_separator(table))
+                {
+                    return None;
+                }
+                let col = visual.segment.map_or(0, |segment| segment.start);
+                Some((
+                    index,
+                    buffer.clamp_offset(buffer.line_to_offset(row) + col, false),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let target = if direction > 0 {
+            targets
+                .iter()
+                .find(|(index, _)| *index >= boundary)
+                .or_else(|| targets.last())
+        } else {
+            targets
+                .iter()
+                .rev()
+                .find(|(index, _)| *index <= boundary)
+                .or_else(|| targets.first())
+        };
+        let Some(&(target_row, target)) = target else {
+            return;
+        };
+        let primary = pane.selection.primary();
+        let cursor = buffer.position_of(primary.head);
+        let cursor_row = rows.iter().position(|visual| {
+            visual.document_row == Some(cursor.row)
+                && visual.segment.is_none_or(|segment| {
+                    crate::wrap::segment_contains(
+                        buffer, cursor.row, segment, cursor.col, width, tab_width,
+                    )
+                })
+        });
+        let outside = cursor_row.map_or_else(
+            || (direction > 0 && primary.head < target) || (direction < 0 && primary.head > target),
+            |row| {
+                if direction > 0 {
+                    row < target_row
+                } else {
+                    row > target_row
+                }
+            },
+        );
+        if outside {
+            let anchor = if self.mode == Mode::Select {
+                primary.anchor
+            } else {
+                target
+            };
+            let selection = pane.selection.with_primary(Range::new(anchor, target));
+            self.active_mut().replace_selection(selection);
+        }
     }
 
     pub(super) fn scroll_pane(&mut self, pane_id: usize, direction: i32) {
