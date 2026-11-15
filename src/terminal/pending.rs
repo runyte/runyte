@@ -202,6 +202,7 @@ impl TerminalPreparation {
                 content_revision: 1,
                 read_revision: 1,
                 review: None,
+                review_generation: 0,
                 emulator,
                 pty: Some(child),
                 exit: None,

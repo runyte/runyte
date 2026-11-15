@@ -224,3 +224,203 @@ fn review_movement_selection_and_copy_survive_multiple_busy_terminals() {
     assert_eq!(app.mode, Mode::Insert);
     assert!(!app.terminals.get(terminal).unwrap().reviewing());
 }
+
+/// Selection undo works on a terminal's review just as it does in a buffer,
+/// and a fresh review snapshot starts a fresh history rather than applying
+/// offsets recorded against different text.
+#[test]
+fn selection_history_undoes_and_redoes_terminal_review_selections() {
+    let (mut app, terminal) = terminal_app("{}");
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"first\r\nsecond\r\nthird".to_vec(),
+    });
+    let selected = |app: &mut App| {
+        app.terminals
+            .get_mut(terminal)
+            .unwrap()
+            .review_selection_text()
+    };
+    send(&mut app, "Ctrl-\\");
+    // Live output has no selection to go back from, and is not refused.
+    send(&mut app, "Alt-u");
+    assert_eq!(app.status, "no earlier selection");
+    send(&mut app, "k");
+    let caret = selected(&mut app);
+    assert_eq!(caret.chars().count(), 1, "{caret:?}");
+    send(&mut app, "x");
+    send(&mut app, "x");
+    assert_eq!(selected(&mut app), "second\nthird");
+    assert_eq!(app.mode, Mode::Select);
+
+    send(&mut app, "Alt-u");
+    assert_eq!(app.status, "selection undo");
+    assert_eq!(selected(&mut app), "second");
+    assert_eq!(app.mode, Mode::Select);
+    send(&mut app, "Alt-u");
+    assert_eq!(selected(&mut app), caret);
+    assert_eq!(app.mode, Mode::Normal);
+    send(&mut app, "Alt-u");
+    assert_eq!(app.status, "no earlier selection");
+
+    send(&mut app, "Alt-U");
+    assert_eq!(app.status, "selection redo");
+    assert_eq!(selected(&mut app), "second");
+    // A restored line selection still extends by line, as in a buffer.
+    send(&mut app, "x");
+    assert_eq!(selected(&mut app), "second\nthird");
+    send(&mut app, "Alt-u");
+    assert_eq!(selected(&mut app), "second");
+
+    // Returning to live output discards the snapshot the offsets addressed.
+    send(&mut app, "i");
+    send(&mut app, "Ctrl-\\");
+    send(&mut app, "k");
+    send(&mut app, "Alt-u");
+    assert_eq!(app.status, "no earlier selection");
+    assert!(app.terminals.get(terminal).unwrap().reviewing());
+}
+
+/// A terminal's selection history belongs to the terminal, so a buffer shown
+/// in the same pane keeps its own and neither restores into the other.
+#[test]
+fn terminal_and_buffer_selection_histories_stay_separate() {
+    let (mut app, terminal) = terminal_app("{}");
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"first\r\nsecond".to_vec(),
+    });
+    send(&mut app, "Ctrl-\\");
+    send(&mut app, "k");
+    send(&mut app, "x");
+    app.panes.get_mut(&app.active_pane).unwrap().terminal = None;
+    app.mode = Mode::Normal;
+    send(&mut app, "Alt-u");
+    assert_eq!(app.status, "no earlier selection");
+    app.panes.get_mut(&app.active_pane).unwrap().terminal = Some(terminal);
+    send(&mut app, "Alt-u");
+    assert_eq!(app.status, "selection undo");
+    assert_eq!(
+        app.terminals
+            .get_mut(terminal)
+            .unwrap()
+            .review_selection_text()
+            .chars()
+            .count(),
+        1
+    );
+}
+
+/// A pointer drag across terminal review is one selection-history step, as a
+/// drag across a document is.
+#[test]
+fn a_terminal_review_drag_is_one_selection_history_step() {
+    let (mut app, terminal) = terminal_app("{}");
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"first\r\nsecond".to_vec(),
+    });
+    send(&mut app, "Ctrl-\\");
+    send(&mut app, "k");
+    let caret = app
+        .terminals
+        .get_mut(terminal)
+        .unwrap()
+        .review_selection_text();
+    let geometry = FrameGeometry {
+        screen: Rect {
+            width: 40,
+            height: 6,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 40,
+            height: 4,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    };
+    let view = app.prepare_view(geometry);
+    let body = view.pane(app.active_pane).unwrap().body;
+    for (kind, column, row) in [
+        (PointerEventKind::Down(PointerButton::Left), 1, 0),
+        (PointerEventKind::Drag(PointerButton::Left), 3, 0),
+        (PointerEventKind::Drag(PointerButton::Left), 2, 1),
+        (PointerEventKind::Up(PointerButton::Left), 2, 1),
+    ] {
+        app.handle_pointer(
+            PointerEvent {
+                kind,
+                column: body.x + column,
+                row: body.y + row,
+                modifiers: Modifiers::NONE,
+            },
+            &view,
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        app.terminals
+            .get_mut(terminal)
+            .unwrap()
+            .review_selection_text(),
+        "irst\nsec"
+    );
+    send(&mut app, "Alt-u");
+    assert_eq!(app.status, "selection undo");
+    assert_eq!(
+        app.terminals
+            .get_mut(terminal)
+            .unwrap()
+            .review_selection_text(),
+        caret
+    );
+    send(&mut app, "Alt-u");
+    assert_eq!(app.status, "no earlier selection");
+}
+
+/// Restoring a selection keeps search navigation in step with it: a restored
+/// match is the active one again, and from any other selection `n` / `N`
+/// step to the nearest match past the caret.
+#[test]
+fn selection_history_keeps_terminal_search_steps_in_step() {
+    let (mut app, terminal) = terminal_app("{}");
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"foo one\r\nfoo two\r\nfoo three".to_vec(),
+    });
+    let anchor = |app: &App| {
+        app.terminals
+            .get(terminal)
+            .unwrap()
+            .review_selection_anchor()
+            .unwrap()
+    };
+    for spelling in ["Ctrl-\\", "g", "g", "l"] {
+        send(&mut app, spelling);
+    }
+    assert_eq!(anchor(&app), 1);
+    for spelling in ["/", "f", "o", "o", "Enter"] {
+        send(&mut app, spelling);
+    }
+    assert_eq!(anchor(&app), 0, "{}", app.status);
+    send(&mut app, "n");
+    assert_eq!(anchor(&app), 8);
+
+    send(&mut app, "Alt-u");
+    assert_eq!(anchor(&app), 0);
+    send(&mut app, "n");
+    assert_eq!(anchor(&app), 8);
+
+    // Back past the search to the caret, which is not a match.
+    send(&mut app, "Alt-u");
+    send(&mut app, "Alt-u");
+    assert_eq!(anchor(&app), 1);
+    send(&mut app, "n");
+    assert_eq!(anchor(&app), 8);
+    send(&mut app, "Alt-u");
+    assert_eq!(anchor(&app), 1);
+    send(&mut app, "N");
+    assert_eq!(anchor(&app), 0);
+}
