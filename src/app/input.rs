@@ -1439,6 +1439,8 @@ impl App {
                     } else {
                         offset
                     };
+                    // Recorded once the gesture ends, as a document drag is.
+                    self.selection_drag_origin = self.capture_selection_origin();
                     if let Some(session) = self.terminals.get_mut(terminal) {
                         session.set_review_selection(anchor, offset);
                     }
@@ -3448,7 +3450,9 @@ impl App {
             }
             VimOperator::Change => self.delete_selection_or_char(true, false, true),
             VimOperator::Yank => {
-                self.yank(false);
+                if self.yank(false) {
+                    self.collapse_after_yank();
+                }
                 let selection = self
                     .active()
                     .selection
@@ -4802,6 +4806,8 @@ impl App {
                     | Command::SelectLineUp
                     | Command::ExtendLineAbove
                     | Command::ExtendLineBelow
+                    | Command::SelectionUndo
+                    | Command::SelectionRedo
             ) && let Some(mode) = self.line_select.take()
             {
                 self.mode = mode;
@@ -4971,8 +4977,22 @@ impl App {
             Command::SelectionRedo => self.restore_selection_history(true),
             Command::Undo => self.undo(),
             Command::Redo => self.redo(),
-            Command::Yank => self.yank(transient_line_selection),
-            Command::YankLine => self.yank_line(),
+            Command::Yank => {
+                self.yank(transient_line_selection);
+            }
+            Command::YankLine => {
+                self.yank_line();
+            }
+            Command::YankCollapseNormalMode => {
+                if self.yank(transient_line_selection) {
+                    self.collapse_after_yank();
+                }
+            }
+            Command::YankLineCollapseNormalMode => {
+                if self.yank_line() {
+                    self.collapse_after_yank();
+                }
+            }
             Command::PasteAfter => self.paste(false, transient_line_selection),
             Command::PasteBefore => self.paste(true, transient_line_selection),
             Command::Indent => self.indent(false),

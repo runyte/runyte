@@ -109,7 +109,10 @@ commands.
 - Restoring never enters Insert/Replace mode or reopens a prompt.
 - Limits: 128 states and 4,096 total ranges per history, for up to 32 buffers
   per pane. An oversized selection ends that history.
-- Terminal review is not supported.
+- Terminal review has the same history. It belongs to the terminal rather than
+  the pane, starts with the first change after review begins, and ends when
+  the terminal returns to live output, because the next review is a new
+  snapshot.
 
 #### Selecting motions
 
@@ -138,13 +141,17 @@ A word is then selected with `v` first: `v e d` deletes to the end of the word.
 #### Yank and paste
 
 **Yank ends the gesture.** `y` and `Y` return to Normal mode and collapse each
-range to a caret on the last character copied, one caret per selection.
+range to a caret on the last character copied, one caret per selection. Their
+actions are `yank-collapse-normal-mode` and `yank-line-collapse-normal-mode`.
 
 - That makes `y` then `p` a duplicate: the caret pastes past the text just
   yanked. A range that outlived the yank would be invisible in Normal mode
   and would make `p` replace the yanked text with itself.
 - `Space c y` is the exception. It is also what a right click does, so it
   copies without disturbing the selection.
+- `yank` and `yank-line` write the same register as `y` and `Y` but leave the
+  selection and mode alone. They have no default key and exist for custom
+  bindings and action sequences, such as `[yank, indent]`.
 
 **`p` depends on the selection**, as `d` and `c` do:
 

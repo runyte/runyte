@@ -21,6 +21,10 @@ fn action_binding_sequences_execute_and_group_selection_history() {
     assert_eq!(cursor(&app).col, 0);
     key(&mut app, KeyCode::Function(7), Modifiers::NONE);
     assert_eq!(app.registers[&'"'].text, "abc def");
+    // `yank` leaves the selection and mode as `select-all` set them.
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.active().selection.primary(), Range::new(0, 6));
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
     key(&mut app, KeyCode::Function(8), Modifiers::NONE);
     assert_eq!(app.mode, Mode::Insert);
 }
@@ -135,6 +139,58 @@ fn without_defaults_a_terminal_can_still_be_left() {
     key(&mut app, KeyCode::Char('\\'), Modifiers::CONTROL);
     assert_eq!(app.mode, Mode::Normal);
     std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn yank_and_yank_line_keep_the_selection_and_mode_while_y_and_y_line_collapse() {
+    let mut app =
+        configured("bind:\n  select:\n    F5: yank\n    F6: yank-line\n    F7: [yank, indent]\n");
+    seed(&mut app, "abc def\nghi");
+    app.mode = Mode::Select;
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 2));
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(app.registers[&'"'].text, "abc");
+    assert!(!app.registers[&'"'].linewise);
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.active().selection.primary(), Range::new(0, 2));
+
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.registers[&'"'].text, "abc def\n");
+    assert!(app.registers[&'"'].linewise);
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.active().selection.primary(), Range::new(0, 2));
+
+    // A register chosen with `"` is the one the bare yank writes.
+    press(&mut app, '"');
+    press(&mut app, 'a');
+    key(&mut app, KeyCode::Function(5), Modifiers::NONE);
+    assert_eq!(app.registers[&'a'].text, "abc");
+
+    // The range survives the yank, so the next action in a sequence acts on it.
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(
+        app.active_buffer()
+            .text()
+            .to_string()
+            .starts_with(char::is_whitespace)
+    );
+    assert_eq!(app.mode, Mode::Select);
+
+    // `y` and `Y` still end the gesture on a caret in Normal mode.
+    seed(&mut app, "abc def\nghi");
+    app.mode = Mode::Select;
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 2));
+    press(&mut app, 'y');
+    assert_eq!(app.registers[&'"'].text, "abc");
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.active().selection.primary().is_empty());
+
+    app.mode = Mode::Select;
+    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 2));
+    press(&mut app, 'Y');
+    assert_eq!(app.registers[&'"'].text, "abc def\n");
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.active().selection.primary().is_empty());
 }
 
 #[test]

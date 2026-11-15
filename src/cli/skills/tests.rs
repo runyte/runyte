@@ -173,6 +173,38 @@ fn unmanaged_files_are_only_adopted_when_identical() {
 }
 
 #[test]
+fn bundled_payload_under_a_stale_record_is_recorded_again() {
+    for action in [Action::Install, Action::Update] {
+        let f = Fixture::new();
+        let path = f.skill();
+        manage(&f.0, &path, Action::Install).unwrap();
+        fs::write(path.join("notes.txt"), "user notes").unwrap();
+        // The bundled bytes copied in by hand over an older managed install.
+        record(&path, Some(old()), None);
+        assert!(
+            manage(&f.0, &path, Action::Status)
+                .unwrap()
+                .contains("current")
+        );
+        assert!(
+            manage(&f.0, &path, action).unwrap().contains("updated"),
+            "{action:?}"
+        );
+        assert_eq!(fs::read(path.join(PAYLOAD)).unwrap(), SKILL);
+        let metadata = read_metadata(Some(&fs::read(path.join(METADATA)).unwrap()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(metadata.installed, Some(Release::bundled()));
+        assert!(metadata.pending.is_none());
+        assert_eq!(
+            fs::read_to_string(path.join("notes.txt")).unwrap(),
+            "user notes"
+        );
+        assert!(manage(&f.0, &path, action).unwrap().contains("current"));
+    }
+}
+
+#[test]
 fn invalid_unknown_and_newer_metadata_are_not_overwritten() {
     let f = Fixture::new();
     let path = f.skill();

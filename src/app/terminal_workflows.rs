@@ -931,7 +931,7 @@ impl App {
                 }
                 true
             }
-            Command::Yank => {
+            Command::Yank | Command::YankCollapseNormalMode => {
                 let mut text = session.review_selection_text();
                 if transient_line_selection && !text.ends_with('\n') {
                     text.push('\n');
@@ -942,7 +942,12 @@ impl App {
                     linewise: transient_line_selection,
                     directory: None,
                 });
-                self.mode = Mode::Normal;
+                // The review selection is kept either way, so it stays on
+                // screen beside the text it copied; `y` only hands Select
+                // back to Normal.
+                if command == Command::YankCollapseNormalMode {
+                    self.mode = Mode::Normal;
+                }
                 self.status("terminal review selection yanked");
                 true
             }
@@ -1024,6 +1029,11 @@ impl App {
                         .action_failed("the paste ended a line and the child has already run it"),
                     SentTextUndo::Refused => self.action_failed("terminal input queue is full"),
                 }
+                true
+            }
+            Command::SelectionUndo | Command::SelectionRedo => {
+                let _ = session;
+                self.restore_selection_history(command == Command::SelectionRedo);
                 true
             }
             Command::JumpBackward
