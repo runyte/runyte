@@ -3580,28 +3580,39 @@ impl App {
         self.normalize_buffer(buffer_id);
     }
 
-    pub(super) fn yank(&mut self, transient_line_selection: bool) {
+    /// Writes the selection, or the character under each caret, to the
+    /// selected register and leaves the selection and mode as they were, so
+    /// a bound sequence can act on what it just copied. Reports whether the
+    /// register was written.
+    pub(super) fn yank(&mut self, transient_line_selection: bool) -> bool {
         let register = self.yank_value(transient_line_selection);
-        self.write_yanked_register(register);
+        self.write_yank(register)
     }
 
-    /// `Y` takes the whole lines rather than the characters, so that the one
-    /// key covers what `x y` covers without walking the selection through
-    /// line mode first. Like `y` it leaves a caret rather than the range it
-    /// copied, so the two spell the end of a gesture the same way.
-    pub(super) fn yank_line(&mut self) {
+    /// `yank-line` takes the whole lines rather than the characters, so that
+    /// one command covers what `x y` covers without walking the selection
+    /// through line mode first. Like `yank` it leaves the selection and mode
+    /// alone; `Y` pairs it with [`Self::collapse_after_yank`].
+    pub(super) fn yank_line(&mut self) -> bool {
         let register = self.line_register();
-        self.write_yanked_register(register);
+        self.write_yank(register)
     }
 
-    fn write_yanked_register(&mut self, mut register: Register) {
+    fn write_yank(&mut self, mut register: Register) -> bool {
         register.directory = match self.directory_register(TransferMode::Copy, true) {
             Ok(directory) => directory,
             Err(error) => {
                 self.action_failed(error.to_string());
-                return;
+                return false;
             }
         };
+        self.write_selected_register(register);
+        self.status("yanked");
+        true
+    }
+
+    /// The second half of `y` and `Y`.
+    pub(super) fn collapse_after_yank(&mut self) {
         // Yanking ends the gesture that chose the text, so Select mode hands
         // back to Normal and every range collapses to a caret at its head. A
         // range that outlived the yank was invisible in Normal mode, where a
@@ -3624,8 +3635,6 @@ impl App {
         };
         self.active_mut().replace_selection(selection.collapse());
         self.mode = Mode::Normal;
-        self.write_selected_register(register);
-        self.status("yanked");
     }
 
     pub(super) fn yank_value(&self, transient_line_selection: bool) -> Register {

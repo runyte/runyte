@@ -246,4 +246,5 @@ const TERMINAL: &[C] = &[
     C::StopMacroRecording,
     C::Undo,
     C::Yank,
+    C::YankCollapseNormalMode,
 ];
