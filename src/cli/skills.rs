@@ -248,6 +248,10 @@ fn manage(root: &Path, destination: &Path, action: Action) -> Result<String> {
             .is_some_and(|p| Some(&p.sha256) == digest.as_ref())
         {
             metadata.pending.clone()
+        } else if before.as_deref() == Some(SKILL) {
+            // The payload is already the bundled skill, so the stale record
+            // describes nothing worth preserving; rewriting it loses no edit.
+            Some(desired.clone())
         } else {
             ensure!(
                 metadata.installed.as_ref().map(|r| &r.sha256) == digest.as_ref(),
