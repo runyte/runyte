@@ -766,6 +766,9 @@ pub struct TerminalSession {
     /// review state.
     read_revision: u64,
     review: Option<TerminalReview>,
+    /// Bumped each time a review snapshot is captured, so a selection
+    /// recorded against one snapshot is never applied to another's text.
+    review_generation: u64,
     emulator: Emulator,
     #[cfg(any(unix, windows))]
     pty: Option<pty::Pty>,
@@ -931,6 +934,7 @@ impl TerminalSession {
     fn ensure_review(&mut self) -> &mut TerminalReview {
         if self.review.is_none() {
             self.review = Some(self.capture_review());
+            self.review_generation = self.review_generation.wrapping_add(1);
             self.revision = self.revision.wrapping_add(1);
         }
         self.review.as_mut().expect("review was created")
@@ -1113,11 +1117,28 @@ impl TerminalSession {
         if review.matches.is_empty() {
             return false;
         }
-        let active = review.active_match.unwrap_or(0);
-        let next = if forward {
-            (active + 1) % review.matches.len()
-        } else {
-            (active + review.matches.len() - 1) % review.matches.len()
+        let count = review.matches.len();
+        let next = match review.active_match {
+            Some(active) if forward => (active + 1) % count,
+            Some(active) => (active + count - 1) % count,
+            // A selection that is not a match, such as one restored from
+            // history: step to the nearest match past the caret, wrapping.
+            None => {
+                let caret = review.selection.primary().head;
+                if forward {
+                    review
+                        .matches
+                        .iter()
+                        .position(|range| range.from() > caret)
+                        .unwrap_or(0)
+                } else {
+                    review
+                        .matches
+                        .iter()
+                        .rposition(|range| range.from() < caret)
+                        .unwrap_or(count - 1)
+                }
+            }
         };
         review.active_match = Some(next);
         let range = inclusive_review_range(review.matches[next]);
@@ -1253,6 +1274,44 @@ impl TerminalSession {
         self.review
             .as_ref()
             .map(|review| review.selection.primary().anchor)
+    }
+
+    /// The review snapshot's identity and its selection, for selection
+    /// history. Live output has no selection, so there is none to record.
+    pub fn review_selection_state(&self) -> Option<(u64, &Selection)> {
+        self.review
+            .as_ref()
+            .map(|review| (self.review_generation, &review.selection))
+    }
+
+    /// Puts back a selection recorded against this same review snapshot.
+    ///
+    /// A different generation means the text the offsets addressed has been
+    /// replaced, so the selection is refused rather than reinterpreted.
+    /// Search matches stay, so `n` keeps stepping through them: a restored
+    /// match becomes the active one again, and any other selection leaves
+    /// none active so the next step starts from the caret.
+    pub fn restore_review_selection(&mut self, generation: u64, selection: Selection) -> bool {
+        if generation != self.review_generation {
+            return false;
+        }
+        let Some(review) = self.review.as_mut() else {
+            return false;
+        };
+        let end = review_document_end(review);
+        review.selection =
+            selection.transform(|range| Range::new(range.anchor.min(end), range.head.min(end)));
+        let primary = review.selection.primary();
+        review.active_match = (review.selection.len() == 1)
+            .then(|| {
+                review.matches.iter().position(|range| {
+                    let range = inclusive_review_range(*range);
+                    (range.from(), range.to()) == (primary.from(), primary.to())
+                })
+            })
+            .flatten();
+        self.revision = self.revision.wrapping_add(1);
+        true
     }
 
     /// Installs an inclusive character selection on the immutable review.
@@ -3055,6 +3114,7 @@ impl TerminalSessions {
                 content_revision: 1,
                 read_revision: 1,
                 review: None,
+                review_generation: 0,
                 emulator,
                 pty: Some(child),
                 exit: None,
@@ -3250,6 +3310,7 @@ mod tests {
             content_revision: 1,
             read_revision: 1,
             review: None,
+            review_generation: 0,
             emulator: Emulator::new(columns, rows),
             #[cfg(any(unix, windows))]
             pty: None,

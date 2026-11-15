@@ -172,6 +172,7 @@ the output as a snapshot. New output keeps arriving behind it.
 | `p` / `P` in a terminal | Leave review and send Runyte's selected register to the live program |
 | `Space c p` / `Space c P` in a terminal | Leave review and send the system clipboard to the live program |
 | `u` in terminal review | Take back the last paste, while it is still the child's last input |
+| `Alt-u` / `Alt-U` in terminal review | Undo / redo selection changes in the review snapshot, as in a buffer |
 
 Review search is case-insensitive for `s` and a regular expression for `/`,
 with stable highlighted matches.

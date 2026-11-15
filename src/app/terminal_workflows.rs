@@ -1031,6 +1031,11 @@ impl App {
                 }
                 true
             }
+            Command::SelectionUndo | Command::SelectionRedo => {
+                let _ = session;
+                self.restore_selection_history(command == Command::SelectionRedo);
+                true
+            }
             Command::JumpBackward
             | Command::JumpForward
             | Command::JumpBackwardBuffer
