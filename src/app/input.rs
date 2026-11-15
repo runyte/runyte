@@ -1439,6 +1439,8 @@ impl App {
                     } else {
                         offset
                     };
+                    // Recorded once the gesture ends, as a document drag is.
+                    self.selection_drag_origin = self.capture_selection_origin();
                     if let Some(session) = self.terminals.get_mut(terminal) {
                         session.set_review_selection(anchor, offset);
                     }
@@ -4802,6 +4804,8 @@ impl App {
                     | Command::SelectLineUp
                     | Command::ExtendLineAbove
                     | Command::ExtendLineBelow
+                    | Command::SelectionUndo
+                    | Command::SelectionRedo
             ) && let Some(mode) = self.line_select.take()
             {
                 self.mode = mode;
