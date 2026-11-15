@@ -54,6 +54,7 @@ theme: mocha
 | `notifications` | Notification history | [Other settings](configuration.md#other-settings) |
 | `lsp` | Language servers | [Language servers](language-support.md#language-servers) |
 | `keys` | Prefixes, remapped keys, and action bindings | [Custom key bindings](custom-key-bindings.md#custom-key-bindings) |
+| `focus` | Experimental cursor focus fading | [Focus mode](#focus-mode-experimental) |
 | `theme` | The active theme | [Themes](themes.md#themes) |
 | `themes` | Custom theme definitions | [Writing a custom theme](themes.md#writing-a-custom-theme) |
 | `plugins` | Process plugins | [Plugin guide](../plugins.md) |
@@ -615,6 +616,48 @@ workspace, not the client that opened the report.
 The report is an informational overlay: arrows and paging scroll it, and
 Escape dismisses it. Printable keys and Enter cannot turn it into a filtered
 choice by accident.
+
+### Focus mode (experimental)
+
+`:focus` toggles fading across all buffer and terminal panes in the current
+workspace. It starts disabled. An active buffer pane retains its original colors
+near the primary cursor; more distant display rows blend smoothly toward the
+pane background. Active terminal panes remain fully opaque across every row,
+including cursorless applications such as htop and terminal review. Inactive
+buffer and terminal panes use a uniform opacity. Foreground, background,
+and underline colors all fade, including terminal ANSI colors, selections,
+and syntax highlighting. Pane titles, borders, overlays, and status lines keep
+their normal appearance. Native image/PDF previews are not text and do not fade.
+Color emoji are an experimental limitation: their bitmap glyphs bypass text
+foreground colors in the native window, so they remain vivid even at zero
+opacity. External terminals may likewise preserve emoji colors. Their cell
+backgrounds still fade.
+
+```yaml
+focus:
+  radius: 2
+  fade_distance: 30
+  minimum_opacity: 50
+  inactive_opacity: 50
+```
+
+- `radius`: buffer display rows on either side of the cursor that retain full color
+  (0–65535). Wrapped rows count separately.
+- `fade_distance`: additional rows over which a smooth curve reaches the minimum
+  opacity (1–65535).
+- `minimum_opacity`: visibility of distant rows in the active buffer pane (0–100 percent).
+- `inactive_opacity`: visibility of all rows in inactive panes (0–100 percent).
+
+Edit these settings in YAML and run `:config-reload` to tune the effect while
+focus remains enabled. Zero opacity blends completely into the background;
+100 preserves the original colors. Fading is spatial, without an animated
+transition. If a buffer cursor is outside the viewport, its active pane uses
+minimum opacity throughout. Terminal cursor visibility and position do not
+affect focus fading.
+Truecolor gives the smoothest results; limited terminal palettes quantize the
+blended colors. A custom theme using `reset` for the pane background cannot
+be blended because the external terminal owns that color, so fading is skipped
+for that pane. No buffer text or terminal output is modified.
 
 <!-- navigation -->
 [Contents](README.md) · [Previous: Diagnostics and logging](diagnostics-and-logging.md) · [Next: Custom key bindings](custom-key-bindings.md)

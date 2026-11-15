@@ -235,34 +235,34 @@ impl TuiTheme {
     }
 }
 
-/// Compare the terminal colours rather than Ratatui's different ways to name
-/// them: ANSI Black, indexed 16, and RGB(0,0,0) paint the same cell.
+/// Resolve explicit terminal colours to their RGB appearance.
+fn terminal_color_rgb(color: ratatui::style::Color) -> Option<[u8; 3]> {
+    use ratatui::style::Color;
+    Some(match color {
+        Color::Reset => return None,
+        Color::Black => xterm_color(0),
+        Color::Red => xterm_color(1),
+        Color::Green => xterm_color(2),
+        Color::Yellow => xterm_color(3),
+        Color::Blue => xterm_color(4),
+        Color::Magenta => xterm_color(5),
+        Color::Cyan => xterm_color(6),
+        Color::Gray => xterm_color(7),
+        Color::DarkGray => xterm_color(8),
+        Color::LightRed => xterm_color(9),
+        Color::LightGreen => xterm_color(10),
+        Color::LightYellow => xterm_color(11),
+        Color::LightBlue => xterm_color(12),
+        Color::LightMagenta => xterm_color(13),
+        Color::LightCyan => xterm_color(14),
+        Color::White => xterm_color(15),
+        Color::Rgb(red, green, blue) => [red, green, blue],
+        Color::Indexed(index) => xterm_color(index),
+    })
+}
+
 fn same_terminal_color(left: ratatui::style::Color, right: ratatui::style::Color) -> bool {
-    fn rgb(color: ratatui::style::Color) -> Option<[u8; 3]> {
-        use ratatui::style::Color;
-        Some(match color {
-            Color::Reset => return None,
-            Color::Black => xterm_color(0),
-            Color::Red => xterm_color(1),
-            Color::Green => xterm_color(2),
-            Color::Yellow => xterm_color(3),
-            Color::Blue => xterm_color(4),
-            Color::Magenta => xterm_color(5),
-            Color::Cyan => xterm_color(6),
-            Color::Gray => xterm_color(7),
-            Color::DarkGray => xterm_color(8),
-            Color::LightRed => xterm_color(9),
-            Color::LightGreen => xterm_color(10),
-            Color::LightYellow => xterm_color(11),
-            Color::LightBlue => xterm_color(12),
-            Color::LightMagenta => xterm_color(13),
-            Color::LightCyan => xterm_color(14),
-            Color::White => xterm_color(15),
-            Color::Rgb(red, green, blue) => [red, green, blue],
-            Color::Indexed(index) => xterm_color(index),
-        })
-    }
-    rgb(left) == rgb(right)
+    terminal_color_rgb(left) == terminal_color_rgb(right)
 }
 
 /// Keeps Runyte's three semantic grounds distinct after indexed conversion.
@@ -895,6 +895,7 @@ fn render_editor_frame(
     }
     for pane in &snapshot.panes {
         draw_pane(frame, &app.theme, snapshot.mode, pane);
+        apply_focus(frame, &app.theme, pane, snapshot.focus);
     }
     draw_pane_drop(frame, &app.theme, snapshot.pane_drop);
     if let Some(tree) = &snapshot.directory_tree {
@@ -1224,6 +1225,7 @@ fn render_attached_frame(
     }
     for pane in &snapshot.editor.panes {
         draw_pane(frame, &theme, snapshot.editor.mode, pane);
+        apply_focus(frame, &theme, pane, snapshot.editor.focus);
     }
     draw_pane_drop(frame, &theme, snapshot.editor.pane_drop);
     if let Some(tree) = &snapshot.editor.directory_tree {
@@ -2538,6 +2540,7 @@ fn draw_resize(frame: &mut Frame<'_>, theme: &TuiTheme, editor: &EditorSnapshot)
     let fading = if resize.fade < 255 {
         for pane in &editor.panes {
             draw_pane(frame, theme, editor.mode, pane);
+            apply_focus(frame, theme, pane, editor.focus);
         }
         if let Some(tree) = &editor.directory_tree {
             draw_directory_tree(frame, theme, tree);
@@ -2676,6 +2679,100 @@ fn draw_pane_drop(frame: &mut Frame<'_>, theme: &TuiTheme, area: Option<crate::l
                 .add_modifier(Modifier::BOLD),
         );
     frame.render_widget(outline, area);
+}
+
+/// Fade the completed content before drawing overlays, preserving every colour role.
+fn apply_focus(
+    frame: &mut Frame<'_>,
+    theme: &TuiTheme,
+    pane: &PaneSnapshot,
+    focus: Option<crate::config::FocusConfig>,
+) {
+    let Some(focus) = focus.filter(|_| pane.drawable) else {
+        return;
+    };
+    // A terminal can host cursorless applications; its active pane stays
+    // fully visible regardless of cursor position, visibility or review mode.
+    if pane.active && pane.terminal.is_some() {
+        return;
+    }
+    let body = to_tui_rect(pane.body).intersection(frame.area());
+    let ground = theme.pane_background(pane.active);
+    let Some(target) = terminal_color_rgb(ground) else {
+        return;
+    };
+    let cursor = pane.cursor_screen_row;
+    for y in body.y..body.bottom() {
+        let opacity = focus_opacity(focus, pane.active, cursor, usize::from(y - pane.body.y));
+        if opacity >= 1.0 {
+            continue;
+        }
+        let blend = |color, fallback, dim| {
+            let source = terminal_color_rgb(color)
+                .or_else(|| terminal_color_rgb(fallback))
+                .unwrap_or(target);
+            let source = if dim {
+                dim_terminal_rgb(source)
+            } else {
+                source
+            };
+            let mix = |i: usize| {
+                (f64::from(target[i]) + (f64::from(source[i]) - f64::from(target[i])) * opacity)
+                    .round() as u8
+            };
+            theme.color_depth.rgb(mix(0), mix(1), mix(2))
+        };
+        for x in body.x..body.right() {
+            let cell = &mut frame.buffer_mut()[(x, y)];
+            // Resolve faint intensity before the fade. Leaving DIM on the
+            // result would darken the target ground again in the frontend.
+            let dim = cell.modifier.contains(Modifier::DIM);
+            let reversed = cell.modifier.contains(Modifier::REVERSED);
+            cell.underline_color = blend(cell.underline_color, cell.fg, false);
+            cell.fg = blend(cell.fg, theme.foreground, dim && !reversed);
+            cell.bg = blend(cell.bg, ground, dim && reversed);
+            cell.modifier.remove(Modifier::DIM);
+        }
+    }
+}
+
+/// Bake the native frontend's faint intensity (HSL lightness × 0.65) into
+/// RGB. Terminal faint intensity is implementation-defined; using the same
+/// explicit colour here keeps both editions fading toward the same ground.
+fn dim_terminal_rgb(source: [u8; 3]) -> [u8; 3] {
+    let channels = source.map(|channel| f64::from(channel) / 255.0);
+    let low = channels.iter().copied().fold(1.0, f64::min);
+    let high = channels.iter().copied().fold(0.0, f64::max);
+    let lightness = (low + high) / 2.0;
+    let dimmed = lightness * 0.65;
+    let span = lightness.min(1.0 - lightness);
+    let scale = if span > 0.0 {
+        dimmed.min(1.0 - dimmed) / span
+    } else {
+        0.0
+    };
+    channels.map(|channel| ((dimmed + (channel - lightness) * scale) * 255.0).round() as u8)
+}
+
+fn focus_opacity(
+    focus: crate::config::FocusConfig,
+    active: bool,
+    cursor: Option<usize>,
+    row: usize,
+) -> f64 {
+    if !active {
+        return f64::from(focus.inactive_opacity.min(100)) / 100.0;
+    }
+    let minimum = f64::from(focus.minimum_opacity.min(100)) / 100.0;
+    let Some(cursor) = cursor else {
+        return minimum;
+    };
+    let distance = row
+        .abs_diff(cursor)
+        .saturating_sub(usize::from(focus.radius));
+    let t = (distance as f64 / f64::from(focus.fade_distance.max(1))).min(1.0);
+    let smooth = t * t * (3.0 - 2.0 * t);
+    1.0 - (1.0 - minimum) * smooth
 }
 
 fn draw_pane(frame: &mut Frame<'_>, theme: &TuiTheme, mode: Mode, pane: &PaneSnapshot) {
@@ -5774,6 +5871,7 @@ mod merge_review_tests;
 mod tests {
     #[path = "content_preview.rs"]
     mod content_preview;
+    mod focus;
 
     use ratatui::{Terminal, backend::TestBackend};
 

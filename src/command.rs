@@ -918,6 +918,7 @@ editor_commands! {
         "toggle-markdown-render",
         "Show a Markdown document as formatted text, or return to its source"
     ),
+    ToggleFocus => ("toggle-focus", "Toggle experimental cursor focus fading"),
     ToggleZen => ("toggle-zen", "Toggle the centred, maximized writing view"),
     ToggleFullscreen => (
         "toggle-fullscreen",
@@ -1519,6 +1520,7 @@ impl EditorCommand {
             | Self::ToggleWhitespace
             | Self::PreviewDocument
             | Self::ToggleMarkdownRender
+            | Self::ToggleFocus
             | Self::ToggleZen
             | Self::ToggleFullscreen => CommandCategory::View,
             Self::OpenExplorer
@@ -2289,6 +2291,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "preview",
         NoArguments
     ),
+    editor_spec!(Editor::ToggleFocus, "focus", [], "focus", NoArguments),
     editor_spec!(Editor::ToggleZen, "zen", [], "zen", NoArguments),
     editor_spec!(
         Editor::ToggleFullscreen,
@@ -3750,6 +3753,7 @@ fn invocation_from_parts(
                 | EditorCommand::ShowAbout
                 | EditorCommand::PreviewDocument
                 | EditorCommand::ToggleMarkdownRender
+                | EditorCommand::ToggleFocus
                 | EditorCommand::ToggleZen
                 | EditorCommand::ToggleFullscreen,
                 ParsedArgument::None,

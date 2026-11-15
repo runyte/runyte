@@ -583,6 +583,7 @@ static FULL_WIDTH_TEXT_ROWS: std::sync::OnceLock<bool> = std::sync::OnceLock::ne
 
 #[cfg(test)]
 mod tests {
+    mod focus;
     use super::{
         CACHE_ENTRIES_PER_FACE, FaceCache, FrameData, MAX_CACHED_SYMBOL_BYTES, backgrounds, color,
     };

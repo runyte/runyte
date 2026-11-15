@@ -165,6 +165,7 @@ impl<'a> SelectionRoles<'a> {
 /// Everything needed to draw the normal editor panes and status surface.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditorSnapshot {
+    pub focus: Option<crate::config::FocusConfig>,
     pub geometry: crate::app::FrameGeometry,
     pub theme: Theme,
     pub terminal_theme_colors: bool,
@@ -950,6 +951,7 @@ impl App {
             Default::default()
         };
         EditorSnapshot {
+            focus: self.focus_enabled.then_some(self.config.focus),
             geometry: prepared.geometry,
             directory_tree: prepared.tree_area.map(|area| {
                 let rows = self.directory_tree.rows();

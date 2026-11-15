@@ -5176,6 +5176,14 @@ impl App {
             }
             Command::PreviewDocument => self.preview_document(),
             Command::ToggleMarkdownRender => self.toggle_markdown_render(),
+            Command::ToggleFocus => {
+                self.focus_enabled = !self.focus_enabled;
+                self.status(if self.focus_enabled {
+                    "focus mode enabled"
+                } else {
+                    "focus mode disabled"
+                });
+            }
             Command::ToggleZen => self.toggle_maximized(MaximizedView::Zen),
             Command::ToggleFullscreen => self.toggle_maximized(MaximizedView::Fullscreen),
             Command::OpenExplorer => self.open_active_directory_explorer()?,

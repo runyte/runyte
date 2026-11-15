@@ -745,3 +745,26 @@ fn terminal_scrollback_applies_at_start_reload_and_persist_without_replacing_rev
     assert_eq!(app.config.terminal.scrollback_lines, 0);
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn focus_reload_updates_tuning_without_changing_toggle_and_rejects_invalid_values() {
+    let (mut app, path) = editor("focus.yaml", "focus:\n  radius: 3\n");
+    app.execute_command("focus").unwrap();
+    assert!(app.focus_enabled);
+    fs::write(&path, "focus:\n  fade_distance: 8\n  minimum_opacity: 40\n").unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert!(app.focus_enabled);
+    assert_eq!(app.config.focus.fade_distance, 8);
+    assert_eq!(app.config.focus.minimum_opacity, 40);
+    for invalid in [
+        "fade_distance: 0",
+        "minimum_opacity: 101",
+        "inactive_opacity: 101",
+    ] {
+        fs::write(&path, format!("focus:\n  {invalid}\n")).unwrap();
+        app.execute_command("config-reload").unwrap();
+        assert!(app.status_error);
+        assert_eq!(app.config.focus.minimum_opacity, 40);
+    }
+    fs::remove_file(path).unwrap();
+}
