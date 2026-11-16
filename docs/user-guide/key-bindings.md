@@ -169,6 +169,12 @@ actions are `yank-collapse-normal-mode` and `yank-line-collapse-normal-mode`.
 - `P` never replaces. It is the way to paste at the start of a selection
   without giving it up.
 - `Space c p` and `Space c P` follow the same rules from the system clipboard.
+- `p` runs `paste-after-or-replace`. Its two halves are separate actions for
+  custom bindings, with no default key, and both leave the mode alone:
+  `paste-after` always pastes after the caret or range, and
+  `replace-with-register` always replaces it, taking a bare caret as the
+  character under it, as `d` does. In a terminal `p` sends the register and
+  enters Insert mode; `paste-after` sends it and stays in the current mode.
 
 #### Pasting images
 
@@ -420,6 +426,11 @@ all of them.
 | `n` / `N` | Selects only the next / previous match; further presses cycle that single selection through the remembered results |
 | An edit after `n` / `N` | Changes only the match you reached |
 | A selection motion such as `e` | Turns the results into ordinary selections, with their Select-coloured endpoint cursors, and shows the selection count |
+
+`set-search-from-selection` takes the pattern `*` would, the word or selection
+under the caret, without selecting anything. It has no default key; bound as
+`[set-search-from-selection, search-next]`, it steps to the next occurrence of
+the word under the caret instead of selecting all of them.
 
 #### Preview while typing
 

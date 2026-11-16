@@ -51,7 +51,11 @@ impl App {
                         linewise,
                         directory: None,
                     },
-                    before,
+                    if before {
+                        super::editing::Paste::Before
+                    } else {
+                        super::editing::Paste::AfterOrReplace
+                    },
                     transient_line_selection,
                 );
             }
@@ -136,7 +140,7 @@ impl App {
                     linewise: false,
                     directory: None,
                 },
-                false,
+                super::editing::Paste::AfterOrReplace,
                 false,
             );
         }
@@ -714,6 +718,23 @@ impl App {
         });
     }
 
+    /// The pattern `*` would search for, without the search: the selection and
+    /// mode are left alone, so a bound sequence decides what to do with it,
+    /// such as `[set-search-from-selection, search-next]` to step to the next
+    /// occurrence of the word under the caret.
+    pub(super) fn set_search_from_selection(&mut self) {
+        let Some(pattern) = self.selection_search_pattern() else {
+            return;
+        };
+        self.search = SearchQuery {
+            pattern,
+            mode: SearchMode::Sensitive,
+            region: None,
+            forward: true,
+        };
+        self.status(format!("search: {}", self.search.pattern));
+    }
+
     /// `*` and `#` in the Vim grammar, which jump to one match at a time.
     pub(super) fn search_selection_direction(&mut self, reverse: bool, count: usize) {
         let Some(pattern) = self.selection_search_pattern() else {
@@ -870,6 +891,7 @@ impl App {
         };
         if matches.is_empty() {
             self.search_info(format!("pattern not found: {}", self.search.pattern));
+            self.sequence_halted = true;
             return;
         }
         let current = self.active().selection.primary().from();
@@ -932,6 +954,7 @@ impl App {
         }
         if matches.is_empty() {
             self.search_info(format!("pattern not found: {}", self.search.pattern));
+            self.sequence_halted = true;
             return;
         }
 

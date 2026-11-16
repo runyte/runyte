@@ -1416,7 +1416,7 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::char('U'), Command::Redo),
         modal(Key::char('y'), Command::YankCollapseNormalMode),
         modal(Key::char('Y'), Command::YankLineCollapseNormalMode),
-        modal(Key::char('p'), Command::PasteAfter),
+        modal(Key::char('p'), Command::PasteAfterOrReplace),
         modal(Key::char('P'), Command::PasteBefore),
         modal(Key::char('>'), Command::Indent),
         modal(Key::char('<'), Command::Unindent),
