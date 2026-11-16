@@ -797,7 +797,9 @@ triggers other bindings.
   or with `enter-insert-mode`, which then accepts typing.
 - Nothing continues automatically after a prompt or background operation.
 
-**Failure.** An error or unavailable action stops the list.
+**Failure.** An error or unavailable action stops the list. So does
+`search-next` or `search-previous` finding no match, so the actions after it
+never run against a selection the search did not choose.
 
 - Actions that already ran stay applied.
 - A list is not rolled back. A saved file stays saved.
@@ -917,7 +919,9 @@ This is the list `:help key-actions` shows, grouped by topic.
 | `yank-line` | N S | continue | Yank the lines the selection touches |
 | `yank-collapse-normal-mode` | N S | continue | Yank, then leave a caret in normal mode |
 | `yank-line-collapse-normal-mode` | N S | continue | Yank lines, then leave a normal-mode caret |
-| `paste-after` | N S | continue | Replace the selection, or paste after the caret |
+| `paste-after-or-replace` | N S | continue | Replace the selection, or paste after the caret |
+| `paste-after` | N S | continue | Paste after the selection or caret |
+| `replace-with-register` | N S | continue | Replace the selection or character |
 | `paste-before` | N S | continue | Paste before the selection |
 | `indent` | N S | continue | Indent the selected lines |
 | `unindent` | N S | continue | Unindent the selected lines |
@@ -1037,9 +1041,10 @@ This is the list `:help key-actions` shows, grouped by topic.
 | --- | --- | --- | --- |
 | `search` | N S | last | Search for text, ignoring case |
 | `search-regex` | N S | last | Search with a regular expression |
-| `search-next` | N S | last | Select only the next search match |
-| `search-previous` | N S | last | Select only the previous search match |
+| `search-next` | N S | continue | Select only the next search match |
+| `search-previous` | N S | continue | Select only the previous search match |
 | `search-selection` | N S | last | Select every match of the selection or word |
+| `set-search-from-selection` | N S | continue | Use the selection or word as the search |
 | `global-search` | N S | last | Search the workspace, ignoring case |
 | `global-search-regex` | N S | last | Search the workspace with a regular expression |
 

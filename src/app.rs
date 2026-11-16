@@ -3324,6 +3324,11 @@ pub struct App {
     directory_views: HashMap<PathBuf, DirectoryView>,
     search: SearchQuery,
     search_selection: Option<SearchSelectionPresentation>,
+    /// Set by an action that finished without an error but also without the
+    /// result a bound sequence would build on, such as `search-next` finding
+    /// nothing. The rest of the sequence is skipped rather than run against a
+    /// selection the step never chose.
+    sequence_halted: bool,
     /// What an open `s` or `/` prompt would select if accepted now.
     search_preview: Option<search_preview::SearchPreview>,
     next_pane: usize,
@@ -4050,6 +4055,7 @@ impl App {
             directory_views: HashMap::new(),
             search: SearchQuery::default(),
             search_selection: None,
+            sequence_halted: false,
             search_preview: None,
             next_pane: 1,
             pane_history_clock: 1,

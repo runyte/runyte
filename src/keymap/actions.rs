@@ -112,6 +112,9 @@ fn scan_editor_modes(command: EditorCommand) -> Vec<Mode> {
                         | EditorCommand::ChangeSelection
                         | EditorCommand::Yank
                         | EditorCommand::YankLine
+                        | EditorCommand::PasteAfter
+                        | EditorCommand::ReplaceWithRegister
+                        | EditorCommand::SetSearchFromSelection
                 ))
         })
         .collect()
@@ -177,8 +180,13 @@ pub fn can_continue(target: BindingTarget) -> bool {
                 | C::Unindent
                 | C::ToggleCase
                 | C::ToggleComments
+                | C::PasteAfterOrReplace
                 | C::PasteAfter
+                | C::ReplaceWithRegister
                 | C::PasteBefore
+                | C::SearchNext
+                | C::SearchPrevious
+                | C::SetSearchFromSelection
                 | C::Undo
                 | C::Redo
                 | C::SelectionUndo

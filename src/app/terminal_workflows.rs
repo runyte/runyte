@@ -971,7 +971,7 @@ impl App {
                 }
                 true
             }
-            Command::PasteAfter | Command::PasteBefore => {
+            Command::PasteAfterOrReplace | Command::PasteAfter | Command::PasteBefore => {
                 let _ = session;
                 let register = self.read_selected_register();
                 if register.text.is_empty() {
@@ -987,7 +987,11 @@ impl App {
                     // child (most often Enter), so hand the terminal back as
                     // soon as the paste reaches its queue. Buffer paste keeps
                     // its ordinary Normal-mode behavior in `paste_register`.
-                    self.mode = Mode::Insert;
+                    // `paste-after` is the bare paste, so like `yank` here it
+                    // leaves the mode for the next action to decide.
+                    if command != Command::PasteAfter {
+                        self.mode = Mode::Insert;
+                    }
                     self.status("pasted Runyte register to terminal");
                 } else {
                     self.action_failed("terminal input queue is full or the paste exceeds 1 MiB");

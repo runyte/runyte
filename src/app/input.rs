@@ -2606,12 +2606,14 @@ impl App {
             } = self.grammar.translate(input, context)?;
             let mut command_outcome = None;
             for intent in intents {
+                self.sequence_halted = false;
                 command_outcome = self
                     .apply_editor_intent(intent, typed_character)?
                     .or(command_outcome);
                 self.reconcile_search_selection_presentation();
                 if configured_description.is_some()
                     && (self.status_error
+                        || self.sequence_halted
                         || matches!(
                             command_outcome,
                             Some(
@@ -4993,8 +4995,19 @@ impl App {
                     self.collapse_after_yank();
                 }
             }
-            Command::PasteAfter => self.paste(false, transient_line_selection),
-            Command::PasteBefore => self.paste(true, transient_line_selection),
+            Command::PasteAfterOrReplace => self.paste(
+                super::editing::Paste::AfterOrReplace,
+                transient_line_selection,
+            ),
+            Command::PasteAfter => {
+                self.paste(super::editing::Paste::After, transient_line_selection)
+            }
+            Command::ReplaceWithRegister => {
+                self.paste(super::editing::Paste::Replace, transient_line_selection)
+            }
+            Command::PasteBefore => {
+                self.paste(super::editing::Paste::Before, transient_line_selection)
+            }
             Command::Indent => self.indent(false),
             Command::Unindent => self.indent(true),
             Command::ToggleComments => self.toggle_comments(),
@@ -5158,6 +5171,7 @@ impl App {
             Command::SearchNext => self.repeat_search(false),
             Command::SearchPrevious => self.repeat_search(true),
             Command::SearchSelection => self.search_selection(),
+            Command::SetSearchFromSelection => self.set_search_from_selection(),
             Command::AlignViewCenter => self.align_view(ViewAlignment::Center),
             Command::AlignViewTop => self.align_view(ViewAlignment::Top),
             Command::AlignViewBottom => self.align_view(ViewAlignment::Bottom),
