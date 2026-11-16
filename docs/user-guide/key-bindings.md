@@ -78,6 +78,11 @@ under [Insert and Replace modes](key-bindings.md#insert-and-replace-modes).
 | `z…` / `Z…` | View alignment and scrolling |
 | `Esc` / `Ctrl-\` (`Ctrl-4` on legacy terminals) | Return to Normal mode |
 
+`zj` / `zk` scroll one display row and move the primary cursor only when it
+reaches the viewport scroll margin. `Z` keeps this view mode active for repeated
+`j` / `k` motions; Escape or Enter leaves it at the new position. Wrapped rows
+count separately. In Select mode the selection anchor stays fixed.
+
 #### Selecting whole lines
 
 | Key | Command | Effect |

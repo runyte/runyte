@@ -61,6 +61,16 @@ Regressions live in `src/terminal/tests/read.rs`, including
 `alternate_screen_limit_changes_trim_primary_history_and_survive_reset` and
 `terminal_history_limits_are_independent_and_reviews_survive_trimming`.
 
+Underline-colour SGR 58 sequences are consumed as whole extended colours,
+including semicolon and colon forms. Separate underline colours are not yet
+represented by terminal cells; they are ignored without allowing RGB channels
+to change foreground, background or attributes. This matters when nesting
+Runyte with focus mode, whose renderer emits underline colours alongside text
+colours. Both the outer emulator and inner editor must be updated to avoid the
+older emulator's colour corruption. Regressions are
+`unsupported_underline_colours_do_not_change_other_rendition` and
+`focus_colors_survive_backend_output_inside_another_terminal`.
+
 ## Unix PTY descriptor ownership
 
 Linux allocates the master with `posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC)`

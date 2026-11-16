@@ -54,6 +54,7 @@ theme: mocha
 | `notifications` | Notification history | [Other settings](configuration.md#other-settings) |
 | `lsp` | Language servers | [Language servers](language-support.md#language-servers) |
 | `keys` | Prefixes, remapped keys, and action bindings | [Custom key bindings](custom-key-bindings.md#custom-key-bindings) |
+| `focus` | Experimental cursor focus fading | [Focus mode](#focus-mode-experimental) |
 | `theme` | The active theme | [Themes](themes.md#themes) |
 | `themes` | Custom theme definitions | [Writing a custom theme](themes.md#writing-a-custom-theme) |
 | `plugins` | Process plugins | [Plugin guide](../plugins.md) |
@@ -327,7 +328,8 @@ nothing.
 
 Every setting below is also on the `[config]` page, except `workspace.state`,
 `workspace.state_anchor`, `mcp.default_grants`, and the language-server
-definitions, which are file-only.
+definitions, which are file-only. Of the `focus` section, only `focus.enabled`
+is on the page.
 
 #### Editor settings
 
@@ -393,6 +395,7 @@ and memory behavior.
 | --- | --- | --- | --- |
 | `git.refresh_interval_seconds` | `60` | 0–3600 | Bounds automatic Git refresh. `0` turns it off. See [Automatic Git refresh](configuration.md#automatic-git-refresh). |
 | `notifications.history_limit` | `50` | 1–1000 | Newest notifications kept in memory for the workspace. |
+| `focus.enabled` | `false` | boolean | Start with experimental focus fading on. Saving from the settings page applies immediately; `:focus` toggles it for this session only. The tuning keys beside it are file-only. See [Focus mode](#focus-mode-experimental). |
 | `lsp.enable` | `true` | boolean | Allow configured language servers to start. Restart required. |
 | `mcp.default_grants` | none | identity: list of permissions | Identities that may read in every workspace that has no grant or revocation of its own. The only permission is `read`; `write` is granted per workspace with `:mcp`. Earlier capability names are accepted; a list with both `terminal_read` and `editor_context_read` means `read`, and any other grants nothing and is reported at start. Read when a workspace starts. See [Default grants](agent-access-to-workspace-context.md#default-grants). |
 | `lsp.<language>` | `rust` only | `command`, `args`, `initialization_options`, `roots` | A language server definition. See [Language servers](language-support.md#language-servers). |
@@ -615,6 +618,55 @@ workspace, not the client that opened the report.
 The report is an informational overlay: arrows and paging scroll it, and
 Escape dismisses it. Printable keys and Enter cannot turn it into a filtered
 choice by accident.
+
+### Focus mode (experimental)
+
+`:focus` toggles fading across all buffer and terminal panes in the current
+workspace. It starts in the state `focus.enabled` names, disabled by default.
+The toggle lasts for this session and is not written back to the file, the
+same as `Space p s` for `editor.soft_wrap`. An active buffer pane retains its original colors
+near the primary cursor; more distant display rows blend smoothly toward the
+pane background. Active terminal panes remain fully opaque across every row,
+including cursorless applications such as htop and terminal review. Inactive
+buffer and terminal panes use a uniform opacity. Foreground, background,
+and underline colors all fade, including terminal ANSI colors, selections,
+and syntax highlighting. Pane titles, borders, overlays, and status lines keep
+their normal appearance. Native image/PDF previews are not text and do not fade.
+Color emoji are an experimental limitation: their bitmap glyphs bypass text
+foreground colors in the native window, so they remain vivid even at zero
+opacity. External terminals may likewise preserve emoji colors. Their cell
+backgrounds still fade.
+
+```yaml
+focus:
+  enabled: false
+  radius: 2
+  fade_distance: 30
+  minimum_opacity: 50
+  inactive_opacity: 50
+```
+
+- `enabled`: whether fading is on when the editor starts. To have every
+  workspace start with it, set it to `true`.
+- `radius`: buffer display rows on either side of the cursor that retain full color
+  (0–65535). Wrapped rows count separately.
+- `fade_distance`: additional rows over which a smooth curve reaches the minimum
+  opacity (1–65535).
+- `minimum_opacity`: visibility of distant rows in the active buffer pane (0–100 percent).
+- `inactive_opacity`: visibility of all rows in inactive panes (0–100 percent).
+
+Edit these settings in YAML and run `:config-reload` to tune the effect. A
+reload adopts every value in the file, `enabled` included, so a `:focus`
+toggle is replaced by the file's value, as a soft-wrap toggle is. Set
+`enabled: true` while tuning to keep the effect visible across reloads. Zero opacity blends completely into the background;
+100 preserves the original colors. Fading is spatial, without an animated
+transition. If a buffer cursor is outside the viewport, its active pane uses
+minimum opacity throughout. Terminal cursor visibility and position do not
+affect focus fading.
+Truecolor gives the smoothest results; limited terminal palettes quantize the
+blended colors. A custom theme using `reset` for the pane background cannot
+be blended because the external terminal owns that color, so fading is skipped
+for that pane. No buffer text or terminal output is modified.
 
 <!-- navigation -->
 [Contents](README.md) · [Previous: Diagnostics and logging](diagnostics-and-logging.md) · [Next: Custom key bindings](custom-key-bindings.md)

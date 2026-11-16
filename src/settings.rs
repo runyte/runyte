@@ -55,6 +55,7 @@ pub enum SettingId {
     EditorSoftWrap,
     EditorAlwaysWrapRenderedMarkdown,
     EditorRenderWhitespace,
+    FocusEnabled,
     EditorZenWidth,
     EditorHardWrapWidth,
     EditorScratchMarkdown,
@@ -295,6 +296,15 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         key: "editor.render_whitespace",
         title: "Whitespace markers",
         description: "Show spaces, tabs, and line terminators",
+        value_type: SettingType::Boolean,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
+        id: SettingId::FocusEnabled,
+        key: "focus.enabled",
+        title: "Focus mode",
+        description: "Experimental: fade text away from the cursor and in inactive panes",
         value_type: SettingType::Boolean,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
@@ -544,6 +554,7 @@ impl SettingId {
         Self::EditorSoftWrap,
         Self::EditorAlwaysWrapRenderedMarkdown,
         Self::EditorRenderWhitespace,
+        Self::FocusEnabled,
         Self::EditorZenWidth,
         Self::EditorHardWrapWidth,
         Self::EditorScratchMarkdown,
@@ -617,6 +628,7 @@ impl SettingId {
                 SettingValue::Boolean(config.editor.always_wrap_rendered_markdown)
             }
             Self::EditorRenderWhitespace => SettingValue::Boolean(config.editor.render_whitespace),
+            Self::FocusEnabled => SettingValue::Boolean(config.focus.enabled),
             Self::EditorZenWidth => SettingValue::Integer(config.editor.zen_width),
             Self::EditorHardWrapWidth => SettingValue::Integer(config.editor.hard_wrap_width),
             Self::EditorScratchMarkdown => SettingValue::Boolean(config.editor.scratch_markdown),
@@ -782,6 +794,9 @@ impl SettingId {
             }
             (Self::EditorRenderWhitespace, SettingValue::Boolean(value)) => {
                 config.editor.render_whitespace = *value;
+            }
+            (Self::FocusEnabled, SettingValue::Boolean(value)) => {
+                config.focus.enabled = *value;
             }
             (Self::EditorZenWidth, SettingValue::Integer(value)) => {
                 config.editor.zen_width = *value;
