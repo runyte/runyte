@@ -90,7 +90,7 @@ pub struct Config {
     pub themes: HashMap<String, ThemeDefinition>,
 }
 
-/// Experimental pane fading. Opacity is a percentage; distances are display rows.
+/// Pane focus fading. Opacity is a percentage; distances are display rows.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(default)]
 pub struct FocusConfig {
@@ -109,9 +109,9 @@ impl Default for FocusConfig {
         Self {
             enabled: false,
             radius: 2,
-            fade_distance: 30,
-            minimum_opacity: 50,
-            inactive_opacity: 50,
+            fade_distance: 50,
+            minimum_opacity: 70,
+            inactive_opacity: 70,
         }
     }
 }

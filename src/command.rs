@@ -924,7 +924,7 @@ editor_commands! {
         "toggle-markdown-render",
         "Show a Markdown document as formatted text, or return to its source"
     ),
-    ToggleFocus => ("toggle-focus", "Toggle experimental cursor focus fading"),
+    ToggleFocus => ("toggle-focus", "Toggle cursor focus fading"),
     ToggleZen => ("toggle-zen", "Toggle the centred, maximized writing view"),
     ToggleFullscreen => (
         "toggle-fullscreen",
