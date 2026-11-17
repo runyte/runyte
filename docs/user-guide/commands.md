@@ -138,7 +138,7 @@ The working directory starts where Runyte was launched.
 | `:hsplit [path]` | `split` | Create a stacked split |
 | `:window-close` | `wc` | Close the active pane, but not the last one |
 | `:resize` | | Preview pane resizing and extension; Enter applies, Escape cancels |
-| `:focus` | | Toggle experimental cursor focus fading in all buffer and terminal panes |
+| `:focus` | | Toggle cursor focus fading in all buffer and terminal panes |
 | `:zen` | | Toggle a centred, maximized editable writing viewport |
 | `:fullscreen` | | Toggle the active pane across the whole editor area, at its ordinary width |
 

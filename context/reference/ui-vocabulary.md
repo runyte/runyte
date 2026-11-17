@@ -947,7 +947,7 @@ scroll and document-text selection belong to the native frontend and its helper.
 The source buffer keeps its editing state. See the
 [preview lifecycle](../../crates/runyte-preview/README.md).
 
-## Experimental focus fading
+## Focus fading
 
 Focus fading is presentation-only blending of pane-body foreground, background,
 and underline colors toward the pane ground. Active buffer panes use distance
@@ -955,7 +955,7 @@ in display rows from the primary caret. Active terminal panes retain full opacit
 regardless of cursor visibility, cursor position, or review mode. Inactive buffer
 and terminal panes use uniform opacity. Chrome and overlays are unaffected.
 Native color-emoji bitmaps bypass these
-style colors and do not fade; this is a documented experimental limitation.
+style colors and do not fade; this is a documented limitation.
 Private bundled protocol version 98 carries optional focus tuning in the editor
 snapshot. A change requires a full frame; existing pane/cursor updates continue
 to carry the current anchor. The toggle remains in the workspace host across

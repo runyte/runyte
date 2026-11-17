@@ -304,7 +304,7 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         id: SettingId::FocusEnabled,
         key: "focus.enabled",
         title: "Focus mode",
-        description: "Experimental: fade text away from the cursor and in inactive panes",
+        description: "Fade text away from the cursor and in inactive panes",
         value_type: SettingType::Boolean,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,

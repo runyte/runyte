@@ -54,7 +54,7 @@ theme: mocha
 | `notifications` | Notification history | [Other settings](configuration.md#other-settings) |
 | `lsp` | Language servers | [Language servers](language-support.md#language-servers) |
 | `keys` | Prefixes, remapped keys, and action bindings | [Custom key bindings](custom-key-bindings.md#custom-key-bindings) |
-| `focus` | Experimental cursor focus fading | [Focus mode](#focus-mode-experimental) |
+| `focus` | Cursor focus fading | [Focus mode](#focus-mode) |
 | `theme` | The active theme | [Themes](themes.md#themes) |
 | `themes` | Custom theme definitions | [Writing a custom theme](themes.md#writing-a-custom-theme) |
 | `plugins` | Process plugins | [Plugin guide](../plugins.md) |
@@ -395,7 +395,7 @@ and memory behavior.
 | --- | --- | --- | --- |
 | `git.refresh_interval_seconds` | `60` | 0–3600 | Bounds automatic Git refresh. `0` turns it off. See [Automatic Git refresh](configuration.md#automatic-git-refresh). |
 | `notifications.history_limit` | `50` | 1–1000 | Newest notifications kept in memory for the workspace. |
-| `focus.enabled` | `false` | boolean | Start with experimental focus fading on. Saving from the settings page applies immediately; `:focus` toggles it for this session only. The tuning keys beside it are file-only. See [Focus mode](#focus-mode-experimental). |
+| `focus.enabled` | `false` | boolean | Start with focus fading on. Saving from the settings page applies immediately; `:focus` toggles it for this session only. The tuning keys beside it are file-only. See [Focus mode](#focus-mode). |
 | `lsp.enable` | `true` | boolean | Allow configured language servers to start. Restart required. |
 | `mcp.default_grants` | none | identity: list of permissions | Identities that may read in every workspace that has no grant or revocation of its own. The only permission is `read`; `write` is granted per workspace with `:mcp`. Earlier capability names are accepted; a list with both `terminal_read` and `editor_context_read` means `read`, and any other grants nothing and is reported at start. Read when a workspace starts. See [Default grants](agent-access-to-workspace-context.md#default-grants). |
 | `lsp.<language>` | `rust` only | `command`, `args`, `initialization_options`, `roots` | A language server definition. See [Language servers](language-support.md#language-servers). |
@@ -619,7 +619,7 @@ The report is an informational overlay: arrows and paging scroll it, and
 Escape dismisses it. Printable keys and Enter cannot turn it into a filtered
 choice by accident.
 
-### Focus mode (experimental)
+### Focus mode
 
 `:focus` toggles fading across all buffer and terminal panes in the current
 workspace. It starts in the state `focus.enabled` names, disabled by default.
@@ -632,7 +632,7 @@ buffer and terminal panes use a uniform opacity. Foreground, background,
 and underline colors all fade, including terminal ANSI colors, selections,
 and syntax highlighting. Pane titles, borders, overlays, and status lines keep
 their normal appearance. Native image/PDF previews are not text and do not fade.
-Color emoji are an experimental limitation: their bitmap glyphs bypass text
+Color emoji are a known limitation: their bitmap glyphs bypass text
 foreground colors in the native window, so they remain vivid even at zero
 opacity. External terminals may likewise preserve emoji colors. Their cell
 backgrounds still fade.
@@ -641,9 +641,9 @@ backgrounds still fade.
 focus:
   enabled: false
   radius: 2
-  fade_distance: 30
-  minimum_opacity: 50
-  inactive_opacity: 50
+  fade_distance: 50
+  minimum_opacity: 70
+  inactive_opacity: 70
 ```
 
 - `enabled`: whether fading is on when the editor starts. To have every

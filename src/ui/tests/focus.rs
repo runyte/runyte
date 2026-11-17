@@ -7,14 +7,14 @@ fn focus_curve_is_symmetric_bounded_and_smooth() {
     let config = FocusConfig::default();
     assert!(!config.enabled);
     assert_eq!(config.radius, 2);
-    assert_eq!(config.fade_distance, 30);
-    assert_eq!(config.minimum_opacity, 50);
-    assert_eq!(config.inactive_opacity, 50);
+    assert_eq!(config.fade_distance, 50);
+    assert_eq!(config.minimum_opacity, 70);
+    assert_eq!(config.inactive_opacity, 70);
     assert_eq!(focus_opacity(config, true, Some(40), 40), 1.0);
     assert_eq!(focus_opacity(config, true, Some(40), 42), 1.0);
-    assert_eq!(focus_opacity(config, true, Some(40), 72), 0.5);
-    assert_eq!(focus_opacity(config, true, None, 0), 0.5);
-    assert_eq!(focus_opacity(config, false, Some(40), 40), 0.5);
+    assert_eq!(focus_opacity(config, true, Some(40), 92), 0.7);
+    assert_eq!(focus_opacity(config, true, None, 0), 0.7);
+    assert_eq!(focus_opacity(config, false, Some(40), 40), 0.7);
     let mut previous = 1.0;
     for distance in 0..40 {
         let opacity = focus_opacity(config, true, Some(40), 40 + distance);
@@ -22,7 +22,7 @@ fn focus_curve_is_symmetric_bounded_and_smooth() {
             opacity,
             focus_opacity(config, true, Some(40), 40 - distance)
         );
-        assert!(opacity <= previous && opacity >= 0.5);
+        assert!(opacity <= previous && opacity >= 0.7);
         previous = opacity;
     }
 }
@@ -253,7 +253,12 @@ fn focus_colors_survive_backend_output_inside_another_terminal() {
             cell.bg = Color::Rgb(40, 60, 80);
             // These faded channels are also valid, destructive SGR commands.
             cell.underline_color = Color::Rgb(62, 84, 14);
-            apply_focus(frame, &theme, &pane, Some(FocusConfig::default()));
+            // Pinned at 50% so the faded channels stay the SGR codes above.
+            let focus = FocusConfig {
+                inactive_opacity: 50,
+                ..FocusConfig::default()
+            };
+            apply_focus(frame, &theme, &pane, Some(focus));
         })
         .unwrap()
         .buffer

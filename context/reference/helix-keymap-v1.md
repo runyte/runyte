@@ -889,7 +889,7 @@ selected choice only through the existing native presentation checks; Escape
 closes without applying. `keys.ui.context-review` can replace these review actions;
 its footer and dispatch use the effective bindings and the same motion registry.
 
-## Experimental focus fading
+## Focus fading
 
 `:focus` is a Runyte-only command (`toggle-focus`) in the View category, with
 no default keybinding. It toggles workspace-wide spatial color fading around
