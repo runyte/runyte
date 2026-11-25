@@ -2794,7 +2794,7 @@ fn list_bindings() -> Vec<Binding> {
         list(Key::plain(KeyCode::Home), Command::ListFirst),
         list(Key::plain(KeyCode::End), Command::ListLast),
         list(Key::ctrl('t'), Command::ListTogglePreview),
-        list(Key::plain(KeyCode::Delete), Command::ListClearFilter),
+        list(Key::plain(KeyCode::Delete), Command::ListCloseTarget),
         list(Key::plain(KeyCode::Escape), Command::ListClose),
         platform(Key::ctrl('c'), Command::ListClose),
         manager(Key::ctrl('o'), Command::OpenSessionDirectory.into()),

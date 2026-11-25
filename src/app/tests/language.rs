@@ -895,6 +895,10 @@ fn closing_a_buffer_closes_its_language_server_document() {
     // Past Bring into active pane, to Close.
     key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.list_close.is_some());
+    assert!(!app.closed_buffers.contains(&app.active().buffer));
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
     assert!(drain(&mut queue).into_iter().any(|command| {
         matches!(command, LspCommand::Close { path: closed, .. } if closed == path)

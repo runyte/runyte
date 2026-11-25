@@ -2554,7 +2554,8 @@ fn clearing_the_filter_arms_the_digit_shortcut_again() {
     assert!(app.take_workspace_switch().is_none());
     assert_eq!(app.list.as_ref().unwrap().filter, "r1");
 
-    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
     assert!(app.list.as_ref().unwrap().filter.is_empty());
     press(&mut app, '1');
     assert_eq!(
@@ -4280,6 +4281,7 @@ fn session_manager_legend_names_only_the_keys_that_act_now() {
             "Ctrl-d/Ctrl-u page",
             "Home/End first/last",
             "Ctrl-t preview",
+            "Delete stop session…",
         ]
     );
 
@@ -4288,13 +4290,15 @@ fn session_manager_legend_names_only_the_keys_that_act_now() {
     let legend = spelled(&session_manager_overlay(&app).legend);
     assert!(!legend.iter().any(|entry| entry.starts_with("Ctrl-e")));
 
-    // Once anything is typed, a digit is filter text and Delete has a
-    // filter to clear.
+    // Once anything is typed, a digit is filter text. Delete preserves the filter.
     key(&mut app, KeyCode::Char('c'), Modifiers::NONE);
     let legend = spelled(&session_manager_overlay(&app).legend);
     assert!(!legend.contains(&"1-9 attach".to_owned()));
-    assert!(legend.contains(&"Delete clear filter".to_owned()));
+    assert!(!legend.contains(&"Delete clear filter".to_owned()));
     key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    assert_eq!(app.list.as_ref().unwrap().filter, "c");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    key(&mut app, KeyCode::Backspace, Modifiers::NONE);
     assert!(app.list.as_ref().unwrap().filter.is_empty());
     assert!(spelled(&session_manager_overlay(&app).legend).contains(&"1-9 attach".to_owned()));
 
@@ -5169,4 +5173,22 @@ fn init_creates_nothing_when_the_replacement_could_not_start() {
 
     test.expect_stayed();
     assert!(!plain.join(".runyte").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn list_close_session_confirmation_cancels_and_rejects_stale_identity() {
+    let (mut app, root) = session_manager_with_running_and_stopped_rows("list-close-session", true);
+    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    assert!(app.list_close.is_some());
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.list_close.is_none());
+    assert!(app.workspace_pending_selection.is_none());
+    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    app.workspace_rows.clear();
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.workspace_pending_selection.is_none());
+    assert!(app.status.contains("changed"));
+    fs::remove_dir_all(root).unwrap();
 }

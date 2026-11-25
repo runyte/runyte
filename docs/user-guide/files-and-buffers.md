@@ -501,6 +501,16 @@ discarded.
 | `Ctrl-t` | Toggle a bounded preview of its in-memory text |
 | `Tab` | Actions, starting with **Bring into active pane** |
 
+**Delete** (`Fn-Delete` on macOS) opens a confirmation for the selected buffer.
+Cancel is selected initially. Unsaved buffers offer **Save and close** and
+**Discard changes and close**. Untitled text asks for a path; a failed save keeps
+the buffer open. Discard closes the buffer without deleting its file. Changes to
+the captured buffer invalidate the confirmation. Directory proposals and commit
+messages offer discard and close; saving those uses their existing filesystem or
+Git workflow. Backspace edits the filter;
+clearing the entire filter has no default shortcut. These keys are
+[configurable](custom-key-bindings.md).
+
 **Tab actions:**
 
 - **Bring into active pane** shows the buffer here instead of focusing another

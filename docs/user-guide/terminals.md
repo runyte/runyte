@@ -149,7 +149,7 @@ the output as a snapshot. New output keeps arriving behind it.
 | `Space t q` | Show this pane's buffer again, leaving the program running |
 | `Space t y` | Copy this terminal's output into a read-only buffer (`:terminal-output`) |
 | `Space t s` | Send the selection — or the whole buffer — to a terminal as one bracketed paste (`:terminal-send [number\|name]`) |
-| `Tab`, then Close in `Space t t` | Explicitly end and forget the selected terminal |
+| Delete (`Fn-Delete` on macOS), or `Tab` then Close in `Space t t` | End and forget the selected terminal; running programs or unknown job state require confirmation |
 | `Tab`, then Force kill in `Space t t` | Kill the selected terminal's process group and discard its output after confirmation; Enter confirms, Escape cancels |
 | `Ctrl-w h/j/k/l` or `Ctrl-w Ctrl-h/j/k/l` in Terminal Insert | Move directly without capturing or discarding review; a live terminal destination starts Insert, a reviewed terminal stays in review, and a document destination starts Normal |
 | `Ctrl-h/j/k/l` in Terminal Insert | The exact same destination behavior without the prefix, when `editor.fast_pane_keys` is on; the child stops receiving those four keys |
@@ -233,9 +233,28 @@ shorter preview keeps the program's cursor row visible. `Ctrl-t` toggles it.
 | **Show** (Tab) | Show the session in the active pane. The only action that attaches one. |
 | **Bring into active pane** (Tab) | Move a session shown elsewhere to this pane; the old pane shows its buffer again. One PTY is never resized by two visible panes. |
 | **Rename** (Tab) | Ask for a name and return to the list, leaving panes unchanged |
-| **Close** (Tab) | End and forget the session. A hidden live process needs a second Enter. For an exited session, removes its output. |
+| **Close** (Tab) | End and forget the session. Running programs and unknown job state require confirmation, initially on Cancel. For an exited session, removes its output. |
 | **Force kill** (Tab) | For a hung program. Always asks, naming the terminal, even when visible: Enter confirms, Escape cancels. Kills the process group, discards its output, and shows the pane's buffer. Unsaved work in the program is lost. Not offered for exited terminals. |
 | **Create** (Tab) | Start a new terminal |
+
+Delete is remappable as `list-close-target`. Exited terminals are removed
+immediately. An idle shell closes immediately only when Runyte can establish
+prompt readiness and the absence of jobs. Currently this requires Linux, a shell
+reporting OSC 133 prompt-end (`B`), the shell owning the foreground process group,
+and no child processes. Input invalidates prompt readiness. Shells without this
+integration, macOS, Windows, failed observations, and other uncertain states ask
+for confirmation. Prompt reports are cooperative shell integration, not an
+authenticated signal. Output volume or silence never decides whether to ask.
+
+Once any input has been submitted to a terminal, live close requires confirmation
+for the remainder of its lifetime: queued prompt reports cannot prove freshness.
+Immediate idle close is limited to newly started, untouched shells with the
+Linux evidence described above. Exited terminals still remove immediately.
+
+A confirmation names the captured terminal and explains that stopping terminates
+its programs and discards output. Escape or choosing Cancel leaves it unchanged.
+Further input into that terminal invalidates the request. Backspace only edits
+the list filter; clear-filter has no default shortcut.
 
 **Runyte never ends a program unless you tell it to.** You can:
 

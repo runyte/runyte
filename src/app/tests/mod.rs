@@ -432,6 +432,7 @@ mod pointer_links;
 
 mod document_preview;
 
+mod list_close;
 mod ui_list_menus;
 
 mod ui_confirmations;

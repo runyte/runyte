@@ -313,6 +313,12 @@ and recently visited sessions, on Unix and Windows.
 
 The title reads `Sessions · Enter open · Tab actions · Esc close`.
 
+Delete captures the selected persistent session and starts on **Cancel**.
+Confirming uses the ordinary stop path: unsaved buffers, live terminal programs
+and pending work retain their existing protections. It never force-stops a
+session or forgets a stopped entry. The key is remappable as `list-close-target`;
+`list-clear-filter` remains available without a default binding.
+
 #### Manager keys
 
 | Key | Action |
@@ -326,20 +332,19 @@ The title reads `Sessions · Enter open · Tab actions · Esc close`.
 | `Ctrl-g` | **Git worktrees** |
 | `Ctrl-n` / `Ctrl-p`, `Ctrl-d` / `Ctrl-u`, Home / End | Move and page |
 | `Ctrl-t` | Toggle the preview |
-| Delete | Clear the filter |
+| Delete (`Fn-Delete` on macOS) | Confirm stopping the selected running persistent session |
 
 - `Space Space` is the complete binding, not a prefix. Once the filter has
   text, `Space` is filter text and only Escape or `Ctrl-c` closes.
 - Digits are shortcuts only while the filter is empty, because names such as
-  `runyte-2` and many paths contain digits. Clearing the filter (Delete, or
-  Backspace to empty) turns them back on. You can't filter by the first
+  `runyte-2` and many paths contain digits. Clearing the filter (Backspace to empty) turns them back on. You can't filter by the first
   character of a name or path that starts with a digit, so type a later part.
 - `Space Space 1` takes you to the first session right away.
 
 **The key legend** sits dimmed at the bottom. It lists only keys that work
 right now: `1-9 attach` while the filter is empty in a persistent editor, the
 `Ctrl-o`, `Ctrl-e`, and `Ctrl-g` chords when they can act, moving and paging,
-Home/End, `Ctrl-t`, and Delete while there is a filter. Rows come first. In a
+Home/End, `Ctrl-t`, and Delete for session stopping. Rows come first. In a
 short manager the legend loses its spacing line and then disappears before any
 row is hidden.
 
@@ -540,7 +545,7 @@ terminals, including retained exited ones. They all use these columns:
 | Tab | Resource actions |
 | `Ctrl-n` / `Ctrl-p`, `Ctrl-d` / `Ctrl-u`, Home / End | Move and page |
 | `Ctrl-t` | Toggle the preview (shown at first) of buffer contents or the live terminal screen |
-| Delete | Clear the filter |
+| Delete (`Fn-Delete` on macOS) | Confirm stopping the selected running persistent session |
 | Escape, `Ctrl-c`, or the leader with an empty query | Cancel |
 
 - Printable `j`, `k`, and `q` filter.

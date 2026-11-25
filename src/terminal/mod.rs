@@ -1917,6 +1917,22 @@ impl TerminalSession {
         false
     }
 
+    /// Only cooperative prompt evidence plus a local no-job observation permits
+    /// immediate close. Missing integration and unsupported platforms ask.
+    pub fn close_needs_confirmation(&self) -> bool {
+        if !self.live() {
+            return false;
+        }
+        #[cfg(target_os = "linux")]
+        if self.input_generation == 0
+            && self.emulator.prompt_ready
+            && self.pty.as_ref().is_some_and(pty::Pty::idle_prompt_process)
+        {
+            return false;
+        }
+        true
+    }
+
     pub fn input_generation(&self) -> u64 {
         self.input_generation
     }
@@ -1945,6 +1961,7 @@ impl TerminalSession {
     /// Input changes what the line holds even where the child echoes
     /// nothing, so a reader's revision moves with it as well as with output.
     fn note_input(&mut self) {
+        self.emulator.prompt_ready = false;
         self.input_generation = self.input_generation.wrapping_add(1);
         self.read_revision = self.read_revision.wrapping_add(1);
     }
@@ -1993,6 +2010,7 @@ impl TerminalSession {
         }
         #[cfg(any(unix, windows))]
         if let Some(pty) = &self.pty {
+            self.emulator.prompt_ready = false;
             let delivery = pty.enqueue_proposal(text, self.emulator.modes.bracketed_paste)?;
             self.proposal_deliveries.push(delivery.clone());
             return Ok(delivery);
@@ -4273,3 +4291,7 @@ mod tests {
         assert!(session.agent_enter_pending());
     }
 }
+
+#[cfg(test)]
+#[path = "tests/close_policy.rs"]
+mod close_policy_tests;

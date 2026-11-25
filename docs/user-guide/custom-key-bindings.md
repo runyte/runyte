@@ -185,7 +185,7 @@ Use `global.list` for ordinary result-list bindings and `session-manager.list`
 for overrides in the session manager. List bindings contain one key. List
 navigation actions are `list-next`, `list-previous`, `list-page-down`,
 `list-page-up`, `list-first`, `list-last`, `list-toggle-preview`,
-`list-clear-filter`, and `list-close`. Use `list-accept` to activate a row and
+`list-clear-filter`, `list-close-target`, and `list-close`. Use `list-accept` to activate a row and
 `list-backspace` to delete the last filter character. `list-open-actions` opens
 a row's actions. When no action menu applies, it cycles tags or moves to the
 next row. These three actions do nothing in reports. Their inherited Enter, Tab
@@ -195,6 +195,25 @@ For example, `Enter: null` leaves `Shift-Enter` available. Empty-filter leader
 input follows the effective Escape action, including its removal. Nested action
 menus own their input separately. Numbered session choices remain structural
 input.
+
+`Delete` (`Fn-Delete` on a compact Mac keyboard) invokes `list-close-target`
+in buffer, terminal and persistent-session lists. It closes the selected resource,
+whereas `list-close` dismisses the list. Backspace only edits the filter, including
+when it is empty. `list-clear-filter` has no default key; bind it if desired:
+
+```yaml
+keys:
+  scopes:
+    global:
+      list:
+        Delete: null
+        F8: list-close-target
+        F9: list-clear-filter
+```
+
+Close confirmations start on Cancel. Their selection, acceptance and cancellation
+keys are configurable under `keys.ui.list-close` (`next`, `previous`, `accept`,
+`cancel`). Repeated input cannot accept a close confirmation.
 
 `:help key-actions` includes the scoped action names and their modes.
 Actions must be supported by the selected view and mode. Scoped assignments

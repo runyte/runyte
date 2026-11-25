@@ -186,6 +186,50 @@ impl std::fmt::Debug for Pty {
 }
 
 impl Pty {
+    /// Bounded, on-demand observation; never inferred from terminal output.
+    #[cfg(target_os = "linux")]
+    pub(super) fn idle_prompt_process(&self) -> bool {
+        use std::io::Read;
+        if self.queued.load(std::sync::atomic::Ordering::Acquire) != 0 {
+            return false;
+        }
+        let Some(master) = &self.master else {
+            return false;
+        };
+        let pid = self.child.id() as libc::pid_t;
+        // SAFETY: the master descriptor remains owned for both queries.
+        if unsafe { libc::tcgetpgrp(master.as_raw_fd()) } != pid
+            || unsafe { libc::getpgid(pid) } != pid
+        {
+            return false;
+        }
+        let Ok(executable) = std::fs::read_link(format!("/proc/{pid}/exe")) else {
+            return false;
+        };
+        if !matches!(
+            executable.file_name().and_then(OsStr::to_str),
+            Some("bash" | "zsh" | "fish" | "dash" | "sh" | "ksh")
+        ) {
+            return false;
+        }
+        // A child forked by a second shell thread would belong to that task.
+        // Multi-threaded observations need a broader proof; ask instead.
+        let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
+            return false;
+        };
+        let tasks = tasks.take(2).collect::<Result<Vec<_>, _>>();
+        if tasks.is_err() || tasks.unwrap().len() != 1 {
+            return false;
+        }
+        let Ok(children) = std::fs::File::open(format!("/proc/{pid}/task/{pid}/children")) else {
+            return false;
+        };
+        let mut bytes = Vec::new();
+        children.take(4097).read_to_end(&mut bytes).is_ok()
+            && bytes.len() <= 4096
+            && bytes.iter().all(u8::is_ascii_whitespace)
+    }
+
     pub fn process_id(&self) -> u32 {
         self.child.id()
     }

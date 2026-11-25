@@ -960,3 +960,13 @@ Private bundled protocol version 98 carries optional focus tuning in the editor
 snapshot. A change requires a full frame; existing pane/cursor updates continue
 to carry the current anchor. The toggle remains in the workspace host across
 frontend detach/attach but is not saved across host restarts.
+
+### List close confirmation
+
+`list-close-target` captures a buffer, terminal, or persistent-session identity.
+Its choice overlay uses the existing action-list presentation and the
+`list-close` UI owner. Cancel is initially selected. Dirty buffers offer Save and
+close or Discard changes and close; clean buffers offer Close buffer. Terminal
+and persistent-session choices say Stop terminal and Stop persistent session.
+The message names the captured resource and consequences. Remapped selection,
+acceptance and cancellation keys are rendered from the same UI registry.
