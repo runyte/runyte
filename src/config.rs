@@ -91,7 +91,7 @@ pub struct Config {
 }
 
 /// Pane focus fading. Opacity is a percentage; distances are display rows.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(default)]
 pub struct FocusConfig {
     /// Whether fading starts enabled. `:focus` flips the running value for
@@ -102,6 +102,9 @@ pub struct FocusConfig {
     pub fade_distance: u16,
     pub minimum_opacity: u8,
     pub inactive_opacity: u8,
+    /// Optional complete palette for inactive panes while focus is enabled.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inactive_theme: Option<String>,
 }
 
 impl Default for FocusConfig {
@@ -112,6 +115,7 @@ impl Default for FocusConfig {
             fade_distance: 50,
             minimum_opacity: 70,
             inactive_opacity: 70,
+            inactive_theme: None,
         }
     }
 }
@@ -1539,6 +1543,10 @@ impl Config {
 
     pub(crate) fn validate_settings(&self) -> std::result::Result<(), String> {
         self.indentation.validate()?;
+        if let Some(name) = &self.focus.inactive_theme {
+            self.resolve_theme(name)
+                .map_err(|error| format!("focus.inactive_theme: {error}"))?;
+        }
         if self.focus.fade_distance == 0
             || self.focus.minimum_opacity > 100
             || self.focus.inactive_opacity > 100

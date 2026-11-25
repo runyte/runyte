@@ -33,6 +33,15 @@ impl Target {
     }
 }
 
+pub(super) fn pane_palette(
+    editor: &runyte::snapshot::EditorSnapshot,
+    pane: &runyte::snapshot::PaneSnapshot,
+) -> Option<runyte::document_preview::Palette> {
+    editor
+        .preview_theme_colors
+        .then(|| runyte::document_preview::Palette::from_theme(editor.pane_theme(pane)))
+}
+
 #[derive(Clone)]
 pub(super) struct Pane {
     pub pane: usize,

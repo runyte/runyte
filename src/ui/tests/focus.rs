@@ -10,17 +10,17 @@ fn focus_curve_is_symmetric_bounded_and_smooth() {
     assert_eq!(config.fade_distance, 50);
     assert_eq!(config.minimum_opacity, 70);
     assert_eq!(config.inactive_opacity, 70);
-    assert_eq!(focus_opacity(config, true, Some(40), 40), 1.0);
-    assert_eq!(focus_opacity(config, true, Some(40), 42), 1.0);
-    assert_eq!(focus_opacity(config, true, Some(40), 92), 0.7);
-    assert_eq!(focus_opacity(config, true, None, 0), 0.7);
-    assert_eq!(focus_opacity(config, false, Some(40), 40), 0.7);
+    assert_eq!(focus_opacity(&config, true, Some(40), 40), 1.0);
+    assert_eq!(focus_opacity(&config, true, Some(40), 42), 1.0);
+    assert_eq!(focus_opacity(&config, true, Some(40), 92), 0.7);
+    assert_eq!(focus_opacity(&config, true, None, 0), 0.7);
+    assert_eq!(focus_opacity(&config, false, Some(40), 40), 0.7);
     let mut previous = 1.0;
     for distance in 0..40 {
-        let opacity = focus_opacity(config, true, Some(40), 40 + distance);
+        let opacity = focus_opacity(&config, true, Some(40), 40 + distance);
         assert_eq!(
             opacity,
-            focus_opacity(config, true, Some(40), 40 - distance)
+            focus_opacity(&config, true, Some(40), 40 - distance)
         );
         assert!(opacity <= previous && opacity >= 0.7);
         previous = opacity;
@@ -107,6 +107,7 @@ fn focus_preserves_active_terminals_and_fades_inactive_terminal_colors() {
         fade_distance: 1,
         minimum_opacity: 0,
         inactive_opacity: 0,
+        inactive_theme: None,
     };
     for review in [false, true] {
         for cursor in [None, Some((0, 0)), Some((4, 2))] {
@@ -121,7 +122,7 @@ fn focus_preserves_active_terminals_and_fades_inactive_terminal_colors() {
             let focused = terminal
                 .draw(|f| {
                     draw_pane(f, &theme, Mode::Normal, &pane);
-                    apply_focus(f, &theme, &pane, Some(config));
+                    apply_focus(f, &theme, &pane, Some(&config));
                 })
                 .unwrap()
                 .buffer
@@ -133,7 +134,7 @@ fn focus_preserves_active_terminals_and_fades_inactive_terminal_colors() {
     let faded = terminal
         .draw(|f| {
             draw_pane(f, &theme, Mode::Normal, &pane);
-            apply_focus(f, &theme, &pane, Some(config));
+            apply_focus(f, &theme, &pane, Some(&config));
         })
         .unwrap()
         .buffer
@@ -258,7 +259,7 @@ fn focus_colors_survive_backend_output_inside_another_terminal() {
                 inactive_opacity: 50,
                 ..FocusConfig::default()
             };
-            apply_focus(frame, &theme, &pane, Some(focus));
+            apply_focus(frame, &theme, &pane, Some(&focus));
         })
         .unwrap()
         .buffer
@@ -283,4 +284,201 @@ fn focus_colors_survive_backend_output_inside_another_terminal() {
         actual.attributes,
         crate::terminal::grid::Attributes::default()
     );
+}
+
+#[test]
+fn inactive_theme_colors_whole_panes_and_fades_toward_its_own_ground() {
+    let mut config = Config::default();
+    config.focus.enabled = true;
+    config.focus.inactive_theme = Some("light".into());
+    config.focus.inactive_opacity = 100;
+    let mut app = App::new(config, None).unwrap();
+    app.buffers[0].apply(&Transaction::insert(0, "hello world\n"));
+    let prepared = app.prepare_view(frame_geometry(TuiRect::new(0, 0, 40, 12)));
+    let mut editor = app.snapshot(&prepared);
+    let mut pane = editor.panes.remove(0);
+    let main = TuiTheme::new(&editor.theme);
+    let alternate = TuiTheme::new(editor.inactive_theme.as_ref().unwrap());
+    let body = to_tui_rect(pane.body);
+    let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+    for active in [false, true] {
+        pane.active = active;
+        let expected = if active { &main } else { &alternate };
+        let actual = terminal
+            .draw(|frame| draw_focused_pane(frame, &main, &editor, &pane))
+            .unwrap()
+            .buffer
+            .clone();
+        let baseline = terminal
+            .draw(|frame| {
+                draw_pane(frame, expected, editor.mode, &pane);
+                apply_focus(frame, expected, &pane, editor.focus.as_ref());
+            })
+            .unwrap()
+            .buffer
+            .clone();
+        assert_eq!(actual, baseline, "body and chrome use the pane palette");
+        assert_eq!(
+            actual[(body.right() - 1, body.bottom() - 1)].bg,
+            expected.pane_background(active)
+        );
+    }
+    pane.active = false;
+    editor.focus.as_mut().unwrap().inactive_opacity = 0;
+    let faded = terminal
+        .draw(|frame| draw_focused_pane(frame, &main, &editor, &pane))
+        .unwrap()
+        .buffer
+        .clone();
+    for y in body.y..body.bottom() {
+        for x in body.x..body.right() {
+            assert_eq!(faded[(x, y)].fg, alternate.pane_background(false));
+            assert_eq!(faded[(x, y)].bg, alternate.pane_background(false));
+        }
+    }
+    editor.focus = None;
+    let disabled = terminal
+        .draw(|frame| draw_focused_pane(frame, &main, &editor, &pane))
+        .unwrap()
+        .buffer
+        .clone();
+    let baseline = terminal
+        .draw(|frame| draw_pane(frame, &main, editor.mode, &pane))
+        .unwrap()
+        .buffer
+        .clone();
+    assert_eq!(disabled, baseline);
+}
+
+#[test]
+fn inactive_theme_native_reset_colors_use_local_contrast_before_fading() {
+    let mut config = Config::default();
+    config.focus.enabled = true;
+    config.focus.inactive_theme = Some("light".into());
+    let app = App::new(config, None).unwrap();
+    let mut host = crate::workspace::WorkspaceHost::new(app);
+    let mut snapshot = host.prepare_frame(frame_geometry(TuiRect::new(0, 0, 40, 12)));
+    snapshot.editor.panes[0].active = false;
+    let body = to_tui_rect(snapshot.editor.panes[0].body);
+    let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+    for reset_background in [false, true] {
+        let palette = snapshot.editor.inactive_theme.as_mut().unwrap();
+        palette.background = if reset_background {
+            RunyteColor::Reset
+        } else {
+            RunyteColor::Rgb(250, 250, 250)
+        };
+        palette.foreground = if reset_background {
+            RunyteColor::Rgb(20, 20, 20)
+        } else {
+            RunyteColor::Reset
+        };
+        let (background, foreground) = native_default_colors(palette);
+        snapshot.editor.panes[0].terminal = Some(TerminalView {
+            revision: 0,
+            columns: usize::from(body.width),
+            rows: vec![
+                vec![
+                    crate::terminal::Cell {
+                        character: 'x',
+                        ..Default::default()
+                    };
+                    usize::from(body.width)
+                ];
+                usize::from(body.height)
+            ],
+            line_ids: vec![],
+            cursor: None,
+            scrollback: 0,
+            live: true,
+            review: false,
+            newer_output: false,
+            highlights: vec![],
+        });
+        for opacity in [100, 50, 0] {
+            snapshot.editor.focus.as_mut().unwrap().inactive_opacity = opacity;
+            let native = terminal
+                .draw(|frame| {
+                    render_native_frame(
+                        frame,
+                        &snapshot,
+                        SessionMode::Standalone,
+                        TerminalColorDepth::TrueColor,
+                    )
+                })
+                .unwrap()
+                .buffer
+                .clone();
+            let ground = if reset_background {
+                background
+            } else {
+                TuiTheme::new(snapshot.editor.inactive_theme.as_ref().unwrap()).inactive_background
+            };
+            let source = terminal_color_rgb(foreground).unwrap();
+            let target = terminal_color_rgb(ground).unwrap();
+            let channels: [u8; 3] = std::array::from_fn(|i| {
+                (f64::from(target[i])
+                    + (f64::from(source[i]) - f64::from(target[i])) * f64::from(opacity) / 100.0)
+                    .round() as u8
+            });
+            assert_eq!(
+                native[(body.x, body.y)].fg,
+                ratatui::style::Color::Rgb(channels[0], channels[1], channels[2])
+            );
+            assert_eq!(native[(body.x, body.y)].bg, ground);
+        }
+    }
+}
+
+#[test]
+fn inactive_theme_preserves_terminal_ansi_policy_and_explicit_rgb() {
+    let mut config = Config::default();
+    config.focus.enabled = true;
+    config.focus.inactive_theme = Some("light".into());
+    config.focus.inactive_opacity = 100;
+    let app = App::new(config, None).unwrap();
+    let mut host = crate::workspace::WorkspaceHost::new(app);
+    let mut snapshot = host.prepare_frame(frame_geometry(TuiRect::new(0, 0, 40, 12)));
+    let pane = &mut snapshot.editor.panes[0];
+    pane.active = false;
+    let body = to_tui_rect(pane.body);
+    let mut emulator =
+        crate::terminal::emulator::Emulator::new(usize::from(body.width), usize::from(body.height));
+    emulator.feed(b"\x1b[31mA\x1b[38;2;1;2;3mB");
+    pane.terminal = Some(TerminalView {
+        revision: 0,
+        columns: usize::from(body.width),
+        rows: (0..usize::from(body.height))
+            .map(|r| emulator.grid().line(r).unwrap().clone())
+            .collect(),
+        line_ids: vec![],
+        cursor: None,
+        scrollback: 0,
+        live: true,
+        review: false,
+        newer_output: false,
+        highlights: vec![],
+    });
+    let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+    for themed in [false, true] {
+        snapshot.editor.terminal_theme_colors = themed;
+        let rendered = terminal
+            .draw(|frame| render_host_frame_exact_colors_for_test(frame, &snapshot))
+            .unwrap()
+            .buffer
+            .clone();
+        let expected = if themed {
+            to_tui_color_for(
+                snapshot.editor.inactive_theme.as_ref().unwrap().terminal[1],
+                TerminalColorDepth::TrueColor,
+            )
+        } else {
+            ratatui::style::Color::Indexed(1)
+        };
+        assert_eq!(rendered[(body.x, body.y)].fg, expected);
+        assert_eq!(
+            rendered[(body.x + 1, body.y)].fg,
+            ratatui::style::Color::Rgb(1, 2, 3)
+        );
+    }
 }

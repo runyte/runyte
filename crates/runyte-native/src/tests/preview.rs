@@ -1177,3 +1177,59 @@ fn wheel_zoom_steps_by_notches_within_the_keyboard_range() {
     }
     assert_eq!(state.zoom, 0.25);
 }
+
+#[test]
+fn inactive_theme_preview_palette_tracks_focus_and_invalidates_cached_rasters() {
+    let root = tempfile::tempdir().unwrap();
+    let mut config = runyte::config::Config::default();
+    config.focus.enabled = true;
+    config.focus.inactive_theme = Some("light".into());
+    let app = runyte::app::App::new_in_project(
+        runyte::test_support::isolated_startup_config(config),
+        None,
+        root.path(),
+    )
+    .unwrap();
+    let mut host = runyte::workspace::WorkspaceHost::new(app);
+    let mut snapshot = host.prepare_frame(runyte::ui::frame_geometry(ratatui::layout::Rect::new(
+        0, 0, 40, 12,
+    )));
+    let editor = &mut snapshot.editor;
+    editor.panes[0].active = false;
+    let alternate = super::pane_palette(editor, &editor.panes[0]);
+    assert_eq!(
+        alternate,
+        Some(runyte::document_preview::Palette::from_theme(
+            editor.inactive_theme.as_ref().unwrap()
+        ))
+    );
+    let mut cache = cached_output();
+    cache.theme = alternate.clone();
+    let mut request = Request {
+        text: "source".into(),
+        language: "text".into(),
+        selection_only: false,
+        path: None,
+        width: 1080,
+        height: 800,
+        scale: 1.0,
+        zoom: 1.0,
+        scroll: [0.0; 2],
+        selection: None,
+        adjacent: true,
+        theme: alternate,
+    };
+    assert!(cache.matches(&request));
+    editor.panes[0].active = true;
+    request.theme = super::pane_palette(editor, &editor.panes[0]);
+    assert_eq!(
+        request.theme,
+        Some(runyte::document_preview::Palette::from_theme(&editor.theme))
+    );
+    assert!(!cache.matches(&request));
+    editor.panes[0].active = false;
+    editor.focus = None;
+    assert_eq!(super::pane_palette(editor, &editor.panes[0]), request.theme);
+    editor.preview_theme_colors = false;
+    assert_eq!(super::pane_palette(editor, &editor.panes[0]), None);
+}

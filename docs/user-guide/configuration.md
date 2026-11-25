@@ -328,8 +328,8 @@ nothing.
 
 Every setting below is also on the `[config]` page, except `workspace.state`,
 `workspace.state_anchor`, `mcp.default_grants`, and the language-server
-definitions, which are file-only. Of the `focus` section, only `focus.enabled`
-is on the page.
+definitions, which are file-only. Of the `focus` section, `focus.enabled` and `focus.inactive_theme`
+are on the page.
 
 #### Editor settings
 
@@ -395,7 +395,8 @@ and memory behavior.
 | --- | --- | --- | --- |
 | `git.refresh_interval_seconds` | `60` | 0–3600 | Bounds automatic Git refresh. `0` turns it off. See [Automatic Git refresh](configuration.md#automatic-git-refresh). |
 | `notifications.history_limit` | `50` | 1–1000 | Newest notifications kept in memory for the workspace. |
-| `focus.enabled` | `false` | boolean | Start with focus fading on. Saving from the settings page applies immediately; `:focus` toggles it for this session only. The tuning keys beside it are file-only. See [Focus mode](#focus-mode). |
+| `focus.enabled` | `false` | boolean | Start with focus fading on. Saving from the settings page applies immediately; `:focus` toggles it for this session only. The opacity and distance keys are file-only. See [Focus mode](#focus-mode). |
+| `focus.inactive_theme` | `null` | theme name or `null` | Complete theme for inactive panes while focus is enabled. “Same as main theme” disables the alternate palette. |
 | `lsp.enable` | `true` | boolean | Allow configured language servers to start. Restart required. |
 | `mcp.default_grants` | none | identity: list of permissions | Identities that may read in every workspace that has no grant or revocation of its own. The only permission is `read`; `write` is granted per workspace with `:mcp`. Earlier capability names are accepted; a list with both `terminal_read` and `editor_context_read` means `read`, and any other grants nothing and is reported at start. Read when a workspace starts. See [Default grants](agent-access-to-workspace-context.md#default-grants). |
 | `lsp.<language>` | `rust` only | `command`, `args`, `initialization_options`, `roots` | A language server definition. See [Language servers](language-support.md#language-servers). |
@@ -644,6 +645,7 @@ focus:
   fade_distance: 50
   minimum_opacity: 70
   inactive_opacity: 70
+  inactive_theme: null
 ```
 
 - `enabled`: whether fading is on when the editor starts. To have every
@@ -654,6 +656,18 @@ focus:
   opacity (1–65535).
 - `minimum_opacity`: visibility of distant rows in the active buffer pane (0–100 percent).
 - `inactive_opacity`: visibility of all rows in inactive panes (0–100 percent).
+- `inactive_theme`: optional built-in or custom theme name for inactive panes,
+  including syntax, selections, gutters, titles, and borders. Omitted or `null`
+  keeps the main theme everywhere. Fading blends toward the selected pane theme’s
+  background; use `inactive_opacity: 100` for the theme difference alone.
+
+`Space o o` offers **Inactive pane theme** beside **Focus mode**. Its picker
+previews changes, supports the usual dark/light filter, saves on Enter, and
+restores the previous choice on Escape. **Same as main theme** saves `null`.
+You can choose a theme with focus disabled; it takes effect when focus is enabled.
+The active pane and shared UI keep the main theme. Terminal ANSI palettes still
+follow `editor.terminal_theme_colors`; explicit terminal colors keep their usual
+behavior.
 
 Edit these settings in YAML and run `:config-reload` to tune the effect. A
 reload adopts every value in the file, `enabled` included, so a `:focus`

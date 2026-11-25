@@ -2998,3 +2998,76 @@ fn remapped_pointer_copy_preserves_selection_and_removes_old_alias() {
     assert_eq!(app.active().selection, selection);
     assert!(!app.pane_pointer_owned);
 }
+
+#[test]
+fn inactive_theme_picker_previews_cancels_and_saves_null_without_changing_main_theme() {
+    let directory = temporary("inactive-theme-picker");
+    fs::create_dir(&directory).unwrap();
+    let path = directory.join("config.yaml");
+    fs::create_dir(directory.join("themes.d")).unwrap();
+    fs::write(
+        directory.join("themes.d/custom.yaml"),
+        "background: '#123456'\n",
+    )
+    .unwrap();
+    let source = "theme: light\nfocus:\n  enabled: false\n  inactive_theme: custom\n";
+    fs::write(&path, source).unwrap();
+    let (config, _) = Config::load(Some(&path)).unwrap();
+    let mut app = App::new(config, None).unwrap();
+    app.note_loaded_config(&path);
+    let original = app.inactive_theme.clone();
+    let choose = |app: &mut App, value: SettingValue| {
+        app.open_setting_values(SettingId::FocusInactiveTheme);
+        let index = app.list_actions.iter().position(|action| matches!(action, ListAction::SettingValue { value: candidate, .. } if *candidate == value)).unwrap();
+        app.list.as_mut().unwrap().selected = index;
+        app.preview_selected_setting_value();
+    };
+    choose(&mut app, SettingValue::Text("dark".into()));
+    assert_eq!(
+        app.inactive_theme,
+        Some(app.config.resolve_theme("dark").unwrap())
+    );
+    assert_eq!(app.theme_name, "light");
+    assert!(!app.config.focus.enabled);
+    assert!(app.list.as_ref().unwrap().has_tags());
+    let prepared = app.prepare_view(crate::ui::frame_geometry(ratatui::layout::Rect::new(
+        0, 0, 60, 20,
+    )));
+    assert!(app.snapshot(&prepared).inactive_theme.is_none());
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.inactive_theme, original);
+    assert_eq!(fs::read_to_string(&path).unwrap(), source);
+
+    choose(&mut app, SettingValue::Text("dark".into()));
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert_eq!(
+        Config::load(Some(&path))
+            .unwrap()
+            .0
+            .focus
+            .inactive_theme
+            .as_deref(),
+        Some("dark")
+    );
+    app.execute_command("focus").unwrap();
+    let prepared = app.prepare_view(crate::ui::frame_geometry(ratatui::layout::Rect::new(
+        0, 0, 60, 20,
+    )));
+    assert_eq!(app.snapshot(&prepared).inactive_theme, app.inactive_theme);
+    choose(&mut app, SettingValue::SameAsMainTheme);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.inactive_theme.is_none());
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .contains("inactive_theme: null")
+    );
+    assert_eq!(app.theme_name, "light");
+
+    fs::write(&path, source).unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert_eq!(app.inactive_theme, original);
+    fs::write(&path, "focus: {inactive_theme: missing-theme}\n").unwrap();
+    assert!(Config::load(Some(&path)).is_err());
+    fs::remove_dir_all(directory).unwrap();
+}

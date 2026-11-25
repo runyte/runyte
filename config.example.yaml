@@ -191,3 +191,5 @@ focus:
   fade_distance: 50
   minimum_opacity: 70
   inactive_opacity: 70
+  # Optional built-in or custom theme for inactive panes; null uses the main theme.
+  inactive_theme: null

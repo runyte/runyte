@@ -2885,6 +2885,7 @@ pub struct App {
     /// state stays separate so restart-required settings remain truthful.
     persisted_config: Config,
     pub theme: Theme,
+    pub(crate) inactive_theme: Option<Theme>,
     pub theme_name: String,
     /// The exact YAML document settings writes patch. Set only by the config
     /// loader, and injectable through `note_loaded_config` for isolated tests.
@@ -3823,7 +3824,13 @@ impl App {
                 .text;
         status = status.replace(configured_help, &live_help);
         let startup_notification = startup_notification_error.then(|| status.clone());
+        let inactive_theme = config
+            .focus
+            .inactive_theme
+            .as_deref()
+            .and_then(|name| config.resolve_theme(name).ok());
         let mut app = Self {
+            inactive_theme,
             config,
             persisted_config,
             theme,

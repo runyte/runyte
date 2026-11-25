@@ -56,6 +56,7 @@ pub enum SettingId {
     EditorAlwaysWrapRenderedMarkdown,
     EditorRenderWhitespace,
     FocusEnabled,
+    FocusInactiveTheme,
     EditorZenWidth,
     EditorHardWrapWidth,
     EditorScratchMarkdown,
@@ -92,6 +93,7 @@ pub enum SettingValue {
     ExplorerSort(ExplorerSort),
     Indent(IndentStyle),
     Text(String),
+    SameAsMainTheme,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -306,6 +308,15 @@ const DESCRIPTORS: &[SettingDescriptor] = &[
         title: "Focus mode",
         description: "Fade text away from the cursor and in inactive panes",
         value_type: SettingType::Boolean,
+        preview: PreviewPolicy::Immediate,
+        persistence: PersistencePolicy::ConfigFile,
+    },
+    SettingDescriptor {
+        id: SettingId::FocusInactiveTheme,
+        key: "focus.inactive_theme",
+        title: "Inactive pane theme",
+        description: "Applies when focus mode is enabled",
+        value_type: SettingType::Theme,
         preview: PreviewPolicy::Immediate,
         persistence: PersistencePolicy::ConfigFile,
     },
@@ -555,6 +566,7 @@ impl SettingId {
         Self::EditorAlwaysWrapRenderedMarkdown,
         Self::EditorRenderWhitespace,
         Self::FocusEnabled,
+        Self::FocusInactiveTheme,
         Self::EditorZenWidth,
         Self::EditorHardWrapWidth,
         Self::EditorScratchMarkdown,
@@ -629,6 +641,12 @@ impl SettingId {
             }
             Self::EditorRenderWhitespace => SettingValue::Boolean(config.editor.render_whitespace),
             Self::FocusEnabled => SettingValue::Boolean(config.focus.enabled),
+            Self::FocusInactiveTheme => config
+                .focus
+                .inactive_theme
+                .clone()
+                .map(SettingValue::Text)
+                .unwrap_or(SettingValue::SameAsMainTheme),
             Self::EditorZenWidth => SettingValue::Integer(config.editor.zen_width),
             Self::EditorHardWrapWidth => SettingValue::Integer(config.editor.hard_wrap_width),
             Self::EditorScratchMarkdown => SettingValue::Boolean(config.editor.scratch_markdown),
@@ -716,6 +734,11 @@ impl SettingId {
             message: format!("expected {}", self.descriptor().value_type),
         };
         match (self.descriptor().value_type, value) {
+            (SettingType::Theme, SettingValue::SameAsMainTheme)
+                if self == Self::FocusInactiveTheme =>
+            {
+                Ok(())
+            }
             (SettingType::Grammar, SettingValue::Grammar(_))
             | (SettingType::Boolean, SettingValue::Boolean(_))
             | (SettingType::RunMode, SettingValue::RunMode(_))
@@ -842,6 +865,12 @@ impl SettingId {
                 config.editor.preview_theme_colors = *value;
             }
             (Self::Theme, SettingValue::Text(value)) => config.theme = Some(value.clone()),
+            (Self::FocusInactiveTheme, SettingValue::Text(value)) => {
+                config.focus.inactive_theme = Some(value.clone())
+            }
+            (Self::FocusInactiveTheme, SettingValue::SameAsMainTheme) => {
+                config.focus.inactive_theme = None
+            }
             (Self::LspEnable, SettingValue::Boolean(value)) => config.lsp.enable = *value,
             (Self::GitRefreshIntervalSeconds, SettingValue::Integer(value)) => {
                 config.git.refresh_interval_seconds = *value;
@@ -901,6 +930,7 @@ impl fmt::Display for SettingValue {
             Self::PaneStyle(value) => value.fmt(formatter),
             Self::Indent(value) => value.fmt(formatter),
             Self::Text(value) => formatter.write_str(value),
+            Self::SameAsMainTheme => formatter.write_str("Same as main theme"),
         }
     }
 }
@@ -1606,6 +1636,7 @@ fn yaml_scalar(value: &SettingValue) -> String {
         SettingValue::ExplorerSort(value) => value.to_string(),
         SettingValue::PaneStyle(value) => value.to_string(),
         SettingValue::Indent(value) => value.to_string(),
+        SettingValue::SameAsMainTheme => "null".to_owned(),
         SettingValue::Text(value) => format!("'{}'", value.replace('\'', "''")),
     }
 }
