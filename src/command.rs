@@ -1166,6 +1166,7 @@ editor_commands! {
     ListFirst => ("list-first", "Select the first row"),
     ListLast => ("list-last", "Select the last row"),
     ListTogglePreview => ("list-toggle-preview", "Show or hide the preview"),
+    ListCloseTarget => ("list-close-target", "Close or stop the selected target"),
     ListClearFilter => ("list-clear-filter", "Clear the filter"),
     ListClose => ("list-close", "Close the list"),
     OpenSessionDestinations => (
@@ -1611,6 +1612,7 @@ impl EditorCommand {
             | Self::ListFirst
             | Self::ListLast
             | Self::ListTogglePreview
+            | Self::ListCloseTarget
             | Self::ListClearFilter
             | Self::ListClose => CommandCategory::View,
             Self::SplitVertical

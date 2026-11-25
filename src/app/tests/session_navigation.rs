@@ -78,7 +78,9 @@ fn navigator_fuzzy_matches_open_names_and_restores_opening_order() {
     assert!(app.list.as_ref().unwrap().show_preview);
     key(&mut app, KeyCode::Char('t'), Modifiers::CONTROL);
     assert!(!app.list.as_ref().unwrap().show_preview);
-    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    for _ in 0..app.list.as_ref().unwrap().filter.chars().count() {
+        key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    }
     assert_eq!(
         app.list
             .as_ref()
@@ -93,7 +95,9 @@ fn navigator_fuzzy_matches_open_names_and_restores_opening_order() {
         press(&mut app, character);
     }
     assert!(app.list.as_ref().unwrap().selected_item().is_none());
-    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    for _ in 0..app.list.as_ref().unwrap().filter.chars().count() {
+        key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    }
     for character in "unopened".chars() {
         press(&mut app, character);
     }
@@ -200,7 +204,9 @@ fn navigator_printable_navigation_letters_filter_and_empty_space_dismisses() {
     assert_eq!(app.list.as_ref().unwrap().filter, "jkq");
     press(&mut app, ' ');
     assert_eq!(app.list.as_ref().unwrap().filter, "jkq ");
-    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    for _ in 0..app.list.as_ref().unwrap().filter.chars().count() {
+        key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    }
     press(&mut app, ' ');
     assert!(app.list.is_none());
 }
@@ -358,7 +364,9 @@ fn navigator_refreshes_terminal_names_and_searchable_titles() {
         selected_destination(&app),
         OpenDestination::Terminal(terminal)
     );
-    key(&mut app, KeyCode::Delete, Modifiers::NONE);
+    for _ in 0..app.list.as_ref().unwrap().filter.chars().count() {
+        key(&mut app, KeyCode::Backspace, Modifiers::NONE);
+    }
     for character in "updated-job-title".chars() {
         press(&mut app, character);
     }

@@ -280,6 +280,7 @@ mod directory_tree;
 mod editing;
 mod external_opening;
 mod file_workflows;
+mod list_close;
 pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
 pub(crate) mod context_access;
 mod git_comparison;
@@ -1280,6 +1281,10 @@ pub enum PromptKind {
     /// Collects a new name for one terminal session, named by the list the
     /// prompt was opened from rather than by whatever pane is active.
     TerminalRename,
+    SaveClosePath {
+        buffer: usize,
+        revision: u64,
+    },
     /// Selects the program a binary file should be handed to. Reuses the same
     /// editing model, with the default and recently chosen programs above it.
     ExternalProgram,
@@ -3070,6 +3075,7 @@ pub struct App {
     /// The `Tab`-opened copy-target menu nested inside the `:path` popup.
     path_action_menu: Option<PathActionMenu>,
     /// An editable buffer whose unsaved text will be reset after a separate Enter.
+    list_close: Option<list_close::CloseTarget>,
     buffer_discard_confirmation: Option<usize>,
     /// Repository-relative paths whose uncommitted changes will be thrown
     /// away after a separate Enter. The one confirmation in the editor that
@@ -3912,6 +3918,7 @@ impl App {
             program_action_menu: None,
             path_popup: None,
             path_action_menu: None,
+            list_close: None,
             buffer_discard_confirmation: None,
             git_discard_confirmation: None,
             closed_buffers: HashSet::new(),

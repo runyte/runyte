@@ -1426,7 +1426,12 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .any(|action| action.target == BindingTarget::Editor(*command))
         {
             CommandExposure::Bound
-        } else if !crate::keymap::actions::editor_modes(*command).is_empty() {
+        } else if !crate::keymap::actions::editor_modes(*command).is_empty()
+            // This unbound action belongs to keys.scopes.global.list, outside
+            // the global editor-mode action inventory. Its admission is tested
+            // by list_close_remaps_and_filter_clearing_is_opt_in.
+            || *command == EditorCommand::ListClearFilter
+        {
             CommandExposure::ConfigurableOnly
         } else {
             panic!("unclassified editor command: {command:?}");
@@ -1468,7 +1473,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .iter()
             .filter(|exposure| **exposure == CommandExposure::ConfigurableOnly)
             .count(),
-        11
+        12
     );
     assert_eq!(
         exposures
@@ -1478,7 +1483,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
         EditorCommand::ALL.len()
             - INTERNAL_EDITOR_COMMANDS.len()
             - GRAMMAR_ONLY_EDITOR_COMMANDS.len()
-            - 69
+            - 70
     );
 
     for spec in COMMANDS {

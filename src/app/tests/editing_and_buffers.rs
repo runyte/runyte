@@ -2396,6 +2396,10 @@ fn closing_a_shared_buffer_redirects_every_pane() {
     // Past Bring into active pane, to Close.
     key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.list_close.is_some());
+    assert!(!app.closed_buffers.contains(&app.active().buffer));
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
 
     assert!(app.closed_buffers.contains(&file));
     let fallback = app.active().buffer;

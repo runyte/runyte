@@ -741,6 +741,7 @@ impl App {
             && self.git_branch_deletion.is_none()
             && self.git_pull_rebase.is_none()
             && self.git_worktree_removal.is_none()
+            && self.list_close.is_none()
             && self.buffer_discard_confirmation.is_none()
             && self.context_action_menu.is_none()
             && self.program_action_menu.is_none()
@@ -908,11 +909,14 @@ impl App {
             self.plugin_physical_input = previous;
             return Ok(());
         }
+        if self.list_close.is_some() && !fresh {
+            return Ok(());
+        }
         self.handle_input_inner(input, false)
     }
 
     pub(super) fn handle_replayed_input(&mut self, input: InputEvent) -> Result<()> {
-        if self.context_overlay_active() {
+        if self.context_overlay_active() || self.list_close.is_some() {
             return Ok(());
         }
         self.prompt_input_error = None;
@@ -2196,6 +2200,9 @@ impl App {
         if self.git_worktree_removal.is_some() {
             return self.handle_worktree_removal_confirmation(key);
         }
+        if self.list_close.is_some() {
+            return self.handle_list_close_key(key);
+        }
         if self.buffer_discard_confirmation.is_some() {
             return self.handle_buffer_discard_confirmation(key);
         }
@@ -2400,6 +2407,7 @@ impl App {
             || self.directory_tree_destination.is_some()
             || self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
+            || self.list_close.is_some()
             || self.buffer_discard_confirmation.is_some()
             || self.context_action_menu.is_some()
             || self.program_action_menu.is_some()
@@ -2470,6 +2478,7 @@ impl App {
             || self.directory_tree_destination.is_some()
             || self.fs_confirmation.is_some()
             || self.directory_reload_confirmation.is_some()
+            || self.list_close.is_some()
             || self.buffer_discard_confirmation.is_some()
             || self.context_action_menu.is_some()
             || self.program_action_menu.is_some()
@@ -5378,7 +5387,10 @@ impl App {
             Command::JumpForwardBuffer => self.jump_in(false, true),
             Command::NewBuffer => self.open_scratch_buffer(),
             Command::OpenNavigator => self.open_navigator(),
-            Command::ListAccept | Command::ListOpenActions | Command::ListBackspace => {
+            Command::ListAccept
+            | Command::ListOpenActions
+            | Command::ListBackspace
+            | Command::ListCloseTarget => {
                 self.run_list_owned_action(command)?;
             }
             Command::ListNext
@@ -5582,6 +5594,8 @@ impl App {
                     }
                     #[cfg(not(any(unix, windows)))]
                     self.action_failed("persistent mode is not yet supported on this platform");
+                } else if let PromptKind::SaveClosePath { buffer, revision } = kind {
+                    self.save_close_path(buffer, revision, &value)?;
                 } else if kind == PromptKind::TerminalRename {
                     if let Some(id) = terminal_rename_target {
                         if value.trim().is_empty() {

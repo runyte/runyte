@@ -51,6 +51,7 @@ pub enum Owner {
     TreeDestination,
     TreeDelete,
     ContextReview,
+    ListClose,
     ProviderReload,
     ProviderOverwrite,
     PluginConfirmation,
@@ -71,7 +72,7 @@ pub enum Owner {
 }
 
 impl Owner {
-    const ALL: [Self; 42] = [
+    const ALL: [Self; 43] = [
         Self::PaneResize,
         Self::Completion,
         Self::ContextActions,
@@ -97,6 +98,7 @@ impl Owner {
         Self::TreeDestination,
         Self::TreeDelete,
         Self::ContextReview,
+        Self::ListClose,
         Self::ProviderReload,
         Self::ProviderOverwrite,
         Self::PluginConfirmation,
@@ -142,6 +144,7 @@ impl Owner {
             Self::TreeDestination => "tree-destination",
             Self::TreeDelete => "tree-delete",
             Self::ContextReview => "context-review",
+            Self::ListClose => "list-close",
             Self::ProviderReload => "provider-reload",
             Self::ProviderOverwrite => "provider-overwrite",
             Self::PluginConfirmation => "plugin-confirmation",
@@ -281,7 +284,7 @@ impl Owner {
                 ToggleSelection,
             ],
             Self::PluginPathCompletion => &[Accept, AcceptOrContinue, Next, Previous],
-            Self::ProviderReload => &[Next, Previous, Accept, Cancel],
+            Self::ListClose | Self::ProviderReload => &[Next, Previous, Accept, Cancel],
             Self::ProviderOverwrite => &[Accept, Cancel],
             Self::ContextReview => &[
                 Next,
@@ -327,7 +330,10 @@ impl Owner {
             Self::MergeAcknowledgment => {
                 matches!(key.code, KeyCode::Char(c) if c.is_control() || key.modifiers.is_empty())
             }
-            Self::ProviderReload | Self::ProviderOverwrite | Self::PluginConfirmation => false,
+            Self::ListClose
+            | Self::ProviderReload
+            | Self::ProviderOverwrite
+            | Self::PluginConfirmation => false,
             Self::PluginChoice => false,
             Self::PluginPicker | Self::PluginForm | Self::PluginPathCompletion => {
                 key.modifiers.is_empty() && matches!(key.code, KeyCode::Char(_))
@@ -898,7 +904,7 @@ fn legacy_action(owner: Owner, key: KeyStroke) -> Option<Action> {
     if owner.is_plugin_input() {
         return plugin_input::legacy_action(owner, key);
     }
-    if owner.is_provider() {
+    if owner.is_provider() || owner == Owner::ListClose {
         return provider::legacy_action(owner, key);
     }
     if owner == Owner::ContextReview {
@@ -1019,7 +1025,7 @@ fn legacy_labels(owner: Owner, action: Action) -> &'static [&'static str] {
     if owner.is_plugin_input() {
         return plugin_input::labels(owner, action);
     }
-    if owner.is_provider() {
+    if owner.is_provider() || owner == Owner::ListClose {
         return provider::labels(action);
     }
     if owner == Owner::ContextReview {

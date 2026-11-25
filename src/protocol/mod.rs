@@ -778,6 +778,9 @@ impl From<CorePromptKind> for PromptKind {
             CorePromptKind::Rename => Self::Rename,
             CorePromptKind::SessionRename => Self::SessionRename,
             CorePromptKind::SessionNumber => Self::SessionNumber,
+            CorePromptKind::SaveClosePath { .. } => {
+                Self::SettingValue("save and close — path".into())
+            }
             CorePromptKind::TerminalRename => Self::TerminalRename,
             CorePromptKind::ExternalProgram => Self::ExternalProgram,
             CorePromptKind::NewBranch => Self::NewBranch,

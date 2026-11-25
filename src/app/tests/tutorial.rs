@@ -230,6 +230,10 @@ fn tutorial_curriculum_advances_through_the_real_input_grammar() {
     key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    if app.list_close.is_some() {
+        key(&mut app, KeyCode::Down, Modifiers::NONE);
+        key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    }
     assert!(app.active_terminal().is_none());
     continue_tutorial(&mut app);
     assert_eq!(app.tutorial_state().unwrap().lesson, 15);

@@ -1036,6 +1036,11 @@ impl App {
                 BindingTarget::Editor(EditorCommand::ListTogglePreview) if picker.has_preview() => {
                     "preview"
                 }
+                BindingTarget::Editor(EditorCommand::ListCloseTarget)
+                    if self.list_close_label().is_some() =>
+                {
+                    self.list_close_label().unwrap()
+                }
                 BindingTarget::Editor(EditorCommand::ListClearFilter) if filtering => {
                     "clear filter"
                 }
@@ -1708,6 +1713,7 @@ impl App {
             || self.fs_confirmation.is_some()
             || self.directory_tree_delete.is_some()
             || self.merge_ui.review.is_some()
+            || self.list_close.is_some()
             || self.confirmation_overlay().is_some()
             || self
                 .terminal_action_menu
@@ -1730,6 +1736,13 @@ impl App {
         };
         if self.context_overlay_active() {
             return self.context_input_requires_presented_approval(*key);
+        }
+        if self.list_close.is_some() {
+            return self
+                .keymap
+                .ui()
+                .lookup(crate::keymap::ui::Owner::ListClose, *key)
+                == Some(crate::keymap::ui::Action::Accept);
         }
         if self.provider_ui_owner().is_some() {
             return self.provider_accept_key(*key);
@@ -1810,6 +1823,7 @@ impl App {
             || self.directory_tree_destination.is_some()
             || self.directory_reload_confirmation.is_some()
             || self.file_reload_confirmation.is_some()
+            || self.list_close.is_some()
             || self.buffer_discard_confirmation.is_some()
             || self.git_discard_confirmation.is_some()
             || self.git_stash_confirmation.is_some()
@@ -3023,6 +3037,27 @@ impl App {
             overlays.push(snapshot);
         }
 
+        if let Some(close) = &self.list_close {
+            let mut overlay = bounded(
+                OverlayKind::BufferActions,
+                close.title(),
+                "",
+                close
+                    .labels()
+                    .iter()
+                    .map(|label| row("", *label, ""))
+                    .collect(),
+                Some(close.selected),
+                Some(close.message.clone()),
+            );
+            overlay.actions = menu_action_hints(
+                self.keymap.ui(),
+                crate::keymap::ui::Owner::ListClose,
+                "choose",
+                "cancel",
+            );
+            overlays.push(overlay);
+        }
         if let Some(confirmation) = self.confirmation_overlay() {
             let typed_input = confirmation.input.clone();
             let mut overlay = bounded(

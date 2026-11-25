@@ -2259,6 +2259,7 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
         PromptKind::Rename => "rename to: ".to_owned(),
         PromptKind::SessionRename => "session name: ".to_owned(),
         PromptKind::SessionNumber => "session number (1-9, empty clears): ".to_owned(),
+        PromptKind::SaveClosePath { .. } => "save and close — path: ".to_owned(),
         PromptKind::TerminalRename => "terminal name: ".to_owned(),
         PromptKind::ExternalProgram => "open with: ".to_owned(),
         PromptKind::NewBranch => "new branch: ".to_owned(),
