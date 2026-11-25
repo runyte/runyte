@@ -202,6 +202,7 @@ impl EditorDamageFrame {
             || base.overlays != next.overlays
             || base.editor.geometry != next.editor.geometry
             || base.editor.theme != next.editor.theme
+            || base.editor.inactive_theme != next.editor.inactive_theme
             || base.editor.terminal_theme_colors != next.editor.terminal_theme_colors
             || base.editor.preview_theme_colors != next.editor.preview_theme_colors
             || base.editor.focus != next.editor.focus
@@ -420,6 +421,7 @@ impl TerminalDamageFrame {
             || base.overlays != next.overlays
             || base.editor.geometry != next.editor.geometry
             || base.editor.theme != next.editor.theme
+            || base.editor.inactive_theme != next.editor.inactive_theme
             || base.editor.terminal_theme_colors != next.editor.terminal_theme_colors
             || base.editor.preview_theme_colors != next.editor.preview_theme_colors
             || base.editor.focus != next.editor.focus
@@ -703,7 +705,8 @@ impl From<ResizeSnapshot> for core::ResizeSnapshot {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EditorSnapshot {
-    pub focus: Option<(u16, u16, u8, u8)>,
+    pub focus: Option<(u16, u16, u8, u8, Option<String>)>,
+    pub inactive_theme: Option<Theme>,
     pub geometry: FrameGeometry,
     pub theme: Theme,
     pub terminal_theme_colors: bool,
@@ -788,12 +791,14 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
         Self {
             geometry: value.geometry.into(),
             theme: value.theme.into(),
+            inactive_theme: value.inactive_theme.map(Into::into),
             focus: value.focus.map(|f| {
                 (
                     f.radius,
                     f.fade_distance,
                     f.minimum_opacity,
                     f.inactive_opacity,
+                    f.inactive_theme,
                 )
             }),
             terminal_theme_colors: value.terminal_theme_colors,
@@ -855,9 +860,18 @@ impl From<core::EditorSnapshot> for EditorSnapshot {
 impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
     type Error = String;
     fn try_from(value: EditorSnapshot) -> Result<Self, Self::Error> {
-        if value.focus.is_some_and(|(_, distance, minimum, inactive)| {
-            distance == 0 || minimum > 100 || inactive > 100
-        }) {
+        if value
+            .focus
+            .as_ref()
+            .is_some_and(|(_, distance, minimum, inactive, name)| {
+                *distance == 0
+                    || *minimum > 100
+                    || *inactive > 100
+                    || name
+                        .as_ref()
+                        .is_some_and(|name| name.len() > crate::protocol::MAX_PATH_BYTES)
+            })
+        {
             return Err("invalid focus settings".into());
         }
         use crate::keymap::native_preview::Bindings as Preview;
@@ -931,8 +945,9 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
             window_bindings,
             geometry: value.geometry.into(),
             theme: value.theme.into(),
+            inactive_theme: value.inactive_theme.map(Into::into),
             focus: value.focus.map(
-                |(radius, fade_distance, minimum_opacity, inactive_opacity)| {
+                |(radius, fade_distance, minimum_opacity, inactive_opacity, inactive_theme)| {
                     // Only an enabled focus configuration is sent at all.
                     crate::config::FocusConfig {
                         enabled: true,
@@ -940,6 +955,7 @@ impl TryFrom<EditorSnapshot> for core::EditorSnapshot {
                         fade_distance,
                         minimum_opacity,
                         inactive_opacity,
+                        inactive_theme,
                     }
                 },
             ),
@@ -1369,6 +1385,7 @@ mod tests {
                 geometry: FrameGeometry::default(),
                 theme: theme.into(),
                 focus: None,
+                inactive_theme: None,
                 terminal_theme_colors: true,
                 preview_theme_colors: true,
                 mode: Mode::Normal,
@@ -1466,15 +1483,40 @@ mod tests {
     fn focus_settings_round_trip_and_invalidate_damage() {
         let base = terminal_frame(1, 1, 'x');
         let mut next = base.clone();
-        next.editor.focus = Some((2, 12, 25, 15));
+        next.editor.focus = Some((2, 12, 25, 15, None));
         assert!(EditorDamageFrame::between(&base, &next).is_none());
         assert!(TerminalDamageFrame::between(&base, &next).is_none());
         let core: crate::workspace::HostFrame = next.clone().try_into().unwrap();
         assert_eq!(HostFrame::from(core).editor.focus, next.editor.focus);
-        for settings in [(2, 0, 25, 15), (2, 12, 101, 15), (2, 12, 25, 101)] {
+        for settings in [
+            (2, 0, 25, 15, None),
+            (2, 12, 101, 15, None),
+            (2, 12, 25, 101, None),
+        ] {
             next.editor.focus = Some(settings);
             assert!(crate::workspace::HostFrame::try_from(next.clone()).is_err());
         }
+    }
+
+    #[test]
+    fn inactive_theme_round_trips_and_invalidates_both_damage_paths() {
+        let base = terminal_frame(1, 1, 'x');
+        let mut next = base.clone();
+        next.editor.inactive_theme = Some(
+            crate::config::Config::default()
+                .resolve_theme("light")
+                .unwrap()
+                .into(),
+        );
+        assert!(EditorDamageFrame::between(&base, &next).is_none());
+        assert!(TerminalDamageFrame::between(&base, &next).is_none());
+        let wire = serde_json::to_vec(&next).unwrap();
+        let decoded: HostFrame = serde_json::from_slice(&wire).unwrap();
+        let core: crate::workspace::HostFrame = decoded.try_into().unwrap();
+        assert_eq!(
+            HostFrame::from(core).editor.inactive_theme,
+            next.editor.inactive_theme
+        );
     }
 
     #[test]

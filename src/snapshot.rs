@@ -168,6 +168,7 @@ pub struct EditorSnapshot {
     pub focus: Option<crate::config::FocusConfig>,
     pub geometry: crate::app::FrameGeometry,
     pub theme: Theme,
+    pub inactive_theme: Option<Theme>,
     pub terminal_theme_colors: bool,
     /// Whether `:preview` documents follow `theme` rather than a fixed light page.
     pub preview_theme_colors: bool,
@@ -550,6 +551,15 @@ impl From<usize> for OverlayIdentity {
 }
 
 impl EditorSnapshot {
+    /// The full palette for this pane, before opacity is applied.
+    pub fn pane_theme(&self, pane: &PaneSnapshot) -> &Theme {
+        if self.focus.is_some() && !pane.active {
+            self.inactive_theme.as_ref().unwrap_or(&self.theme)
+        } else {
+            &self.theme
+        }
+    }
+
     pub fn pane(&self, pane_id: usize) -> Option<&PaneSnapshot> {
         self.panes.iter().find(|pane| pane.pane_id == pane_id)
     }
@@ -951,7 +961,17 @@ impl App {
             Default::default()
         };
         EditorSnapshot {
-            focus: self.config.focus.enabled.then_some(self.config.focus),
+            focus: self
+                .config
+                .focus
+                .enabled
+                .then_some(self.config.focus.clone()),
+            inactive_theme: self
+                .config
+                .focus
+                .enabled
+                .then(|| self.inactive_theme.clone())
+                .flatten(),
             geometry: prepared.geometry,
             directory_tree: prepared.tree_area.map(|area| {
                 let rows = self.directory_tree.rows();

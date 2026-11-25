@@ -18,7 +18,10 @@ them, regardless of which extensibility direction is chosen.
   contains every pane and overlay.
 - **Pane** — one view of one buffer. Splits create panes; buffers may be shared
   by several panes. The active pane keeps the theme background; inactive panes
-  use a derived ground halfway between it and the overlay ground.
+  use a derived ground halfway between it and the overlay ground. With focus mode
+  enabled, `focus.inactive_theme` can select a complete alternate palette for
+  inactive panes, including their titles and borders. Shared UI keeps the main
+  theme. Private bundled protocol version 99 carries the resolved alternate palette.
 - **Directory tree sidebar** — a persistent navigation surface at the left of
   the editor area. It has its own focus and selected path, retains the last
   ordinary pane for focus restoration, and reserves width before
