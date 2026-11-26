@@ -1073,6 +1073,31 @@ fn select_manager_action(app: &mut App, label: &str) {
     panic!("session action {label} was absent");
 }
 
+/// The session menu's Close asks before stopping and opens with Cancel
+/// selected, so a stop request reaches the service only after a choice.
+fn confirm_list_close(app: &mut App, title: &str, label: &str) {
+    for _ in 0..3 {
+        let dialog = app
+            .overlay_snapshots()
+            .into_iter()
+            .find(|overlay| {
+                overlay.kind == runyte::snapshot::OverlayKind::BufferActions
+                    && overlay.title == title
+            })
+            .unwrap_or_else(|| panic!("{title} confirmation is open"));
+        if dialog
+            .selected
+            .and_then(|index| dialog.rows.get(index))
+            .is_some_and(|row| row.label == label)
+        {
+            manager_key(app, KeyCode::Enter);
+            return;
+        }
+        manager_key(app, KeyCode::Down);
+    }
+    panic!("close confirmation choice {label} was absent");
+}
+
 fn apply_native_event(
     runtime: &tokio::runtime::Runtime,
     app: &mut App,
@@ -1225,6 +1250,11 @@ fn manager_controls_exact_real_publication_and_waits_for_force_exit() {
     select_manager_name(&mut app, "managed");
 
     select_manager_action(&mut app, "Close");
+    confirm_list_close(
+        &mut app,
+        "Stop persistent session",
+        "Stop persistent session",
+    );
     apply_native_event(
         &runtime,
         &mut app,
