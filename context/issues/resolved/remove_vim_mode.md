@@ -31,7 +31,8 @@ and the Runyte-only help tests in `src/help.rs`. Run them with `cargo test
 
 ## Subsequent cleanup
 
-Stage 0 of [#132](https://github.com/runyte/runyte/issues/132) removes the retained
+[PR #134](https://github.com/runyte/runyte/pull/134), stage 0 of
+[#132](https://github.com/runyte/runyte/issues/132), removes the retained
 `GrammarKind::Vim` sentinel, test-only interpreter, unreachable range handlers
 and directional search actions described above. Configuration and command text
 still reject `vim`. Half-open selection semantics remain for syntax and pointer
