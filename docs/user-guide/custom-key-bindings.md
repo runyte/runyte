@@ -899,7 +899,6 @@ Regenerate this block with `cargo run --example action_reference`.
 <a id="clipboard-register-and-macro-actions"></a>
 <!-- action-reference:start -->
 
-
 Use these names in `keys.bind`. Modes are independent. Sequence position says whether
 an action may be followed by another action. Counts on multi-action bindings go to the first accepting step; if none accepts
 a count, the binding is rejected before execution. Plugin bindings use `plugins[].bindings`.
@@ -1997,7 +1996,6 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `session-stop` | background work | not accepted | none | session-stop [workspace] |  |
 | `session-rename` | background work, configuration | not accepted | none | session-rename <workspace> <name> |  |
 | `session-clean` | background work | not accepted | none | none |  |
-
 <!-- action-reference:end -->
 
 <!-- navigation -->
