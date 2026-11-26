@@ -1510,27 +1510,6 @@ fn a_linewise_paste_over_a_line_selection_replaces_whole_lines() {
 }
 
 #[test]
-fn a_linewise_paste_over_a_vim_line_selection_replaces_whole_lines() {
-    let mut app = App::new(Config::default(), None).unwrap();
-    seed(&mut app, "target words\nnext");
-    app.registers.insert(
-        '"',
-        Register {
-            text: "copied\n".to_owned(),
-            linewise: true,
-            directory: None,
-        },
-    );
-    app.active_mut().selection = Selection::single(Range::new(0, 13));
-    app.active_mut()
-        .mark_selection_semantics(SelectionSemantics::VimLinewise);
-
-    press(&mut app, 'p');
-
-    assert_eq!(text(&app), "copied\nnext");
-}
-
-#[test]
 fn linewise_paste_replaces_one_character_blank_and_final_empty_x_lines() {
     for (source, row, expected) in [
         ("alpha\nb\nnext", 1, "alpha\ncopied\nnext"),

@@ -6,27 +6,26 @@
 #[cfg(any(unix, windows))]
 use super::parse_session_number;
 use super::{
-    ActiveGrammar, App, AppCapabilitySnapshot, ApplyReport, ArgumentKind, Axis, BTreeMap, Buffer,
-    BufferKind, COMMAND_PATH_HINT_LIMIT, COMMANDS, Capabilities, Change, ColonCommand,
-    CommandArguments, CommandAvailability, CommandExecutionContext, CommandId, CommandInvocation,
-    CommandMatch, CommandOutcome, CommandOutcomeHint, CommandRefusal, CommandState,
-    CommandUnavailable, CompletionSource, ContentAlignment, DEFAULT_MACRO_REGISTER,
-    DeletionAuthorization, DeletionMode, DelimiterPair, DiffScope, Edge, EditorCommand,
-    EditorIntent, EntryKind, FileObservation, FilePicker, FinderTarget, FsOperation,
-    GeneratedViewIdentity, GrammarContext, GrammarNotice, GrammarOutput, HOVER_PEEK_ROWS, HashSet,
-    HelpInvocation, InputEvent, InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence,
-    KeyStroke, Keymap, LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers,
-    Motion, Offset, Path, PathBuf, PathHint, PickerTarget, PointerDrag, PointerEvent,
-    PointerEventKind, PointerOutcome, PreparedView, ProgramAction, ProgramActionMenu,
-    ProgramChoice, PromptKind, Range, RangeIntent, RequestKind, Result, SearchMode, SearchQuery,
-    Selection, SelectionSemantics, SettingId, SettingType, SettingValue, SignatureContext,
-    StashScope, SyntaxObject, SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard,
-    TextObjectPart, Transaction, ViewAlignment, VimMotion, VimOperator, VimRangeTarget,
-    VimTextObject, buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path,
-    external_open, hint_is_not_before, hover_content_rows, is_path_separator,
-    is_path_token_boundary, is_word, is_word_completion_character, keymap_for, mapped_applied_path,
-    operative_span, persistent_session_availability, pointer_pane, pointer_resize_pair,
-    prompt_backspace, prompt_delete, prompt_delete_range, prompt_insert, prompt_left, prompt_right,
+    ActiveGrammar, App, AppCapabilitySnapshot, ApplyReport, ArgumentKind, Axis, BTreeMap,
+    BufferKind, COMMAND_PATH_HINT_LIMIT, COMMANDS, Capabilities, ColonCommand, CommandArguments,
+    CommandAvailability, CommandExecutionContext, CommandId, CommandInvocation, CommandMatch,
+    CommandOutcome, CommandOutcomeHint, CommandRefusal, CommandState, CommandUnavailable,
+    CompletionSource, ContentAlignment, DEFAULT_MACRO_REGISTER, DeletionAuthorization,
+    DeletionMode, DelimiterPair, DiffScope, Edge, EditorCommand, EditorIntent, EntryKind,
+    FileObservation, FilePicker, FinderTarget, FsOperation, GeneratedViewIdentity, GrammarContext,
+    GrammarNotice, GrammarOutput, HOVER_PEEK_ROWS, HashSet, HelpInvocation, InputEvent,
+    InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence, KeyStroke, Keymap,
+    LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers, Motion, Offset, Path,
+    PathBuf, PathHint, PickerTarget, PointerDrag, PointerEvent, PointerEventKind, PointerOutcome,
+    PreparedView, ProgramAction, ProgramActionMenu, ProgramChoice, PromptKind, Range, RangeIntent,
+    RequestKind, Result, SearchMode, SearchQuery, Selection, SelectionSemantics, SettingId,
+    SettingType, SettingValue, SignatureContext, StashScope, SyntaxObject, SyntaxObjectPart,
+    SyntaxSelectionTransform, SystemClipboard, TextObjectPart, ViewAlignment, buffer_language,
+    char_to_byte, display_path, enclosing_area, expand_home_path, external_open,
+    hint_is_not_before, hover_content_rows, is_path_separator, is_path_token_boundary, is_word,
+    is_word_completion_character, keymap_for, mapped_applied_path, operative_span,
+    persistent_session_availability, pointer_pane, pointer_resize_pair, prompt_backspace,
+    prompt_delete, prompt_delete_range, prompt_insert, prompt_left, prompt_right,
     prompt_word_backward, prompt_word_forward, quote_path_hint, rect_contains, resolve_command,
     resolved_operation_path, row_characters, unclosed_or_complete_quoted_path,
 };
@@ -130,12 +129,7 @@ impl App {
             {
                 Some(self.mode)
             }
-            crate::command::GrammarKind::Vim
-                if matches!(self.mode, Mode::Normal | Mode::Select) =>
-            {
-                Some(Mode::Normal)
-            }
-            crate::command::GrammarKind::Runyte | crate::command::GrammarKind::Vim => None,
+            crate::command::GrammarKind::Runyte => None,
         }
     }
 
@@ -1797,10 +1791,7 @@ impl App {
         };
         let pane = self.active();
         let buffer = self.active_buffer();
-        let half_open = matches!(
-            pane.selection_semantics(),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
-        );
+        let half_open = matches!(pane.selection_semantics(), SelectionSemantics::HalfOpen);
         pane.selection.ranges().iter().any(|range| {
             let (from, to) = if half_open {
                 (range.from(), range.to())
@@ -2014,41 +2005,27 @@ impl App {
     /// drag covers the pressed cell and the cell under the pointer and
     /// everything between. That is Runyte's own inclusive range model, which
     /// is why a pointer selection carries Runyte semantics rather than the
-    /// half-open ones a syntax range or a Vim operator produces. The Vim
-    /// grammar writes the same span down with its leading end one past the
-    /// last covered character, so it is converted rather than reshaped.
+    /// half-open ones a syntax range produces.
     pub(super) fn pointer_selection(
         &self,
         anchor: Offset,
         head: Offset,
     ) -> (Selection, SelectionSemantics) {
         let selection = Selection::single(Range::new(anchor, head));
-        if self.grammar.kind() == crate::command::GrammarKind::Runyte {
-            return (selection, SelectionSemantics::Runyte);
-        }
-        // A bare Vim caret is an empty half-open range: Normal mode there
-        // draws over a character without selecting it.
-        if anchor == head {
-            return (selection, SelectionSemantics::HalfOpen);
-        }
-        (
-            self.vim_inclusive_to_half_open(selection, true),
-            SelectionSemantics::HalfOpen,
-        )
+        (selection, SelectionSemantics::Runyte)
     }
 
     /// The character cell a Shift-click extends from.
     ///
     /// An inclusive range is anchored on a character it covers whichever way
-    /// it runs, so its anchor is already a cell. A half-open one — a Vim
-    /// selection, or a delimiter text object under either grammar — keeps its
+    /// it runs, so its anchor is already a cell. A half-open syntax range keeps its
     /// anchor one past the covered character when it runs backward.
     fn pointer_anchor(&self, pane: usize) -> Offset {
         let pane = &self.panes[&pane];
         if pane.selection_semantics() == SelectionSemantics::Runyte {
             return pane.selection.primary().anchor;
         }
-        self.vim_half_open_to_inclusive(pane.selection.clone())
+        self.half_open_to_inclusive(pane.selection.clone())
             .primary()
             .anchor
     }
@@ -2566,7 +2543,7 @@ impl App {
                 && let Some(reason) = self.active_buffer().read_only_reason()
                 && matches!(
                     self.grammar.kind(),
-                    crate::command::GrammarKind::Runyte | crate::command::GrammarKind::Vim
+                    crate::command::GrammarKind::Runyte
                 )
             {
                 self.mode = Mode::Normal;
@@ -2723,20 +2700,7 @@ impl App {
         }
         if let EditorIntent::Range(range) = &intent {
             let repetitions = match range {
-                RangeIntent::SelectLine { count, .. }
-                | RangeIntent::VimMotion { count, .. }
-                | RangeIntent::VimVisualLine { count }
-                | RangeIntent::VimRepeatSearch { count, .. }
-                | RangeIntent::VimSearchWord { count, .. } => count.get(),
-                RangeIntent::VimOperator { target, .. } => match target {
-                    VimRangeTarget::Characters { count }
-                    | VimRangeTarget::Motion { count, .. }
-                    | VimRangeTarget::Line { count, .. } => count.get(),
-                    VimRangeTarget::Syntax { .. } => 1,
-                },
-                RangeIntent::VimVisualOperator { .. }
-                | RangeIntent::VimSyntaxSelection { .. }
-                | RangeIntent::VimReplace { .. } => 1,
+                RangeIntent::SelectLine { count, .. } => count.get(),
             };
             if !self.reserve_macro_replay_range_work(repetitions) {
                 return Ok(None);
@@ -2770,48 +2734,6 @@ impl App {
                 for _ in 0..count.get() {
                     self.execute_editor_command(command)?;
                 }
-            }
-            EditorIntent::Range(RangeIntent::VimMotion {
-                motion,
-                count,
-                explicit_count,
-                extend,
-            }) => self.apply_vim_motion(motion, count.get(), explicit_count, extend),
-            EditorIntent::Range(RangeIntent::VimOperator {
-                operator,
-                target,
-                register,
-            }) => {
-                self.apply_vim_operator(operator, target, register)?;
-            }
-            EditorIntent::Range(RangeIntent::VimVisualOperator { operator, register }) => {
-                self.apply_vim_visual_operator(operator, register)?;
-            }
-            EditorIntent::Range(RangeIntent::VimVisualLine { count }) => {
-                self.enter_vim_visual_line(count.get());
-            }
-            EditorIntent::Range(RangeIntent::VimSyntaxSelection { object, around }) => {
-                self.select_vim_syntax(object, around)?;
-            }
-            EditorIntent::Range(RangeIntent::VimReplace { character }) => {
-                self.select_vim_characters(1);
-                if self
-                    .active()
-                    .selection
-                    .ranges()
-                    .iter()
-                    .any(|range| !range.is_empty())
-                {
-                    self.replace_with_char(character);
-                    self.active_mut()
-                        .mark_selection_semantics(SelectionSemantics::HalfOpen);
-                }
-            }
-            EditorIntent::Range(RangeIntent::VimRepeatSearch { previous, count }) => {
-                self.repeat_search_count(previous, count.get());
-            }
-            EditorIntent::Range(RangeIntent::VimSearchWord { previous, count }) => {
-                self.search_selection_direction(previous, count.get());
             }
             EditorIntent::Notice(notice) => {
                 match notice {
@@ -2879,7 +2801,7 @@ impl App {
         Ok(None)
     }
 
-    pub(super) fn vim_inclusive_to_half_open(
+    pub(super) fn inclusive_to_half_open(
         &self,
         selection: Selection,
         inclusive: bool,
@@ -2911,7 +2833,7 @@ impl App {
         })
     }
 
-    pub(super) fn vim_half_open_to_inclusive(&self, selection: Selection) -> Selection {
+    pub(super) fn half_open_to_inclusive(&self, selection: Selection) -> Selection {
         let buffer = self.active_buffer();
         selection.transform(|range| {
             if range.is_empty() {
@@ -2924,599 +2846,6 @@ impl App {
                 Range::new(buffer.grapheme_floor(range.anchor - 1), range.head)
             }
         })
-    }
-
-    fn vim_motion_kind(motion: VimMotion) -> Option<Motion> {
-        match motion {
-            VimMotion::Left => Some(Motion::Left),
-            VimMotion::Right => Some(Motion::Right),
-            VimMotion::Up => Some(Motion::Up),
-            VimMotion::Down => Some(Motion::Down),
-            VimMotion::WordForward => Some(Motion::WordForward),
-            VimMotion::WordBackward => Some(Motion::WordBack),
-            VimMotion::WordEnd => Some(Motion::WordEnd),
-            VimMotion::WordEndBackward => Some(Motion::WordEndBack),
-            VimMotion::LongWordForward => Some(Motion::LongWordForward),
-            VimMotion::LongWordBackward => Some(Motion::LongWordBack),
-            VimMotion::LongWordEnd => Some(Motion::LongWordEnd),
-            VimMotion::LongWordEndBackward => Some(Motion::LongWordEndBack),
-            VimMotion::LineStart => Some(Motion::LineStart),
-            VimMotion::FirstNonWhitespace => Some(Motion::FirstNonWhitespace),
-            VimMotion::LastNonWhitespace => Some(Motion::LastNonWhitespace),
-            VimMotion::LineEnd => Some(Motion::LineEnd),
-            VimMotion::FileStart => Some(Motion::FileStart),
-            VimMotion::FileEnd => Some(Motion::FileEnd),
-            VimMotion::PageUp => Some(Motion::PageUp),
-            VimMotion::PageDown => Some(Motion::PageDown),
-            VimMotion::HalfPageUp => Some(Motion::HalfPageUp),
-            VimMotion::HalfPageDown => Some(Motion::HalfPageDown),
-            VimMotion::WindowTop => Some(Motion::WindowTop),
-            VimMotion::WindowCenter => Some(Motion::WindowCenter),
-            VimMotion::WindowBottom => Some(Motion::WindowBottom),
-            VimMotion::FindNext(_)
-            | VimMotion::FindPrevious(_)
-            | VimMotion::TillNext(_)
-            | VimMotion::TillPrevious(_)
-            | VimMotion::MatchBracket => None,
-        }
-    }
-
-    fn apply_vim_motion(
-        &mut self,
-        motion: VimMotion,
-        count: usize,
-        explicit_count: bool,
-        extend: bool,
-    ) {
-        if extend && self.active().selection_semantics() == SelectionSemantics::VimLinewise {
-            self.move_vim_linewise_selection(motion, count, explicit_count);
-            return;
-        }
-        if !extend {
-            self.collapse_vim_normal_selection();
-        }
-        self.move_vim_selection(motion, count, explicit_count, extend, extend);
-    }
-
-    fn collapse_vim_normal_selection(&mut self) {
-        if self
-            .active()
-            .selection
-            .ranges()
-            .iter()
-            .any(|range| !range.is_empty())
-        {
-            let selection = if matches!(
-                self.active().selection_semantics(),
-                SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
-            ) {
-                self.vim_half_open_to_inclusive(self.active().selection.clone())
-            } else {
-                self.active().selection.clone()
-            };
-            self.active_mut().replace_selection(selection.collapse());
-        }
-        self.active_mut()
-            .mark_selection_semantics(SelectionSemantics::HalfOpen);
-    }
-
-    fn select_vim_characters(&mut self, count: usize) {
-        self.collapse_vim_normal_selection();
-        let buffer = self.active_buffer();
-        let selection = self.active().selection.transform(|range| {
-            let row = buffer.offset_to_row(range.head);
-            let row_end = buffer.line_to_offset(row) + buffer.line_len(row);
-            Range::new(range.head, range.head.saturating_add(count).min(row_end))
-        });
-        self.active_mut().replace_selection(selection);
-        self.active_mut()
-            .mark_selection_semantics(SelectionSemantics::HalfOpen);
-    }
-
-    fn move_vim_selection(
-        &mut self,
-        motion: VimMotion,
-        count: usize,
-        explicit_count: bool,
-        extend: bool,
-        inclusive: bool,
-    ) {
-        if extend
-            && matches!(
-                self.active().selection_semantics(),
-                SelectionSemantics::HalfOpen
-            )
-        {
-            let selection = self.vim_half_open_to_inclusive(self.active().selection.clone());
-            self.active_mut().replace_selection(selection);
-        }
-
-        let selection_before_motion = self.active().selection.clone();
-
-        if matches!(motion, VimMotion::FileStart | VimMotion::FileEnd) && explicit_count {
-            let buffer = self.active_buffer();
-            let row = count.saturating_sub(1).min(buffer.last_row());
-            let target = buffer.clamp_offset(buffer.line_to_offset(row), false);
-            let selection = if extend {
-                self.active()
-                    .selection
-                    .transform(|range| range.extend_to(target))
-            } else {
-                Selection::point(target)
-            };
-            self.active_mut().replace_selection(selection);
-        } else if matches!(motion, VimMotion::Left | VimMotion::Right) {
-            for _ in 0..count {
-                let buffer = self.active_buffer();
-                let selection = self.active().selection.transform(|range| {
-                    let position = buffer.position_of(range.head);
-                    let line_end =
-                        buffer.line_to_offset(position.row) + buffer.line_len(position.row);
-                    let head = if motion == VimMotion::Left {
-                        if position.col > 0 {
-                            buffer.previous_grapheme(range.head)
-                        } else {
-                            range.head
-                        }
-                    } else if buffer.next_grapheme(range.head) < line_end {
-                        buffer.next_grapheme(range.head)
-                    } else {
-                        range.head
-                    };
-                    if extend {
-                        range.extend_to(head)
-                    } else {
-                        Range::point(head)
-                    }
-                });
-                self.active_mut().replace_selection(selection);
-            }
-        } else if motion == VimMotion::LineEnd && count > 1 {
-            let buffer = self.active_buffer();
-            let selection = self.active().selection.transform(|range| {
-                let row = buffer
-                    .offset_to_row(range.head)
-                    .saturating_add(count - 1)
-                    .min(buffer.last_row());
-                let start = buffer.line_to_offset(row);
-                let end = start + buffer.line_len(row);
-                let head = buffer.clamp_offset(end, false);
-                if extend {
-                    range.extend_to(head)
-                } else {
-                    Range::point(head)
-                }
-            });
-            self.active_mut().replace_selection(selection);
-        } else if matches!(
-            motion,
-            VimMotion::WindowTop | VimMotion::WindowCenter | VimMotion::WindowBottom
-        ) {
-            let shared = Self::vim_motion_kind(motion).expect("window motion has shared form");
-            self.motion_with_extension(shared, extend);
-            let step = match motion {
-                VimMotion::WindowTop => Some(Motion::Down),
-                VimMotion::WindowBottom => Some(Motion::Up),
-                VimMotion::WindowCenter => None,
-                _ => unreachable!(),
-            };
-            if let Some(step) = step {
-                for _ in 1..count {
-                    self.motion_with_extension(step, extend);
-                }
-            }
-        } else if let Some(motion) = Self::vim_motion_kind(motion) {
-            for _ in 0..count {
-                self.motion_with_extension(motion, extend);
-            }
-        } else {
-            let prior_mode = self.mode;
-            self.mode = if extend { Mode::Select } else { Mode::Normal };
-            for index in 0..count {
-                match motion {
-                    VimMotion::FindNext(character) => self.find_character(character, true, false),
-                    VimMotion::FindPrevious(character) => {
-                        self.find_character(character, false, false)
-                    }
-                    VimMotion::TillNext(character) => {
-                        self.find_character(character, true, index + 1 == count)
-                    }
-                    VimMotion::TillPrevious(character) => {
-                        self.find_character(character, false, index + 1 == count)
-                    }
-                    VimMotion::MatchBracket => self.match_bracket(),
-                    _ => unreachable!("ordinary Vim motions have a shared Motion"),
-                }
-            }
-            self.mode = prior_mode;
-        }
-
-        let fallible_target = matches!(
-            motion,
-            VimMotion::FindNext(_)
-                | VimMotion::FindPrevious(_)
-                | VimMotion::TillNext(_)
-                | VimMotion::TillPrevious(_)
-                | VimMotion::MatchBracket
-        );
-        if extend && (!fallible_target || self.active().selection != selection_before_motion) {
-            let selection =
-                self.vim_inclusive_to_half_open(self.active().selection.clone(), inclusive);
-            self.active_mut().replace_selection(selection);
-        }
-        self.active_mut()
-            .mark_selection_semantics(SelectionSemantics::HalfOpen);
-    }
-
-    fn select_vim_lines(&mut self, direction: LineDirection, count: usize) {
-        let buffer = self.active_buffer();
-        let ranges = self
-            .active()
-            .selection
-            .ranges()
-            .iter()
-            .map(|range| {
-                let row = buffer.offset_to_row(range.head);
-                let other = match direction {
-                    LineDirection::Down => row
-                        .saturating_add(count.saturating_sub(1))
-                        .min(buffer.last_row()),
-                    LineDirection::Up => row.saturating_sub(count.saturating_sub(1)),
-                };
-                let first = row.min(other);
-                let last = row.max(other);
-                let from = buffer.line_to_offset(first);
-                let to = if last < buffer.last_row() {
-                    buffer.line_to_offset(last + 1)
-                } else {
-                    buffer.len_chars()
-                };
-                Range::new(from, to)
-            })
-            .collect::<Vec<_>>();
-        let primary = self.active().selection.primary_index();
-        self.active_mut()
-            .replace_selection(Selection::new(ranges, primary));
-        self.active_mut()
-            .mark_selection_semantics(SelectionSemantics::VimLinewise);
-    }
-
-    fn vim_linewise_range(buffer: &Buffer, anchor_row: usize, head_row: usize) -> Range {
-        let row_end = |row: usize| {
-            if row < buffer.last_row() {
-                buffer.line_to_offset(row + 1)
-            } else {
-                buffer.len_chars()
-            }
-        };
-        if head_row >= anchor_row {
-            Range::new(buffer.line_to_offset(anchor_row), row_end(head_row))
-        } else {
-            Range::new(row_end(anchor_row), buffer.line_to_offset(head_row))
-        }
-    }
-
-    fn vim_linewise_rows(buffer: &Buffer, range: Range) -> (usize, usize) {
-        if range.anchor <= range.head {
-            let anchor_row = buffer.offset_to_row(range.anchor);
-            let head = range.head.saturating_sub(1).min(buffer.len_chars());
-            (anchor_row, buffer.offset_to_row(head))
-        } else {
-            let anchor = range.anchor.saturating_sub(1).min(buffer.len_chars());
-            (
-                buffer.offset_to_row(anchor),
-                buffer.offset_to_row(range.head),
-            )
-        }
-    }
-
-    fn enter_vim_visual_line(&mut self, count: usize) {
-        let mut selection = self.active().selection.clone();
-        if self.mode == Mode::Select
-            && self.active().selection_semantics() == SelectionSemantics::HalfOpen
-        {
-            selection = self.vim_half_open_to_inclusive(selection);
-        }
-        let buffer = self.active_buffer();
-        let ranges = selection
-            .ranges()
-            .iter()
-            .map(|range| {
-                let anchor_row = buffer.offset_to_row(range.anchor);
-                let current_head_row = buffer.offset_to_row(range.head);
-                let forward = range.anchor <= range.head;
-                let head_row = if forward {
-                    current_head_row
-                        .saturating_add(count.saturating_sub(1))
-                        .min(buffer.last_row())
-                } else {
-                    current_head_row.saturating_sub(count.saturating_sub(1))
-                };
-                Self::vim_linewise_range(buffer, anchor_row, head_row)
-            })
-            .collect::<Vec<_>>();
-        let primary = selection.primary_index();
-        self.active_mut()
-            .replace_selection(Selection::new(ranges, primary));
-        self.active_mut()
-            .mark_selection_semantics(SelectionSemantics::VimLinewise);
-        self.mode = Mode::Select;
-    }
-
-    fn move_vim_linewise_selection(
-        &mut self,
-        motion: VimMotion,
-        count: usize,
-        explicit_count: bool,
-    ) {
-        let buffer = self.active_buffer();
-        let anchors_and_points = self
-            .active()
-            .selection
-            .ranges()
-            .iter()
-            .map(|range| {
-                let (anchor_row, head_row) = Self::vim_linewise_rows(buffer, *range);
-                (anchor_row, Range::point(buffer.line_to_offset(head_row)))
-            })
-            .collect::<Vec<_>>();
-        let primary = self.active().selection.primary_index();
-        self.active_mut().replace_selection(Selection::new(
-            anchors_and_points.iter().map(|(_, point)| *point).collect(),
-            primary,
-        ));
-        self.move_vim_selection(motion, count, explicit_count, false, false);
-
-        let buffer = self.active_buffer();
-        let ranges = anchors_and_points
-            .iter()
-            .zip(self.active().selection.ranges())
-            .map(|((anchor_row, _), target)| {
-                let head_row = buffer.offset_to_row(target.head);
-                Self::vim_linewise_range(buffer, *anchor_row, head_row)
-            })
-            .collect::<Vec<_>>();
-        self.active_mut()
-            .replace_selection(Selection::new(ranges, primary));
-        self.active_mut()
-            .mark_selection_semantics(SelectionSemantics::VimLinewise);
-    }
-
-    fn select_vim_syntax(&mut self, object: VimTextObject, around: bool) -> Result<bool> {
-        let object = match object {
-            VimTextObject::Function => SyntaxObject::Function,
-            VimTextObject::Class => SyntaxObject::Class,
-            VimTextObject::Parameter => SyntaxObject::Parameter,
-        };
-        let part = if around {
-            SyntaxObjectPart::Around
-        } else {
-            SyntaxObjectPart::Inside
-        };
-        let revision = self.active().selection_revision;
-        self.select_syntax_object(object, part)?;
-        let produced = self.active().selection_revision != revision;
-        if produced
-            && self
-                .active()
-                .selection
-                .ranges()
-                .iter()
-                .any(|range| !range.is_empty())
-        {
-            if self.active().selection_semantics() == SelectionSemantics::Runyte {
-                let selection =
-                    self.vim_inclusive_to_half_open(self.active().selection.clone(), true);
-                self.active_mut().replace_selection(selection);
-            }
-            self.active_mut()
-                .mark_selection_semantics(SelectionSemantics::HalfOpen);
-        }
-        Ok(produced)
-    }
-
-    fn apply_vim_operator(
-        &mut self,
-        operator: VimOperator,
-        target: VimRangeTarget,
-        register: Option<char>,
-    ) -> Result<()> {
-        if let Some(reason) = self.active_buffer().read_only_reason()
-            && operator != VimOperator::Yank
-        {
-            self.action_failed(reason);
-            return Ok(());
-        }
-        self.collapse_vim_normal_selection();
-        match target {
-            VimRangeTarget::Characters { count } => {
-                self.select_vim_characters(count.get());
-            }
-            VimRangeTarget::Line { direction, count } => {
-                self.select_vim_lines(direction, count.get());
-            }
-            VimRangeTarget::Syntax { object, around } => {
-                if !self.select_vim_syntax(object, around)? {
-                    return Ok(());
-                }
-            }
-            VimRangeTarget::Motion { motion, count } => {
-                let motion = if operator == VimOperator::Change
-                    && motion == VimMotion::WordForward
-                    && !self
-                        .active_buffer()
-                        .char_at(self.active().selection.primary().head)
-                        .is_some_and(char::is_whitespace)
-                {
-                    VimMotion::WordEnd
-                } else {
-                    motion
-                };
-                if matches!(motion, VimMotion::FileStart | VimMotion::FileEnd) {
-                    let current = self
-                        .active_buffer()
-                        .offset_to_row(self.active().selection.primary().head);
-                    let target = if count.get() > 1 {
-                        count
-                            .get()
-                            .saturating_sub(1)
-                            .min(self.active_buffer().last_row())
-                    } else if motion == VimMotion::FileStart {
-                        0
-                    } else {
-                        self.active_buffer().last_row()
-                    };
-                    self.select_vim_lines(
-                        if target < current {
-                            LineDirection::Up
-                        } else {
-                            LineDirection::Down
-                        },
-                        current.abs_diff(target) + 1,
-                    );
-                } else {
-                    let inclusive = matches!(
-                        motion,
-                        VimMotion::WordEnd
-                            | VimMotion::WordEndBackward
-                            | VimMotion::LongWordEnd
-                            | VimMotion::LongWordEndBackward
-                            | VimMotion::LineEnd
-                            | VimMotion::LastNonWhitespace
-                            | VimMotion::FindNext(_)
-                            | VimMotion::FindPrevious(_)
-                            | VimMotion::TillNext(_)
-                            | VimMotion::TillPrevious(_)
-                            | VimMotion::MatchBracket
-                    );
-                    self.move_vim_selection(motion, count.get(), false, true, inclusive);
-                    if motion == VimMotion::Right
-                        && self.active().selection.ranges().iter().all(Range::is_empty)
-                    {
-                        let buffer = self.active_buffer();
-                        let selection = self.active().selection.transform(|range| {
-                            let row = buffer.offset_to_row(range.head);
-                            let end = buffer.line_to_offset(row) + buffer.line_len(row);
-                            Range::new(range.head, buffer.next_grapheme(range.head).min(end))
-                        });
-                        self.active_mut().replace_selection(selection);
-                    }
-                }
-            }
-        }
-        if self.active().selection.ranges().iter().all(Range::is_empty) {
-            self.mode = Mode::Normal;
-            return Ok(());
-        }
-        if let Some(register) = register {
-            self.select_register(register);
-        }
-        self.finish_vim_operator(operator);
-        Ok(())
-    }
-
-    fn apply_vim_visual_operator(
-        &mut self,
-        operator: VimOperator,
-        register: Option<char>,
-    ) -> Result<()> {
-        if let Some(reason) = self.active_buffer().read_only_reason()
-            && operator != VimOperator::Yank
-        {
-            self.action_failed(reason);
-            return Ok(());
-        }
-        if self.active().selection.ranges().iter().all(Range::is_empty) {
-            let buffer = self.active_buffer();
-            let selection = self.active().selection.transform(|range| {
-                let row = buffer.offset_to_row(range.head);
-                let end = buffer.line_to_offset(row) + buffer.line_len(row);
-                Range::new(range.head, buffer.next_grapheme(range.head).min(end))
-            });
-            self.active_mut().replace_selection(selection);
-        }
-        if self.active().selection_semantics() != SelectionSemantics::VimLinewise {
-            if self.active().selection_semantics() == SelectionSemantics::Runyte {
-                let selection =
-                    self.vim_inclusive_to_half_open(self.active().selection.clone(), true);
-                self.active_mut().replace_selection(selection);
-            }
-            self.active_mut()
-                .mark_selection_semantics(SelectionSemantics::HalfOpen);
-        }
-        if let Some(register) = register {
-            self.select_register(register);
-        }
-        self.finish_vim_operator(operator);
-        Ok(())
-    }
-
-    fn finish_vim_operator(&mut self, operator: VimOperator) {
-        match operator {
-            VimOperator::Delete => self.delete_selection_or_char(false, false, true),
-            VimOperator::Change
-                if self.active().selection_semantics() == SelectionSemantics::VimLinewise =>
-            {
-                self.change_vim_lines()
-            }
-            VimOperator::Change => self.delete_selection_or_char(true, false, true),
-            VimOperator::Yank => {
-                if self.yank(false) {
-                    self.collapse_after_yank();
-                }
-                let selection = self
-                    .active()
-                    .selection
-                    .transform(|range| Range::point(range.from()));
-                self.active_mut().replace_selection(selection);
-                self.mode = Mode::Normal;
-            }
-            VimOperator::Indent | VimOperator::Unindent => {
-                self.indent(operator == VimOperator::Unindent);
-                let selection = self
-                    .active()
-                    .selection
-                    .transform(|range| Range::point(range.from()));
-                self.active_mut().replace_selection(selection);
-                self.mode = Mode::Normal;
-            }
-        }
-        self.active_mut()
-            .mark_selection_semantics(SelectionSemantics::HalfOpen);
-    }
-
-    fn change_vim_lines(&mut self) {
-        let buffer_id = self.active().buffer;
-        let register = self.yank_value(true);
-        self.write_selected_register(register);
-        self.buffers[buffer_id].begin_undo_group();
-        let buffer = self.active_buffer();
-        let spans = self.operative_spans();
-        let primary = self.active().selection.primary_index();
-        let insertion_points = spans
-            .iter()
-            .map(|(from, _)| Range::point(*from))
-            .collect::<Vec<_>>();
-        let changes = spans
-            .into_iter()
-            .filter_map(|(from, to)| {
-                let delete_to = if to > from && buffer.char_at(to - 1) == Some('\n') {
-                    if to - from >= 2 && buffer.char_at(to - 2) == Some('\r') {
-                        to - 2
-                    } else {
-                        to - 1
-                    }
-                } else {
-                    to
-                };
-                (from < delete_to).then(|| Change::new(from, delete_to, ""))
-            })
-            .collect();
-        self.edit(Transaction::new(changes));
-        self.active_mut()
-            .replace_selection(Selection::new(insertion_points, primary));
-        self.mode = Mode::Insert;
-        self.normalize_buffer(buffer_id);
     }
 
     pub(super) fn confirmation_ui_owner(&self) -> Option<crate::keymap::ui::Owner> {
@@ -5175,8 +4504,6 @@ impl App {
             Command::FormatTable => self.format_selected_tables(),
             Command::Search => self.open_prompt(PromptKind::Search(SearchMode::Insensitive)),
             Command::SearchRegex => self.open_prompt(PromptKind::Search(SearchMode::Regex)),
-            Command::SearchForward => self.open_prompt(PromptKind::SearchForward),
-            Command::SearchBackward => self.open_prompt(PromptKind::SearchBackward),
             Command::SearchNext => self.repeat_search(false),
             Command::SearchPrevious => self.repeat_search(true),
             Command::SearchSelection => self.search_selection(),
@@ -5685,19 +5012,8 @@ impl App {
                             pattern: value,
                             mode,
                             region,
-                            forward: true,
                         });
                         self.finish_search_preview(search_preview, found);
-                    } else {
-                        // The Vim grammar's directional single-match search.
-                        let forward = kind == PromptKind::SearchForward;
-                        self.search = SearchQuery {
-                            pattern: value,
-                            mode: SearchMode::Sensitive,
-                            region: None,
-                            forward,
-                        };
-                        self.find_search(forward, true, 1);
                     }
                     let (spelling, description) = match kind {
                         PromptKind::Search(SearchMode::Insensitive) => {
@@ -5709,8 +5025,6 @@ impl App {
                         PromptKind::Search(SearchMode::Regex) => {
                             ("/", "Search with a regular expression")
                         }
-                        PromptKind::SearchForward => ("/", "Search forward"),
-                        PromptKind::SearchBackward => ("?", "Search backward"),
                         _ => unreachable!(
                             "handle_search_prompt's catch-all only reaches search prompt kinds: {kind:?}"
                         ),
@@ -6039,12 +5353,11 @@ impl App {
         &self,
         buffer_id: usize,
         selection: Selection,
-        semantics: SelectionSemantics,
+        _semantics: SelectionSemantics,
         mode: Mode,
     ) -> Selection {
         if matches!(mode, Mode::Insert | Mode::Replace) {
             let buffer = &self.buffers[buffer_id];
-            let vim = self.grammar.kind() == crate::command::GrammarKind::Vim;
             let append = mode == Mode::Insert
                 && self
                     .append_insert
@@ -6052,13 +5365,7 @@ impl App {
                     .is_some_and(|append| append.buffer == buffer_id);
             selection.transform(|range| {
                 let mut head = range.head;
-                if vim {
-                    let row = buffer.offset_to_row(head);
-                    let start = buffer.line_to_offset(row);
-                    if head > start {
-                        head -= 1;
-                    }
-                } else if append {
+                if append {
                     // The caret never steps back across the row start, so an
                     // append that ended on a fresh line stays on that line.
                     let row = buffer.offset_to_row(head);
@@ -6068,14 +5375,6 @@ impl App {
                 }
                 Range::point(buffer.clamp_offset(head, false))
             })
-        } else if self.grammar.kind() == crate::command::GrammarKind::Vim
-            && mode == Mode::Select
-            && matches!(
-                semantics,
-                SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
-            )
-        {
-            self.vim_half_open_to_inclusive(selection).collapse()
         } else {
             selection.collapse()
         }
@@ -6100,9 +5399,6 @@ impl App {
             crate::command::GrammarKind::Runyte => self
                 .active_mut()
                 .mark_selection_semantics(SelectionSemantics::Runyte),
-            crate::command::GrammarKind::Vim => self
-                .active_mut()
-                .mark_selection_semantics(SelectionSemantics::HalfOpen),
         }
         self.grammar.reset();
         self.dismiss_popups();
@@ -7100,22 +6396,12 @@ impl App {
     }
 
     pub(super) fn select_grammar(&mut self, kind: crate::command::GrammarKind) {
-        let grammar = match ActiveGrammar::new(kind) {
-            Ok(grammar) => grammar,
-            Err(error) => {
-                self.action_failed(error.to_string());
-                return;
-            }
-        };
-        self.grammar = grammar;
+        self.grammar = ActiveGrammar::new(kind);
         match kind {
             crate::command::GrammarKind::Runyte => {
                 self.active_mut()
                     .mark_selection_semantics(SelectionSemantics::Runyte);
                 self.enter_normal_mode();
-            }
-            crate::command::GrammarKind::Vim => {
-                unreachable!("removed grammar cannot be selected")
             }
         }
         self.status(format!("active grammar: {kind}"));

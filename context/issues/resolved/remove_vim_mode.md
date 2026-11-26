@@ -29,6 +29,15 @@ Coverage lives in
 and the Runyte-only help tests in `src/help.rs`. Run them with `cargo test
 --test headless_editor`, `cargo test --test key_hints`, and `cargo test --lib`.
 
+## Subsequent cleanup
+
+Stage 0 of [#132](https://github.com/runyte/runyte/issues/132) removes the retained
+`GrammarKind::Vim` sentinel, test-only interpreter, unreachable range handlers
+and directional search actions described above. Configuration and command text
+still reject `vim`. Half-open selection semantics remain for syntax and pointer
+operations. The original resolution and provenance above describe the August
+change; they no longer describe the retained implementation.
+
 ## Report
 
 Normal mode includes familiar Vim and Helix motions, including `g l` and `$`.

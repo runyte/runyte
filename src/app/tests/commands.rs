@@ -191,329 +191,15 @@ fn grammar_colon_is_runyte_only_and_rejects_removed_vim() {
     assert_eq!(app.mode, Mode::Normal);
 }
 
-pub(super) fn vim_app(text: &str) -> App {
-    let mut config = Config::default();
-    config.editor.grammar = GrammarKind::Vim;
-    let mut app = App::new(config, None).unwrap();
-    seed(&mut app, text);
-    app.active_mut()
-        .mark_selection_semantics(SelectionSemantics::HalfOpen);
-    app
-}
-
-#[test]
-fn vim_addresses_horizontal_clamping_and_insert_escape_are_conventional() {
-    let mut app = vim_app("zero\none\ntwo");
-    press(&mut app, 'G');
-    assert_eq!(cursor(&app).row, 2);
-    press(&mut app, '1');
-    press(&mut app, 'G');
-    assert_eq!(cursor(&app).row, 0);
-    press(&mut app, '2');
-    press(&mut app, 'G');
-    assert_eq!(cursor(&app).row, 1);
-    press(&mut app, 'g');
-    press(&mut app, 'g');
-    assert_eq!(cursor(&app).row, 0);
-    press(&mut app, '2');
-    press(&mut app, 'g');
-    press(&mut app, 'g');
-    assert_eq!(cursor(&app).row, 1);
-
-    press(&mut app, '$');
-    let end = cursor(&app);
-    press(&mut app, 'l');
-    assert_eq!(cursor(&app), end, "Vim l does not wrap to the next row");
-    press(&mut app, '0');
-    press(&mut app, 'h');
-    assert_eq!(cursor(&app).col, 0, "Vim h does not wrap to the prior row");
-
-    press(&mut app, 'i');
-    app.handle_input(InputEvent::Text("λ".to_owned())).unwrap();
-    key(&mut app, KeyCode::Escape, Modifiers::NONE);
-    assert_eq!(
-        cursor(&app).col,
-        0,
-        "Esc returns onto the inserted Unicode character"
-    );
-    assert_eq!(app.mode, Mode::Normal);
-
-    let mut counted_line_end = vim_app("a\nbcd\nef");
-    press(&mut counted_line_end, '2');
-    press(&mut counted_line_end, '$');
-    assert_eq!(cursor(&counted_line_end), Position::new(1, 2));
-
-    let mut counted_till = vim_app("a,b,c,d");
-    press(&mut counted_till, '2');
-    press(&mut counted_till, 't');
-    press(&mut counted_till, ',');
-    assert_eq!(cursor(&counted_till).col, 2);
-}
-
-#[test]
-fn vim_character_edits_visual_exit_and_insert_first_nonblank_are_exact() {
-    let mut replace = vim_app("abc");
-    press(&mut replace, 'r');
-    press(&mut replace, 'X');
-    assert_eq!(text(&replace), "Xbc");
-    set_cursor(&mut replace, 0, 2);
-    press(&mut replace, 'r');
-    press(&mut replace, 'Y');
-    assert_eq!(text(&replace), "XbY");
-
-    let mut counted_x = vim_app("abc");
-    press(&mut counted_x, '3');
-    press(&mut counted_x, 'x');
-    assert_eq!(text(&counted_x), "");
-
-    let mut line_end = vim_app("abc");
-    set_cursor(&mut line_end, 0, 2);
-    press(&mut line_end, 'd');
-    press(&mut line_end, '$');
-    assert_eq!(text(&line_end), "ab");
-
-    let mut visual = vim_app("abcd");
-    press(&mut visual, 'v');
-    press(&mut visual, 'l');
-    key(&mut visual, KeyCode::Escape, Modifiers::NONE);
-    assert_eq!(cursor(&visual).col, 1);
-
-    let mut first_nonblank = vim_app("   abc");
-    press(&mut first_nonblank, 'I');
-    assert_eq!(first_nonblank.mode, Mode::Insert);
-    assert_eq!(cursor(&first_nonblank).col, 3);
-}
-
-#[test]
-fn vim_shifted_uppercase_visual_lines_and_undo_redo_work_end_to_end() {
-    let mut file = vim_app("one\ntwo\nthree");
-    key(&mut file, KeyCode::Char('G'), Modifiers::SHIFT);
-    assert_eq!(cursor(&file).row, 2);
-    key(&mut file, KeyCode::Char('V'), Modifiers::SHIFT);
-    assert_eq!(file.mode, Mode::Select);
-    assert_eq!(
-        file.active().selection_semantics(),
-        SelectionSemantics::VimLinewise
-    );
-    press(&mut file, 'k');
-    press(&mut file, 'y');
-    assert_eq!(file.registers[&'"'].text, "two\nthree\n");
-    assert!(file.registers[&'"'].linewise);
-    assert_eq!(file.mode, Mode::Normal);
-
-    press(&mut file, 'i');
-    press(&mut file, 'X');
-    key(&mut file, KeyCode::Escape, Modifiers::NONE);
-    let edited = text(&file);
-    press(&mut file, 'u');
-    assert_ne!(text(&file), edited);
-    key(&mut file, KeyCode::Char('r'), Modifiers::CONTROL);
-    assert_eq!(text(&file), edited);
-
-    let mut config = Config::default();
-    config.editor.grammar = GrammarKind::Vim;
-    let mut empty = App::new(config, None).unwrap();
-    press(&mut empty, 'u');
-    assert_eq!(empty.status, "nothing to undo");
-    key(&mut empty, KeyCode::Char('r'), Modifiers::CONTROL);
-    assert_eq!(empty.status, "nothing to redo");
-}
-
-#[test]
-fn vim_visual_lines_edit_and_undo_an_explorer_as_buffer_rows() {
-    let directory = temporary("runyte-vim-visual-line-explorer");
-    fs::create_dir_all(&directory).unwrap();
-    fs::write(directory.join("alpha.txt"), "alpha").unwrap();
-    fs::write(directory.join("beta.txt"), "beta").unwrap();
-    let mut config = Config::default();
-    config.editor.grammar = GrammarKind::Vim;
-    let mut explorer = App::new(config, Some(directory.clone())).unwrap();
-    let before = text(&explorer);
-
-    key(&mut explorer, KeyCode::Char('V'), Modifiers::SHIFT);
-    press(&mut explorer, 'd');
-    assert_ne!(text(&explorer), before);
-    press(&mut explorer, 'u');
-    assert_eq!(text(&explorer), before);
-    key(&mut explorer, KeyCode::Char('r'), Modifiers::CONTROL);
-    assert_ne!(text(&explorer), before);
-
-    fs::remove_dir_all(directory).unwrap();
-}
-
-#[test]
-fn vim_added_word_find_search_jump_and_operator_motions_execute_in_files() {
-    let mut words = vim_app("one two three");
-    set_cursor(&mut words, 0, 10);
-    press(&mut words, 'g');
-    press(&mut words, 'e');
-    assert_eq!(cursor(&words).col, 6);
-
-    let mut last_nonblank = vim_app("abc   \nnext");
-    press(&mut last_nonblank, 'g');
-    press(&mut last_nonblank, '_');
-    assert_eq!(cursor(&last_nonblank).col, 2);
-
-    let mut find = vim_app("a:x:x");
-    press(&mut find, 'f');
-    press(&mut find, 'x');
-    assert_eq!(cursor(&find).col, 2);
-    press(&mut find, ';');
-    assert_eq!(cursor(&find).col, 4);
-    press(&mut find, ',');
-    assert_eq!(cursor(&find).col, 2);
-
-    let mut word_search = vim_app("alpha beta alpha");
-    press(&mut word_search, '*');
-    assert_eq!(cursor(&word_search).col, 11);
-    press(&mut word_search, '#');
-    assert_eq!(cursor(&word_search).col, 0);
-
-    let mut find_delete = vim_app("abc:def");
-    press(&mut find_delete, 'd');
-    press(&mut find_delete, 'f');
-    press(&mut find_delete, ':');
-    assert_eq!(text(&find_delete), "def");
-
-    let mut unavailable_bracket = vim_app("(abc) tail");
-    press(&mut unavailable_bracket, 'd');
-    press(&mut unavailable_bracket, '%');
-    assert_eq!(text(&unavailable_bracket), "(abc) tail");
-
-    let bracket_path = temporary("runyte-vim-bracket-motion.rs");
-    fs::write(&bracket_path, "fn main() { call(); }\n").unwrap();
-    let mut config = Config::default();
-    config.editor.grammar = GrammarKind::Vim;
-    let mut bracket_delete = App::new(config, Some(bracket_path.clone())).unwrap();
-    set_cursor(&mut bracket_delete, 0, 10);
-    press(&mut bracket_delete, 'd');
-    press(&mut bracket_delete, '%');
-    assert_eq!(text(&bracket_delete), "fn main() \n");
-    fs::remove_file(bracket_path).unwrap();
-
-    let mut to_end = vim_app("one\ntwo\nthree");
-    press(&mut to_end, 'd');
-    key(&mut to_end, KeyCode::Char('G'), Modifiers::SHIFT);
-    assert_eq!(text(&to_end), "");
-}
-
-#[test]
-fn vim_operator_counts_linewise_registers_change_and_cw_are_shared_edits() {
-    let mut multiplied = vim_app("one two three four five six seven");
-    for key_name in ['2', 'd', '3', 'w'] {
-        press(&mut multiplied, key_name);
-    }
-    let mut direct = vim_app("one two three four five six seven");
-    for key_name in ['d', '6', 'w'] {
-        press(&mut direct, key_name);
-    }
-    assert_eq!(text(&multiplied), text(&direct));
-
-    let mut lines = vim_app("one\ntwo\nthree\n");
-    press(&mut lines, 'y');
-    press(&mut lines, 'y');
-    assert_eq!(lines.registers[&'"'].text, "one\n");
-    assert!(lines.registers[&'"'].linewise);
-    press(&mut lines, 'p');
-    assert_eq!(text(&lines), "one\none\ntwo\nthree\n");
-
-    let mut delete_lines = vim_app("one\ntwo\nthree\n");
-    press(&mut delete_lines, 'd');
-    press(&mut delete_lines, 'j');
-    assert_eq!(text(&delete_lines), "three\n");
-
-    let mut change_line = vim_app("one\ntwo\n");
-    press(&mut change_line, 'c');
-    press(&mut change_line, 'c');
-    assert_eq!(text(&change_line), "\ntwo\n");
-    assert_eq!(change_line.mode, Mode::Insert);
-    press(&mut change_line, 'X');
-    assert_eq!(text(&change_line), "X\ntwo\n");
-
-    let mut change_word = vim_app("one two");
-    press(&mut change_word, 'c');
-    press(&mut change_word, 'w');
-    assert_eq!(text(&change_word), " two");
-    assert_eq!(change_word.mode, Mode::Insert);
-
-    let mut whitespace_cw = vim_app("one two");
-    set_cursor(&mut whitespace_cw, 0, 3);
-    press(&mut whitespace_cw, 'c');
-    press(&mut whitespace_cw, 'w');
-    assert_eq!(text(&whitespace_cw), "onetwo");
-}
-
-#[test]
-fn vim_visual_line_change_preserves_crlf_registers_and_undo_grouping() {
-    for (source, row, changed, register, inserted) in [
-        (
-            "one\r\ntwo\r\n",
-            0,
-            "\r\ntwo\r\n",
-            "one\r\n",
-            "X\r\ntwo\r\n",
-        ),
-        ("one\r\ntwo", 1, "one\r\n", "two\r\n", "one\r\nX"),
-    ] {
-        let mut app = vim_app(source);
-        set_cursor(&mut app, row, 0);
-
-        press(&mut app, 'V');
-        press(&mut app, 'c');
-
-        assert_eq!(text(&app), changed, "change row {row}");
-        assert_eq!(app.registers[&'"'].text, register, "register row {row}");
-        assert!(app.registers[&'"'].linewise);
-        assert_eq!(app.mode, Mode::Insert);
-
-        press(&mut app, 'X');
-        assert_eq!(text(&app), inserted, "insert row {row}");
-        key(&mut app, KeyCode::Escape, Modifiers::NONE);
-        press(&mut app, 'u');
-        assert_eq!(text(&app), source, "undo row {row}");
-    }
-}
-
-#[test]
-fn vim_visual_syntax_objects_are_half_open_and_failed_objects_are_atomic() {
-    let path = temporary("vim-syntax-objects.rs");
-    fs::write(&path, "fn café(x: i32) { x; }\n").unwrap();
-    let mut config = Config::default();
-    config.editor.grammar = GrammarKind::Vim;
-    let mut app = App::new(config, Some(path.clone())).unwrap();
-
-    press(&mut app, 'v');
-    press(&mut app, 'a');
-    press(&mut app, 'f');
-    assert_eq!(
-        app.active().selection_semantics(),
-        SelectionSemantics::HalfOpen
-    );
-    press(&mut app, 'y');
-    assert_eq!(app.registers[&'"'].text, "fn café(x: i32) { x; }");
-
-    let before = text(&app);
-    set_cursor(&mut app, 0, 0);
-    press(&mut app, 'd');
-    press(&mut app, 'i');
-    press(&mut app, 'p');
-    assert_eq!(
-        text(&app),
-        before,
-        "missing parameter object must not delete"
-    );
-    fs::remove_file(path).unwrap();
-}
-
 #[test]
 fn syntax_namespace_text_objects_end_on_the_last_included_character() {
     let path = temporary("inclusive-syntax-objects.rs");
     let source = "fn demo() { call(2 + 3); }\n";
     fs::write(&path, source).unwrap();
 
-    for grammar in [GrammarKind::Runyte, GrammarKind::Vim] {
+    for semantic in [false, true] {
         let mut config = Config::default();
-        config.editor.grammar = grammar;
+        config.editor.grammar = GrammarKind::Runyte;
         let mut app = App::new(config, Some(path.clone())).unwrap();
 
         for (part, command, expected, last) in [
@@ -523,14 +209,12 @@ fn syntax_namespace_text_objects_end_on_the_last_included_character() {
             app.active_mut()
                 .replace_selection(Selection::point(source.find('2').unwrap()));
             app.enter_normal_mode();
-            // The retained Vim interpreter spends `m` on its own meaning, so it
-            // reaches the object through the command rather than the keys.
-            if grammar == GrammarKind::Runyte {
+            if semantic {
+                app.execute_editor_command(command).unwrap();
+            } else {
                 for key in ['m', part, '('] {
                     press(&mut app, key);
                 }
-            } else {
-                app.execute_editor_command(command).unwrap();
             }
 
             assert_eq!(
@@ -544,46 +228,6 @@ fn syntax_namespace_text_objects_end_on_the_last_included_character() {
     }
 
     fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn vim_registers_are_deferred_validated_and_macros_stop_post_dispatch() {
-    let mut app = vim_app("abc");
-    press(&mut app, '"');
-    press(&mut app, 'a');
-    key(&mut app, KeyCode::Escape, Modifiers::NONE);
-    press(&mut app, 'x');
-    assert!(!app.registers.contains_key(&'a'));
-
-    press(&mut app, '"');
-    press(&mut app, '_');
-    press(&mut app, 'x');
-    assert_eq!(text(&app), "c");
-    press(&mut app, '"');
-    press(&mut app, '1');
-    assert!(app.status_error);
-
-    let mut invalid_operator = vim_app("abc");
-    press(&mut invalid_operator, '"');
-    press(&mut invalid_operator, 'a');
-    press(&mut invalid_operator, 'd');
-    press(&mut invalid_operator, 'z');
-    press(&mut invalid_operator, 'x');
-    assert!(!invalid_operator.registers.contains_key(&'a'));
-
-    let mut macros = vim_app("");
-    press(&mut macros, 'q');
-    press(&mut macros, 'a');
-    press(&mut macros, 'i');
-    press(&mut macros, 'x');
-    key(&mut macros, KeyCode::Escape, Modifiers::NONE);
-    press(&mut macros, 'q');
-    assert_eq!(macros.macros[&'a'].len(), 3, "stop q is not recorded");
-    press(&mut macros, '2');
-    press(&mut macros, '@');
-    press(&mut macros, 'a');
-    finish_macro_replay(&mut macros);
-    assert_eq!(text(&macros), "xxx");
 }
 
 pub(super) fn type_text(app: &mut App, text: &str) {
@@ -1408,8 +1052,6 @@ fn command_inventory_classifies_every_command_and_current_binding() {
     for command in EditorCommand::ALL {
         let exposure = if INTERNAL_EDITOR_COMMANDS.contains(command) {
             CommandExposure::Internal
-        } else if GRAMMAR_ONLY_EDITOR_COMMANDS.contains(command) {
-            CommandExposure::GrammarOnly
         } else if bindings.iter().any(|binding| {
             binding.target == BindingTarget::Editor(*command)
                 && matches!(binding.availability, BindingAvailability::Unsupported(_))
@@ -1457,13 +1099,6 @@ fn command_inventory_classifies_every_command_and_current_binding() {
     assert_eq!(
         exposures
             .iter()
-            .filter(|exposure| **exposure == CommandExposure::GrammarOnly)
-            .count(),
-        GRAMMAR_ONLY_EDITOR_COMMANDS.len()
-    );
-    assert_eq!(
-        exposures
-            .iter()
             .filter(|exposure| **exposure == CommandExposure::SharedColon)
             .count(),
         57
@@ -1480,10 +1115,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .iter()
             .filter(|exposure| **exposure == CommandExposure::Bound)
             .count(),
-        EditorCommand::ALL.len()
-            - INTERNAL_EDITOR_COMMANDS.len()
-            - GRAMMAR_ONLY_EDITOR_COMMANDS.len()
-            - 70
+        EditorCommand::ALL.len() - INTERNAL_EDITOR_COMMANDS.len() - 70
     );
 
     for spec in COMMANDS {

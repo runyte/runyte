@@ -61,11 +61,7 @@ impl<'a> SelectionRoles<'a> {
         replacing: bool,
         semantics: crate::jumplist::SelectionSemantics,
     ) -> Self {
-        let half_open = matches!(
-            semantics,
-            crate::jumplist::SelectionSemantics::HalfOpen
-                | crate::jumplist::SelectionSemantics::VimLinewise
-        );
+        let half_open = matches!(semantics, crate::jumplist::SelectionSemantics::HalfOpen);
         Self {
             ranges,
             primary,
@@ -2246,9 +2242,6 @@ fn prompt_prefix(kind: crate::app::PromptKind) -> String {
             "terminal search (case-sensitive): ".to_owned()
         }
         PromptKind::TerminalSearch(SearchMode::Regex) => "terminal search (regex): ".to_owned(),
-        // The Vim grammar keeps Vim's own one-character prompts.
-        PromptKind::SearchForward => "/".to_owned(),
-        PromptKind::SearchBackward => "?".to_owned(),
         PromptKind::GlobalSearch(SearchMode::Insensitive) => "workspace search: ".to_owned(),
         PromptKind::GlobalSearch(SearchMode::Sensitive) => {
             "workspace search (case-sensitive): ".to_owned()
@@ -2391,11 +2384,7 @@ mod tests {
             Selection::new(vec![Range::point(3), Range::point(8)], 0),
         ];
         for selection in &selections {
-            for semantics in [
-                SelectionSemantics::Runyte,
-                SelectionSemantics::HalfOpen,
-                SelectionSemantics::VimLinewise,
-            ] {
+            for semantics in [SelectionSemantics::Runyte, SelectionSemantics::HalfOpen] {
                 for select_mode in [false, true] {
                     for pristine in [false, true] {
                         for replacing in [false, true] {
@@ -4304,14 +4293,14 @@ mod tests {
     fn prompt_cursor_uses_display_cells_at_a_unicode_midpoint() {
         let mut app = App::new(Config::default(), None).unwrap();
         app.mode = Mode::Command;
-        app.prompt_kind = crate::app::PromptKind::SearchForward;
+        app.prompt_kind = crate::app::PromptKind::Search(crate::app::SearchMode::Regex);
         app.command = "界a".to_owned();
         app.command_cursor = 1;
 
         let snapshot = prepared_snapshot(&mut app, 40, 8);
 
-        assert_eq!(snapshot.status.interaction_line, "/界a");
-        assert_eq!(snapshot.status.prompt_cursor_column, Some(3));
+        assert_eq!(snapshot.status.interaction_line, "search (regex): 界a");
+        assert_eq!(snapshot.status.prompt_cursor_column, Some(18));
 
         app.prompt_kind = crate::app::PromptKind::Command;
         app.command = "e\u{301}".to_owned();

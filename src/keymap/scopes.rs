@@ -359,7 +359,6 @@ fn admit(scope: BindingScope, mode: Mode, name: &str) -> Option<BindingTarget> {
                 actions.retain(|_, target| match target {
                     BindingTarget::Editor(command) => {
                         !crate::command::INTERNAL_EDITOR_COMMANDS.contains(command)
-                            && !crate::command::GRAMMAR_ONLY_EDITOR_COMMANDS.contains(command)
                     }
                     _ => true,
                 });

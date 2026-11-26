@@ -928,46 +928,6 @@ longer line"
     );
 }
 
-#[test]
-fn a_pointer_drag_under_the_vim_grammar_covers_the_same_characters() {
-    let mut config = Config::default();
-    config.editor.line_numbers = false;
-    config.editor.grammar = GrammarKind::Vim;
-    let mut app = App::new(config, None).unwrap();
-    seed(&mut app, "Testtest rest");
-    let geometry = FrameGeometry {
-        screen: Rect {
-            width: 40,
-            height: 6,
-            ..Rect::default()
-        },
-        editor: Rect {
-            width: 40,
-            height: 4,
-            ..Rect::default()
-        },
-        status: Rect::default(),
-        message: Rect::default(),
-    };
-    let view = app.prepare_view(geometry);
-
-    // Vim writes the same span down with its leading end one past the last
-    // covered character, which is what its half-open semantics mean.
-    drag_across(&mut app, &view, 0, 7);
-    assert_eq!(app.active().selection.primary(), Range::new(0, 8));
-    assert_eq!(
-        app.active().selection_semantics(),
-        SelectionSemantics::HalfOpen
-    );
-    press(&mut app, 'y');
-    assert_eq!(app.registers[&'"'].text, "Testtest");
-
-    drag_across(&mut app, &view, 7, 0);
-    assert_eq!(app.active().selection.primary(), Range::new(8, 0));
-    press(&mut app, 'y');
-    assert_eq!(app.registers[&'"'].text, "Testtest");
-}
-
 #[cfg(unix)]
 #[test]
 fn a_reported_terminal_click_enters_input_before_forwarding() {
@@ -2634,8 +2594,6 @@ fn every_prompt_names_what_it_collects_and_no_two_name_the_same_thing() {
         PromptKind::TerminalSearch(SearchMode::Insensitive),
         PromptKind::TerminalSearch(SearchMode::Sensitive),
         PromptKind::TerminalSearch(SearchMode::Regex),
-        PromptKind::SearchForward,
-        PromptKind::SearchBackward,
         PromptKind::GlobalSearch(SearchMode::Insensitive),
         PromptKind::GlobalSearch(SearchMode::Sensitive),
         PromptKind::GlobalSearch(SearchMode::Regex),

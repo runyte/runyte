@@ -50,8 +50,6 @@ fn addresses_text(command: C) -> bool {
         command,
         C::Search
             | C::SearchRegex
-            | C::SearchForward
-            | C::SearchBackward
             | C::SearchNext
             | C::SearchPrevious
             | C::SearchSelection

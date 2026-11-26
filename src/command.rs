@@ -310,10 +310,6 @@ pub enum GrammarKind {
     #[default]
     #[serde(alias = "helix")]
     Runyte,
-    /// Retained so old programmatic callers receive an explicit removal
-    /// error. It is not accepted from configuration or command text.
-    #[serde(skip)]
-    Vim,
 }
 
 impl GrammarKind {
@@ -322,7 +318,6 @@ impl GrammarKind {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Runyte => "runyte",
-            Self::Vim => "vim",
         }
     }
 }
@@ -394,9 +389,6 @@ pub enum CommandExposure {
     Bound,
     SharedColon,
     UnsupportedBinding,
-    /// Reached only through one grammar's own parser, never through the shared
-    /// keymap.
-    GrammarOnly,
     /// No default key and no palette spelling; reached only through a binding
     /// the person configures under `keys`.
     ConfigurableOnly,
@@ -883,8 +875,6 @@ editor_commands! {
 
     Search => ("search", "Search for text, ignoring case"),
     SearchRegex => ("search-regex", "Search with a regular expression"),
-    SearchForward => ("search-forward", "Search forward"),
-    SearchBackward => ("search-backward", "Search backward"),
     SearchNext => ("search-next", "Select only the next search match"),
     SearchPrevious => ("search-previous", "Select only the previous search match"),
     SearchSelection => ("search-selection", "Select every match of the selection or word"),
@@ -1502,8 +1492,6 @@ impl EditorCommand {
             | Self::UnfoldAllSyntax => CommandCategory::Syntax,
             Self::Search
             | Self::SearchRegex
-            | Self::SearchForward
-            | Self::SearchBackward
             | Self::SearchNext
             | Self::SearchPrevious
             | Self::SearchSelection
@@ -1724,15 +1712,6 @@ pub const INTERNAL_EDITOR_COMMANDS: &[EditorCommand] = &[
     EditorCommand::RefreshDirectory,
     EditorCommand::StopMacroRecording,
 ];
-
-/// Commands one grammar reaches through its own parser rather than through the
-/// shared keymap.
-///
-/// The Vim grammar keeps `/` and `?` as directional single-match searches, so
-/// both identities stay alive even though the Runyte grammar spends those keys
-/// on the regular-expression search and on nothing at all.
-pub const GRAMMAR_ONLY_EDITOR_COMMANDS: &[EditorCommand] =
-    &[EditorCommand::SearchForward, EditorCommand::SearchBackward];
 
 /// One identity shared by every currently inventoried command surface.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

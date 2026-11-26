@@ -172,7 +172,7 @@ impl App {
             .map(|range| {
                 let (from, to) = if matches!(
                     pane.selection_semantics(),
-                    super::SelectionSemantics::HalfOpen | super::SelectionSemantics::VimLinewise
+                    super::SelectionSemantics::HalfOpen
                 ) {
                     (range.from(), range.to())
                 } else {

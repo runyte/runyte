@@ -10,6 +10,12 @@ custom assignments do not change the default-key compatibility rows below.
 could assign, so those rows describe nothing until `bind` assigns them again.
 `:help key-actions` is generated from the configurable action inventory.
 
+The retired Vim interpreter and its directional `search-forward` and
+`search-backward` actions have been removed ([#132](https://github.com/runyte/runyte/issues/132),
+stage 0). `editor.grammar` and `:grammar` still accept only `runyte` and its
+`helix` alias; `vim` is rejected. Default keys and Runyte search behavior are
+unchanged. Half-open selections used by syntax operations and the mouse remain.
+
 Target: [Helix master keymap](https://docs.helix-editor.com/master/keymap.html),
 verified 2026-07-27.
 
