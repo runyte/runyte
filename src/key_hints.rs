@@ -54,7 +54,7 @@ impl KeyHintRow {
             alias: binding.alias.clone(),
             alias_modes: binding.alias_modes,
             target: binding.actions.is_empty().then_some(binding.target),
-            description: binding.description.clone(),
+            description: binding.discovery_description(),
             availability: binding.availability,
             capability: binding.action_capability(),
             unavailable_reason: None,
@@ -987,7 +987,7 @@ mod tests {
                 CommandId::Editor(_) | CommandId::Plugin(_) => None,
             }))
             .collect::<Vec<_>>();
-        assert_eq!(targets.len(), 441, "the command inventory changed");
+        assert_eq!(targets.len(), 444, "the command inventory changed");
         for target in targets {
             let mut row = KeyHintRow {
                 sequence: KeySequence::default(),
@@ -1396,6 +1396,7 @@ mod tests {
         const NORMAL: &[Mode] = &[Mode::Normal];
         let unavailable = Binding {
             actions: Vec::new(),
+            source_paths: Vec::new(),
             modes: NORMAL,
             scope: BindingScope::Global,
             sequence: [Key::char('x'), Key::char('y')].into(),

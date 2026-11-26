@@ -699,6 +699,11 @@ pub(super) fn apply(
                     rule.sequence.clone(),
                     first.target(),
                 );
+                binding.source_paths = vec![vec![
+                    "bind".into(),
+                    mode_name(rule.mode).into(),
+                    rule.source.clone(),
+                ]];
                 binding.actions = rule.actions.clone();
                 binding.description = rule.description.clone().into();
                 candidate.bindings.push(binding);
@@ -826,30 +831,44 @@ fn sequence_for(source: &str, keymap: &Keymap) -> Option<KeySequence> {
 pub fn reference() -> String {
     use std::fmt::Write;
     let mut out = String::from(
-        "# Bindable actions\n\nUse these names in `keys.bind`. Modes are independent. Actions marked `last`\nmust end a sequence; `continue` actions may precede another action. Counts\non multi-action bindings are rejected. Plugin bindings use `plugins[].bindings`.\n\n| Action | Modes | Sequence position | Description |\n| --- | --- | --- | --- |\n",
+        "# Bindable actions\n\nUse these names in `keys.bind`. Modes are independent. Sequence position says whether\nan action may be followed by another action. Counts on multi-action bindings\nare rejected. Plugin bindings use `plugins[].bindings`.\n",
     );
-    for &command in EditorCommand::ALL {
-        let modes = editor_modes(command);
-        if modes.is_empty() {
+    for &category in command::CommandCategory::ALL {
+        let commands = EditorCommand::ALL
+            .iter()
+            .copied()
+            .filter(|c| c.descriptor().category == category && !editor_modes(*c).is_empty())
+            .collect::<Vec<_>>();
+        if commands.is_empty() {
             continue;
         }
-        let metadata = command.metadata();
         let _ = writeln!(
             out,
-            "| `{}` | {} | {} | {} |",
-            metadata.name,
-            modes
-                .into_iter()
-                .map(mode_name)
-                .collect::<Vec<_>>()
-                .join(", "),
-            if can_continue(BindingTarget::Editor(command)) {
-                "continue"
-            } else {
-                "last"
-            },
-            metadata.description
+            "\n## {} actions\n\n| Action | Modes | Sequence position | Description |\n| --- | --- | --- | --- |",
+            category.label()
         );
+        for command in commands {
+            let modes = editor_modes(command);
+            if modes.is_empty() {
+                continue;
+            }
+            let descriptor = command.descriptor();
+            let metadata = descriptor.metadata;
+            let _ = writeln!(
+                out,
+                "| `{}` | {} | {} | {} |",
+                metadata.name,
+                modes
+                    .into_iter()
+                    .map(mode_name)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                crate::command::discovery::display::position(
+                    descriptor.policy.legacy_sequence_position
+                ),
+                metadata.description
+            );
+        }
     }
     out.push_str("\n## Colon commands\n\nThese accept the same arguments as the command palette, supplied separately\nas `{ command: name, argument: text }`. They are available in Normal and\nSelect modes and must end a sequence. Required arguments must be supplied.\n\n| Command | Usage | Description |\n| --- | --- | --- |\n");
     for spec in command::COMMANDS {
@@ -862,6 +881,7 @@ pub fn reference() -> String {
         }
     }
     out.push_str(&super::scopes::reference());
+    out.push_str(&crate::command::discovery::descriptor_reference());
     out
 }
 

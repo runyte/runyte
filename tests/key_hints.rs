@@ -809,6 +809,7 @@ fn unavailable_action_is_dimmed_and_labeled() {
     let keymap = std::sync::Arc::new(
         Keymap::new(vec![Binding {
             actions: Vec::new(),
+            source_paths: Vec::new(),
             modes: NORMAL,
             scope: BindingScope::Global,
             sequence: [Key::char(' '), Key::char('x')].into(),

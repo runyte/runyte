@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 pub mod descriptor;
+pub mod discovery;
 
 use std::{fmt, path::PathBuf};
 
@@ -279,6 +280,9 @@ pub enum ColonCommand {
     Notifications,
     Open,
     Path,
+    DescribeKey,
+    ActionBrowser,
+    CopyBinding,
     Detach,
     Quit,
     ForceQuit,
@@ -363,6 +367,25 @@ pub enum CommandCategory {
 }
 
 impl CommandCategory {
+    pub const ALL: &'static [Self] = &[
+        Self::Application,
+        Self::Editing,
+        Self::Movement,
+        Self::Selection,
+        Self::Syntax,
+        Self::Search,
+        Self::View,
+        Self::File,
+        Self::Git,
+        Self::Window,
+        Self::Language,
+        Self::Clipboard,
+        Self::Register,
+        Self::Configuration,
+        Self::Terminal,
+        Self::Help,
+    ];
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::Application => "Application",
@@ -452,6 +475,9 @@ impl ColonCommand {
         Self::Notifications,
         Self::Open,
         Self::Path,
+        Self::DescribeKey,
+        Self::ActionBrowser,
+        Self::CopyBinding,
         Self::Detach,
         Self::Quit,
         Self::ForceQuit,
@@ -494,7 +520,10 @@ impl ColonCommand {
             | Self::DiffRemote
             | Self::DiffOff
             | Self::Notifications
-            | Self::Path => CommandCategory::View,
+            | Self::Path
+            | Self::DescribeKey
+            | Self::ActionBrowser
+            | Self::CopyBinding => CommandCategory::View,
             Self::Format | Self::LspTrust | Self::LspRestart | Self::LspStatus => {
                 CommandCategory::Language
             }
@@ -1871,6 +1900,30 @@ use CommandId::{Colon as ColonId, Editor as EditorId};
 use EditorCommand as Editor;
 
 pub const COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        id: ColonId(Colon::DescribeKey),
+        name: discovery::DESCRIBE_KEY,
+        aliases: &[],
+        usage: discovery::DESCRIBE_KEY,
+        description: "Inspect a key without executing it",
+        arguments: NoArguments,
+    },
+    CommandSpec {
+        id: ColonId(Colon::ActionBrowser),
+        name: discovery::ACTION_BROWSER,
+        aliases: &[],
+        usage: discovery::ACTION_BROWSER,
+        description: "Browse action descriptors and default keys",
+        arguments: NoArguments,
+    },
+    CommandSpec {
+        id: ColonId(Colon::CopyBinding),
+        name: discovery::COPY_BINDING,
+        aliases: &[],
+        usage: discovery::COPY_BINDING,
+        description: "Copy the last inspected binding as YAML",
+        arguments: NoArguments,
+    },
     editor_spec!(
         Editor::OpenNavigator,
         "navigator",
@@ -3297,6 +3350,9 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             | Colon::AgentChannel
             | Colon::Notifications
             | Colon::Path
+            | Colon::DescribeKey
+            | Colon::ActionBrowser
+            | Colon::CopyBinding
             | Colon::ServiceHealth
             | Colon::PipeCancel
             | Colon::Plugins
@@ -3730,6 +3786,9 @@ fn invocation_from_parts(
                 | ColonCommand::AgentChannel
                 | ColonCommand::Notifications
                 | ColonCommand::Path
+                | ColonCommand::DescribeKey
+                | ColonCommand::ActionBrowser
+                | ColonCommand::CopyBinding
                 | ColonCommand::ServiceHealth
                 | ColonCommand::PipeCancel
                 | ColonCommand::Plugins

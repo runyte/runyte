@@ -455,7 +455,7 @@ preview focus does not depend on the source editor's selection or link bindings.
 | Directory `x y` / `x d`, then `p` | Helix selection, yank/delete, paste | existing modal commands | Implemented | The register retains file identities across explorer navigation and panes, so `:w` reviews a copy or move rather than creating an empty file. No Oil-specific binding is added. |
 | Directory `Ctrl-w v/s`, `Space w v/s` | split-open entry | `split-vertical` / `split-horizontal` | Changed | The directory scope no longer shadows the split sequences. Splitting an explorer shows the same listing in both panes, exactly as splitting a file shows the same text, and it no longer depends on a row having an entry on it. The new pane still takes an explorer of its own as soon as it navigates, which is what keeps a copy across two explorers possible. |
 | `Space v` | a different Helix action | — | Removed | Vertical split remains under `Space w v` and compatibility `Ctrl-w v`. |
-| `Space h` | a different Helix action | — | Removed | Documentation remains under `Space l h`; horizontal split remains under `Space w s` and compatibility `Ctrl-w s`. |
+| `Space h` | a different Helix action | Help prefix | Deviation | `Space h k` describes a key without executing it; `Space h a` browses actions. Documentation remains under `Space l h`; horizontal split remains under `Space w s` and compatibility `Ctrl-w s`. |
 | `Space q`, `Ctrl-q` | not Helix defaults | — | Changed | V0 quit shortcuts removed in every mode, including prompts. Leaving the editor is a typed decision: `:q[!]` closes the active pane and a buffer displayed only there, and leaves only from the last pane, while `:qa[!]` always requests an editor exit. In mux mode that exit stops the session; `:detach` is the distinct leave-it-running operation and preserves every pane, buffer, edit, and terminal without a force form. Ordinary quit spellings, including `:qa!`, refuse while terminal children run. `:quit-all!!` (`:qa!!`) explicitly discards unsaved buffers and terminates the current workspace’s terminals before quitting or stopping its persistent session; other protected host work still blocks it. |
 | `Space ?` | command palette | `show-help` | Deviation | Retains Runyte's contextual view help; `:` opens its command palette. The palette spelling `:? [topic]` is an alias of `:help [topic]` and opens the separate general manual. |
 | `Space w` save | not a Helix default | — | Changed | V0 shortcut removed because `Space w` is now window mode. Use `Ctrl-s`, `:write`, or `:save`. `:save` and `:save!` are Runyte aliases of `:write` and `:write!` with no Helix counterpart, for people who reach for the verb rather than Vim's spelling; `:w` and `:w!` are unchanged. |
@@ -926,3 +926,9 @@ Once any input has been submitted to a terminal, live close requires confirmatio
 for the remainder of its lifetime: queued prompt reports cannot prove freshness.
 Immediate idle close is limited to newly started, untouched shells with the
 Linux evidence described above. Exited terminals still remove immediately.
+
+The 2026-11-26 discovery decision adds `describe-key` on `Space h k` and
+`browse-actions` on `Space h a`, grouped under the Help prefix `Space h`.
+`Space ?` remains contextual `show-help`; `copy-key-binding` copies an inspected
+binding. `:keymap-export` has no default key and is deferred to stage 4 of #132,
+when it can export the merged binding table.

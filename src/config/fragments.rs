@@ -59,6 +59,7 @@ impl Config {
             let source = source.cloned().map(Ok).unwrap_or_else(|| read(&file))?;
             self.merge_keys_source(&source)
                 .with_context(|| format!("invalid YAML in {}", file.display()))?;
+            self.key_sources.merge(&source, &file, false);
         }
         Ok(())
     }

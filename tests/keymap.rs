@@ -1002,8 +1002,13 @@ fn ctrl_w_arrow_suffixes_stay_unbound_in_every_mode_and_terminal_insert() {
 
 #[test]
 fn removed_duplicate_bindings_stay_unbound() {
+    // Space h is now the Help prefix, rather than a removed split alias.
+    assert!(matches!(
+        default_keymap().lookup(Mode::Normal, &sequence(" h")),
+        Lookup::Prefix(_)
+    ));
     for keys in [
-        " :", " Fe", " FE", " Ff", " Fb", " F/", " Fs", " Fr", " h", " S", " a", " y", " P", " wq",
+        " :", " Fe", " FE", " Ff", " Fb", " F/", " Fs", " Fr", " S", " a", " y", " P", " wq",
         // `?` was the backward search prompt. Search no longer has a direction
         // to choose at the prompt, and `Space ?` still opens help.
         "?", // Removing a selection is `Space s r`, so the key matches the word.

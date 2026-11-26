@@ -221,12 +221,15 @@ fn compile(section: &Value, base: &Keymap, defer_policy: bool) -> Result<Keymap,
                     .or_default()
                     .insert(sequence.clone(), target.is_some());
                 if let Some(target) = target {
-                    assignments.push(Binding::implemented_in(
-                        actions::mode_slice(mode),
-                        scope,
-                        sequence,
-                        target,
-                    ));
+                    let mut binding =
+                        Binding::implemented_in(actions::mode_slice(mode), scope, sequence, target);
+                    binding.source_paths = vec![vec![
+                        "scopes".into(),
+                        scope.name().into(),
+                        actions::mode_name(mode).into(),
+                        source.into(),
+                    ]];
+                    assignments.push(binding);
                 }
             }
         }
@@ -306,7 +309,7 @@ fn compile(section: &Value, base: &Keymap, defer_policy: bool) -> Result<Keymap,
 
 /// Admit only actions already supported by this owner and mode. A scoped
 /// spelling must not grant a surface another owner's internal transitions.
-fn admit(scope: BindingScope, mode: Mode, name: &str) -> Option<BindingTarget> {
+pub(crate) fn admit(scope: BindingScope, mode: Mode, name: &str) -> Option<BindingTarget> {
     use std::{collections::HashMap, sync::LazyLock};
     type Inventory = HashMap<(BindingScope, Mode), HashMap<&'static str, BindingTarget>>;
     static INVENTORY: LazyLock<Inventory> = LazyLock::new(|| {

@@ -1673,7 +1673,8 @@ impl App {
     /// The terminal event loop uses the same boundary as `handle_key` so a key
     /// that closes an overlay cannot also produce a normal-mode key hint.
     pub fn has_input_overlay(&self) -> bool {
-        self.pane_resize.is_some()
+        self.describe_key.is_some()
+            || self.pane_resize.is_some()
             || self.plugins.input.is_some()
             || self.has_native_input_overlay()
     }

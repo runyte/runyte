@@ -95,6 +95,11 @@ Recorded 2026-11-26.
 5. **The input layer becomes a small fixed engine, and grammar behaviour moves
    into presets** written in the binding format.
 6. **The Vim-style preset is an acceptance test,** not a shipped feature.
+7. **Discovery names and keys (2026-11-26).** `describe-key` uses `Space h k`;
+   `browse-actions` uses `Space h a`. `Space h` is the Help prefix and
+   `Space ?` remains `show-help`. `copy-key-binding` is the companion copy
+   command. `keymap-export` has no default key and lands in stage 4 with the
+   merged binding table, rather than exporting the superseded 0.4 shapes.
 
 ## Model
 
@@ -321,8 +326,8 @@ features outside bindings (marks, ex ranges, `:normal`).
 - **Key hints** show a binding's description, or its step names when it has
   none.
 
-Command names and default keys for describe key and the action browser are
-decided in stage 2 against `context/reference/helix-keymap-v1.md`.
+Discovery names and default keys follow decision 7 and are recorded in
+`context/reference/helix-keymap-v1.md`. Whole-keymap export lands in stage 4.
 
 ## Initial classification of existing actions
 
@@ -382,7 +387,8 @@ where input or help can reach the native frontend.
 4. **One binding table.** Merge `keys.bind` and `keys.scopes` into
    `keys.bind.<view>.<mode>`. Move terminal and directory interceptions into
    descriptors and `terminal` and `directory` bindings. Add per-mode fallback.
-   Report the old configuration shapes.
+   Report the old configuration shapes. Add `:keymap-export` (no default key)
+   to export this merged table as YAML.
 5. **Arguments and conditionals.** Arguments that replace operands and
    prompts, `insert-text`, and conditional steps with the documented
    condition set.
@@ -424,8 +430,6 @@ where input or help can reach the native frontend.
 5. Should plugin commands be allowed as the last step of a program?
 6. Which conditions belong in the first condition set, and which are
    view-specific?
-7. Command names and default keys for describe key, the action browser and
-   export.
 
 ## Documents to update
 

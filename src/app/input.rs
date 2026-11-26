@@ -925,6 +925,10 @@ impl App {
     }
 
     fn handle_input_inner(&mut self, input: InputEvent, replaying: bool) -> Result<()> {
+        if self.describe_key.is_some() {
+            self.capture_described_input(input);
+            return Ok(());
+        }
         self.with_selection_action(|app| app.handle_input_action(input, replaying))
     }
 
@@ -3694,7 +3698,14 @@ impl App {
                 self.command.clear();
                 self.command_cursor = 0;
                 self.command_selection = 0;
-                self.mode = Mode::Normal;
+                self.mode = if matches!(
+                    invocation.id(),
+                    CommandId::Colon(ColonCommand::DescribeKey | ColonCommand::ActionBrowser)
+                ) {
+                    self.prompt_origin_mode
+                } else {
+                    Mode::Normal
+                };
                 let outcome = self.execute(invocation)?;
                 self.report_completed_action(&format!(":{name}"), &description, outcome);
                 if let Some(mode) = self.grammar.preferred_mode()
@@ -6259,6 +6270,18 @@ impl App {
             }
             (Colon::Notifications, InvocationParameters::None) => {
                 self.open_notifications_buffer();
+                Ok(())
+            }
+            (Colon::DescribeKey, InvocationParameters::None) => {
+                self.start_describe_key();
+                Ok(())
+            }
+            (Colon::ActionBrowser, InvocationParameters::None) => {
+                self.open_action_browser();
+                Ok(())
+            }
+            (Colon::CopyBinding, InvocationParameters::None) => {
+                self.copy_described_binding();
                 Ok(())
             }
             (Colon::Path, InvocationParameters::None) => {

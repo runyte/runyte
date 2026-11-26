@@ -23,6 +23,7 @@ pub mod native_window;
 pub mod pointer;
 pub mod pointer_actions;
 mod scopes;
+pub(crate) use scopes::admit as admits_scoped_action;
 pub mod terminal_input;
 pub mod ui;
 pub mod validate;
@@ -147,17 +148,10 @@ impl BindingTarget {
     }
 
     pub fn description(self) -> &'static str {
-        match self {
-            Self::Plugin(_) => "Run plugin command",
-            Self::Editor(command) => command.metadata().description,
-            Self::Colon(command) => {
-                COMMANDS
-                    .iter()
-                    .find(|spec| spec.id == CommandId::Colon(command))
-                    .expect("every bindable colon identity belongs to the command inventory")
-                    .description
-            }
-        }
+        self.id()
+            .descriptor()
+            .map(|d| d.metadata.description)
+            .unwrap_or("Run plugin command")
     }
 
     pub fn name(self) -> &'static str {
@@ -361,6 +355,8 @@ pub struct Binding {
     pub target: BindingTarget,
     /// Configured semantic actions; empty for ordinary built-in bindings.
     pub actions: Vec<actions::Action>,
+    /// Accepted configuration paths, relative to keys; empty for built-ins.
+    pub source_paths: Vec<Vec<String>>,
     pub description: std::borrow::Cow<'static, str>,
     pub availability: BindingAvailability,
     pub role: BindingRole,
@@ -375,6 +371,22 @@ pub struct Binding {
 }
 
 impl Binding {
+    /// Preserve authored labels; unnamed programs expose their ordered steps.
+    pub fn discovery_description(&self) -> std::borrow::Cow<'static, str> {
+        if !self.description.is_empty() {
+            self.description.clone()
+        } else if self.actions.is_empty() {
+            self.target.description().into()
+        } else {
+            self.actions
+                .iter()
+                .map(|a| a.target().name())
+                .collect::<Vec<_>>()
+                .join(" → ")
+                .into()
+        }
+    }
+
     /// Capability needed by a configured action or the ordinary target.
     pub fn action_capability(&self) -> Option<CommandCapability> {
         self.actions
@@ -409,6 +421,7 @@ impl Binding {
             sequence: sequence.into(),
             target,
             actions: Vec::new(),
+            source_paths: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Implemented,
             role: BindingRole::Primary,
@@ -430,6 +443,7 @@ impl Binding {
             sequence: sequence.into(),
             target,
             actions: Vec::new(),
+            source_paths: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Implemented,
             role: BindingRole::Primary,
@@ -486,6 +500,7 @@ impl Binding {
             sequence: sequence.into(),
             target,
             actions: Vec::new(),
+            source_paths: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Planned(reason),
             role: BindingRole::Primary,
@@ -507,6 +522,7 @@ impl Binding {
             sequence: sequence.into(),
             target,
             actions: Vec::new(),
+            source_paths: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Unsupported(reason),
             role: BindingRole::Primary,
@@ -1654,6 +1670,16 @@ fn built_in_bindings() -> Vec<Binding> {
             Command::NextRunningSession,
         ),
         modal([Key::char(' '), Key::char('?')], Command::ShowHelp),
+        Binding::implemented(
+            MODAL,
+            [Key::char(' '), Key::char('h'), Key::char('k')],
+            ColonCommand::DescribeKey,
+        ),
+        Binding::implemented(
+            MODAL,
+            [Key::char(' '), Key::char('h'), Key::char('a')],
+            ColonCommand::ActionBrowser,
+        ),
         // Buffers. `Space b b` repeats the namespace letter the way `Space m m`
         // does: the most-reached-for thing in a group is spelled with the group
         // itself rather than with a second letter to remember.
@@ -2940,6 +2966,7 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             .with_capability(CommandCapability::GitProject),
         BindingNamespace::global(MODAL, [Key::char(' '), Key::char('l')], "Language (LSP)")
             .with_capability(CommandCapability::LspDocument),
+        BindingNamespace::global(MODAL, [Key::char(' '), Key::char('h')], "Help"),
         BindingNamespace::global(MODAL, [Key::char(' '), Key::char('m')], "Macros"),
         BindingNamespace::global(MODAL, [Key::char(' '), Key::char('o')], "Configuration"),
         BindingNamespace::global(
@@ -4202,17 +4229,16 @@ mod tests {
     }
 
     #[test]
-    fn removed_short_space_actions_stay_unbound_and_splits_keep_their_namespaces() {
+    fn help_prefix_and_removed_short_split_keep_their_namespaces() {
         let keymap = default_keymap();
-        for suffix in ['h', 'v'] {
-            assert!(matches!(
-                keymap.lookup(
-                    Mode::Normal,
-                    &KeySequence::from([Key::char(' '), Key::char(suffix)])
-                ),
-                Lookup::NoMatch
-            ));
-        }
+        assert!(matches!(
+            keymap.lookup(Mode::Normal, &KeySequence::parse("Space v").unwrap()),
+            Lookup::NoMatch
+        ));
+        assert!(matches!(
+            keymap.lookup(Mode::Normal, &KeySequence::parse("Space h").unwrap()),
+            Lookup::Prefix(_)
+        ));
         for (sequence, command) in [
             (
                 KeySequence::from([Key::char(' '), Key::char('w'), Key::char('v')]),

@@ -282,6 +282,7 @@ mod external_opening;
 mod file_workflows;
 mod list_close;
 pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
+mod action_discovery;
 pub(crate) mod context_access;
 mod git_comparison;
 mod git_fetch;
@@ -3312,6 +3313,9 @@ pub struct App {
     pub(crate) pipe: pipe::State,
     pub(crate) plugins: plugin_workflows::Plugins,
     keymap: Arc<Keymap>,
+    describe_key: Option<action_discovery::Capture>,
+    described_binding: Option<String>,
+    discovery_buffer: Option<usize>,
     /// Precompiled variants indexed by `editor.fast_pane_keys` when the
     /// optional key-remapping section exists.
     configured_keymaps: Option<[Arc<Keymap>; 2]>,
@@ -4048,6 +4052,9 @@ impl App {
             pipe: Default::default(),
             plugins: Default::default(),
             configured_keymaps,
+            describe_key: None,
+            described_binding: None,
+            discovery_buffer: None,
             grammar,
             directory_views: HashMap::new(),
             search: SearchQuery::default(),
@@ -4182,6 +4189,7 @@ fn outcome_clause(outcome: &str, message: &str) -> String {
 /// What a picker row stands for.
 #[derive(Clone, Debug)]
 enum ListAction {
+    ActionDetails(String),
     PluginEntry(usize),
     PluginLifecycle(crate::plugin::manager::Intent),
     PluginManagerBack,
