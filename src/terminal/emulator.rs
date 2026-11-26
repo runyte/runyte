@@ -71,6 +71,7 @@ pub struct Emulator {
     /// Most recent bounded OSC 7 payload. Validation against the local host
     /// and filesystem belongs to the owning session, not the emulator.
     directory_report: Option<Vec<u8>>,
+    pub(super) prompt_ready: bool,
     bell: bool,
     /// Bytes owed to the child in answer to a query it sent.
     replies: Vec<u8>,
@@ -94,6 +95,7 @@ impl Emulator {
             tab_stops: default_tab_stops(columns),
             title: None,
             directory_report: None,
+            prompt_ready: false,
             bell: false,
             replies: Vec::new(),
             default_colors: DefaultColors::default(),
@@ -334,6 +336,7 @@ impl Emulator {
     }
 
     fn reset(&mut self) {
+        self.prompt_ready = false;
         let columns = self.grid().columns();
         let rows = self.grid().rows();
         let primary_generation = self.allocate_grid_generation();
@@ -632,6 +635,9 @@ impl Emulator {
             b"0" | b"1" | b"2" => {
                 let title = parameters.get(1).map(|value| sanitize(value));
                 self.title = title.filter(|title| !title.is_empty());
+            }
+            b"133" => {
+                self.prompt_ready = matches!(parameters, [_, marker] if marker == b"B");
             }
             b"7" => {
                 self.directory_report = parameters

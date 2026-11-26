@@ -227,7 +227,8 @@ use crate::workspace::{
 // Version 95 carries keyboard pane-layout previews.
 // Version 97 carries compact pane chrome and separator ownership.
 // Version 98 carries experimental focus fading settings.
-pub const VERSION: u32 = 98;
+// Version 99 carries the optional inactive-pane focus palette.
+pub const VERSION: u32 = 99;
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const MAX_PATHS: usize = 32;
 pub const MAX_PATH_BYTES: usize = 32 * 1024;
@@ -737,8 +738,6 @@ pub enum PromptKind {
     Command,
     Search(SearchMode),
     TerminalSearch(SearchMode),
-    SearchForward,
-    SearchBackward,
     GlobalSearch(SearchMode),
     FilterSelections { keep: bool },
     Rename,
@@ -770,13 +769,14 @@ impl From<CorePromptKind> for PromptKind {
             CorePromptKind::Command => Self::Command,
             CorePromptKind::Search(mode) => Self::Search(mode.into()),
             CorePromptKind::TerminalSearch(mode) => Self::TerminalSearch(mode.into()),
-            CorePromptKind::SearchForward => Self::SearchForward,
-            CorePromptKind::SearchBackward => Self::SearchBackward,
             CorePromptKind::GlobalSearch(mode) => Self::GlobalSearch(mode.into()),
             CorePromptKind::FilterSelections { keep } => Self::FilterSelections { keep },
             CorePromptKind::Rename => Self::Rename,
             CorePromptKind::SessionRename => Self::SessionRename,
             CorePromptKind::SessionNumber => Self::SessionNumber,
+            CorePromptKind::SaveClosePath { .. } => {
+                Self::SettingValue("save and close — path".into())
+            }
             CorePromptKind::TerminalRename => Self::TerminalRename,
             CorePromptKind::ExternalProgram => Self::ExternalProgram,
             CorePromptKind::NewBranch => Self::NewBranch,
@@ -1639,7 +1639,7 @@ mod tests {
 
     #[test]
     fn protocol_version_and_request_bounds_are_explicit() {
-        assert_eq!(VERSION, 98);
+        assert_eq!(VERSION, 99);
         let oversized_command = ClientRequest::Invoke {
             command: CommandRequest {
                 name: "open".to_owned(),

@@ -352,10 +352,13 @@ fn admit(scope: BindingScope, mode: Mode, name: &str) -> Option<BindingTarget> {
                         }
                     }
                 }
+                if mode == Mode::List {
+                    let command = crate::command::EditorCommand::ListClearFilter;
+                    actions.insert(command.metadata().name, BindingTarget::Editor(command));
+                }
                 actions.retain(|_, target| match target {
                     BindingTarget::Editor(command) => {
                         !crate::command::INTERNAL_EDITOR_COMMANDS.contains(command)
-                            && !crate::command::GRAMMAR_ONLY_EDITOR_COMMANDS.contains(command)
                     }
                     _ => true,
                 });
@@ -393,7 +396,10 @@ pub(super) fn reference() -> String {
             let targets = defaults
                 .bindings_for_scope(mode, scope)
                 .map(|binding| binding.target)
-                .chain(defaults.context_actions(scope).map(|action| action.target));
+                .chain(defaults.context_actions(scope).map(|action| action.target))
+                .chain((mode == Mode::List).then_some(BindingTarget::Editor(
+                    crate::command::EditorCommand::ListClearFilter,
+                )));
             for target in targets {
                 if admit(scope, mode, target.name()).is_none() {
                     continue;

@@ -8,6 +8,15 @@ window experiment only on `exp`. The public plugin contract is unchanged;
 window and terminal attachments share the private bundled-client protocol and
 require the same Runyte client/host version, regardless of edition.
 
+## macOS acceptance — 2026-11-26
+
+The maintainer confirmed that everything works on macOS as expected and
+accepted the remaining manual gate in the
+[editions plan](../plans/completed/PLAN_EDITIONS_AND_EXTENSIONS.md).
+This records overall hands-on acceptance; no specific release version,
+hardware matrix or individual checklist results were supplied. No new
+automated tests were run for this documentation update.
+
 ## Ownership
 
 GPUI owns the main thread, window, font rendering, image textures, media

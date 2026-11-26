@@ -431,3 +431,18 @@ terminal dispatch retains bracketed-paste handling. Ctrl-Shift-c copies a
 terminal review selection through the registry, while Ctrl-c remains child
 input. Terminal Insert's copy exception and its help read the effective
 Terminal binding, including configured replacements.
+
+## Close-time shell prompt observation
+
+OSC 133 B records cooperative prompt readiness; A/C/D, other 133 markers, reset
+and input invalidate it. This affects only an explicit terminal Close request.
+On Linux a bounded `/proc/<pid>/task/<pid>/children` read (4097 bytes maximum),
+current shell executable name, foreground group and pending input queue check
+allow immediate idle close. Missing evidence and unsupported platforms require
+confirmation. No polling, subprocess, output-silence heuristic or shell startup
+modification is introduced. Reports are cooperative, not an authorization boundary.
+
+Once any input has been submitted to a terminal, live close requires confirmation
+for the remainder of its lifetime: queued prompt reports cannot prove freshness.
+Immediate idle close is limited to newly started, untouched shells with the
+Linux evidence described above. Exited terminals still remove immediately.

@@ -2,6 +2,14 @@
 
 ## Status
 
+Completed on 2026-11-26. The maintainer confirmed that everything works on
+macOS as expected and accepted the remaining manual macOS gate. Phases 1–7
+were already implemented and accepted; signing, notarization and publication
+are automated in the release workflow. This closes the plan. The confirmation
+is maintainer acceptance, not a new automated test run or a separately recorded
+result for every historical checklist item. Earlier progress notes below are
+retained as historical evidence.
+
 Approved for implementation on 2026-10-10. Recorded on `exp` at `9b83729`, and
 revised the same day after an independent review against the repository.
 Phases 1–6 are implementation work. Phase 7 merges `exp` into `dev` and
@@ -10,10 +18,10 @@ notarized macOS disk image; it is manual and needs the maintainer's Apple
 Developer credentials.
 
 Phases 1–7 are implemented and accepted as of 2026-10-10, with the approved
-fast-forward into `dev`. Phase 8 remains active. On 2026-11-04 the maintainer
+fast-forward into `dev`. Phase 8 remained open until the acceptance above. On 2026-11-04 the maintainer
 moved its signing, notarization and disk-image publication into the release
 workflow (see decision 9); the real-window and quarantine acceptance of the
-first signed release is still manual.
+first signed release remained manual until that acceptance.
 
 ## How to execute this plan
 

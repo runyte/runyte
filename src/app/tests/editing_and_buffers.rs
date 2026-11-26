@@ -674,42 +674,6 @@ fn the_old_macro_aliases_are_gone_and_a_second_recording_is_refused() {
 }
 
 #[test]
-fn the_macro_namespace_awaits_its_register_under_the_vim_grammar_too() {
-    let mut config = Config::default();
-    config.editor.grammar = GrammarKind::Vim;
-    let mut app = App::new(config, None).unwrap();
-    for stroke in [' ', 'm', 'M'] {
-        press(&mut app, stroke);
-    }
-    assert!(app.recording_macro.is_none(), "the register is still owed");
-    press(&mut app, 'a');
-    assert_eq!(app.recording_macro, Some('a'));
-
-    press(&mut app, 'i');
-    press(&mut app, 'x');
-    key(&mut app, KeyCode::Escape, Modifiers::NONE);
-    // Vim keeps `q` as its own stop, and the namespace stops it as well.
-    for stroke in [' ', 'm', 'm'] {
-        press(&mut app, stroke);
-    }
-    assert!(app.recording_macro.is_none());
-    assert_eq!(app.macros[&'a'].len(), 3);
-
-    // Vim drops a count when it enters a Space namespace, so repetition
-    // stays on its own `2@a`; the namespace replays once.
-    for stroke in [' ', 'm', 'R', 'a'] {
-        press(&mut app, stroke);
-    }
-    finish_macro_replay(&mut app);
-    assert_eq!(text(&app), "xx");
-    press(&mut app, '2');
-    press(&mut app, '@');
-    press(&mut app, 'a');
-    finish_macro_replay(&mut app);
-    assert_eq!(text(&app), "xxxx");
-}
-
-#[test]
 fn an_empty_macro_list_says_so_instead_of_opening_an_empty_picker() {
     let mut app = App::new(Config::default(), None).unwrap();
     for stroke in [' ', 'm', 'l'] {
@@ -845,13 +809,9 @@ fn a_recorded_maximal_command_count_is_expanded_cooperatively() {
 
 #[test]
 fn grammar_level_counts_cannot_bypass_the_macro_work_budget() {
-    for (mut app, recorded) in [
-        (
-            App::new(Config::default(), None).unwrap(),
-            "999999x".to_owned(),
-        ),
-        (super::commands::vim_app("abcdef"), "999999l".to_owned()),
-    ] {
+    {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let recorded = "999999x";
         let selection = app.active().selection.clone();
         app.macros.insert(
             'a',
@@ -2394,6 +2354,10 @@ fn closing_a_shared_buffer_redirects_every_pane() {
     app.open_buffer_picker();
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     // Past Bring into active pane, to Close.
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(app.list_close.is_some());
+    assert!(!app.closed_buffers.contains(&app.active().buffer));
     key(&mut app, KeyCode::Down, Modifiers::NONE);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
 

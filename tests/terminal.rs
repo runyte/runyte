@@ -1905,6 +1905,9 @@ fn closing_a_terminal_ends_its_child_and_forgets_it() {
     session.press(KeyCode::Down);
     session.press(KeyCode::Down);
     session.press(KeyCode::Enter);
+    assert!(session.app.terminals.get(id).unwrap().live());
+    session.press(KeyCode::Down);
+    session.press(KeyCode::Enter);
     assert!(session.app.active_terminal().is_none());
     assert!(session.app.terminals.get(id).is_none());
 }

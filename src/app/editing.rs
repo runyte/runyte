@@ -661,7 +661,7 @@ impl App {
         }
         let mut selection = self.active().selection.clone();
         if extend && self.active().selection_semantics() != SelectionSemantics::Runyte {
-            selection = self.vim_half_open_to_inclusive(selection);
+            selection = self.half_open_to_inclusive(selection);
         }
         let buffer = self.active_buffer();
         let selection = selection.transform(|range| {
@@ -1138,7 +1138,7 @@ impl App {
     pub(super) fn operative_spans(&self) -> Vec<(Offset, Offset)> {
         if matches!(
             self.active().selection_semantics(),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+            SelectionSemantics::HalfOpen
         ) {
             return self
                 .active()
@@ -2132,7 +2132,7 @@ impl App {
             return Ok(());
         };
         let selection = if self.active().selection_semantics() == SelectionSemantics::Runyte {
-            self.vim_inclusive_to_half_open(self.active().selection.clone(), true)
+            self.inclusive_to_half_open(self.active().selection.clone(), true)
         } else {
             self.active().selection.clone()
         };
@@ -2313,7 +2313,7 @@ impl App {
         let nonempty = selection.ranges().iter().all(|range| !range.is_empty());
         let (selection, semantics) = if nonempty {
             (
-                self.vim_half_open_to_inclusive(selection),
+                self.half_open_to_inclusive(selection),
                 SelectionSemantics::Runyte,
             )
         } else {
@@ -2899,7 +2899,7 @@ impl App {
         let buffer = self.active_buffer();
         let half_open = matches!(
             self.active().selection_semantics(),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+            SelectionSemantics::HalfOpen
         );
         let mut rows: Vec<usize> = self
             .active()
@@ -3001,7 +3001,7 @@ impl App {
         let buffer = self.active_buffer();
         let half_open = matches!(
             self.active().selection_semantics(),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+            SelectionSemantics::HalfOpen
         );
         // `operative_spans` maps the ranges one for one and in order, so the two
         // stay aligned.
@@ -3052,7 +3052,7 @@ impl App {
         let buffer = self.active_buffer();
         let half_open = matches!(
             self.active().selection_semantics(),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+            SelectionSemantics::HalfOpen
         );
         let last_row = buffer.last_row();
         let last_joinable_row = if last_row > 0 && buffer.line_len(last_row) == 0 {
@@ -3259,8 +3259,7 @@ impl App {
         if enter_insert {
             self.buffers[buffer_id].begin_undo_group();
         }
-        let linewise = transient_line_selection
-            || self.active().selection_semantics() == SelectionSemantics::VimLinewise;
+        let linewise = transient_line_selection;
         if yank {
             // This is not `[yank, delete-selection]`, and the difference is
             // what a directory buffer does with the register. `yank` records
@@ -3312,7 +3311,7 @@ impl App {
         // still recorded it.
         let half_open = matches!(
             self.active().selection_semantics(),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+            SelectionSemantics::HalfOpen
         );
         let mut runs: Vec<(usize, usize)> = self
             .active()
@@ -3635,14 +3634,13 @@ impl App {
         // looked like a dead key. On the caret left behind, `p` pastes past
         // the last character yanked, which is the duplicate the pair reads as.
         // A half-open range ends one past the last character it copied, so it
-        // becomes inclusive before collapsing; otherwise `y y` in the Vim
-        // grammar would leave the caret on the row below the yanked line and
-        // the linewise `p` after it would insert there.
+        // becomes inclusive before collapsing, keeping the caret on the last
+        // copied character rather than the following row.
         let selection = if matches!(
             self.active().selection_semantics(),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+            SelectionSemantics::HalfOpen
         ) {
-            self.vim_half_open_to_inclusive(self.active().selection.clone())
+            self.half_open_to_inclusive(self.active().selection.clone())
         } else {
             self.active().selection.clone()
         };
@@ -3659,8 +3657,7 @@ impl App {
         {
             return self.line_register();
         }
-        let linewise = transient_line_selection
-            || self.active().selection_semantics() == SelectionSemantics::VimLinewise;
+        let linewise = transient_line_selection;
         if linewise {
             return self.line_register();
         }
@@ -3677,7 +3674,7 @@ impl App {
         let buffer = self.active_buffer();
         let half_open = matches!(
             self.active().selection_semantics(),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+            SelectionSemantics::HalfOpen
         );
         let mut rows: Vec<usize> = self
             .active()
@@ -3758,10 +3755,9 @@ impl App {
         let clipboard = register.text.clone();
         let half_open = matches!(
             self.active().selection_semantics(),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+            SelectionSemantics::HalfOpen
         );
-        let line_selection = transient_line_selection
-            || self.active().selection_semantics() == SelectionSemantics::VimLinewise;
+        let line_selection = transient_line_selection;
         // In Runyte's inclusive grammar a selected single character and a
         // Normal-mode caret both have equal endpoints. Select mode is what
         // distinguishes the former, including one-character search matches.
@@ -3933,7 +3929,7 @@ impl App {
         let buffer = &self.buffers[buffer_id];
         let half_open = matches!(
             self.active().selection_semantics(),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+            SelectionSemantics::HalfOpen
         );
         let mut clipboard = register
             .entries

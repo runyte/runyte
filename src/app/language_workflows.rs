@@ -2680,7 +2680,9 @@ impl App {
             matches!(
                 bound,
                 Some(BindingTarget::Editor(
-                    EditorCommand::ListAccept | EditorCommand::ListOpenActions
+                    EditorCommand::ListAccept
+                        | EditorCommand::ListOpenActions
+                        | EditorCommand::ListCloseTarget
                 ))
             )
         };
@@ -2781,6 +2783,7 @@ impl App {
         }
         let mut preview_changed = false;
         match command {
+            EditorCommand::ListCloseTarget => self.request_list_close(),
             EditorCommand::ListOpenActions => {
                 if let Some(ListAction::PluginEntry(index)) = self.selected_list_action() {
                     self.open_plugin_manager_actions(index);
@@ -2908,6 +2911,7 @@ impl App {
             BindingTarget::Editor(
                 command @ (EditorCommand::ListAccept
                 | EditorCommand::ListOpenActions
+                | EditorCommand::ListCloseTarget
                 | EditorCommand::ListBackspace),
             ) => self.run_list_owned_action(command),
             BindingTarget::Editor(command) => self.execute_editor_command(command),
@@ -3001,7 +3005,7 @@ impl App {
     }
 
     #[cfg(any(unix, windows))]
-    fn open_session_actions(&mut self) {
+    pub(super) fn open_session_actions(&mut self) {
         let Some(ListAction::Workspace(row)) = self.selected_list_action() else {
             return;
         };
@@ -3169,7 +3173,7 @@ impl App {
                     (false, SessionAction::Number) => {
                         self.status("this session is already stopped")
                     }
-                    (true, SessionAction::Close) => self.stop_selected_session(selection, false),
+                    (true, SessionAction::Close) => self.request_session_close(selection),
                     (false, SessionAction::Close) => self.status("this session is already stopped"),
                     (true, SessionAction::ForceClose) => {
                         self.stop_selected_session(selection, true)
@@ -3275,18 +3279,8 @@ impl App {
                         return Ok(());
                     }
                 }
-                if action == TerminalAction::Close
-                    && self.terminals.get(id).is_some_and(TerminalSession::live)
-                    && self.active_terminal() != Some(id)
-                    && !armed
-                {
-                    self.terminal_action_menu.as_mut().unwrap().close_armed = true;
-                    self.status(format!(
-                        "closing ends this hidden live process; press {} again",
-                        self.keymap
-                            .ui()
-                            .label(Owner::TerminalActions, Action::Accept)
-                    ));
+                if action == TerminalAction::Close {
+                    self.request_terminal_close(id);
                     return Ok(());
                 }
                 if action == TerminalAction::CloseExited
@@ -3646,7 +3640,7 @@ impl App {
                 self.confirmation_revision = self.confirmation_revision.wrapping_add(1);
                 self.status_confirmation();
             }
-            BufferAction::Close => self.close_buffer(buffer),
+            BufferAction::Close => self.request_buffer_close(buffer),
             BufferAction::CloseHidden => {
                 self.buffer_action_menu = None;
                 // Counted by what closed rather than what was asked to, since

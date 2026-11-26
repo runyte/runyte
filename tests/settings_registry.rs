@@ -71,6 +71,13 @@ fn other_value(setting: SettingId, current: &SettingValue, config: &Config) -> S
                 IndentStyle::Spaces
             })
         }
+        (SettingType::Theme, SettingValue::SameAsMainTheme) => SettingValue::Text(
+            setting
+                .allowed_values(config)
+                .into_iter()
+                .next()
+                .expect("a usable theme"),
+        ),
         (SettingType::Theme, SettingValue::Text(value)) => SettingValue::Text(
             setting
                 .allowed_values(config)
@@ -291,4 +298,31 @@ fn terminal_history_default_and_numeric_validation_match_the_registry() {
     );
     assert!(serde_yaml::from_str::<Config>("terminal: { scrollback_lines: -1 }").is_err());
     assert!(serde_yaml::from_str::<Config>("terminal: { scrollback_lines: 1.5 }").is_err());
+}
+
+#[test]
+fn inactive_theme_named_and_null_values_round_trip_without_changing_main_theme() {
+    let mut config = Config {
+        theme: Some("dark".into()),
+        ..Config::default()
+    };
+    let setting = SettingId::FocusInactiveTheme;
+    for value in [
+        SettingValue::Text("light".into()),
+        SettingValue::SameAsMainTheme,
+    ] {
+        setting.apply(&value, &mut config).unwrap();
+        let yaml = config.to_yaml().unwrap();
+        let loaded: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(setting.configured_value(&loaded), value);
+        assert_eq!(loaded.theme.as_deref(), Some("dark"));
+        if value == SettingValue::SameAsMainTheme {
+            assert!(!yaml.contains("inactive_theme:"));
+        }
+    }
+    assert!(
+        SettingId::Theme
+            .validate(&SettingValue::SameAsMainTheme, &config)
+            .is_err()
+    );
 }

@@ -153,17 +153,7 @@ fn headless_grammar_report_uses_typed_colon_identity_without_key_events() {
         CommandOutcome::Status(message) if message == "active grammar: runyte"
     ));
 
-    let removed = CommandInvocation::from_parts(
-        CommandId::Colon(runyte::command::ColonCommand::Grammar),
-        InvocationParameters::Grammar(Some(GrammarKind::Vim)),
-        CommandExecutionContext::default(),
-    )
-    .unwrap();
-    assert!(matches!(
-        editor.execute(removed).unwrap(),
-        CommandOutcome::UserError(message)
-            if message == "vim grammar has been removed; use runyte"
-    ));
+    assert!(runyte::command::parse_colon_command("grammar vim").is_err());
     assert_eq!(editor.grammar_kind(), GrammarKind::Runyte);
 }
 

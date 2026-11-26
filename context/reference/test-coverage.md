@@ -82,6 +82,22 @@ has passed. The floor is deliberately below
 the observed baseline because conditional Linux and macOS code changes both the
 instrumented denominator and the paths available to a run on one platform.
 
+## 2026-11-26 — composable bindings, stage 0
+
+Measured on `x86_64-unknown-linux-gnu` with Rust 1.97.1 and cargo-llvm-cov
+0.9.0 using `cargo llvm-cov --locked --package runyte` with four test threads.
+The instrumented suite passed after removing the retired Vim interpreter and
+its exclusive tests for [#132](https://github.com/runyte/runyte/issues/132).
+
+| Measure | Covered | Total | Coverage |
+| --- | ---: | ---: | ---: |
+| Lines | 167,832 | 181,011 | 92.72% |
+| Functions | 15,139 | 16,391 | 92.36% |
+| Regions | 257,707 | 279,641 | 92.16% |
+
+The root 89% floor remains unchanged. This Linux measurement does not establish
+a new macOS or Windows baseline or measure desktop rendering coverage.
+
 ## 2026-10-30 — configurable UI actions
 
 Measured on `x86_64-unknown-linux-gnu` with Rust 1.97.1 and cargo-llvm-cov

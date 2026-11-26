@@ -18,7 +18,10 @@ them, regardless of which extensibility direction is chosen.
   contains every pane and overlay.
 - **Pane** — one view of one buffer. Splits create panes; buffers may be shared
   by several panes. The active pane keeps the theme background; inactive panes
-  use a derived ground halfway between it and the overlay ground.
+  use a derived ground halfway between it and the overlay ground. With focus mode
+  enabled, `focus.inactive_theme` can select a complete alternate palette for
+  inactive panes, including their titles and borders. Shared UI keeps the main
+  theme. Private bundled protocol version 99 carries the resolved alternate palette.
 - **Directory tree sidebar** — a persistent navigation surface at the left of
   the editor area. It has its own focus and selected path, retains the last
   ordinary pane for focus restoration, and reserves width before
@@ -960,3 +963,13 @@ Private bundled protocol version 98 carries optional focus tuning in the editor
 snapshot. A change requires a full frame; existing pane/cursor updates continue
 to carry the current anchor. The toggle remains in the workspace host across
 frontend detach/attach but is not saved across host restarts.
+
+### List close confirmation
+
+`list-close-target` captures a buffer, terminal, or persistent-session identity.
+Its choice overlay uses the existing action-list presentation and the
+`list-close` UI owner. Cancel is initially selected. Dirty buffers offer Save and
+close or Discard changes and close; clean buffers offer Close buffer. Terminal
+and persistent-session choices say Stop terminal and Stop persistent session.
+The message names the captured resource and consequences. Remapped selection,
+acceptance and cancellation keys are rendered from the same UI registry.

@@ -174,8 +174,13 @@ fn configured_hidden_terminal_menu_close_arms_and_accepts_only_effective_key() {
         close_armed: false,
     });
     key(&mut app, KeyCode::Function(8), Modifiers::NONE);
-    assert!(app.terminal_action_menu.as_ref().unwrap().close_armed);
-    assert!(app.status.contains("press F8 again"));
+    assert!(app.terminal_action_menu.is_none());
+    assert_eq!(app.list_close.as_ref().unwrap().selected, 0);
+    let source = serde_yaml::from_str("ui: {list-close: {accept: [F8]}}").unwrap();
+    let compiled = crate::keymap::configured::compile(&source, &app.keymap);
+    assert!(compiled.errors.is_empty());
+    app.keymap = compiled.keymap;
+    key(&mut app, KeyCode::Down, Modifiers::NONE);
     assert!(
         app.input_requires_presented_approval(&InputEvent::Key(KeyStroke::parse("F8").unwrap()))
     );

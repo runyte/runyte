@@ -129,7 +129,7 @@ impl App {
         } else {
             let (from, to) = if matches!(
                 self.active().selection_semantics(),
-                SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
+                SelectionSemantics::HalfOpen
             ) {
                 (range.from(), range.to())
             } else {
@@ -1287,7 +1287,6 @@ impl App {
         );
         let normal_semantics = match self.grammar.kind() {
             crate::command::GrammarKind::Runyte => SelectionSemantics::Runyte,
-            crate::command::GrammarKind::Vim => SelectionSemantics::HalfOpen,
         };
         let previous_directory = self.buffers[previous_buffer]
             .is_directory()

@@ -69,7 +69,7 @@ use crate::{
     },
     input_grammar::{
         ActiveGrammar, EditorIntent, GrammarContext, GrammarNotice, GrammarOutput, InputGrammar,
-        LineDirection, RangeIntent, VimMotion, VimOperator, VimRangeTarget, VimTextObject,
+        LineDirection, RangeIntent,
     },
     jump_labels::{JumpLabels, Press},
     jumplist::{Jump, JumpList, SelectionSemantics},
@@ -280,6 +280,7 @@ mod directory_tree;
 mod editing;
 mod external_opening;
 mod file_workflows;
+mod list_close;
 pub(crate) use file_workflows::{ProviderSavePreview, ProviderSavePreviewLimit};
 pub(crate) mod context_access;
 mod git_comparison;
@@ -1160,15 +1161,12 @@ enum Motion {
     WordForward,
     WordBack,
     WordEnd,
-    WordEndBack,
     LongWordForward,
     LongWordBack,
     LongWordEnd,
-    LongWordEndBack,
     NextParagraph,
     PreviousParagraph,
     FirstNonWhitespace,
-    LastNonWhitespace,
     PageUp,
     PageDown,
     HalfPageUp,
@@ -1230,9 +1228,6 @@ struct SearchQuery {
     /// Scoping is what keeps a search that started inside a selection from
     /// wandering out of it when `n` wraps.
     region: Option<SearchRegion>,
-    /// Only the Vim grammar reads this: its `n`/`N` repeat the direction the
-    /// search was started in, where Runyte's always step forward and backward.
-    forward: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1262,9 +1257,6 @@ pub enum PromptKind {
     /// Search over an immutable retained terminal snapshot rather than the
     /// buffer hidden behind the pane.
     TerminalSearch(SearchMode),
-    /// The Vim grammar's directional single-match searches.
-    SearchForward,
-    SearchBackward,
     GlobalSearch(SearchMode),
     /// Keeps or drops selections by regular expression. `keep` distinguishes
     /// `Space s k` from `Space s r`; the editing model is otherwise identical.
@@ -1280,6 +1272,10 @@ pub enum PromptKind {
     /// Collects a new name for one terminal session, named by the list the
     /// prompt was opened from rather than by whatever pane is active.
     TerminalRename,
+    SaveClosePath {
+        buffer: usize,
+        revision: u64,
+    },
     /// Selects the program a binary file should be handed to. Reuses the same
     /// editing model, with the default and recently chosen programs above it.
     ExternalProgram,
@@ -2885,6 +2881,7 @@ pub struct App {
     /// state stays separate so restart-required settings remain truthful.
     persisted_config: Config,
     pub theme: Theme,
+    pub(crate) inactive_theme: Option<Theme>,
     pub theme_name: String,
     /// The exact YAML document settings writes patch. Set only by the config
     /// loader, and injectable through `note_loaded_config` for isolated tests.
@@ -3069,6 +3066,7 @@ pub struct App {
     /// The `Tab`-opened copy-target menu nested inside the `:path` popup.
     path_action_menu: Option<PathActionMenu>,
     /// An editable buffer whose unsaved text will be reset after a separate Enter.
+    list_close: Option<list_close::CloseTarget>,
     buffer_discard_confirmation: Option<usize>,
     /// Repository-relative paths whose uncommitted changes will be thrown
     /// away after a separate Enter. The one confirmation in the editor that
@@ -3774,16 +3772,8 @@ impl App {
         let configured_help = ":? or <help-key> for help";
         let mut status = startup_status(&registry_errors, configured_help);
         let mut status_error = !registry_errors.is_empty();
-        let mut startup_notification_error = !registry_errors.is_empty();
-        let grammar = match ActiveGrammar::new(config.editor.grammar) {
-            Ok(grammar) => grammar,
-            Err(error) => {
-                status = format!("{status} · {error}; using runyte");
-                status_error = true;
-                startup_notification_error = true;
-                ActiveGrammar::default()
-            }
-        };
+        let startup_notification_error = !registry_errors.is_empty();
+        let grammar = ActiveGrammar::new(config.editor.grammar);
         let initial_mode = grammar.preferred_mode().unwrap_or(Mode::Normal);
         let reported_registry_errors = registry_errors
             .iter()
@@ -3823,7 +3813,13 @@ impl App {
                 .text;
         status = status.replace(configured_help, &live_help);
         let startup_notification = startup_notification_error.then(|| status.clone());
+        let inactive_theme = config
+            .focus
+            .inactive_theme
+            .as_deref()
+            .and_then(|name| config.resolve_theme(name).ok());
         let mut app = Self {
+            inactive_theme,
             config,
             persisted_config,
             theme,
@@ -3905,6 +3901,7 @@ impl App {
             program_action_menu: None,
             path_popup: None,
             path_action_menu: None,
+            list_close: None,
             buffer_discard_confirmation: None,
             git_discard_confirmation: None,
             closed_buffers: HashSet::new(),
@@ -4102,10 +4099,6 @@ impl App {
         app.sync_terminal_default_colors();
         app.terminals
             .set_scrollback_lines(app.config.terminal.scrollback_lines);
-        if app.grammar.kind() == crate::command::GrammarKind::Vim {
-            app.active_mut()
-                .mark_selection_semantics(SelectionSemantics::HalfOpen);
-        }
         if let Some(message) = startup_notification {
             app.push_notification(NotificationDraft::new(
                 NotificationSeverity::Error,
@@ -4895,9 +4888,7 @@ fn region_spans(buffer: &Buffer, region: &SearchRegion) -> Vec<(Offset, Offset)>
         .iter()
         .map(|range| match region.semantics {
             SelectionSemantics::Runyte => operative_span(buffer, range),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise => {
-                (range.from(), range.to())
-            }
+            SelectionSemantics::HalfOpen => (range.from(), range.to()),
         })
         .collect()
 }

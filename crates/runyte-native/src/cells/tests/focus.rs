@@ -24,6 +24,7 @@ fn focus_zero_opacity_dim_glyphs_match_the_native_background() {
         fade_distance: 1,
         minimum_opacity: 0,
         inactive_opacity: 0,
+        inactive_theme: None,
     });
     let body = snapshot.editor.panes[0].body;
     let mut cell = Cell {

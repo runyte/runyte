@@ -10,6 +10,12 @@ custom assignments do not change the default-key compatibility rows below.
 could assign, so those rows describe nothing until `bind` assigns them again.
 `:help key-actions` is generated from the configurable action inventory.
 
+The retired Vim interpreter and its directional `search-forward` and
+`search-backward` actions have been removed ([#132](https://github.com/runyte/runyte/issues/132),
+stage 0). `editor.grammar` and `:grammar` still accept only `runyte` and its
+`helix` alias; `vim` is rejected. Default keys and Runyte search behavior are
+unchanged. Half-open selections used by syntax operations and the mouse remain.
+
 Target: [Helix master keymap](https://docs.helix-editor.com/master/keymap.html),
 verified 2026-07-27.
 
@@ -659,7 +665,7 @@ TYPE names and colours the kind, NAME holds the path or name with middle
 elision, and STATE collects all applicable flags. All use recent activation
 order, fuzzy name/path filtering, Enter to visit, and a bounded contents
 preview shown by default. `Ctrl-t` toggles it. A pinned legend reads movement,
-paging, first/last, preview and clear-filter keys from the list keymap scope;
+paging, first/last, preview and close-target keys from the list keymap scope;
 Tab retains the selected resource's actions. The terminal list includes
 exited terminals after running ones; the Navigator includes only running ones.
 Runyte adds `Space n` as a complete Navigator binding, with `Ctrl-w n` in all
@@ -895,3 +901,23 @@ its footer and dispatch use the effective bindings and the same motion registry.
 no default keybinding. It toggles workspace-wide spatial color fading around
 the active pane's cursor. YAML `focus` settings tune display-row distances and
 opacity; `:config-reload` applies them without changing the toggle.
+
+## List close targets
+
+Delete (`Fn-Delete` on compact Mac keyboards) invokes `list-close-target` in
+buffer, terminal and persistent-session lists, including the Navigator's local
+destinations. This Runyte-specific action is configurable through `keys.scopes`.
+`list-clear-filter` remains configurable but unbound; Backspace only edits the
+filter. Buffer and persistent-session requests capture their target and require
+confirmation, with Cancel initially selected. Dirty buffers offer saving or
+explicit discard before close. Terminal Close and Delete share the same policy:
+exited or established idle terminals close immediately, running or unknown jobs
+ask. Linux idle detection requires cooperative OSC 133 B plus bounded process
+checks; other platforms ask. See the terminal guide for limitations.
+`keys.ui.list-close` owns next/previous/accept/cancel and supplies the choice
+legend. Repeated opening keys and repeated approval cannot accept a confirmation.
+
+Once any input has been submitted to a terminal, live close requires confirmation
+for the remainder of its lifetime: queued prompt reports cannot prove freshness.
+Immediate idle close is limited to newly started, untouched shells with the
+Linux evidence described above. Exited terminals still remove immediately.

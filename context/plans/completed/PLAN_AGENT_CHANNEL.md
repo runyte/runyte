@@ -6,8 +6,9 @@ This record describes the original in-memory, workspace-scoped channel.
 
 Tracking issue: [#29](https://github.com/runyte/runyte/issues/29), item 5.
 
-The [follow-up proposal](../active/PLAN_AGENT_CHANNEL_SKILL_AND_STORAGE.md)
-consolidates future skill, storage and notification work. Completion of this
+The [follow-up record](PLAN_AGENT_CHANNEL_SKILL_AND_STORAGE.md)
+records delivered skill and storage work, superseded notifications and deferred
+durable-channel deployment. Completion of this
 plan does not determine the status of the broader tracking issue.
 
 ## Problem

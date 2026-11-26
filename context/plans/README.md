@@ -26,22 +26,11 @@ current sources take precedence.
 
 Active work:
 
-- [MCP read and write permissions](active/PLAN_MCP_READ_WRITE_PERMISSIONS.md):
-  two per-workspace permissions, direct terminal writes with a revision-guarded
-  delayed Enter, and removal of nudges, terminal bindings and reviewed
-  proposals. Channel notifications remain an experiment on `exp`.
-
-- [Runyte MCP skill and durable agent channels](active/PLAN_AGENT_CHANNEL_SKILL_AND_STORAGE.md):
-  a cooperative MCP skill and safe installer first, followed by user testing;
-  SQLite storage across workspaces with retained public history and acknowledged
-  DM/group cleanup, now deferred. Its channel nudges were replaced by terminal
-  writes under the read and write permissions plan; hooks remain tentative.
-
-- [Terminal and desktop editions](active/PLAN_EDITIONS_AND_EXTENSIONS.md):
-  two editions built from one Cargo workspace, PDF and document-preview helpers
-  inside the desktop executable, one register of process boundaries and
-  extension tiers, release packaging for both editions, and a manually signed
-  and notarized macOS disk image.
+- [Composable key bindings](active/PLAN_COMPOSABLE_KEY_BINDINGS.md): atomic
+  actions with one descriptor each, bindings as programs in one table for every
+  view and mode, conditional steps, configurable macros, modes with fallbacks
+  and hooks, the built-in keymap as a preset, and a Vim-style acceptance preset.
+  Breaking change for 0.5.
 
 Current desktop ownership, supported behavior and measurements are recorded in
 [the desktop edition reference](../reference/desktop-edition.md), with the
@@ -55,6 +44,21 @@ Proposed work:
   portability and browser lifecycle ownership before implementation.
 
 The retained completed records cover:
+
+- [MCP read and write permissions](completed/PLAN_MCP_READ_WRITE_PERMISSIONS.md):
+  implemented per-workspace Read/Write grants and guarded terminal input;
+  later refined with combined write-and-submit and protection for recent
+  physical typing. Archived on 2026-11-26;
+
+- [Runyte MCP skill and durable agent channels](completed/PLAN_AGENT_CHANNEL_SKILL_AND_STORAGE.md):
+  delivered skill, installer, SQLite foundation and opt-in live trial. Closed
+  on 2026-11-26 with remaining user tests and general durable-channel deployment
+  explicitly deferred; nudges were superseded by terminal writes;
+
+- [Terminal and desktop editions](completed/PLAN_EDITIONS_AND_EXTENSIONS.md):
+  shared Cargo workspace, desktop helpers, edition packaging and automated
+  macOS signing/notarization. The maintainer accepted macOS behavior on
+  2026-11-26, closing the remaining manual gate;
 
 - [Flexible startup](completed/PLAN_FLEXIBLE_STARTUP.md): the configured mode for
   graphical launches, a home workspace whose state lives outside `~`, a
@@ -75,7 +79,8 @@ The retained completed records cover:
   workspace-scoped conversation through `runyte mcp`, with verified participant
   identity, direct messages, unread indicators and the person's read-only view
   ([#29](https://github.com/runyte/runyte/issues/29), item 5). Follow-up work is
-  consolidated in the active MCP skill and durable-channel plan above;
+  recorded in the completed MCP skill and durable-channel plan above, with
+  unfinished rollout work deferred;
 - [Aligned indentation and document overrides](completed/PLAN_INDENTATION_OVERRIDES.md):
   shared per-buffer indentation, aligned Backspace, and configurable language
   and ordered file-pattern overrides through the settings page;

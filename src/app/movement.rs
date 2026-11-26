@@ -354,27 +354,6 @@ pub(super) fn word_end(buffer: &Buffer, offset: Offset, long: bool) -> Offset {
     }
 }
 
-pub(super) fn word_end_back(buffer: &Buffer, offset: Offset, long: bool) -> Offset {
-    let Some(mut candidate) = word_scan_previous(offset) else {
-        return 0;
-    };
-    if let Some(class) = word_class_at(buffer, offset, long).filter(|class| *class != 0) {
-        while word_class_at(buffer, candidate, long) == Some(class) {
-            let Some(previous) = word_scan_previous(candidate) else {
-                return 0;
-            };
-            candidate = previous;
-        }
-    }
-    while word_class_at(buffer, candidate, long).unwrap_or(0) == 0 {
-        let Some(previous) = word_scan_previous(candidate) else {
-            return 0;
-        };
-        candidate = previous;
-    }
-    candidate
-}
-
 pub(super) fn insert_word_back(buffer: &Buffer, offset: Offset) -> Offset {
     let Some(mut candidate) = previous_offset(buffer, offset) else {
         return 0;
@@ -808,11 +787,9 @@ fn move_offset_unsnapped(
         Motion::WordForward => word_forward_kind(buffer, offset, false),
         Motion::WordBack => word_back_kind(buffer, offset, false),
         Motion::WordEnd => word_end(buffer, offset, false),
-        Motion::WordEndBack => word_end_back(buffer, offset, false),
         Motion::LongWordForward => word_forward_kind(buffer, offset, true),
         Motion::LongWordBack => word_back_kind(buffer, offset, true),
         Motion::LongWordEnd => word_end(buffer, offset, true),
-        Motion::LongWordEndBack => word_end_back(buffer, offset, true),
         Motion::NextParagraph => next_paragraph(buffer, offset),
         Motion::PreviousParagraph => previous_paragraph(buffer, offset),
         Motion::FirstNonWhitespace => {
@@ -820,16 +797,6 @@ fn move_offset_unsnapped(
                 .line_string(position.row)
                 .chars()
                 .position(|character| !character.is_whitespace())
-                .unwrap_or(0);
-            buffer.clamp_offset(buffer.line_to_offset(position.row) + column, false)
-        }
-        Motion::LastNonWhitespace => {
-            let column = buffer
-                .line_string(position.row)
-                .chars()
-                .enumerate()
-                .filter_map(|(column, character)| (!character.is_whitespace()).then_some(column))
-                .last()
                 .unwrap_or(0);
             buffer.clamp_offset(buffer.line_to_offset(position.row) + column, false)
         }

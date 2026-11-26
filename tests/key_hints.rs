@@ -1091,10 +1091,12 @@ fn help_opens_a_buffer_describing_the_current_view() {
 }
 
 #[test]
-fn removed_vim_configuration_falls_back_to_runyte_help_and_hints() {
+fn rejected_vim_configuration_leaves_runyte_help_and_hints_available() {
     let mut hints = KeyHintState::default();
-    let mut config = Config::default();
-    config.editor.grammar = GrammarKind::Vim;
+    let error = serde_yaml::from_str::<Config>("editor: {grammar: vim}").unwrap_err();
+    assert!(error.to_string().contains("vim"));
+    assert!(error.to_string().contains("runyte"));
+    let config = Config::default();
     let mut app = App::new(isolated_startup_config(config), None).unwrap();
     assert_eq!(app.grammar_kind(), GrammarKind::Runyte);
     app.execute(CommandInvocation::help(HelpInvocation::ActiveView))

@@ -477,6 +477,16 @@ impl App {
 
     pub(super) fn setting_values(&self, setting: SettingId) -> Vec<SettingValue> {
         match setting.descriptor().value_type {
+            SettingType::Theme if setting == SettingId::FocusInactiveTheme => {
+                std::iter::once(SettingValue::SameAsMainTheme)
+                    .chain(
+                        setting
+                            .allowed_values(&self.config)
+                            .into_iter()
+                            .map(SettingValue::Text),
+                    )
+                    .collect()
+            }
             SettingType::Grammar => crate::command::GrammarKind::ALL
                 .iter()
                 .copied()
@@ -648,12 +658,11 @@ impl App {
             return;
         }
         self.sync_keymap();
+        self.sync_inactive_theme();
         match value {
             SettingValue::Grammar(kind) => {
-                if let Ok(grammar) = ActiveGrammar::new(kind) {
-                    self.grammar = grammar;
-                    self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
-                }
+                self.grammar = ActiveGrammar::new(kind);
+                self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
             }
             SettingValue::Text(ref name) if setting == SettingId::Theme => {
                 if let Ok(theme) = self.config.resolve_theme(name) {
@@ -667,7 +676,8 @@ impl App {
             | SettingValue::PaneStyle(_)
             | SettingValue::ExplorerSort(_)
             | SettingValue::Indent(_)
-            | SettingValue::Text(_) => {}
+            | SettingValue::Text(_)
+            | SettingValue::SameAsMainTheme => {}
         }
         self.status(format!(
             "previewing {}: {value} · Enter saves · Esc rolls back",
@@ -699,6 +709,7 @@ impl App {
         let preview = (**preview).clone();
         self.config = preview.original_config;
         self.sync_keymap();
+        self.sync_inactive_theme();
         self.replace_theme(preview.original_theme_name, preview.original_theme);
         self.grammar = preview.original_grammar;
         self.mode = preview.original_mode;
@@ -758,6 +769,7 @@ impl App {
             return false;
         }
         self.sync_keymap();
+        self.sync_inactive_theme();
         if setting == SettingId::TerminalScrollbackLines {
             self.sync_terminal_scrollback();
         }
@@ -780,7 +792,8 @@ impl App {
             | SettingValue::PaneStyle(_)
             | SettingValue::ExplorerSort(_)
             | SettingValue::Indent(_)
-            | SettingValue::Text(_) => {}
+            | SettingValue::Text(_)
+            | SettingValue::SameAsMainTheme => {}
         }
         // An explorer setting changed from this page has to reach the open
         // listings just as the explorer's own keys do.
@@ -812,6 +825,15 @@ impl App {
         }
         self.persist_selected_setting(SettingId::Theme, SettingValue::Text(name.to_owned()));
         Ok(())
+    }
+
+    pub(super) fn sync_inactive_theme(&mut self) {
+        self.inactive_theme = self
+            .config
+            .focus
+            .inactive_theme
+            .as_deref()
+            .and_then(|name| self.config.resolve_theme(name).ok());
     }
 
     pub(super) fn replace_theme(&mut self, name: String, theme: Theme) {

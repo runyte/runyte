@@ -41,6 +41,7 @@ use crate::notification::{NotificationCounts, NotificationSeverity};
 /// adapter uses terminal colors, while `App` and `Config` retain only
 /// frontend-independent values.
 struct TuiTheme {
+    native_defaults: bool,
     color_depth: TerminalColorDepth,
     terminal: [ratatui::style::Color; 16],
     terminal_theme_colors: bool,
@@ -114,6 +115,7 @@ impl TuiTheme {
             &[background, inactive_background],
         );
         let mut resolved = Self {
+            native_defaults: false,
             color_depth,
             terminal: theme.terminal.map(color),
             terminal_theme_colors: true,
@@ -894,8 +896,7 @@ fn render_editor_frame(
         draw_directory_tree(frame, &app.theme, tree);
     }
     for pane in &snapshot.panes {
-        draw_pane(frame, &app.theme, snapshot.mode, pane);
-        apply_focus(frame, &app.theme, pane, snapshot.focus);
+        draw_focused_pane(frame, &app.theme, snapshot, pane);
     }
     draw_pane_drop(frame, &app.theme, snapshot.pane_drop);
     if let Some(tree) = &snapshot.directory_tree {
@@ -1103,7 +1104,7 @@ pub fn render_host_frame(
     snapshot: &HostFrame,
     color_depth: TerminalColorDepth,
 ) {
-    render_attached_frame(frame, snapshot, SessionMode::Persistent, color_depth);
+    render_attached_frame(frame, snapshot, SessionMode::Persistent, color_depth, false);
 }
 
 /// Preserves a transport-owned frame's exact RGB for presentation-oriented
@@ -1115,6 +1116,7 @@ pub fn render_host_frame_exact_colors_for_test(frame: &mut Frame<'_>, snapshot: 
         snapshot,
         SessionMode::Persistent,
         TerminalColorDepth::TrueColor,
+        false,
     );
 }
 
@@ -1205,7 +1207,7 @@ pub fn render_native_frame(
     session: SessionMode,
     color_depth: TerminalColorDepth,
 ) {
-    render_attached_frame(frame, snapshot, session, color_depth);
+    render_attached_frame(frame, snapshot, session, color_depth, true);
 }
 
 fn render_attached_frame(
@@ -1213,9 +1215,11 @@ fn render_attached_frame(
     snapshot: &HostFrame,
     session: SessionMode,
     color_depth: TerminalColorDepth,
+    native_defaults: bool,
 ) {
     let mut theme = TuiTheme::with_color_depth(&snapshot.editor.theme, color_depth);
     theme.terminal_theme_colors = snapshot.editor.terminal_theme_colors;
+    theme.native_defaults = native_defaults;
     if draw_resize(frame, &theme, &snapshot.editor) {
         return;
     }
@@ -1224,8 +1228,7 @@ fn render_attached_frame(
         draw_directory_tree(frame, &theme, tree);
     }
     for pane in &snapshot.editor.panes {
-        draw_pane(frame, &theme, snapshot.editor.mode, pane);
-        apply_focus(frame, &theme, pane, snapshot.editor.focus);
+        draw_focused_pane(frame, &theme, &snapshot.editor, pane);
     }
     draw_pane_drop(frame, &theme, snapshot.editor.pane_drop);
     if let Some(tree) = &snapshot.editor.directory_tree {
@@ -2539,8 +2542,7 @@ fn draw_resize(frame: &mut Frame<'_>, theme: &TuiTheme, editor: &EditorSnapshot)
     };
     let fading = if resize.fade < 255 {
         for pane in &editor.panes {
-            draw_pane(frame, theme, editor.mode, pane);
-            apply_focus(frame, theme, pane, editor.focus);
+            draw_focused_pane(frame, theme, editor, pane);
         }
         if let Some(tree) = &editor.directory_tree {
             draw_directory_tree(frame, theme, tree);
@@ -2681,12 +2683,71 @@ fn draw_pane_drop(frame: &mut Frame<'_>, theme: &TuiTheme, area: Option<crate::l
     frame.render_widget(outline, area);
 }
 
+fn draw_focused_pane(
+    frame: &mut Frame<'_>,
+    theme: &TuiTheme,
+    editor: &EditorSnapshot,
+    pane: &PaneSnapshot,
+) {
+    if !pane.drawable {
+        return;
+    }
+    let alternate = (!pane.active && editor.focus.is_some())
+        .then_some(editor.inactive_theme.as_ref())
+        .flatten()
+        .map(|palette| {
+            let defaults = theme
+                .native_defaults
+                .then(|| native_default_colors(palette));
+            let mut palette = TuiTheme::with_color_depth(palette, theme.color_depth);
+            palette.terminal_theme_colors = theme.terminal_theme_colors;
+            if let Some((background, foreground)) = defaults {
+                if palette.background == ratatui::style::Color::Reset {
+                    palette.background = background;
+                }
+                if palette.inactive_background == ratatui::style::Color::Reset {
+                    palette.inactive_background = background;
+                }
+                if palette.foreground == ratatui::style::Color::Reset {
+                    palette.foreground = foreground;
+                }
+            }
+            (palette, defaults)
+        });
+    let theme = alternate
+        .as_ref()
+        .map(|(palette, _)| palette)
+        .unwrap_or(theme);
+    draw_pane(frame, theme, editor.mode, pane);
+    // Native windows have frame-wide defaults. Bake the alternate pane's
+    // defaults into its cells before fading so Reset never inherits another
+    // palette's contrast. External terminals keep their own Reset semantics.
+    if let Some((_, Some((background, foreground)))) = alternate.as_ref() {
+        let area = to_tui_rect(pane.area).intersection(frame.area());
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                let cell = &mut frame.buffer_mut()[(x, y)];
+                if cell.fg == ratatui::style::Color::Reset {
+                    cell.fg = *foreground;
+                }
+                if cell.bg == ratatui::style::Color::Reset {
+                    cell.bg = *background;
+                }
+                if cell.underline_color == ratatui::style::Color::Reset {
+                    cell.underline_color = *foreground;
+                }
+            }
+        }
+    }
+    apply_focus(frame, theme, pane, editor.focus.as_ref());
+}
+
 /// Fade the completed content before drawing overlays, preserving every colour role.
 fn apply_focus(
     frame: &mut Frame<'_>,
     theme: &TuiTheme,
     pane: &PaneSnapshot,
-    focus: Option<crate::config::FocusConfig>,
+    focus: Option<&crate::config::FocusConfig>,
 ) {
     let Some(focus) = focus.filter(|_| pane.drawable) else {
         return;
@@ -2755,7 +2816,7 @@ fn dim_terminal_rgb(source: [u8; 3]) -> [u8; 3] {
 }
 
 fn focus_opacity(
-    focus: crate::config::FocusConfig,
+    focus: &crate::config::FocusConfig,
     active: bool,
     cursor: Option<usize>,
     row: usize,

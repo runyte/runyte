@@ -84,10 +84,7 @@ pub fn editor_modes(command: EditorCommand) -> Vec<Mode> {
 }
 
 fn scan_editor_modes(command: EditorCommand) -> Vec<Mode> {
-    if command::INTERNAL_EDITOR_COMMANDS.contains(&command)
-        || command::GRAMMAR_ONLY_EDITOR_COMMANDS.contains(&command)
-        || command == EditorCommand::ShellPipe
-    {
+    if command::INTERNAL_EDITOR_COMMANDS.contains(&command) || command == EditorCommand::ShellPipe {
         return Vec::new();
     }
     let map = super::default_keymap();

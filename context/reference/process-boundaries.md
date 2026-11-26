@@ -136,7 +136,7 @@ unchanged. Either kind also needs the reader to still hold Write, the same
 frontend to be attached and the terminal to be live. This replaced channel
 nudges and native terminal bindings (removed together with reviewed terminal
 proposals; see
-[the plan](../plans/active/PLAN_MCP_READ_WRITE_PERMISSIONS.md)): the earlier
+[the plan](../plans/completed/PLAN_MCP_READ_WRITE_PERMISSIONS.md)): the earlier
 rule that terminal text never submits Enter is now that it never carries Enter
 as a byte. A five-second visible delay before every Enter preceded the
 typing rule; the read-before-write discipline is now the agent's, stated in
