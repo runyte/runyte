@@ -366,14 +366,19 @@ where input or help can reach the native frontend.
    semantics, which syntax selection and the mouse use. Re-measure coverage.
 1. **Action descriptors.** One descriptor per action. Derive modes,
    continuation and counts from it, with no behaviour change. A test requires
-   a complete descriptor for every action.
+   a complete descriptor for every action. During this migration the descriptor
+   retains `legacy_sequence_position` beside descriptive effects, preserving
+   existing sequence admission. The writable-buffer gate remains separate from
+   possible text transactions; scoped admission remains authoritative until
+   stage 4.
 2. **Discoverability on the current keymap.** Describe key, the action
    browser, and help generated from descriptors.
 3. **Programs everywhere.** Built-in bindings become programs. Add the count
    and undo rules, operand resumption, and the atomic splits in the
    classification above. Author the built-in keymap as the Runyte preset,
-   compiled at build time. Default keys keep their behaviour; the
-   classification test lands.
+   compiled at build time. Remove `legacy_sequence_position` when execution and
+   validation switch together to effect-derived continuation. Default keys keep
+   their behaviour; the classification test lands.
 4. **One binding table.** Merge `keys.bind` and `keys.scopes` into
    `keys.bind.<view>.<mode>`. Move terminal and directory interceptions into
    descriptors and `terminal` and `directory` bindings. Add per-mode fallback.

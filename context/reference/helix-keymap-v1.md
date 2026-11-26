@@ -16,6 +16,11 @@ stage 0). `editor.grammar` and `:grammar` still accept only `runyte` and its
 `helix` alias; `vim` is rejected. Default keys and Runyte search behavior are
 unchanged. Half-open selections used by syntax operations and the mouse remain.
 
+Stage 1 of #132 gives built-in actions descriptors for effects, counts,
+operands, global binding modes and specialized view behavior. It preserves all
+current keys, sequence admission and read-only gates. Descriptive effects do
+not yet replace the legacy continuation policy; scoped admission is unchanged.
+
 Target: [Helix master keymap](https://docs.helix-editor.com/master/keymap.html),
 verified 2026-07-27.
 
