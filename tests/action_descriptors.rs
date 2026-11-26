@@ -32,6 +32,31 @@ fn legacy_action_contract_is_preserved() {
 }
 
 #[test]
+fn default_global_editor_bindings_use_descriptor_admitted_modes() {
+    use runyte::command::Mode;
+    use runyte::keymap::{BindingAvailability, BindingScope, default_keymap};
+
+    for binding in default_keymap().bindings() {
+        if binding.scope != BindingScope::Global
+            || binding.availability != BindingAvailability::Implemented
+        {
+            continue;
+        }
+        let BindingTarget::Editor(command) = binding.target else {
+            continue;
+        };
+        for mode in [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace] {
+            if binding.is_active_in(mode) {
+                assert!(
+                    command.action_policy().global_binding_modes.contains(&mode),
+                    "{command:?} has an implemented default global binding in {mode:?}, but its descriptor does not admit that mode"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn every_builtin_identity_has_a_complete_descriptor() {
     use runyte::command::{COMMANDS, ColonCommand, CommandId};
     use runyte::keymap::{BindingScope, admission};

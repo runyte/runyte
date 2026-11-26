@@ -1,2 +1,5 @@
 # Unified patch context represents blank source lines with one space.
 benchmarks/*-milestones.patch whitespace=-blank-at-eol,-blank-at-eof
+
+# Byte-compared text fixtures must keep LF on Windows checkouts.
+tests/fixtures/*.tsv text eol=lf
