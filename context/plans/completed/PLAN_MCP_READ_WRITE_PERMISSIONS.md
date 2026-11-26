@@ -1,6 +1,15 @@
 # MCP read and write permissions
 
-Status: active on `dev`, 2026-10-29. Related:
+Status: completed; archived on 2026-11-26 by maintainer direction.
+Implemented on `dev` on 2026-10-29 in `fc1148a7`, with the verification
+recorded below. Terminal submission was subsequently refined in `cc030723`:
+the five-second delay was removed, combined write-and-submit was added, and
+recent physical typing blocks agent input. Current behavior is recorded in
+`context/reference/process-boundaries.md` and `docs/mcp.md`. This lifecycle
+update does not claim additional platform CI verification beyond the retained
+evidence.
+
+Related:
 [#43](https://github.com/runyte/runyte/issues/43),
 [#42](https://github.com/runyte/runyte/issues/42) and
 [#40](https://github.com/runyte/runyte/issues/40).

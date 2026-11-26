@@ -1,6 +1,7 @@
 # Runyte MCP skill and durable agent channels
 
-Status: active. Stage 1 is implemented and verified locally;
+Status: completed as a delivery record on 2026-11-26 by maintainer direction,
+with unfinished work explicitly deferred. Stage 1 is implemented and verified locally;
 Stage 2 has partial subagent trial evidence; native-client user tests remain.
 Stage 3 includes the storage foundation and a tested opt-in live MCP trial;
 it is deferred as of 2026-10-26, and general deployment remains unfinished.
@@ -17,6 +18,16 @@ and its related [issue #29](https://github.com/runyte/runyte/issues/29). It
 preserves the legacy in-memory channel. Repository inspection baseline:
 `594f057`, 2026-10-25. Stage 4 nudges are tracked in
 [issue #40](https://github.com/runyte/runyte/issues/40).
+
+## Closure — 2026-11-26
+
+The implemented skill, installer, storage foundation and opt-in live trial are
+retained as delivered work. Moving this record to `completed/` does not graduate
+durable channels to general availability. The remaining Stage 2 native-client
+tests and Stage 3 deployment requirements below are deferred, not completed;
+resuming them requires an explicit decision. Channel nudges were superseded by
+terminal writes, and tentative lifecycle hooks are not a delivery commitment.
+The progress and acceptance sections below preserve the historical evidence.
 
 ## Objectives
 
