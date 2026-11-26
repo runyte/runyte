@@ -865,7 +865,7 @@ fn review_top(action: crate::keymap::ui::Action, top: usize, rows: usize) -> usi
 
 /// Navigation is shared with the editor registry without granting editor action authority.
 fn review_motion(binding: &Binding) -> Option<Command> {
-    if !binding.actions.is_empty() {
+    if binding.configured_actions || !binding.is_plain_action() {
         return None;
     }
     match binding.target {

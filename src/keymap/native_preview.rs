@@ -409,7 +409,7 @@ fn authored(
     factory: &HashMap<KeySequence, (BindingTarget, bool)>,
 ) -> bool {
     configured.contains(&binding.sequence)
-        || !binding.actions.is_empty()
+        || binding.configured_actions
         || factory.get(&binding.sequence) != Some(&(binding.target, binding.is_plain_action()))
 }
 fn project(map: &Keymap, mode: Mode, source: BindingScope) -> Bindings {

@@ -823,8 +823,14 @@ never run against a selection the search did not choose.
 - Actions that already ran stay applied.
 - A list is not rolled back. A saved file stays saved.
 
-**Counts.** A single action keeps its usual count behavior. A count before a
-multi-action binding is rejected before anything runs.
+**Counts.** A single action keeps its usual count behavior. In a multi-action
+binding, a count goes to the first action whose descriptor accepts one; later
+actions run once. If no action accepts a count, the entire binding is rejected
+before anything runs. For example, `3` before `[yank, move-right, move-right]`
+yanks once and moves right four times. During macro replay, counted multi-action
+bindings run within the existing 128-repetition atomic limit; larger counts
+stop replay before any step runs. Singleton counted commands retain their
+cooperative replay scheduling.
 
 **Undo.**
 
@@ -893,9 +899,10 @@ Regenerate this block with `cargo run --example action_reference`.
 <a id="clipboard-register-and-macro-actions"></a>
 <!-- action-reference:start -->
 
+
 Use these names in `keys.bind`. Modes are independent. Sequence position says whether
-an action may be followed by another action. Counts on multi-action bindings
-are rejected. Plugin bindings use `plugins[].bindings`.
+an action may be followed by another action. Counts on multi-action bindings go to the first accepting step; if none accepts
+a count, the binding is rejected before execution. Plugin bindings use `plugins[].bindings`.
 
 #### Application actions
 
@@ -1990,6 +1997,7 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `session-stop` | background work | not accepted | none | session-stop [workspace] |  |
 | `session-rename` | background work, configuration | not accepted | none | session-rename <workspace> <name> |  |
 | `session-clean` | background work | not accepted | none | none |  |
+
 <!-- action-reference:end -->
 
 <!-- navigation -->

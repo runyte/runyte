@@ -54,7 +54,7 @@ impl Index {
             claim.unconditional |= explicit
                 || first == map.window_prefix()
                 || super::is_terminal_normal_key(first)
-                || (binding.actions.is_empty()
+                || (!binding.configured_actions
                     && binding.target == BindingTarget::Editor(EditorCommand::ClipboardYank));
             claim.persistent |= matches!(
                 binding.target,

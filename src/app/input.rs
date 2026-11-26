@@ -2578,7 +2578,9 @@ impl App {
                     .keymap
                     .lookup_in(self.mode, self.key_binding_scope(), &sequence)
                 {
-                    crate::keymap::Lookup::Exact(binding) if !binding.actions.is_empty() => {
+                    crate::keymap::Lookup::Exact(binding)
+                        if binding.configured_actions || binding.program.len() > 1 =>
+                    {
                         Some(binding.description.to_string())
                     }
                     _ => None,
@@ -2594,31 +2596,57 @@ impl App {
                 post_action,
                 resolved_binding,
             } = self.grammar.translate(input, context)?;
-            let mut command_outcome = None;
-            for intent in intents {
-                self.sequence_halted = false;
-                command_outcome = self
-                    .apply_editor_intent(intent, typed_character)?
-                    .or(command_outcome);
-                self.reconcile_search_selection_presentation();
-                if configured_description.is_some()
-                    && (self.status_error
-                        || self.sequence_halted
-                        || matches!(
-                            command_outcome,
-                            Some(
-                                CommandOutcome::UserError(_)
-                                    | CommandOutcome::Unavailable(_)
-                                    | CommandOutcome::Confirmation(_)
-                                    | CommandOutcome::Prompt(_)
-                                    | CommandOutcome::AsynchronousRequest(_)
-                            )
-                        ))
-                {
+            // Counted programs must finish their accepting step before their
+            // tail. Reserve bounded atomic work up front instead of letting
+            // singleton macro scheduling defer repetitions past that tail.
+            let atomic = intents.len() > 1 && self.macro_replay.is_some();
+            if atomic {
+                let repetitions = intents.iter().map(|intent| match intent {
+                    EditorIntent::Command(invocation)
+                        if matches!(invocation.id(), CommandId::Editor(command)
+                            if command.action_policy().count == crate::command::descriptor::CountBehavior::Repeat
+                                && !matches!(command, EditorCommand::ReplayMacro | EditorCommand::ReplayDefaultMacro)) =>
+                        invocation.execution().repetitions(),
+                    EditorIntent::Range(RangeIntent::SelectLine { count, .. }) => count.get(),
+                    _ => 1,
+                }).max().unwrap_or(1);
+                if !self.reserve_macro_replay_range_work(repetitions) {
                     self.grammar.reset();
-                    break;
+                    return Ok(());
                 }
             }
+            let previous_atomic = self.atomic_program_replay;
+            self.atomic_program_replay |= atomic;
+            let result = (|| -> Result<Option<CommandOutcome>> {
+                let mut command_outcome = None;
+                for intent in intents {
+                    self.sequence_halted = false;
+                    command_outcome = self
+                        .apply_editor_intent(intent, typed_character)?
+                        .or(command_outcome);
+                    self.reconcile_search_selection_presentation();
+                    if configured_description.is_some()
+                        && (self.status_error
+                            || self.sequence_halted
+                            || matches!(
+                                command_outcome,
+                                Some(
+                                    CommandOutcome::UserError(_)
+                                        | CommandOutcome::Unavailable(_)
+                                        | CommandOutcome::Confirmation(_)
+                                        | CommandOutcome::Prompt(_)
+                                        | CommandOutcome::AsynchronousRequest(_)
+                                )
+                            ))
+                    {
+                        self.grammar.reset();
+                        break;
+                    }
+                }
+                Ok(command_outcome)
+            })();
+            self.atomic_program_replay = previous_atomic;
+            let command_outcome = result?;
             self.grammar.complete(post_action, self.mode);
             if let Some((sequence, target)) = resolved_binding {
                 let outcome = command_outcome.unwrap_or_else(|| {
@@ -2706,7 +2734,8 @@ impl App {
             let repetitions = match range {
                 RangeIntent::SelectLine { count, .. } => count.get(),
             };
-            if !self.reserve_macro_replay_range_work(repetitions) {
+            if !self.atomic_program_replay && !self.reserve_macro_replay_range_work(repetitions) {
+                self.sequence_halted = true;
                 return Ok(None);
             }
         }
@@ -2770,8 +2799,8 @@ impl App {
                     } else {
                         format!("register must be a-z, A-Z, quote, or underscore, not '{register}'")
                     }),
-                    GrammarNotice::ActionSequenceCount => {
-                        self.action_failed("bindings with multiple actions do not support a count");
+                    GrammarNotice::ProgramCountNotSupported => {
+                        self.action_failed("this program has no action that accepts a count");
                     }
                     GrammarNotice::CountNotSupported(target) => {
                         self.action_failed(format!(
@@ -5764,7 +5793,10 @@ impl App {
                     | EditorCommand::FindTillPreviousChar
             );
             let selecting = repeated_character_command && self.selecting_motions_apply();
-            let repetitions = if self.macro_replay.is_some() && repeated_character_command {
+            let repetitions = if self.macro_replay.is_some()
+                && !self.atomic_program_replay
+                && repeated_character_command
+            {
                 1
             } else {
                 execution.repetitions()
@@ -5910,13 +5942,21 @@ impl App {
             self.replay_macro(DEFAULT_MACRO_REGISTER, execution.repetitions())?;
             return Ok(());
         }
-        let repetitions = if self.macro_replay.is_some() {
+        let repetitions = if self.macro_replay.is_some() && !self.atomic_program_replay {
             1
         } else {
             execution.repetitions()
         };
         for _ in 0..repetitions {
             self.execute_editor_command(command)?;
+            if self.atomic_program_replay
+                && (self.status_error
+                    || self.sequence_halted
+                    || self.should_quit
+                    || self.workspace_switch.is_some())
+            {
+                break;
+            }
         }
         let deferred = execution.repetitions().saturating_sub(repetitions);
         if deferred > 0 && !self.should_quit && self.workspace_switch.is_none() {

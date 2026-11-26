@@ -625,9 +625,7 @@ pub(crate) fn render_document_with_descriptions(
         let _ = writeln!(out, "Buffer keys");
         let _ = writeln!(out, "  Only this view answers to these.\n");
         for binding in &scoped {
-            let label = binding
-                .actions
-                .is_empty()
+            let label = (!binding.configured_actions && binding.is_plain_action())
                 .then(|| description(binding.target))
                 .flatten();
             let detail = platform_description(
@@ -636,8 +634,9 @@ pub(crate) fn render_document_with_descriptions(
             );
             // A plugin wrote this description, and Runyte validates it for
             // length and control characters, not for braces.
-            let plugin =
-                matches!(binding.target, BindingTarget::Plugin(_)) || !binding.actions.is_empty();
+            let plugin = matches!(binding.target, BindingTarget::Plugin(_))
+                || binding.configured_actions
+                || !binding.is_plain_action();
             let detail = if plugin {
                 std::borrow::Cow::Owned(crate::key_spelling::escape_markers(&detail))
             } else {
@@ -740,7 +739,8 @@ pub(crate) fn render_document_with_descriptions(
                         Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => (
                             platform_description(binding.target, entry.description),
                             matches!(binding.target, BindingTarget::Plugin(_))
-                                || !binding.actions.is_empty(),
+                                || binding.configured_actions
+                                || !binding.is_plain_action(),
                         ),
                         _ => (std::borrow::Cow::Borrowed(entry.description), false),
                     };
@@ -1111,9 +1111,7 @@ fn write_mode_bindings(
         } else {
             binding.sequence.to_string()
         };
-        let configured = binding
-            .actions
-            .is_empty()
+        let configured = (!binding.configured_actions && binding.is_plain_action())
             .then(|| description(binding.target))
             .flatten();
         let detail = platform_description(
@@ -1122,8 +1120,9 @@ fn write_mode_bindings(
                 .as_deref()
                 .unwrap_or(binding.description.as_ref()),
         );
-        let plugin =
-            matches!(binding.target, BindingTarget::Plugin(_)) || !binding.actions.is_empty();
+        let plugin = matches!(binding.target, BindingTarget::Plugin(_))
+            || binding.configured_actions
+            || !binding.is_plain_action();
         let detail = if plugin {
             std::borrow::Cow::Owned(crate::key_spelling::escape_markers(&detail))
         } else {

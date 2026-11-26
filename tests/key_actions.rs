@@ -36,7 +36,7 @@ fn action_bindings_override_after_remapping_and_keep_modes_independent() {
     else {
         panic!("missing sequence")
     };
-    assert_eq!(binding.actions.len(), 2);
+    assert_eq!(binding.program.len(), 2);
     assert_eq!(binding.description, "select-all → yank");
 }
 
@@ -183,7 +183,7 @@ fn action_bindings_preserve_terminal_input_and_its_window_commands() {
             panic!("missing terminal command")
         };
         assert_eq!(binding.target, BindingTarget::Editor(expected));
-        assert!(binding.actions.is_empty());
+        assert!(!binding.configured_actions);
     }
     for sequence in ["Ctrl-a F1", "F2"] {
         let sequence = KeySequence::parse(sequence).unwrap();

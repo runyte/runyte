@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Bound the work and storage of configured assignments across all mode files.
 pub const MAX_BINDINGS: usize = 65_536;
-const MAX_ACTIONS: usize = 16;
+const MAX_ACTIONS: usize = super::program::MAX_STEPS;
 const MAX_ARGUMENT_BYTES: usize = 4096;
 
 #[cfg(test)]
@@ -55,11 +55,14 @@ pub enum Action {
     /// The grammar supplies a count or a subsequent character, as for a default key.
     Editor(EditorCommand),
     Invocation(CommandInvocation),
+    /// Unparameterized colon or plugin target, resolved when the key executes.
+    Target(BindingTarget),
 }
 
 impl Action {
     pub fn target(&self) -> BindingTarget {
         match self {
+            Self::Target(target) => *target,
             Self::Editor(command) => BindingTarget::Editor(*command),
             Self::Invocation(invocation) => match invocation.id() {
                 CommandId::Editor(command) => BindingTarget::Editor(command),
@@ -478,7 +481,7 @@ pub(super) fn missing_way_out(keymap: &Keymap) -> Option<String> {
             binding.availability == BindingAvailability::Implemented
                 && (binding.target == target
                     || binding
-                        .actions
+                        .program
                         .iter()
                         .any(|action| action.target() == target))
         })
@@ -704,7 +707,9 @@ pub(super) fn apply(
                     mode_name(rule.mode).into(),
                     rule.source.clone(),
                 ]];
-                binding.actions = rule.actions.clone();
+                binding.program = super::program::Program::new(rule.actions.clone())
+                    .expect("nonempty parsed rule");
+                binding.configured_actions = true;
                 binding.description = rule.description.clone().into();
                 candidate.bindings.push(binding);
             }
@@ -794,7 +799,7 @@ pub(crate) fn default_bindings(section: Option<&Value>) -> BTreeMap<&'static str
         let mut entries = BTreeMap::new();
         for binding in keymap.bindings_for_mode(mode) {
             let sequence = &binding.sequence;
-            if binding.actions.is_empty()
+            if !binding.configured_actions
                 && !claimed.contains(sequence)
                 && !matches!(sequence.as_slice(), [key] if super::is_fast_pane_key(*key))
                 && is_expressible(binding, mode)
@@ -831,7 +836,7 @@ fn sequence_for(source: &str, keymap: &Keymap) -> Option<KeySequence> {
 pub fn reference() -> String {
     use std::fmt::Write;
     let mut out = String::from(
-        "# Bindable actions\n\nUse these names in `keys.bind`. Modes are independent. Sequence position says whether\nan action may be followed by another action. Counts on multi-action bindings\nare rejected. Plugin bindings use `plugins[].bindings`.\n",
+        "# Bindable actions\n\nUse these names in `keys.bind`. Modes are independent. Sequence position says whether\nan action may be followed by another action. Counts on multi-action bindings go to the first accepting step; if none accepts\na count, the binding is rejected before execution. Plugin bindings use `plugins[].bindings`.\n",
     );
     for &category in command::CommandCategory::ALL {
         let commands = EditorCommand::ALL
@@ -897,7 +902,7 @@ mod tests {
         if binding.is_plain_action() {
             format!("{:?}", binding.target)
         } else {
-            format!("{:?}", binding.actions)
+            format!("{:?}", binding.program)
         }
     }
 

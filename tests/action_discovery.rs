@@ -87,7 +87,7 @@ fn copied_yaml_preserves_order_arguments_descriptions_and_scope() {
             panic!()
         };
         assert_eq!(binding.target, copy.target);
-        assert_eq!(binding.actions, copy.actions);
+        assert_eq!(binding.program, copy.program);
         assert_eq!(binding.description, copy.description);
     }
 }
@@ -158,10 +158,12 @@ fn browser_projection_bounds_many_plain_and_composed_bindings() {
             EditorCommand::SelectAll,
         );
         if i > 40 {
-            binding.actions = vec![
+            binding.program = runyte::keymap::program::Program::new(vec![
                 Action::Editor(EditorCommand::SelectAll),
                 Action::Editor(EditorCommand::Yank),
-            ];
+            ])
+            .unwrap();
+            binding.configured_actions = true;
         }
         bindings.push(binding);
     }

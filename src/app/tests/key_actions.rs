@@ -40,11 +40,10 @@ fn action_binding_counts_character_arguments_and_runtime_errors() {
     assert_eq!(cursor(&app).col, 3);
     press(&mut app, '2');
     key(&mut app, KeyCode::Function(2), Modifiers::NONE);
-    assert_eq!(cursor(&app).col, 3);
-    assert!(app.status_error);
-    assert!(app.status.contains("multiple actions"));
+    assert_eq!(cursor(&app).col, 6, "count reaches only the first move");
+    assert!(!app.status_error);
     key(&mut app, KeyCode::Function(4), Modifiers::NONE);
-    assert_eq!(cursor(&app).col, 3);
+    assert_eq!(cursor(&app).col, 6);
     assert!(app.status_error);
     set_cursor(&mut app, 0, 0);
     key(&mut app, KeyCode::Function(3), Modifiers::NONE);
@@ -431,4 +430,125 @@ fn delete_and_change_selection_leave_registers_alone_while_d_and_c_yank() {
     press(&mut app, 'c');
     assert_eq!(app.mode, Mode::Insert);
     assert_eq!(app.registers[&'"'].text, "hi");
+}
+
+#[test]
+fn program_counts_skip_nonaccepting_steps_and_reject_before_any_effect() {
+    let mut app = configured(
+        "bind: {normal: {F1: [yank, move-right, move-right], F2: [select-all, yank], F3: [yank, move-file-start]}}",
+    );
+    seed(&mut app, "abc def\nsecond\nthird\nfourth");
+    press(&mut app, '2');
+    key(&mut app, KeyCode::Function(1), Modifiers::NONE);
+    assert_eq!(cursor(&app).col, 3);
+    assert_eq!(app.registers[&'"'].text, "a");
+    assert!(!app.status_error);
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    assert_eq!(cursor(&app).col, 0, "one selection-history action");
+    press(&mut app, '3');
+    key(&mut app, KeyCode::Function(2), Modifiers::NONE);
+    assert!(app.status_error);
+    assert!(app.status.contains("no action that accepts a count"));
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.active().selection.primary(), Range::point(0));
+    assert_eq!(app.registers[&'"'].text, "a", "yank never ran");
+    press(&mut app, '3');
+    key(&mut app, KeyCode::Function(3), Modifiers::NONE);
+    assert_eq!(
+        cursor(&app).row,
+        2,
+        "an interpreted count is a line address"
+    );
+}
+
+#[test]
+fn singleton_count_compatibility_includes_configured_operand_and_invocation() {
+    let mut app = configured(
+        "bind: {normal: {F1: find-next-char, F2: {command: help, argument: key-actions}}}",
+    );
+    seed(&mut app, "axxb");
+    press(&mut app, '2');
+    key(&mut app, KeyCode::Function(1), Modifiers::NONE);
+    press(&mut app, 'x');
+    assert_eq!(cursor(&app).col, 1);
+    press(&mut app, '2');
+    key(&mut app, KeyCode::Function(2), Modifiers::NONE);
+    assert!(app.status_error);
+    assert_eq!(
+        text(&app),
+        "axxb",
+        "counted parameterized singleton did not open help"
+    );
+}
+
+#[test]
+fn counted_program_replay_keeps_steps_ordered_and_rejects_oversized_work() {
+    for (program, count, accepted) in [
+        ("[move-right, yank]", "3", true),
+        ("[yank, move-right, yank]", "129", false),
+        ("[yank, select-line, yank]", "129", false),
+    ] {
+        let mut app = configured(&format!("bind: {{normal: {{F1: {program}}}}}"));
+        seed(&mut app, "abcd");
+        register(&mut app, "sentinel", false);
+        if accepted {
+            for c in count.chars() {
+                press(&mut app, c);
+            }
+            key(&mut app, KeyCode::Function(1), Modifiers::NONE);
+            assert_eq!(app.registers[&'"'].text, "d");
+            set_cursor(&mut app, 0, 0);
+            register(&mut app, "sentinel", false);
+        }
+        let inputs = count
+            .chars()
+            .map(|c| InputEvent::Key(KeyStroke::new(KeyCode::Char(c), Modifiers::NONE)))
+            .chain(std::iter::once(InputEvent::Key(KeyStroke::new(
+                KeyCode::Function(1),
+                Modifiers::NONE,
+            ))))
+            .collect();
+        app.macros.insert(DEFAULT_MACRO_REGISTER, inputs);
+        for c in [' ', 'm', 'r'] {
+            press(&mut app, c);
+        }
+        finish_macro_replay(&mut app);
+        if accepted {
+            assert_eq!(
+                app.registers[&'"'].text, "d",
+                "tail follows all counted moves"
+            );
+            assert_eq!(cursor(&app).col, 3);
+        } else {
+            assert!(app.status_error);
+            assert!(app.status.contains("per-action limit"));
+            assert_eq!(
+                app.registers[&'"'].text, "sentinel",
+                "neither prefix nor tail ran"
+            );
+            assert_eq!(cursor(&app).col, 0);
+        }
+        assert!(!app.atomic_program_replay);
+    }
+}
+
+#[test]
+fn counted_program_replay_reserves_remaining_budget_before_prefix_effects() {
+    let mut app = configured("bind: {normal: {F1: [yank, move-right, yank]}}");
+    seed(&mut app, "abcd");
+    register(&mut app, "sentinel", false);
+    app.macros.insert(
+        DEFAULT_MACRO_REGISTER,
+        vec![
+            InputEvent::Key(KeyStroke::new(KeyCode::Char('3'), Modifiers::NONE)),
+            InputEvent::Key(KeyStroke::new(KeyCode::Function(1), Modifiers::NONE)),
+        ],
+    );
+    app.replay_macro(DEFAULT_MACRO_REGISTER, 1).unwrap();
+    app.macro_replay.as_mut().unwrap().remaining_work = 3;
+    finish_macro_replay(&mut app);
+    assert!(app.status_error);
+    assert!(app.status.contains("safety limit"));
+    assert_eq!(app.registers[&'"'].text, "sentinel");
+    assert_eq!(cursor(&app).col, 0);
 }

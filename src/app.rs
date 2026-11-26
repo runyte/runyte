@@ -3293,6 +3293,8 @@ pub struct App {
     /// moment its sequence completes, in the order it arrived.
     macro_staging: Vec<InputEvent>,
     macro_replay: Option<MacroReplay>,
+    /// Bounded composed-program repetitions already charged to the replay budget.
+    atomic_program_replay: bool,
     /// Last successfully invoked command reached through the effective leader
     /// namespace. The semantic invocation is replayed against current state;
     /// window-prefix aliases never enter this history.
@@ -4041,6 +4043,7 @@ impl App {
             recording_macro: None,
             macro_staging: Vec::new(),
             macro_replay: None,
+            atomic_program_replay: false,
             jump: None,
             line_select: None,
             selection_action_depth: 0,

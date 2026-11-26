@@ -22,6 +22,7 @@ pub mod native_preview;
 pub mod native_window;
 pub mod pointer;
 pub mod pointer_actions;
+pub mod program;
 mod scopes;
 pub(crate) use scopes::admit as admits_scoped_action;
 pub mod terminal_input;
@@ -353,8 +354,10 @@ pub struct Binding {
     pub scope: BindingScope,
     pub sequence: KeySequence,
     pub target: BindingTarget,
-    /// Configured semantic actions; empty for ordinary built-in bindings.
-    pub actions: Vec<actions::Action>,
+    /// Nonempty semantic program shared by built-in and configured bindings.
+    pub program: program::Program,
+    /// Assigned through keys.bind (distinct from remapping or scoped assignments).
+    pub configured_actions: bool,
     /// Accepted configuration paths, relative to keys; empty for built-ins.
     pub source_paths: Vec<Vec<String>>,
     pub description: std::borrow::Cow<'static, str>,
@@ -375,10 +378,10 @@ impl Binding {
     pub fn discovery_description(&self) -> std::borrow::Cow<'static, str> {
         if !self.description.is_empty() {
             self.description.clone()
-        } else if self.actions.is_empty() {
+        } else if self.is_plain_action() {
             self.target.description().into()
         } else {
-            self.actions
+            self.program
                 .iter()
                 .map(|a| a.target().name())
                 .collect::<Vec<_>>()
@@ -389,7 +392,7 @@ impl Binding {
 
     /// Capability needed by a configured action or the ordinary target.
     pub fn action_capability(&self) -> Option<CommandCapability> {
-        self.actions
+        self.program
             .iter()
             .find_map(|action| action.target().id().capability())
             .or_else(|| self.target.id().capability())
@@ -397,8 +400,8 @@ impl Binding {
 
     /// Whether this binding invokes exactly its target, without arguments.
     pub fn is_plain_action(&self) -> bool {
-        match self.actions.as_slice() {
-            [] => true,
+        match self.program.as_slice() {
+            [actions::Action::Target(target)] => self.target == *target,
             [actions::Action::Editor(command)] => self.target == BindingTarget::Editor(*command),
             [actions::Action::Invocation(invocation)] => self
                 .target
@@ -420,7 +423,8 @@ impl Binding {
             scope: BindingScope::Global,
             sequence: sequence.into(),
             target,
-            actions: Vec::new(),
+            program: program::Program::single(target),
+            configured_actions: false,
             source_paths: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Implemented,
@@ -442,7 +446,8 @@ impl Binding {
             scope,
             sequence: sequence.into(),
             target,
-            actions: Vec::new(),
+            program: program::Program::single(target),
+            configured_actions: false,
             source_paths: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Implemented,
@@ -480,7 +485,7 @@ impl Binding {
             && !(scope.is_merge_review() && self.scope == BindingScope::Global)
             && !(scope == BindingScope::Terminal
                 && matches!(mode, Mode::Insert | Mode::Replace)
-                && !self.actions.is_empty())
+                && self.configured_actions)
     }
 
     pub fn is_active_in(&self, mode: Mode) -> bool {
@@ -499,7 +504,8 @@ impl Binding {
             scope: BindingScope::Global,
             sequence: sequence.into(),
             target,
-            actions: Vec::new(),
+            program: program::Program::single(target),
+            configured_actions: false,
             source_paths: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Planned(reason),
@@ -521,7 +527,8 @@ impl Binding {
             scope: BindingScope::Global,
             sequence: sequence.into(),
             target,
-            actions: Vec::new(),
+            program: program::Program::single(target),
+            configured_actions: false,
             source_paths: Vec::new(),
             description: target.description().into(),
             availability: BindingAvailability::Unsupported(reason),
@@ -753,7 +760,7 @@ impl Keymap {
     pub(crate) fn with_indent_overrides(mut self, enabled: bool) -> Self {
         if enabled {
             for binding in &mut self.bindings {
-                if !binding.actions.is_empty() {
+                if binding.configured_actions {
                     continue;
                 }
                 binding.description = match binding.target {
@@ -773,7 +780,7 @@ impl Keymap {
     pub(crate) fn with_indent_style(&self, style: crate::config::IndentStyle) -> Self {
         let mut keymap = self.clone();
         for binding in &mut keymap.bindings {
-            if !binding.actions.is_empty() {
+            if binding.configured_actions {
                 continue;
             }
             binding.description = match (binding.target, style) {
@@ -1196,7 +1203,7 @@ impl Keymap {
     /// configured replacements. Ordinary Ctrl-c remains child input.
     pub fn terminal_clipboard_key(&self, key: Key) -> bool {
         let copy = |binding: &Binding| {
-            binding.actions.is_empty()
+            !binding.configured_actions
                 && binding.target == BindingTarget::Editor(EditorCommand::ClipboardYank)
         };
         match self.lookup_in(

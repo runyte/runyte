@@ -438,3 +438,20 @@ where input or help can reach the native frontend.
 - `context/reference/ui-vocabulary.md` where lists and pickers change
 - `context/reference/startup-performance.md`
 - `context/plans/README.md`
+
+### Stage 3 implementation slices
+
+Stage 3a introduces a nonempty bounded program for every binding, retaining
+inline storage for singleton defaults and explicit `keys.bind` provenance for
+input ownership. Multi-step programs route a count to their first accepting
+step, or reject it before any effects when none accepts it. Singleton key
+behavior remains in a named compatibility adapter: for example, `2fx` still
+ignores the count, while a parameterized singleton rejects it. The final
+uniform count policy needs to reconcile this with default-key compatibility.
+
+Stage 3b still owns resumable execution, program undo ownership, effect-derived
+continuation and removal of the legacy policy, atomic splits and default
+program rewrites. Until those land, operands and mode changes retain their
+existing last-step restrictions and text edits retain their existing undo
+boundaries. Preset authoring remains pending open question 2. Stage 3 is not
+complete with 3a alone.
