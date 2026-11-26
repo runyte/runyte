@@ -26,6 +26,12 @@ current sources take precedence.
 
 Active work:
 
+- [Composable key bindings](active/PLAN_COMPOSABLE_KEY_BINDINGS.md): atomic
+  actions with one descriptor each, bindings as programs in one table for every
+  view and mode, conditional steps, configurable macros, modes with fallbacks
+  and hooks, the built-in keymap as a preset, and a Vim-style acceptance preset.
+  Breaking change for 0.5.
+
 Current desktop ownership, supported behavior and measurements are recorded in
 [the desktop edition reference](../reference/desktop-edition.md), with the
 [document preview reference](../reference/native-document-preview.md) retaining
