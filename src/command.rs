@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
+pub mod descriptor;
+
 use std::{fmt, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -585,85 +587,21 @@ macro_rules! editor_commands {
             /// Whether this command consumes the next character as an
             /// operand instead of treating it as another key binding.
             pub const fn takes_character(self) -> bool {
-                matches!(
-                    self,
-                    Self::FindNextChar
-                        | Self::FindPreviousChar
-                        | Self::FindTillNextChar
-                        | Self::FindTillPreviousChar
-                        | Self::ReplaceChar
-                        | Self::SurroundAdd
-                        | Self::SurroundReplace
-                        | Self::SurroundDelete
-                        | Self::SelectRegister
-                        | Self::RecordMacro
-                        | Self::ReplayMacro
-                )
+                !matches!(self.action_policy().operands, descriptor::OperandArity::Zero)
             }
 
             /// Whether the command takes a second character operand after
             /// its first, as `m r` names the pair to replace and then the
             /// pair replacing it.
             pub const fn takes_second_character(self) -> bool {
-                matches!(self, Self::SurroundReplace)
+                matches!(self.action_policy().operands, descriptor::OperandArity::Two)
             }
 
             /// Whether the semantic command accepts a numeric address or
             /// repetition count. Input grammars own their separate policy
             /// for interpreting a count prefix.
             pub const fn accepts_count(self) -> bool {
-                matches!(
-                    self,
-                    Self::MoveLeft
-                        | Self::MoveRight
-                        | Self::MoveUp
-                        | Self::MoveDown
-                        | Self::MediaMoveUp
-                        | Self::MediaMoveDown
-                        | Self::MoveWordForward
-                        | Self::MoveWordBackward
-                        | Self::MoveWordEnd
-                        | Self::MoveLongWordForward
-                        | Self::MoveLongWordBackward
-                        | Self::MoveLongWordEnd
-                        | Self::GotoNextParagraph
-                        | Self::GotoPreviousParagraph
-                        | Self::MoveFileStart
-                        | Self::MoveFileEnd
-                        | Self::PageUp
-                        | Self::PageDown
-                        | Self::HalfPageUp
-                        | Self::HalfPageDown
-                        | Self::ScrollViewDown
-                        | Self::ScrollViewUp
-                        | Self::SelectLine
-                        | Self::SelectLineUp
-                        | Self::ExtendLineAbove
-                        | Self::ExtendLineBelow
-                        | Self::PasteAfterOrReplace
-                        | Self::PasteAfter
-                        | Self::PasteBefore
-                        | Self::ClipboardPasteAfter
-                        | Self::ClipboardPasteBefore
-                        | Self::SelectionUndo
-                        | Self::SelectionRedo
-                        | Self::Undo
-                        | Self::Redo
-                        | Self::ReplayMacro
-                        | Self::ReplayDefaultMacro
-                        | Self::ExpandSyntaxSelection
-                        | Self::ShrinkSyntaxSelection
-                        | Self::SelectSyntaxParent
-                        | Self::SelectSyntaxChild
-                        | Self::SelectPreviousSyntaxSibling
-                        | Self::SelectNextSyntaxSibling
-                        | Self::GotoPreviousSyntaxFunction
-                        | Self::GotoNextSyntaxFunction
-                        | Self::GotoPreviousSyntaxClass
-                        | Self::GotoNextSyntaxClass
-                        | Self::GotoPreviousSyntaxParameter
-                        | Self::GotoNextSyntaxParameter
-                )
+                self.action_policy().count.accepts()
             }
         }
     };
@@ -1201,65 +1139,14 @@ editor_commands! {
 }
 
 impl EditorCommand {
-    /// Whether executing this command ends at a buffer transaction.
+    /// Legacy writable-buffer gate. This is not the semantic transaction effect.
+    /// See `descriptor().policy.buffer_mutation` for that separate contract.
     ///
     /// A read-only buffer refuses these, so the same predicate has to answer
     /// both "may this run" and "is this worth listing in help". Advertising a
     /// key that only ever reports a refusal is worse than omitting it.
     pub const fn is_mutating(self) -> bool {
-        matches!(
-            self,
-            Self::EnterInsertMode
-                | Self::EnterReplaceMode
-                | Self::AppendAfter
-                | Self::InsertLineStart
-                | Self::InsertLineEnd
-                | Self::OpenLineBelow
-                | Self::OpenLineAbove
-                | Self::ToggleCase
-                | Self::Undo
-                | Self::Redo
-                | Self::PasteAfterOrReplace
-                | Self::PasteAfter
-                | Self::ReplaceWithRegister
-                | Self::PasteBefore
-                | Self::ClipboardPasteAfter
-                | Self::ClipboardPasteBefore
-                | Self::ClipboardPaste
-                | Self::Indent
-                | Self::Unindent
-                | Self::ToggleComments
-                | Self::YankDeleteSelection
-                | Self::YankChangeSelection
-                | Self::DeleteSelection
-                | Self::ChangeSelection
-                | Self::ReplaceChar
-                | Self::SurroundAdd
-                | Self::SurroundReplace
-                | Self::SurroundDelete
-                | Self::Save
-                | Self::DeleteWordBackward
-                | Self::DeleteWordForward
-                | Self::DeleteToLineStart
-                | Self::DeleteToLineEnd
-                | Self::DeleteCharBackward
-                | Self::DeleteCharForward
-                | Self::InsertNewline
-                | Self::InsertTab
-                | Self::InsertLiteralTab
-                | Self::RotateSelectionContentsForward
-                | Self::RotateSelectionContentsBackward
-                | Self::HardWrap
-                | Self::Reflow
-                | Self::JoinSelections
-                | Self::JoinLines
-                | Self::FormatTable
-                // These reach a buffer through the language server rather than
-                // directly, but they still end at a transaction.
-                | Self::RenameSymbol
-                | Self::CodeAction
-                | Self::TriggerCompletion
-        )
+        self.action_policy().requires_writable_buffer
     }
 
     pub const fn capability(self) -> Option<CommandCapability> {

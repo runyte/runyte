@@ -1,0 +1,151 @@
+// SPDX-License-Identifier: MPL-2.0
+//! Prose for specialized implementations, not a second admission table.
+use super::ViewBehavior;
+use crate::{command::EditorCommand as C, keymap::BindingScope as S};
+
+macro_rules! views {
+    ($($scope:ident: $description:literal),+ $(,)?) => {
+        &[$(ViewBehavior { scope: S::$scope, description: $description }),+]
+    };
+}
+
+pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
+    match command {
+        C::EnterNormalMode => {
+            views!(Terminal: "Leave child input for live Normal mode; otherwise capture review and collapse its selection")
+        }
+        C::EnterSelectMode => {
+            views!(Terminal: "Toggle Select mode over captured terminal output", Media: "Toggle selection of PDF text or an image region")
+        }
+        C::EnterInsertMode
+        | C::AppendAfter
+        | C::InsertLineStart
+        | C::InsertLineEnd
+        | C::OpenLineBelow
+        | C::OpenLineAbove => {
+            views!(Terminal: "Return to live output and send subsequent input to the child")
+        }
+        C::SelectAll => {
+            views!(Terminal: "Select all captured terminal output and enter Select mode")
+        }
+        C::CollapseSelection => {
+            views!(Terminal: "Collapse the review selection and enter Normal mode")
+        }
+        C::SelectLine | C::ExtendLineAbove | C::ExtendLineBelow | C::SelectLineUp => {
+            views!(Terminal: "Select or extend captured output lines, entering Select mode for the line selection")
+        }
+        C::KeepPrimarySelection => views!(Terminal: "Keep only the primary review selection"),
+        C::CopySelectionDown | C::CopySelectionUp => {
+            views!(Terminal: "Copy the review cursor to the adjacent captured output line")
+        }
+        C::MoveLeft | C::MoveRight => {
+            views!(Terminal: "Move or extend the cursor in captured output", Media: "Pan horizontally, or extend the media selection in Select mode")
+        }
+        C::MoveUp | C::MoveDown => {
+            views!(Terminal: "Move or extend the cursor in captured output", Media: "Pan vertically, change PDF page at fit, or extend the media selection")
+        }
+        C::MoveFileStart | C::MoveFileEnd => {
+            views!(Terminal: "Move to the captured output boundary", Media: "Select a PDF page by address or move to its first or last page")
+        }
+        C::MoveLineStart
+        | C::MoveLineEnd
+        | C::MoveFirstNonWhitespace
+        | C::MoveWordForward
+        | C::MoveWordBackward
+        | C::MoveWordEnd
+        | C::MoveLongWordForward
+        | C::MoveLongWordBackward
+        | C::MoveLongWordEnd
+        | C::GotoNextParagraph
+        | C::GotoPreviousParagraph => {
+            views!(Terminal: "Move or extend the review selection within captured output")
+        }
+        C::PageUp | C::PageDown => {
+            views!(Terminal: "Move the review cursor by a page of captured output", Media: "Move to the previous or next PDF page")
+        }
+        C::HalfPageUp | C::HalfPageDown => {
+            views!(Terminal: "Move the review cursor by half a page of captured output", Media: "Move to the previous or next PDF page", DirectoryTree: "Move the selected tree row by half a page")
+        }
+        C::GotoWindowTop | C::GotoWindowCenter | C::GotoWindowBottom => {
+            views!(Terminal: "Move the review cursor within the visible captured output", DirectoryTree: "Select the tree row at the top, middle or bottom of the view")
+        }
+        C::GotoFile => {
+            views!(Terminal: "Open a path or URL inferred from the review selection and terminal directory")
+        }
+        C::GotoWord => {
+            views!(Terminal: "Label visible captured output words and jump to one", DirectoryTree: "Label visible tree entries and select one")
+        }
+        C::FindNextChar | C::FindPreviousChar | C::FindTillNextChar | C::FindTillPreviousChar => {
+            views!(Terminal: "Find the supplied character within captured output")
+        }
+        C::ScrollViewUp | C::ScrollViewDown => {
+            views!(Terminal: "Capture review and scroll its output", Media: "Pan the image or PDF vertically")
+        }
+        C::AlignViewCenter | C::AlignViewMiddle => {
+            views!(Media: "Center the image or PDF in its pane")
+        }
+        C::Search => views!(Terminal: "Prompt for a case-insensitive search of captured output"),
+        C::SearchRegex => {
+            views!(Terminal: "Prompt for a regular-expression search of captured output", DirectoryTree: "Prompt to search visible tree entries")
+        }
+        C::SearchNext | C::SearchPrevious => {
+            views!(Terminal: "Select the next or previous review match without changing mode", DirectoryTree: "Select the next or previous matching tree entry")
+        }
+        C::RotateSelectionForward | C::RotateSelectionBackward => {
+            views!(Terminal: "Select the next or previous terminal review search match")
+        }
+        C::Yank => {
+            views!(Terminal: "Copy the review selection to the selected register and retain its selection and mode", Directory: "Copy selected entries and record a directory copy payload")
+        }
+        C::YankLine => {
+            views!(Directory: "Copy selected entry lines and record a directory copy payload")
+        }
+        C::YankCollapseNormalMode => {
+            views!(Terminal: "Copy the review selection, retain it on screen and enter Normal mode", Directory: "Copy selected entries, collapse the selection and enter Normal mode")
+        }
+        C::YankLineCollapseNormalMode => {
+            views!(Directory: "Copy selected entry lines, collapse the selection and enter Normal mode")
+        }
+        C::YankDeleteSelection | C::YankChangeSelection => {
+            views!(Directory: "Record selected entries as a move payload without removing files; delete or change the listing selection")
+        }
+        C::PasteAfter => {
+            views!(Terminal: "Send register text to the child without changing mode", Directory: "Stage copies or moves from a directory register into the listing")
+        }
+        C::PasteAfterOrReplace | C::PasteBefore => {
+            views!(Terminal: "Send register text to the child and enter Insert mode after successful queueing", Directory: "Stage copies or moves from a directory register into the listing")
+        }
+        C::ReplaceWithRegister => {
+            views!(Directory: "Insert rows from a directory-register payload; directory pastes use row insertion rather than text replacement")
+        }
+        C::ClipboardYank => {
+            views!(Terminal: "Copy the captured review selection to the system clipboard", Media: "Copy selected PDF text or an image region")
+        }
+        C::ClipboardPasteAfter | C::ClipboardPasteBefore => {
+            views!(Terminal: "Send system clipboard text to the child without changing mode")
+        }
+        C::ClipboardPaste => {
+            views!(Terminal: "Paste clipboard text or an image reference into the terminal input queue")
+        }
+        C::Undo => {
+            views!(Terminal: "Ask the child to erase the last text Runyte sent, if it has not been submitted")
+        }
+        C::SelectionUndo | C::SelectionRedo => {
+            views!(Terminal: "Restore the previous or next terminal review selection")
+        }
+        C::MediaBack => {
+            views!(Media: "Enter Normal mode, then fit media, clear selection or leave preview", PdfPages: "Collapse a Select-mode page selection, otherwise open the parent explorer")
+        }
+        C::MediaShowPage => views!(PdfPages: "Display the selected PDF page and enter Normal mode"),
+        C::Save | C::ForceSave => {
+            views!(Directory: "Review and apply edits to the directory listing as filesystem operations", CommitMessage: "Review staged changes and submit the commit message")
+        }
+        C::CloseWindow => views!(DirectoryTree: "Close the directory tree and restore pane focus"),
+        C::ToggleHiddenFiles => views!(DirectoryTree: "Show or hide hidden tree entries"),
+        C::ShowHelp => views!(DirectoryTree: "Open directory-tree help"),
+        // Other actions use their canonical description in every admitted view.
+        // Admission remains exhaustive in keymap::admission; this list only
+        // documents differing implementations and deliberately grants nothing.
+        _ => &[],
+    }
+}

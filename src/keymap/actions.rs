@@ -10,7 +10,6 @@ use crate::command::{self, CommandId, CommandInvocation, EditorCommand, Mode};
 use crate::input::KeyCode;
 use serde_yaml::{Mapping, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::LazyLock;
 
 /// Bound the work and storage of configured assignments across all mode files.
 pub const MAX_BINDINGS: usize = 65_536;
@@ -72,133 +71,19 @@ impl Action {
 }
 
 pub fn editor_modes(command: EditorCommand) -> Vec<Mode> {
-    // Scanned once: configuration compiles ask this for every admitted rule
-    // and, without the defaults, for every built-in binding in every mode.
-    static MODES: LazyLock<HashMap<EditorCommand, Vec<Mode>>> = LazyLock::new(|| {
-        EditorCommand::ALL
-            .iter()
-            .map(|&command| (command, scan_editor_modes(command)))
-            .collect()
-    });
-    MODES.get(&command).cloned().unwrap_or_default()
+    command.action_policy().global_binding_modes.to_vec()
 }
 
-fn scan_editor_modes(command: EditorCommand) -> Vec<Mode> {
-    if command::INTERNAL_EDITOR_COMMANDS.contains(&command) || command == EditorCommand::ShellPipe {
-        return Vec::new();
-    }
-    let map = super::default_keymap();
-    let target = BindingTarget::Editor(command);
-    BIND_MODES
-        .into_iter()
-        .filter(|mode| {
-            map.bindings().iter().any(|binding| {
-                binding.scope == BindingScope::Global
-                    && binding.target == target
-                    && binding.is_active_in(*mode)
-                    && binding.availability == BindingAvailability::Implemented
-            }) || (matches!(mode, Mode::Normal | Mode::Select)
-                && matches!(
-                    command,
-                    EditorCommand::ExtendLineAbove
-                        | EditorCommand::ExtendLineBelow
-                        | EditorCommand::SelectLineUp
-                        | EditorCommand::GotoNextParagraph
-                        | EditorCommand::GotoPreviousParagraph
-                        | EditorCommand::DeleteSelection
-                        | EditorCommand::ChangeSelection
-                        | EditorCommand::Yank
-                        | EditorCommand::YankLine
-                        | EditorCommand::PasteAfter
-                        | EditorCommand::ReplaceWithRegister
-                        | EditorCommand::SetSearchFromSelection
-                ))
-        })
-        .collect()
-}
-
-/// Commands whose completed synchronous effect can feed the next action.
-/// Everything else is available only as the final action. Extend deliberately.
+/// Stage 1 preserves the historical sequence contract. Stage 3 replaces this
+/// policy together with execution, when operand waits can resume programs.
 pub fn can_continue(target: BindingTarget) -> bool {
-    use EditorCommand as C;
-    matches!(
-        target,
-        BindingTarget::Editor(
-            C::MoveLeft
-                | C::MoveRight
-                | C::MoveUp
-                | C::MoveDown
-                | C::MoveLineStart
-                | C::MoveLineEnd
-                | C::MoveFirstNonWhitespace
-                | C::MoveFileStart
-                | C::MoveFileEnd
-                | C::MoveWordForward
-                | C::MoveWordBackward
-                | C::MoveWordEnd
-                | C::MoveLongWordForward
-                | C::MoveLongWordBackward
-                | C::MoveLongWordEnd
-                | C::GotoNextParagraph
-                | C::GotoPreviousParagraph
-                | C::PageUp
-                | C::PageDown
-                | C::HalfPageUp
-                | C::HalfPageDown
-                | C::GotoWindowTop
-                | C::GotoWindowCenter
-                | C::GotoWindowBottom
-                | C::SelectLine
-                | C::SelectLineUp
-                | C::ExtendLineAbove
-                | C::ExtendLineBelow
-                | C::SelectAll
-                | C::CollapseSelection
-                | C::FlipSelection
-                | C::KeepPrimarySelection
-                | C::RemovePrimarySelection
-                | C::CopySelectionDown
-                | C::CopySelectionUp
-                | C::CopySelectionDownPadded
-                | C::CopySelectionUpPadded
-                | C::RotateSelectionForward
-                | C::RotateSelectionBackward
-                | C::AlignSelections
-                | C::TrimSelections
-                | C::SplitSelectionAtLineEnds
-                | C::SplitSelectionAtLineStarts
-                | C::Yank
-                | C::YankLine
-                | C::YankCollapseNormalMode
-                | C::YankLineCollapseNormalMode
-                | C::YankDeleteSelection
-                | C::DeleteSelection
-                | C::Indent
-                | C::Unindent
-                | C::ToggleCase
-                | C::ToggleComments
-                | C::PasteAfterOrReplace
-                | C::PasteAfter
-                | C::ReplaceWithRegister
-                | C::PasteBefore
-                | C::SearchNext
-                | C::SearchPrevious
-                | C::SetSearchFromSelection
-                | C::Undo
-                | C::Redo
-                | C::SelectionUndo
-                | C::SelectionRedo
-                | C::DeleteWordBackward
-                | C::DeleteWordForward
-                | C::DeleteToLineStart
-                | C::DeleteToLineEnd
-                | C::DeleteCharBackward
-                | C::DeleteCharForward
-                | C::InsertNewline
-                | C::InsertTab
-                | C::InsertLiteralTab
-        )
-    )
+    use command::descriptor::LegacySequencePosition;
+    let policy = match target {
+        BindingTarget::Editor(c) => c.action_policy(),
+        BindingTarget::Colon(c) => c.action_policy(),
+        BindingTarget::Plugin(_) => return false,
+    };
+    policy.legacy_sequence_position == LegacySequencePosition::Continue
 }
 
 pub fn mode_name(mode: Mode) -> &'static str {
@@ -286,7 +171,9 @@ fn parse_action(value: &Value, mode: Mode) -> Result<(Action, String), String> {
                     mode_name(mode)
                 ));
             }
-        } else if !matches!(mode, Mode::Normal | Mode::Select) {
+        } else if let CommandId::Colon(command) = invocation.id()
+            && !command.action_policy().global_binding_modes.contains(&mode)
+        {
             return Err("colon-only commands require normal or select mode".into());
         }
         Action::Invocation(invocation)
