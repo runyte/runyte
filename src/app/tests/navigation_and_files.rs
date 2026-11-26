@@ -2978,43 +2978,6 @@ fn splitting_an_explorer_shows_the_same_listing_in_both_panes() {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[test]
-fn vim_directory_scope_opens_entries_and_parents_before_global_interpretation() {
-    let directory = temporary("vim-explorer-scope");
-    fs::create_dir_all(directory.join("child")).unwrap();
-    let file = directory.join("note.txt");
-    fs::write(&file, "hello").unwrap();
-    let mut config = Config::default();
-    config.editor.grammar = GrammarKind::Vim;
-
-    let mut opening = App::new(config.clone(), Some(directory.clone())).unwrap();
-    let row = opening
-        .active_buffer()
-        .lines()
-        .position(|line| line == "note.txt")
-        .unwrap();
-    set_cursor(&mut opening, row, 0);
-    key(&mut opening, KeyCode::Enter, Modifiers::NONE);
-    assert_eq!(
-        opening.active_buffer().path.as_deref(),
-        Some(file.as_path())
-    );
-
-    let mut parenting = App::new(config, Some(directory.join("child"))).unwrap();
-    key(&mut parenting, KeyCode::Backspace, Modifiers::NONE);
-    assert_eq!(
-        parenting.active_buffer().path.as_deref(),
-        Some(directory.as_path())
-    );
-    key(&mut parenting, KeyCode::Char('G'), Modifiers::SHIFT);
-    assert_eq!(
-        parenting.cursor_position().row,
-        parenting.active_buffer().last_row()
-    );
-
-    fs::remove_dir_all(directory).unwrap();
-}
-
 /// An editor-wait request arrives from a program running inside the terminal
 /// the pane is showing, so covering that terminal with the requested document
 /// is a detour rather than a decision to stop using the terminal. Finishing

@@ -14,16 +14,14 @@ use crate::selection::Selection;
 
 /// Coordinate provenance for a remembered selection.
 ///
-/// Runyte selections address characters inclusively, while Vim range
-/// operations use half-open spans. Equal coordinates can therefore carry
+/// Runyte selections address characters inclusively, while syntax and pointer range
+/// operations may use half-open spans. Equal coordinates can therefore carry
 /// different editing meaning and must travel with a jump.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum SelectionSemantics {
     #[default]
     Runyte,
     HalfOpen,
-    /// A half-open span that must enter and leave registers as whole lines.
-    VimLinewise,
 }
 
 /// How many positions a pane remembers. Helix uses 30; the cost here is one

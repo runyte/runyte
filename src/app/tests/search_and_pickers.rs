@@ -607,19 +607,6 @@ fn a_search_that_finds_nothing_on_enter_returns_the_view() {
 }
 
 #[test]
-fn a_vim_search_prompt_with_no_match_echoes_as_information() {
-    let mut app = vim_app("foo bar");
-
-    search_for(&mut app, '/', "absent");
-    assert!(!app.status_error, "{}", app.status);
-    assert!(!app.displayed_status_message_is_error());
-    assert_eq!(
-        app.displayed_status_message(),
-        "/ (pattern not found: absent)"
-    );
-}
-
-#[test]
 fn view_and_window_modes_update_presentation_state() {
     let mut app = App::new(Config::default(), None).unwrap();
     app.config.editor.soft_wrap = false;
@@ -787,12 +774,10 @@ fn yank_paste_and_prompt_editing_use_unicode_character_positions() {
 
 #[test]
 fn visual_yank_includes_the_character_under_the_cursor() {
-    // Vim's `w` rests on the next word's first character and its visual yank
-    // takes it; Runyte's rests on the space before it, as Helix's does.
-    for (mut app, after_w) in [
-        (App::new(Config::default(), None).unwrap(), "Test "),
-        (vim_app(""), "Test T"),
-    ] {
+    // Runyte's `w` rests on the space before the next word, as Helix's does.
+    {
+        let mut app = App::new(Config::default(), None).unwrap();
+        let after_w = "Test ";
         seed(&mut app, "Test Test");
 
         for motion in ['e', 'w'] {

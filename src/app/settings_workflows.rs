@@ -661,10 +661,8 @@ impl App {
         self.sync_inactive_theme();
         match value {
             SettingValue::Grammar(kind) => {
-                if let Ok(grammar) = ActiveGrammar::new(kind) {
-                    self.grammar = grammar;
-                    self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
-                }
+                self.grammar = ActiveGrammar::new(kind);
+                self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
             }
             SettingValue::Text(ref name) if setting == SettingId::Theme => {
                 if let Ok(theme) = self.config.resolve_theme(name) {

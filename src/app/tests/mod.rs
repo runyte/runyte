@@ -10,9 +10,7 @@ use std::{
 
 use super::*;
 use crate::command::parse_colon_command;
-use crate::command::{
-    CommandExposure, GRAMMAR_ONLY_EDITOR_COMMANDS, GrammarKind, INTERNAL_EDITOR_COMMANDS,
-};
+use crate::command::{CommandExposure, GrammarKind, INTERNAL_EDITOR_COMMANDS};
 use crate::file_picker::ScanEntry;
 use crate::keymap::{Binding, BindingAvailability, BindingTarget};
 use crate::lsp::LspPosition;
@@ -244,7 +242,7 @@ mod windows_session_manager;
 mod workspace;
 mod workspace_startup;
 
-use commands::{type_command, type_text, vim_app};
+use commands::{type_command, type_text};
 use editing_and_buffers::MemoryClipboard;
 use language::{drain, ready, rust_app, server_id, temporary, tracked};
 

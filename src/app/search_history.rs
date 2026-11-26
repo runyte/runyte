@@ -203,11 +203,7 @@ impl App {
     }
 
     fn macro_stop_hint(&self) -> String {
-        if self.grammar.kind() == crate::command::GrammarKind::Vim {
-            "q".to_owned()
-        } else {
-            self.key_text(crate::key_spelling::actionable::MACRO_RECORD)
-        }
+        self.key_text(crate::key_spelling::actionable::MACRO_RECORD)
     }
 
     pub(super) fn stop_macro_recording(&mut self) {
@@ -714,7 +710,6 @@ impl App {
             pattern,
             mode: SearchMode::Sensitive,
             region: None,
-            forward: true,
         });
     }
 
@@ -730,23 +725,8 @@ impl App {
             pattern,
             mode: SearchMode::Sensitive,
             region: None,
-            forward: true,
         };
         self.status(format!("search: {}", self.search.pattern));
-    }
-
-    /// `*` and `#` in the Vim grammar, which jump to one match at a time.
-    pub(super) fn search_selection_direction(&mut self, reverse: bool, count: usize) {
-        let Some(pattern) = self.selection_search_pattern() else {
-            return;
-        };
-        self.search = SearchQuery {
-            pattern,
-            mode: SearchMode::Sensitive,
-            region: None,
-            forward: !reverse,
-        };
-        self.find_search(!reverse, true, count);
     }
 
     pub(super) fn repeat_search(&mut self, reverse: bool) {
@@ -756,17 +736,6 @@ impl App {
     pub(super) fn repeat_search_count(&mut self, reverse: bool, count: usize) {
         if self.search.pattern.is_empty() {
             self.action_failed("no previous search");
-            return;
-        }
-        if self.grammar.kind() == crate::command::GrammarKind::Vim {
-            let forward = if reverse {
-                !self.search.forward
-            } else {
-                self.search.forward
-            };
-            // Repeats deliberately do not record: walking `n` through twenty
-            // matches would bury the position the search started from.
-            self.find_search(forward, false, count);
             return;
         }
         self.step_search(!reverse, count);
@@ -815,9 +784,7 @@ impl App {
             .filter(|range| {
                 let (from, to) = match pane.selection_semantics() {
                     SelectionSemantics::Runyte => operative_span(buffer, range),
-                    SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise => {
-                        (range.from(), range.to())
-                    }
+                    SelectionSemantics::HalfOpen => (range.from(), range.to()),
                 };
                 to.saturating_sub(from) >= 2
             })
@@ -927,101 +894,6 @@ impl App {
             index + 1,
             self.search.pattern
         ));
-    }
-
-    /// Moves to a single match, the way the Vim grammar's `/`, `?`, `n`, `N`,
-    /// `*`, and `#` do. `record` distinguishes starting a search, which is a
-    /// jump, from stepping through its results, which is not.
-    ///
-    /// This deliberately keeps its own literal line scan rather than sharing
-    /// [`buffer_matches`]: the Runyte grammar's flavours and multicursor result
-    /// are not what Vim's search means, and folding the two together would drag
-    /// one grammar's semantics into the other.
-    pub(super) fn find_search(&mut self, forward: bool, record: bool, count: usize) {
-        if self.search.pattern.is_empty() {
-            return;
-        }
-        let buffer = self.active_buffer();
-        let pattern_len = self.search.pattern.chars().count();
-        let mut matches = Vec::new();
-        for row in 0..buffer.len_lines() {
-            let line = buffer.line_string(row);
-            let start = buffer.line_to_offset(row);
-            for (byte, _) in line.match_indices(&self.search.pattern) {
-                let from = start + line[..byte].chars().count();
-                matches.push((from, from + pattern_len.saturating_sub(1)));
-            }
-        }
-        if matches.is_empty() {
-            self.search_info(format!("pattern not found: {}", self.search.pattern));
-            self.sequence_halted = true;
-            return;
-        }
-
-        let current = self.active().selection.primary().from();
-        let first_index = if forward {
-            matches
-                .iter()
-                .position(|(from, _)| *from > current)
-                .unwrap_or(0)
-        } else {
-            matches
-                .iter()
-                .rposition(|(from, _)| *from < current)
-                .unwrap_or(matches.len() - 1)
-        };
-        let distance = count.saturating_sub(1) % matches.len();
-        let found_index = if forward {
-            (first_index + distance) % matches.len()
-        } else {
-            (first_index + matches.len() - distance) % matches.len()
-        };
-        let found = matches[found_index];
-
-        if record {
-            self.push_jump();
-        }
-        let vim = self.grammar.kind() == crate::command::GrammarKind::Vim;
-        let vim_visual =
-            vim && (self.mode == Mode::Select || record && self.prompt_origin_mode == Mode::Select);
-        if vim_visual
-            && matches!(
-                self.active().selection_semantics(),
-                SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise
-            )
-        {
-            let selection = self.vim_half_open_to_inclusive(self.active().selection.clone());
-            self.active_mut().replace_selection(selection);
-        }
-        let selection = if vim_visual {
-            self.active()
-                .selection
-                .transform(|range| range.extend_to(found.1))
-        } else if vim {
-            Selection::point(found.0)
-        } else {
-            Selection::single(Range::new(found.0, found.1))
-        };
-        let pane = self.active_mut();
-        pane.replace_selection(selection);
-        pane.preserve_scroll = false;
-        self.mode = if vim {
-            if vim_visual {
-                Mode::Select
-            } else {
-                Mode::Normal
-            }
-        } else {
-            Mode::Select
-        };
-        if vim {
-            let selection =
-                self.vim_inclusive_to_half_open(self.active().selection.clone(), vim_visual);
-            self.active_mut().replace_selection(selection);
-            self.active_mut()
-                .mark_selection_semantics(SelectionSemantics::HalfOpen);
-        }
-        self.status(format!("search: {}", self.search.pattern));
     }
 
     pub(super) fn find_character(&mut self, character: char, forward: bool, till: bool) {

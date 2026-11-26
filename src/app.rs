@@ -69,7 +69,7 @@ use crate::{
     },
     input_grammar::{
         ActiveGrammar, EditorIntent, GrammarContext, GrammarNotice, GrammarOutput, InputGrammar,
-        LineDirection, RangeIntent, VimMotion, VimOperator, VimRangeTarget, VimTextObject,
+        LineDirection, RangeIntent,
     },
     jump_labels::{JumpLabels, Press},
     jumplist::{Jump, JumpList, SelectionSemantics},
@@ -1161,15 +1161,12 @@ enum Motion {
     WordForward,
     WordBack,
     WordEnd,
-    WordEndBack,
     LongWordForward,
     LongWordBack,
     LongWordEnd,
-    LongWordEndBack,
     NextParagraph,
     PreviousParagraph,
     FirstNonWhitespace,
-    LastNonWhitespace,
     PageUp,
     PageDown,
     HalfPageUp,
@@ -1231,9 +1228,6 @@ struct SearchQuery {
     /// Scoping is what keeps a search that started inside a selection from
     /// wandering out of it when `n` wraps.
     region: Option<SearchRegion>,
-    /// Only the Vim grammar reads this: its `n`/`N` repeat the direction the
-    /// search was started in, where Runyte's always step forward and backward.
-    forward: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1263,9 +1257,6 @@ pub enum PromptKind {
     /// Search over an immutable retained terminal snapshot rather than the
     /// buffer hidden behind the pane.
     TerminalSearch(SearchMode),
-    /// The Vim grammar's directional single-match searches.
-    SearchForward,
-    SearchBackward,
     GlobalSearch(SearchMode),
     /// Keeps or drops selections by regular expression. `keep` distinguishes
     /// `Space s k` from `Space s r`; the editing model is otherwise identical.
@@ -3781,16 +3772,8 @@ impl App {
         let configured_help = ":? or <help-key> for help";
         let mut status = startup_status(&registry_errors, configured_help);
         let mut status_error = !registry_errors.is_empty();
-        let mut startup_notification_error = !registry_errors.is_empty();
-        let grammar = match ActiveGrammar::new(config.editor.grammar) {
-            Ok(grammar) => grammar,
-            Err(error) => {
-                status = format!("{status} · {error}; using runyte");
-                status_error = true;
-                startup_notification_error = true;
-                ActiveGrammar::default()
-            }
-        };
+        let startup_notification_error = !registry_errors.is_empty();
+        let grammar = ActiveGrammar::new(config.editor.grammar);
         let initial_mode = grammar.preferred_mode().unwrap_or(Mode::Normal);
         let reported_registry_errors = registry_errors
             .iter()
@@ -4116,10 +4099,6 @@ impl App {
         app.sync_terminal_default_colors();
         app.terminals
             .set_scrollback_lines(app.config.terminal.scrollback_lines);
-        if app.grammar.kind() == crate::command::GrammarKind::Vim {
-            app.active_mut()
-                .mark_selection_semantics(SelectionSemantics::HalfOpen);
-        }
         if let Some(message) = startup_notification {
             app.push_notification(NotificationDraft::new(
                 NotificationSeverity::Error,
@@ -4909,9 +4888,7 @@ fn region_spans(buffer: &Buffer, region: &SearchRegion) -> Vec<(Offset, Offset)>
         .iter()
         .map(|range| match region.semantics {
             SelectionSemantics::Runyte => operative_span(buffer, range),
-            SelectionSemantics::HalfOpen | SelectionSemantics::VimLinewise => {
-                (range.from(), range.to())
-            }
+            SelectionSemantics::HalfOpen => (range.from(), range.to()),
         })
         .collect()
 }
