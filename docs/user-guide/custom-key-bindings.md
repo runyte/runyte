@@ -858,336 +858,302 @@ arguments. Key hints show the same descriptions, shortened to fit. A key you
 removed or overwrote is no longer advertised. Teaching text shows another
 binding for the action, or says it is unbound.
 
+### Discovering actions and bindings
+
+The provisional commands `:describe-key`, `:action-browser`, and
+`:copy-key-binding` have no default keys while their names are under review.
+Describe key captures a sequence in the current view and mode without running
+it. Escape cancels. The result reports the accepted configuration source and
+line when available, action steps, and YAML that the current compiler accepts.
+Runtime plugin bindings use their plugin configuration instead. The copy command
+copies the most recently inspected copyable binding.
+
+The action browser opens a searchable picker. Enter inspects an action; Tab
+filters to the current view and mode. Details distinguish plain effective keys
+from membership in composed bindings, and show descriptor contracts and runtime
+capability gates. Document state and action-specific guards can still prevent an
+action from running.
+
 ### Bindable action reference
 
-This is the list `:help key-actions` shows, grouped by topic.
+Regenerate this block with `cargo run --example action_reference`.
 
-- **Modes:** N normal, S select, I insert, R replace.
-- **Position:** `continue` can be followed by another action in a list.
-  `last` must end it. See [Action sequences](custom-key-bindings.md#action-sequences).
+<a id="mode-and-page-actions"></a>
+<a id="movement-actions"></a>
+<a id="editing-actions"></a>
+<a id="insert-and-replace-mode-actions"></a>
+<a id="selection-actions"></a>
+<a id="text-object-actions"></a>
+<a id="syntax-tree-actions"></a>
+<a id="search-actions"></a>
+<a id="view-actions"></a>
+<a id="file-buffer-and-destination-actions"></a>
+<a id="pane-actions"></a>
+<a id="terminal-actions"></a>
+<a id="persistent-session-actions"></a>
+<a id="language-server-actions"></a>
+<a id="clipboard-register-and-macro-actions"></a>
+<a id="colon-commands"></a>
+<!-- action-reference:start -->
 
-#### Mode and page actions
+Use these names in `keys.bind`. Modes are independent. Actions marked `last`
+must end a sequence; `continue` actions may precede another action. Counts
+on multi-action bindings are rejected. Plugin bindings use `plugins[].bindings`.
 
-| Action | Modes | Position | Description |
+| Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `enter-normal-mode` | N S I R | last | Return to normal mode |
-| `open-command-palette` | N S | last | Open the command palette |
-| `enter-insert-mode` | N S | last | Insert before the selection |
-| `enter-replace-mode` | N S | last | Replace text from each selection head |
-| `append-after` | N S | last | Insert after the selection |
-| `insert-line-start` | N S | last | Insert at line start |
-| `insert-line-end` | N S | last | Insert at line end |
-| `open-line-below` | N S | last | Open a line below |
-| `open-line-above` | N S | last | Open a line above |
-| `enter-select-mode` | N S | last | Toggle select mode |
-| `show-help` | N S | last | Open general or contextual Runyte help |
-| `open-settings` | N S | last | Open editor settings |
-| `open-theme-settings` | N S | last | Choose and save the editor theme |
-
-#### Movement actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `move-left` | N S I R | continue | Move left |
-| `move-right` | N S I R | continue | Move right |
-| `move-up` | N S I R | continue | Move up |
-| `move-down` | N S I R | continue | Move down |
-| `move-line-start` | N S I R | continue | Move to line start |
-| `move-line-end` | N S I R | continue | Move to line end |
-| `move-first-non-whitespace` | N S | continue | Move to first non-whitespace character |
-| `move-file-start` | N S | continue | Move to file start |
-| `move-file-end` | N S | continue | Move to file end |
-| `move-word-forward` | N S | continue | Move to next word start |
-| `move-word-backward` | N S | continue | Move to previous word start |
-| `move-word-end` | N S | continue | Move to next word end |
-| `move-long-word-forward` | N S | continue | Move to next WORD start |
-| `move-long-word-backward` | N S | continue | Move to previous WORD start |
-| `move-long-word-end` | N S | continue | Move to next WORD end |
-| `goto-next-paragraph` | N S | continue | Go to the next paragraph |
-| `goto-previous-paragraph` | N S | continue | Go to the previous paragraph |
-| `find-next-char` | N S | last | Find next character |
-| `find-previous-char` | N S | last | Find previous character |
-| `find-till-next-char` | N S | last | Find before next character |
-| `find-till-previous-char` | N S | last | Find after previous character |
-| `page-up` | N S I R | continue | Move one page up |
-| `page-down` | N S I R | continue | Move one page down |
-| `half-page-up` | N S | continue | Move half a page up |
-| `half-page-down` | N S | continue | Move half a page down |
-| `goto-window-top` | N S | continue | Move to the top of the view |
-| `goto-window-center` | N S | continue | Move to the center of the view |
-| `goto-window-bottom` | N S | continue | Move to the bottom of the view |
-| `goto-word` | N S | last | Label visible words by proximity and jump to one |
-| `match-bracket` | N S | last | Go to the matching syntax bracket |
-| `jump-backward` | N S | last | Jump to the previous position |
-| `jump-forward` | N S | last | Jump to the next position |
-| `jump-backward-buffer` | N S | last | Jump to the previous buffer or terminal surface |
-| `jump-forward-buffer` | N S | last | Jump to the next buffer or terminal surface |
-
-#### Editing actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `replace-char` | N S | last | Replace selection with a character |
-| `surround-add` | N S | last | Surround selections with a pair |
-| `surround-replace` | N S | last | Replace the surrounding pair |
-| `surround-delete` | N S | last | Delete the surrounding pair |
-| `toggle-case` | N S | continue | Switch case of the selection |
-| `undo` | N S | continue | Undo the last change |
-| `redo` | N S | continue | Redo the last change |
-| `yank` | N S | continue | Yank the selection or character |
-| `yank-line` | N S | continue | Yank the lines the selection touches |
-| `yank-collapse-normal-mode` | N S | continue | Yank, then leave a caret in normal mode |
-| `yank-line-collapse-normal-mode` | N S | continue | Yank lines, then leave a normal-mode caret |
-| `paste-after-or-replace` | N S | continue | Replace the selection, or paste after the caret |
-| `paste-after` | N S | continue | Paste after the selection or caret |
-| `replace-with-register` | N S | continue | Replace the selection or character |
-| `paste-before` | N S | continue | Paste before the selection |
-| `indent` | N S | continue | Indent the selected lines |
-| `unindent` | N S | continue | Unindent the selected lines |
-| `toggle-comments` | N S I R | continue | Comment or uncomment the selected lines |
-| `yank-delete-selection` | N S | continue | Yank, then delete the selection or character |
-| `yank-change-selection` | N S | last | Yank, then change the selection or character |
-| `delete-selection` | N S | continue | Delete the selection or character without yanking |
-| `change-selection` | N S | last | Change the selection or character without yanking |
-| `rotate-selection-contents-forward` | N S | last | Rotate selected text forward |
-| `rotate-selection-contents-backward` | N S | last | Rotate selected text backward |
-| `trim-trailing-whitespace` | N S | last | Delete trailing whitespace from every selected line |
-| `hard-wrap` | N S | last | Hard-wrap the selection |
-| `reflow` | N S | last | Reflow paragraphs in the selection |
-| `join-selections` | N S | last | Join the selected lines with a typed delimiter |
-| `join-lines` | N S | last | Join the selected lines, or the line below, with a space |
-| `format-table` | N S | last | Align the columns of the selected table |
-
-#### Insert and Replace mode actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `delete-word-backward` | I R | continue | Delete the previous word |
-| `delete-word-forward` | I R | continue | Delete the next word |
-| `delete-to-line-start` | I R | continue | Delete to the start of the line |
-| `delete-to-line-end` | I R | continue | Delete to the end of the line |
-| `delete-char-backward` | I R | continue | Delete the previous character |
-| `delete-char-forward` | I R | continue | Delete the next character |
-| `insert-newline` | I R | continue | Insert a new line |
-| `insert-indent` | I R | continue | Insert configured indentation |
-| `insert-other-indent` | I R | continue | Insert the other indentation style |
-
-#### Selection actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `selection-undo` | N S | continue | Undo the last selection change |
-| `selection-redo` | N S | continue | Redo the last selection change |
-| `select-line` | N S | continue | Select the current line, then extend downward |
-| `extend-line-above` | N S | continue | Extend whole lines above |
-| `extend-line-below` | N S | continue | Extend whole lines below |
-| `select-line-up` | N S | continue | Select the current line, then extend upward |
-| `select-all` | N S | continue | Select all text |
-| `collapse-selection` | N S | continue | Collapse selection to the cursor |
-| `flip-selection` | N S | continue | Flip the selection anchor and cursor |
-| `split-selection-at-line-ends` | N S | continue | Place a cursor at the end of every selected line |
-| `split-selection-at-line-starts` | N S | continue | Place a cursor at the start of every selected line |
-| `keep-primary-selection` | N S | continue | Drop every selection except the primary |
-| `remove-primary-selection` | N S | continue | Drop the primary selection |
-| `copy-selection-down` | N S | continue | Add a cursor on the line below |
-| `copy-selection-up` | N S | continue | Add a cursor on the line above |
-| `copy-selection-down-padded` | N S | continue | Add a cursor on the line below, padding it when needed |
-| `copy-selection-up-padded` | N S | continue | Add a cursor on the line above, padding it when needed |
-| `rotate-selection-forward` | N S | continue | Make the next selection primary |
-| `rotate-selection-backward` | N S | continue | Make the previous selection primary |
-| `keep-matching-selections` | N S | last | Keep selections matching a regular expression |
-| `remove-matching-selections` | N S | last | Remove selections matching a regular expression |
-| `align-selections` | N S | continue | Pad with spaces so every cursor shares the rightmost column |
-| `trim-selections` | N S | continue | Trim whitespace from every selection |
-
-#### Text object actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `select-around-parentheses` | N S | last | Select around parentheses |
-| `select-inside-parentheses` | N S | last | Select inside parentheses |
-| `select-around-square-brackets` | N S | last | Select around square brackets |
-| `select-inside-square-brackets` | N S | last | Select inside square brackets |
-| `select-around-braces` | N S | last | Select around braces |
-| `select-inside-braces` | N S | last | Select inside braces |
-| `select-around-angle-brackets` | N S | last | Select around angle brackets |
-| `select-inside-angle-brackets` | N S | last | Select inside angle brackets |
-| `select-around-double-quotes` | N S | last | Select around double quotes |
-| `select-inside-double-quotes` | N S | last | Select inside double quotes |
-| `select-around-single-quotes` | N S | last | Select around single quotes |
-| `select-inside-single-quotes` | N S | last | Select inside single quotes |
-| `select-around-backticks` | N S | last | Select around backticks |
-| `select-inside-backticks` | N S | last | Select inside backticks |
-| `select-inside-word` | N S | last | Select the word under the cursor |
-| `select-around-word` | N S | last | Select the word under the cursor and the space beside it |
-| `select-inside-long-word` | N S | last | Select the WORD under the cursor |
-| `select-around-long-word` | N S | last | Select the WORD under the cursor and the space beside it |
-| `select-inside-paragraph` | N S | last | Select the paragraph's lines |
-| `select-around-paragraph` | N S | last | Select the paragraph's lines and the blank lines beside them |
-| `select-around-closest-delimiter` | N S | last | Select around the closest delimiter pair |
-| `select-inside-closest-delimiter` | N S | last | Select inside the closest delimiter pair |
-
-#### Syntax tree actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `expand-syntax-selection` | N S | last | Expand to the enclosing syntax node |
-| `shrink-syntax-selection` | N S | last | Shrink the syntax selection |
-| `select-syntax-parent` | N S | last | Select the enclosing syntax node |
-| `select-syntax-child` | N S | last | Select the first child syntax node |
-| `select-previous-syntax-sibling` | N S | last | Select the previous sibling syntax node |
-| `select-next-syntax-sibling` | N S | last | Select the next sibling syntax node |
-| `select-syntax-function` | N S | last | Select the enclosing function |
-| `select-inside-syntax-function` | N S | last | Select inside the enclosing function |
-| `select-syntax-class` | N S | last | Select the enclosing class-like item |
-| `select-inside-syntax-class` | N S | last | Select inside the enclosing class-like item |
-| `select-syntax-parameter` | N S | last | Select the enclosing parameter |
-| `select-inside-syntax-parameter` | N S | last | Select inside the enclosing parameter |
-| `goto-previous-syntax-function` | N S | last | Go to the previous function |
-| `goto-next-syntax-function` | N S | last | Go to the next function |
-| `goto-previous-syntax-class` | N S | last | Go to the previous class-like item |
-| `goto-next-syntax-class` | N S | last | Go to the next class-like item |
-| `goto-previous-syntax-parameter` | N S | last | Go to the previous parameter |
-| `goto-next-syntax-parameter` | N S | last | Go to the next parameter |
-| `document-outline` | N S | last | Open the document outline |
-| `toggle-syntax-fold` | N S | last | Toggle the syntax fold at the cursor |
-| `fold-all-syntax` | N S | last | Fold every syntax region |
-| `unfold-all-syntax` | N S | last | Unfold every syntax region |
-
-#### Search actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `search` | N S | last | Search for text, ignoring case |
-| `search-regex` | N S | last | Search with a regular expression |
-| `search-next` | N S | continue | Select only the next search match |
-| `search-previous` | N S | continue | Select only the previous search match |
-| `search-selection` | N S | last | Select every match of the selection or word |
-| `set-search-from-selection` | N S | continue | Use the selection or word as the search |
-| `global-search` | N S | last | Search the workspace, ignoring case |
-| `global-search-regex` | N S | last | Search the workspace with a regular expression |
-
-#### View actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `align-view-center` | N S | last | Center the cursor line in the view |
-| `align-view-top` | N S | last | Align the cursor line at the top |
-| `align-view-bottom` | N S | last | Align the cursor line at the bottom |
-| `align-view-middle` | N S | last | Center the cursor column in the view |
-| `scroll-view-down` | N S | last | Scroll the view down |
-| `scroll-view-up` | N S | last | Scroll the view up |
-| `toggle-soft-wrap` | N S | last | Toggle soft wrapping |
-| `toggle-whitespace` | N S | last | Toggle whitespace markers |
-| `toggle-zen` | N S | last | Toggle the centred, maximized writing view |
-| `toggle-fullscreen` | N S | last | Toggle the active pane across the whole editor area |
-
-#### File, buffer, and destination actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `save` | N S I R | last | Write the active buffer |
-| `new-buffer` | N S | last | Open a new scratch buffer |
-| `goto-file` | N S | last | Open the file or web link under the cursor |
-| `open-explorer` | N S | last | Open file explorer in the active buffer's directory |
-| `toggle-directory-tree` | N S | last | Show or hide the directory tree |
-| `focus-directory-tree` | N S | last | Reveal the active file in the directory tree |
-| `open-working-directory-explorer` | N S | last | Open file explorer in the working directory |
-| `git-conflicts` | N S | last | Open unresolved Git conflicts |
-| `open-file-picker` | N S | last | Open the finder over the project's files, buffers, and terminals |
-| `open-all-files-picker` | N S | last | Open the finder over the project, including files Git ignores |
-| `open-path-file-picker` | N S | last | Open the finder in a chosen path, including files Git ignores |
-| `open-buffer-picker` | N S | last | Open the buffer picker |
-| `open-navigator` | N S I R | last | Navigate open buffers and terminals |
-| `previous-destination` | N S I R | last | Return to the previous destination in this pane |
-
-#### Pane actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `split-vertical` | N S | last | Create a side-by-side split |
-| `split-horizontal` | N S | last | Create a stacked split |
-| `focus-window-left` | N S I R | last | Focus the pane to the left |
-| `focus-window-down` | N S I R | last | Focus the pane below |
-| `focus-window-up` | N S I R | last | Focus the pane above |
-| `focus-window-right` | N S I R | last | Focus the pane to the right |
-| `next-window` | N S I R | last | Focus the next pane |
-| `swap-window` | N S I R | last | Swap this pane's content with the previously focused pane |
-| `move-window-left` | N S I R | last | Move pane to the left edge, full height |
-| `move-window-down` | N S I R | last | Move pane to the bottom edge, full width |
-| `move-window-up` | N S I R | last | Move pane to the top edge, full width |
-| `move-window-right` | N S I R | last | Move pane to the right edge, full height |
-| `close-window` | N S | last | Close the active pane |
-| `only-window` | N S | last | Close every pane except the active pane |
-| `equalize-windows` | N S | last | Equalize pane widths, then pane heights within each column |
-
-#### Terminal actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `open-terminal` | N S | last | Start a terminal in this pane |
-| `open-terminal-list` | N S | last | Show the running terminals |
-| `rename-terminal` | N S | last | Name the active terminal session |
-| `leave-terminal` | N S | last | Show this pane's buffer again |
-| `copy-terminal-output` | N S | last | Open this terminal's output as a buffer |
-| `send-to-terminal` | N S | last | Send the selection to a terminal |
-
-#### Persistent session actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `previous-session` | N S I R | last | Return to the previously visited persistent session |
-| `session-1` | N S | last | Attach to persistent session 1 |
-| `session-2` | N S | last | Attach to persistent session 2 |
-| `session-3` | N S | last | Attach to persistent session 3 |
-| `session-4` | N S | last | Attach to persistent session 4 |
-| `session-5` | N S | last | Attach to persistent session 5 |
-| `session-6` | N S | last | Attach to persistent session 6 |
-| `session-7` | N S | last | Attach to persistent session 7 |
-| `session-8` | N S | last | Attach to persistent session 8 |
-| `session-9` | N S | last | Attach to persistent session 9 |
-| `next-running-session` | N S I R | last | Visit the next running persistent session |
-| `previous-running-session` | N S I R | last | Visit the previous running persistent session |
-
-#### Language server actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `goto-definition` | N S | last | Go to definition |
-| `goto-declaration` | N S | last | Go to declaration |
-| `goto-type-definition` | N S | last | Go to type definition |
-| `goto-references` | N S | last | Go to references |
-| `goto-implementation` | N S | last | Go to implementation |
-| `show-documentation` | N S | last | Show documentation |
-| `document-symbols` | N S | last | Open document symbols |
-| `workspace-symbols` | N S | last | Open workspace symbols |
-| `diagnostics` | N S | last | Open diagnostics |
-| `trigger-completion` | N S I R | last | Ask the language server for completions |
-| `rename-symbol` | N S | last | Rename symbol |
-| `code-action` | N S | last | Apply a code action |
-
-#### Clipboard, register, and macro actions
-
-| Action | Modes | Position | Description |
-| --- | --- | --- | --- |
-| `clipboard-yank` | N S | last | Yank to the system clipboard |
-| `clipboard-paste-after` | N S | last | Paste from the system clipboard |
-| `clipboard-paste-before` | N S | last | Paste before from the system clipboard |
-| `clipboard-paste` | N S I R | last | Paste an image or text from the clipboard |
-| `select-register` | N S | last | Select a register |
-| `record-macro` | N S | last | Record a macro named by the next key |
-| `record-default-macro` | N S | last | Record the default macro, or stop recording |
-| `replay-macro` | N S | last | Replay the macro named by the next key |
-| `replay-default-macro` | N S | last | Replay the default macro |
-| `list-macros` | N S | last | List the recorded macros |
+| `enter-normal-mode` | normal, select, insert, replace | last | Return to normal mode |
+| `open-command-palette` | normal, select | last | Open the command palette |
+| `move-left` | normal, select, insert, replace | continue | Move left |
+| `move-right` | normal, select, insert, replace | continue | Move right |
+| `move-up` | normal, select, insert, replace | continue | Move up |
+| `move-down` | normal, select, insert, replace | continue | Move down |
+| `move-line-start` | normal, select, insert, replace | continue | Move to line start |
+| `move-line-end` | normal, select, insert, replace | continue | Move to line end |
+| `move-first-non-whitespace` | normal, select | continue | Move to first non-whitespace character |
+| `move-file-start` | normal, select | continue | Move to file start |
+| `move-file-end` | normal, select | continue | Move to file end |
+| `move-word-forward` | normal, select | continue | Move to next word start |
+| `move-word-backward` | normal, select | continue | Move to previous word start |
+| `move-word-end` | normal, select | continue | Move to next word end |
+| `move-long-word-forward` | normal, select | continue | Move to next WORD start |
+| `move-long-word-backward` | normal, select | continue | Move to previous WORD start |
+| `move-long-word-end` | normal, select | continue | Move to next WORD end |
+| `goto-next-paragraph` | normal, select | continue | Go to the next paragraph |
+| `goto-previous-paragraph` | normal, select | continue | Go to the previous paragraph |
+| `find-next-char` | normal, select | last | Find next character |
+| `find-previous-char` | normal, select | last | Find previous character |
+| `find-till-next-char` | normal, select | last | Find before next character |
+| `find-till-previous-char` | normal, select | last | Find after previous character |
+| `page-up` | normal, select, insert, replace | continue | Move one page up |
+| `page-down` | normal, select, insert, replace | continue | Move one page down |
+| `half-page-up` | normal, select | continue | Move half a page up |
+| `half-page-down` | normal, select | continue | Move half a page down |
+| `enter-insert-mode` | normal, select | last | Insert before the selection |
+| `enter-replace-mode` | normal, select | last | Replace text from each selection head |
+| `append-after` | normal, select | last | Insert after the selection |
+| `insert-line-start` | normal, select | last | Insert at line start |
+| `insert-line-end` | normal, select | last | Insert at line end |
+| `open-line-below` | normal, select | last | Open a line below |
+| `open-line-above` | normal, select | last | Open a line above |
+| `replace-char` | normal, select | last | Replace selection with a character |
+| `surround-add` | normal, select | last | Surround selections with a pair |
+| `surround-replace` | normal, select | last | Replace the surrounding pair |
+| `surround-delete` | normal, select | last | Delete the surrounding pair |
+| `toggle-case` | normal, select | continue | Switch case of the selection |
+| `selection-undo` | normal, select | continue | Undo the last selection change |
+| `selection-redo` | normal, select | continue | Redo the last selection change |
+| `undo` | normal, select | continue | Undo the last change |
+| `redo` | normal, select | continue | Redo the last change |
+| `yank` | normal, select | continue | Yank the selection or character |
+| `yank-line` | normal, select | continue | Yank the lines the selection touches |
+| `yank-collapse-normal-mode` | normal, select | continue | Yank, then leave a caret in normal mode |
+| `yank-line-collapse-normal-mode` | normal, select | continue | Yank lines, then leave a normal-mode caret |
+| `paste-after-or-replace` | normal, select | continue | Replace the selection, or paste after the caret |
+| `paste-after` | normal, select | continue | Paste after the selection or caret |
+| `replace-with-register` | normal, select | continue | Replace the selection or character |
+| `paste-before` | normal, select | continue | Paste before the selection |
+| `indent` | normal, select | continue | Indent the selected lines |
+| `unindent` | normal, select | continue | Unindent the selected lines |
+| `toggle-comments` | normal, select, insert, replace | continue | Comment or uncomment the selected lines |
+| `yank-delete-selection` | normal, select | continue | Yank, then delete the selection or character |
+| `yank-change-selection` | normal, select | last | Yank, then change the selection or character |
+| `delete-selection` | normal, select | continue | Delete the selection or character without yanking |
+| `change-selection` | normal, select | last | Change the selection or character without yanking |
+| `enter-select-mode` | normal, select | last | Toggle select mode |
+| `select-line` | normal, select | continue | Select the current line, then extend downward |
+| `extend-line-above` | normal, select | continue | Extend whole lines above |
+| `extend-line-below` | normal, select | continue | Extend whole lines below |
+| `select-line-up` | normal, select | continue | Select the current line, then extend upward |
+| `select-all` | normal, select | continue | Select all text |
+| `collapse-selection` | normal, select | continue | Collapse selection to the cursor |
+| `flip-selection` | normal, select | continue | Flip the selection anchor and cursor |
+| `expand-syntax-selection` | normal, select | last | Expand to the enclosing syntax node |
+| `shrink-syntax-selection` | normal, select | last | Shrink the syntax selection |
+| `select-syntax-parent` | normal, select | last | Select the enclosing syntax node |
+| `select-syntax-child` | normal, select | last | Select the first child syntax node |
+| `select-previous-syntax-sibling` | normal, select | last | Select the previous sibling syntax node |
+| `select-next-syntax-sibling` | normal, select | last | Select the next sibling syntax node |
+| `select-syntax-function` | normal, select | last | Select the enclosing function |
+| `select-inside-syntax-function` | normal, select | last | Select inside the enclosing function |
+| `select-syntax-class` | normal, select | last | Select the enclosing class-like item |
+| `select-inside-syntax-class` | normal, select | last | Select inside the enclosing class-like item |
+| `select-syntax-parameter` | normal, select | last | Select the enclosing parameter |
+| `select-inside-syntax-parameter` | normal, select | last | Select inside the enclosing parameter |
+| `select-around-parentheses` | normal, select | last | Select around parentheses |
+| `select-inside-parentheses` | normal, select | last | Select inside parentheses |
+| `select-around-square-brackets` | normal, select | last | Select around square brackets |
+| `select-inside-square-brackets` | normal, select | last | Select inside square brackets |
+| `select-around-braces` | normal, select | last | Select around braces |
+| `select-inside-braces` | normal, select | last | Select inside braces |
+| `select-around-angle-brackets` | normal, select | last | Select around angle brackets |
+| `select-inside-angle-brackets` | normal, select | last | Select inside angle brackets |
+| `select-around-double-quotes` | normal, select | last | Select around double quotes |
+| `select-inside-double-quotes` | normal, select | last | Select inside double quotes |
+| `select-around-single-quotes` | normal, select | last | Select around single quotes |
+| `select-inside-single-quotes` | normal, select | last | Select inside single quotes |
+| `select-around-backticks` | normal, select | last | Select around backticks |
+| `select-inside-backticks` | normal, select | last | Select inside backticks |
+| `select-inside-word` | normal, select | last | Select the word under the cursor |
+| `select-around-word` | normal, select | last | Select the word under the cursor and the space beside it |
+| `select-inside-long-word` | normal, select | last | Select the WORD under the cursor |
+| `select-around-long-word` | normal, select | last | Select the WORD under the cursor and the space beside it |
+| `select-inside-paragraph` | normal, select | last | Select the paragraph's lines |
+| `select-around-paragraph` | normal, select | last | Select the paragraph's lines and the blank lines beside them |
+| `select-around-closest-delimiter` | normal, select | last | Select around the closest delimiter pair |
+| `select-inside-closest-delimiter` | normal, select | last | Select inside the closest delimiter pair |
+| `goto-previous-syntax-function` | normal, select | last | Go to the previous function |
+| `goto-next-syntax-function` | normal, select | last | Go to the next function |
+| `goto-previous-syntax-class` | normal, select | last | Go to the previous class-like item |
+| `goto-next-syntax-class` | normal, select | last | Go to the next class-like item |
+| `goto-previous-syntax-parameter` | normal, select | last | Go to the previous parameter |
+| `goto-next-syntax-parameter` | normal, select | last | Go to the next parameter |
+| `document-outline` | normal, select | last | Open the document outline |
+| `toggle-syntax-fold` | normal, select | last | Toggle the syntax fold at the cursor |
+| `fold-all-syntax` | normal, select | last | Fold every syntax region |
+| `unfold-all-syntax` | normal, select | last | Unfold every syntax region |
+| `split-selection-at-line-ends` | normal, select | continue | Place a cursor at the end of every selected line |
+| `split-selection-at-line-starts` | normal, select | continue | Place a cursor at the start of every selected line |
+| `keep-primary-selection` | normal, select | continue | Drop every selection except the primary |
+| `remove-primary-selection` | normal, select | continue | Drop the primary selection |
+| `copy-selection-down` | normal, select | continue | Add a cursor on the line below |
+| `copy-selection-up` | normal, select | continue | Add a cursor on the line above |
+| `copy-selection-down-padded` | normal, select | continue | Add a cursor on the line below, padding it when needed |
+| `copy-selection-up-padded` | normal, select | continue | Add a cursor on the line above, padding it when needed |
+| `rotate-selection-forward` | normal, select | continue | Make the next selection primary |
+| `rotate-selection-backward` | normal, select | continue | Make the previous selection primary |
+| `rotate-selection-contents-forward` | normal, select | last | Rotate selected text forward |
+| `rotate-selection-contents-backward` | normal, select | last | Rotate selected text backward |
+| `keep-matching-selections` | normal, select | last | Keep selections matching a regular expression |
+| `remove-matching-selections` | normal, select | last | Remove selections matching a regular expression |
+| `align-selections` | normal, select | continue | Pad with spaces so every cursor shares the rightmost column |
+| `trim-selections` | normal, select | continue | Trim whitespace from every selection |
+| `trim-trailing-whitespace` | normal, select | last | Delete trailing whitespace from every selected line |
+| `hard-wrap` | normal, select | last | Hard-wrap the selection |
+| `reflow` | normal, select | last | Reflow paragraphs in the selection |
+| `join-selections` | normal, select | last | Join the selected lines with a typed delimiter |
+| `join-lines` | normal, select | last | Join the selected lines, or the line below, with a space |
+| `format-table` | normal, select | last | Align the columns of the selected table |
+| `search` | normal, select | last | Search for text, ignoring case |
+| `search-regex` | normal, select | last | Search with a regular expression |
+| `search-next` | normal, select | continue | Select only the next search match |
+| `search-previous` | normal, select | continue | Select only the previous search match |
+| `search-selection` | normal, select | last | Select every match of the selection or word |
+| `set-search-from-selection` | normal, select | continue | Use the selection or word as the search |
+| `align-view-center` | normal, select | last | Center the cursor line in the view |
+| `align-view-top` | normal, select | last | Align the cursor line at the top |
+| `align-view-bottom` | normal, select | last | Align the cursor line at the bottom |
+| `align-view-middle` | normal, select | last | Center the cursor column in the view |
+| `scroll-view-down` | normal, select | last | Scroll the view down |
+| `scroll-view-up` | normal, select | last | Scroll the view up |
+| `goto-window-top` | normal, select | continue | Move to the top of the view |
+| `goto-window-center` | normal, select | continue | Move to the center of the view |
+| `goto-window-bottom` | normal, select | continue | Move to the bottom of the view |
+| `goto-file` | normal, select | last | Open the file or web link under the cursor |
+| `goto-word` | normal, select | last | Label visible words by proximity and jump to one |
+| `toggle-soft-wrap` | normal, select | last | Toggle soft wrapping |
+| `toggle-whitespace` | normal, select | last | Toggle whitespace markers |
+| `toggle-zen` | normal, select | last | Toggle the centred, maximized writing view |
+| `toggle-fullscreen` | normal, select | last | Toggle the active pane across the whole editor area |
+| `open-explorer` | normal, select | last | Open file explorer in the active buffer's directory |
+| `toggle-directory-tree` | normal, select | last | Show or hide the directory tree |
+| `focus-directory-tree` | normal, select | last | Reveal the active file in the directory tree |
+| `open-working-directory-explorer` | normal, select | last | Open file explorer in the working directory |
+| `open-file-picker` | normal, select | last | Open the finder over the project's files, buffers, and terminals |
+| `open-all-files-picker` | normal, select | last | Open the finder over the project, including files Git ignores |
+| `open-path-file-picker` | normal, select | last | Open the finder in a chosen path, including files Git ignores |
+| `git-conflicts` | normal, select | last | Open unresolved Git conflicts |
+| `open-settings` | normal, select | last | Open editor settings |
+| `open-theme-settings` | normal, select | last | Choose and save the editor theme |
+| `split-vertical` | normal, select | last | Create a side-by-side split |
+| `split-horizontal` | normal, select | last | Create a stacked split |
+| `save` | normal, select, insert, replace | last | Write the active buffer |
+| `show-help` | normal, select | last | Open general or contextual Runyte help |
+| `focus-window-left` | normal, select, insert, replace | last | Focus the pane to the left |
+| `focus-window-down` | normal, select, insert, replace | last | Focus the pane below |
+| `focus-window-up` | normal, select, insert, replace | last | Focus the pane above |
+| `focus-window-right` | normal, select, insert, replace | last | Focus the pane to the right |
+| `next-window` | normal, select, insert, replace | last | Focus the next pane |
+| `swap-window` | normal, select, insert, replace | last | Swap this pane's content with the previously focused pane |
+| `move-window-left` | normal, select, insert, replace | last | Move pane to the left edge, full height |
+| `move-window-down` | normal, select, insert, replace | last | Move pane to the bottom edge, full width |
+| `move-window-up` | normal, select, insert, replace | last | Move pane to the top edge, full width |
+| `move-window-right` | normal, select, insert, replace | last | Move pane to the right edge, full height |
+| `close-window` | normal, select | last | Close the active pane |
+| `only-window` | normal, select | last | Close every pane except the active pane |
+| `equalize-windows` | normal, select | last | Equalize pane widths, then pane heights within each column |
+| `open-terminal` | normal, select | last | Start a terminal in this pane |
+| `open-terminal-list` | normal, select | last | Show the running terminals |
+| `rename-terminal` | normal, select | last | Name the active terminal session |
+| `leave-terminal` | normal, select | last | Show this pane's buffer again |
+| `copy-terminal-output` | normal, select | last | Open this terminal's output as a buffer |
+| `send-to-terminal` | normal, select | last | Send the selection to a terminal |
+| `delete-word-backward` | insert, replace | continue | Delete the previous word |
+| `delete-word-forward` | insert, replace | continue | Delete the next word |
+| `delete-to-line-start` | insert, replace | continue | Delete to the start of the line |
+| `delete-to-line-end` | insert, replace | continue | Delete to the end of the line |
+| `delete-char-backward` | insert, replace | continue | Delete the previous character |
+| `delete-char-forward` | insert, replace | continue | Delete the next character |
+| `insert-newline` | insert, replace | continue | Insert a new line |
+| `insert-indent` | insert, replace | continue | Insert configured indentation |
+| `insert-other-indent` | insert, replace | continue | Insert the other indentation style |
+| `goto-definition` | normal, select | last | Go to definition |
+| `goto-declaration` | normal, select | last | Go to declaration |
+| `goto-type-definition` | normal, select | last | Go to type definition |
+| `goto-references` | normal, select | last | Go to references |
+| `goto-implementation` | normal, select | last | Go to implementation |
+| `new-buffer` | normal, select | last | Open a new scratch buffer |
+| `open-navigator` | normal, select, insert, replace | last | Navigate open buffers and terminals |
+| `previous-destination` | normal, select, insert, replace | last | Return to the previous destination in this pane |
+| `previous-session` | normal, select, insert, replace | last | Return to the previously visited persistent session |
+| `session-1` | normal, select | last | Attach to persistent session 1 |
+| `session-2` | normal, select | last | Attach to persistent session 2 |
+| `session-3` | normal, select | last | Attach to persistent session 3 |
+| `session-4` | normal, select | last | Attach to persistent session 4 |
+| `session-5` | normal, select | last | Attach to persistent session 5 |
+| `session-6` | normal, select | last | Attach to persistent session 6 |
+| `session-7` | normal, select | last | Attach to persistent session 7 |
+| `session-8` | normal, select | last | Attach to persistent session 8 |
+| `session-9` | normal, select | last | Attach to persistent session 9 |
+| `next-running-session` | normal, select, insert, replace | last | Visit the next running persistent session |
+| `previous-running-session` | normal, select, insert, replace | last | Visit the previous running persistent session |
+| `open-buffer-picker` | normal, select | last | Open the buffer picker |
+| `global-search` | normal, select | last | Search the workspace, ignoring case |
+| `global-search-regex` | normal, select | last | Search the workspace with a regular expression |
+| `show-documentation` | normal, select | last | Show documentation |
+| `document-symbols` | normal, select | last | Open document symbols |
+| `workspace-symbols` | normal, select | last | Open workspace symbols |
+| `diagnostics` | normal, select | last | Open diagnostics |
+| `trigger-completion` | normal, select, insert, replace | last | Ask the language server for completions |
+| `jump-backward` | normal, select | last | Jump to the previous position |
+| `jump-forward` | normal, select | last | Jump to the next position |
+| `jump-backward-buffer` | normal, select | last | Jump to the previous buffer or terminal surface |
+| `jump-forward-buffer` | normal, select | last | Jump to the next buffer or terminal surface |
+| `rename-symbol` | normal, select | last | Rename symbol |
+| `code-action` | normal, select | last | Apply a code action |
+| `clipboard-paste-after` | normal, select | last | Paste from the system clipboard |
+| `clipboard-paste-before` | normal, select | last | Paste before from the system clipboard |
+| `clipboard-yank` | normal, select, insert, replace | last | Yank to the system clipboard |
+| `clipboard-paste` | normal, select, insert, replace | last | Paste an image or text from the clipboard |
+| `select-register` | normal, select | last | Select a register |
+| `record-macro` | normal, select | last | Record a macro named by the next key |
+| `record-default-macro` | normal, select | last | Record the default macro, or stop recording |
+| `replay-macro` | normal, select | last | Replay the macro named by the next key |
+| `replay-default-macro` | normal, select | last | Replay the default macro |
+| `list-macros` | normal, select | last | List the recorded macros |
+| `match-bracket` | normal, select | last | Go to the matching syntax bracket |
 
 #### Colon commands
 
-These run in Normal and Select modes and are always `last`. Pass an argument
-with `{ command: name, argument: text }`.
+These accept the same arguments as the command palette, supplied separately
+as `{ command: name, argument: text }`. They are available in Normal and
+Select modes and must end a sequence. Required arguments must be supplied.
 
 | Command | Usage | Description |
 | --- | --- | --- |
+| `describe-key` | `describe-key` | Inspect a key without executing it |
+| `action-browser` | `action-browser` | Browse action descriptors and default keys |
+| `copy-key-binding` | `copy-key-binding` | Copy the last inspected binding as YAML |
 | `cd` | `cd [path]` | Change directory, moving to its workspace when it belongs to another |
 | `init` | `init [directory]` | Make a directory a workspace and move to it |
 | `session-attach` | `session-attach <workspace>` | Attach to another workspace's persistent session |
@@ -1217,12 +1183,12 @@ with `{ command: name, argument: text }`.
 | `close!` | `close!` | Close the active buffer and discard its unsaved text |
 | `git-compare` | `git-compare` | Compare with this branch or worktree |
 | `git-branches` | `git-branches` | Open the local and remote branch list |
-| `git-log` | `git-log` | Open the Git log, or refresh it from its first page |
 | `git-network` | `git-network` | Open or refresh the cached commit network |
-| `git-network-head` | `git-network-head` | Restrict the commit network to HEAD |
-| `git-network-all` | `git-network-all` | Show all cached refs and HEAD |
-| `git-network-choose-ref` | `git-network-choose-ref` | Choose a captured exact ref |
+| `git-network-head` | `git-network-head` | Restrict the commit network to current HEAD |
+| `git-network-all` | `git-network-all` | Show all cached refs and HEAD in the commit network |
+| `git-network-choose-ref` | `git-network-choose-ref` | Choose a captured full ref for the commit network |
 | `git-network-ref` | `git-network-ref <full-ref>` | Restrict the commit network to an exact full ref |
+| `git-log` | `git-log` | Open the Git log, or refresh it from its first page |
 | `git-search-commits` | `git-search-commits` | Fuzzy-search commits reachable from HEAD by message, object ID, author, or date |
 | `git-blame` | `git-blame` | Show attribution for the primary line using live buffer text |
 | `git-blame-file` | `git-blame-file` | Open full-file attribution using live buffer text |
@@ -1247,8 +1213,8 @@ with `{ command: name, argument: text }`.
 | `git-unstage` | `git-unstage` | Unstage the active file |
 | `git-refresh` | `git-refresh` | Refresh Git state or retry failed repository discovery |
 | `lsp-trust` | `lsp-trust` | Choose LSP permission for this workspace |
-| `mcp` | `mcp [identity]` | Review workspace agent permissions |
 | `agent-channel` | `agent-channel` | Show this workspace's agent channel |
+| `mcp` | `mcp [identity]` | Review MCP permissions and connected agents |
 | `lsp-restart` | `lsp-restart [language]` | Restart stopped language servers |
 | `lsp-status` | `lsp-status` | Report language server state |
 | `open` | `open <path>` | Open a file or directory in the active pane |
@@ -1257,13 +1223,700 @@ with `{ command: name, argument: text }`.
 | `quit!` | `quit!` | Discard a unique buffer and close its pane, or force quit from the last pane |
 | `quit-all` | `quit-all` | Quit if all buffers are saved and no terminal is running |
 | `quit-all!` | `quit-all!` | Quit and discard unsaved buffers, but never terminate terminals |
-| `quit-all!!` | `quit-all!!` | Discard unsaved buffers, terminate this workspace’s terminals and quit |
+| `quit-all!!` | `quit-all!!` | Discard unsaved buffers, terminate this workspace's terminals and quit |
 | `quit-here` | `quit-here` | Quit and hand the active directory to the shell wrapper |
 | `quit-here!` | `quit-here!` | Discard changes, quit, and hand the active directory to the shell wrapper |
 | `reload` | `reload` | Reload the active view |
 | `resize` | `resize` | Preview pane resizing and extension; Enter applies, Escape cancels |
 | `write-quit` | `write-quit` | Write the active buffer, then close its pane or quit if it is the last pane |
 | `write-buffer-close` | `write-buffer-close` | Write and close the active buffer without changing the pane layout |
+
+#### Scoped actions
+
+Use one action name or null in `keys.scopes.<scope>.<mode>`. Ordinary editor
+scopes also support the applicable global actions above. These additional
+actions belong to the indicated owner; raw UI input still has its own scope.
+
+##### global
+
+- `list-accept`: list
+- `list-backspace`: list
+- `list-clear-filter`: list
+- `list-close`: list
+- `list-close-target`: list
+- `list-first`: list
+- `list-last`: list
+- `list-next`: list
+- `list-open-actions`: list
+- `list-page-down`: list
+- `list-page-up`: list
+- `list-previous`: list
+- `list-toggle-preview`: list
+
+##### media
+
+- `media-actual-size`: normal, select
+- `media-back`: normal, select
+- `media-copy-selection`: normal, select
+- `media-fit`: normal, select
+- `media-move-down`: normal, select
+- `media-move-up`: normal, select
+- `media-pan-left`: normal, select
+- `media-pan-right`: normal, select
+- `media-select-all`: normal, select
+- `media-zoom-in`: normal, select
+- `media-zoom-out`: normal, select
+
+##### pdf-pages
+
+- `media-back`: normal, select
+- `media-show-page`: normal, select
+
+##### directory
+
+- `choose-explorer-order`: normal, select
+- `open-directory-entry`: normal, select
+- `open-explorer-finder`: normal, select
+- `open-explorer-session`: normal, select
+- `open-explorer-system`: normal, select
+- `open-explorer-workspace`: normal, select
+- `open-parent-directory`: normal, select
+- `open-terminal-directory-root`: normal, select
+- `toggle-directory-details`: normal, select
+- `toggle-hidden-files`: normal, select
+
+##### directory-tree
+
+- `directory-tree-close`: normal, select
+- `directory-tree-delete`: normal, select
+- `directory-tree-down`: normal, select
+- `directory-tree-first`: normal, select
+- `directory-tree-last`: normal, select
+- `directory-tree-left`: normal, select
+- `directory-tree-legend`: normal, select
+- `directory-tree-move`: normal, select
+- `directory-tree-new`: normal, select
+- `directory-tree-open`: normal, select
+- `directory-tree-open-horizontal`: normal, select
+- `directory-tree-open-vertical`: normal, select
+- `directory-tree-page-down`: normal, select
+- `directory-tree-page-up`: normal, select
+- `directory-tree-pane-1`: normal, select
+- `directory-tree-pane-2`: normal, select
+- `directory-tree-pane-3`: normal, select
+- `directory-tree-pane-4`: normal, select
+- `directory-tree-pane-5`: normal, select
+- `directory-tree-pane-6`: normal, select
+- `directory-tree-pane-7`: normal, select
+- `directory-tree-pane-8`: normal, select
+- `directory-tree-pane-9`: normal, select
+- `directory-tree-refresh`: normal, select
+- `directory-tree-rename`: normal, select
+- `directory-tree-right`: normal, select
+- `directory-tree-up`: normal, select
+- `toggle-hidden-files`: normal, select
+
+##### settings
+
+- `activate-setting`: normal, select
+- `override-setting-language`: normal, select
+- `override-setting-pattern`: normal, select
+- `remove-setting-override`: normal, select
+
+##### git-status
+
+- `git-merge-abort`: normal, select
+- `git-merge-continue`: normal, select
+- `open-changed-file`: normal, select
+- `pull-branch`: normal, select
+- `push-branch`: normal, select
+- `stage-all-changed-files`: normal, select
+
+##### git-branches
+
+- `checkout-branch`: normal, select
+- `create-branch`: normal, select
+- `create-worktree`: normal, select
+- `delete-branch`: normal, select
+- `git-fetch-branch`: normal, select
+- `git-merge-branch`: normal, select
+- `pull-branch`: normal, select
+- `push-branch`: normal, select
+
+##### git-conflicts
+
+- `git-conflict-file-current`: normal, select
+- `git-conflict-file-other`: normal, select
+- `git-conflict-resolve`: normal, select
+- `git-conflict-resolve-literal-markers`: normal, select
+- `git-conflict-sides`: normal, select
+- `git-merge-abort`: normal, select
+- `git-merge-continue`: normal, select
+- `open-git-conflict`: normal, select
+
+##### git-conflict-file
+
+- `git-conflict-file-current`: normal, select
+- `git-conflict-file-other`: normal, select
+- `git-conflict-keep-current`: normal, select
+- `git-conflict-list`: normal, select
+- `git-conflict-next`: normal, select
+- `git-conflict-previous`: normal, select
+- `git-conflict-resolve`: normal, select
+- `git-conflict-resolve-literal-markers`: normal, select
+- `git-conflict-sides`: normal, select
+- `git-conflict-take-other`: normal, select
+
+##### git-conflict-markdown
+
+- `git-conflict-file-current`: normal, select
+- `git-conflict-file-other`: normal, select
+- `git-conflict-keep-current`: normal, select
+- `git-conflict-list`: normal, select
+- `git-conflict-next`: normal, select
+- `git-conflict-previous`: normal, select
+- `git-conflict-resolve`: normal, select
+- `git-conflict-resolve-literal-markers`: normal, select
+- `git-conflict-sides`: normal, select
+- `git-conflict-take-other`: normal, select
+- `toggle-markdown-render`: normal, select
+
+##### git-merge-review
+
+- `git-review-approve`: normal
+- `git-review-cancel`: normal
+- `git-review-enter`: normal
+- `git-review-left`: normal
+- `git-review-next`: normal
+- `git-review-previous`: normal
+- `git-review-right`: normal
+
+##### git-merge-detail
+
+- `git-review-back`: normal
+- `git-review-cancel`: normal
+- `git-review-enter`: normal
+- `git-review-left`: normal
+- `git-review-next`: normal
+- `git-review-previous`: normal
+- `git-review-right`: normal
+
+##### git-merge-input
+
+- `git-review-cancel`: normal
+- `git-review-enter`: normal
+- `git-review-left`: normal
+- `git-review-next`: normal
+- `git-review-previous`: normal
+- `git-review-right`: normal
+
+##### terminal
+
+- `split-horizontal`: insert
+- `split-vertical`: insert
+- `toggle-fullscreen`: insert
+- `toggle-zen`: insert
+
+##### git-worktrees
+
+- `create-new-worktree`: normal, select
+- `open-worktree`: normal, select
+- `remove-worktree`: normal, select
+
+##### git-log
+
+- `next-git-log-page`: normal, select
+- `open-git-commit`: normal, select
+- `previous-git-log-page`: normal, select
+
+##### git-network
+
+- `next-git-network-page`: normal, select
+- `open-git-commit`: normal, select
+- `previous-git-network-page`: normal, select
+
+##### git-blame
+
+- `open-git-commit`: normal, select
+
+##### workspace-search
+
+- `open-workspace-search-result`: normal, select
+
+##### markdown
+
+- `toggle-markdown-render`: normal, select
+
+##### session-manager
+
+- `list-accept`: list
+- `list-backspace`: list
+- `list-clear-filter`: list
+- `list-close`: list
+- `list-close-target`: list
+- `list-first`: list
+- `list-last`: list
+- `list-next`: list
+- `list-open-actions`: list
+- `list-page-down`: list
+- `list-page-up`: list
+- `list-previous`: list
+- `list-toggle-preview`: list
+- `open-session-destinations`: list
+- `open-session-directory`: list
+
+
+#### Action contracts
+
+Generated from built-in descriptors. Effects include owned continuations and specialized views; they do not change the current sequence rules. Character operands and palette arguments are separate.
+
+| Action | Effects | Count | Character operands | Palette argument | View differences |
+| --- | --- | --- | --- | --- | --- |
+| `enter-normal-mode` | [Mode, Selection] | Reject | Zero | none | terminal: Leave child input for live Normal mode; otherwise capture review and collapse its selection |
+| `open-command-palette` | [Prompt] | Reject | Zero | none |  |
+| `move-left` | [Selection, View] | Repeat | Zero | none | terminal: Move or extend the cursor in captured output; media: Pan horizontally, or extend the media selection in Select mode |
+| `move-right` | [Selection, View] | Repeat | Zero | none | terminal: Move or extend the cursor in captured output; media: Pan horizontally, or extend the media selection in Select mode |
+| `move-up` | [Selection, View] | Repeat | Zero | none | terminal: Move or extend the cursor in captured output; media: Pan vertically, change PDF page at fit, or extend the media selection |
+| `move-down` | [Selection, View] | Repeat | Zero | none | terminal: Move or extend the cursor in captured output; media: Pan vertically, change PDF page at fit, or extend the media selection |
+| `move-line-start` | [Selection] | Reject | Zero | none | terminal: Move or extend the review selection within captured output |
+| `move-line-end` | [Selection] | Reject | Zero | none | terminal: Move or extend the review selection within captured output |
+| `move-first-non-whitespace` | [Selection] | Reject | Zero | none | terminal: Move or extend the review selection within captured output |
+| `move-file-start` | [Selection, View] | Interpret | Zero | none | terminal: Move to the captured output boundary; media: Select a PDF page by address or move to its first or last page |
+| `move-file-end` | [Selection, View] | Interpret | Zero | none | terminal: Move to the captured output boundary; media: Select a PDF page by address or move to its first or last page |
+| `move-word-forward` | [Selection] | Repeat | Zero | none | terminal: Move or extend the review selection within captured output |
+| `move-word-backward` | [Selection] | Repeat | Zero | none | terminal: Move or extend the review selection within captured output |
+| `move-word-end` | [Selection] | Repeat | Zero | none | terminal: Move or extend the review selection within captured output |
+| `move-long-word-forward` | [Selection] | Repeat | Zero | none | terminal: Move or extend the review selection within captured output |
+| `move-long-word-backward` | [Selection] | Repeat | Zero | none | terminal: Move or extend the review selection within captured output |
+| `move-long-word-end` | [Selection] | Repeat | Zero | none | terminal: Move or extend the review selection within captured output |
+| `goto-next-paragraph` | [Selection] | Repeat | Zero | none | terminal: Move or extend the review selection within captured output |
+| `goto-previous-paragraph` | [Selection] | Repeat | Zero | none | terminal: Move or extend the review selection within captured output |
+| `find-next-char` | [Operand, Selection] | Reject | One | none | terminal: Find the supplied character within captured output |
+| `find-previous-char` | [Operand, Selection] | Reject | One | none | terminal: Find the supplied character within captured output |
+| `find-till-next-char` | [Operand, Selection] | Reject | One | none | terminal: Find the supplied character within captured output |
+| `find-till-previous-char` | [Operand, Selection] | Reject | One | none | terminal: Find the supplied character within captured output |
+| `page-up` | [Selection, View] | Repeat | Zero | none | terminal: Move the review cursor by a page of captured output; media: Move to the previous or next PDF page |
+| `page-down` | [Selection, View] | Repeat | Zero | none | terminal: Move the review cursor by a page of captured output; media: Move to the previous or next PDF page |
+| `half-page-up` | [Selection, View] | Repeat | Zero | none | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page |
+| `half-page-down` | [Selection, View] | Repeat | Zero | none | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page |
+| `enter-insert-mode` | [Mode, Selection] | Reject | Zero | none | terminal: Return to live output and send subsequent input to the child |
+| `enter-replace-mode` | [Mode, Selection] | Reject | Zero | none |  |
+| `append-after` | [Mode, Selection] | Reject | Zero | none | terminal: Return to live output and send subsequent input to the child |
+| `insert-line-start` | [Mode, Selection] | Reject | Zero | none | terminal: Return to live output and send subsequent input to the child |
+| `insert-line-end` | [Mode, Selection] | Reject | Zero | none | terminal: Return to live output and send subsequent input to the child |
+| `open-line-below` | [Text, Mode, Selection] | Reject | Zero | none | terminal: Return to live output and send subsequent input to the child |
+| `open-line-above` | [Text, Mode, Selection] | Reject | Zero | none | terminal: Return to live output and send subsequent input to the child |
+| `replace-char` | [Operand, Text, Mode] | Reject | One | none |  |
+| `surround-add` | [Operand, Text, Mode] | Reject | One | none |  |
+| `surround-replace` | [Operand, Text, Mode] | Reject | Two | none |  |
+| `surround-delete` | [Operand, Text, Mode] | Reject | One | none |  |
+| `toggle-case` | [Text, Mode] | Reject | Zero | none |  |
+| `selection-undo` | [Selection] | Repeat | Zero | none | terminal: Restore the previous or next terminal review selection |
+| `selection-redo` | [Selection] | Repeat | Zero | none | terminal: Restore the previous or next terminal review selection |
+| `undo` | [Text, TerminalInput] | Repeat | Zero | none | terminal: Ask the child to erase the last text Runyte sent, if it has not been submitted |
+| `redo` | [Text] | Repeat | Zero | none |  |
+| `yank` | [Register] | Reject | Zero | none | terminal: Copy the review selection to the selected register and retain its selection and mode; directory: Copy selected entries and record a directory copy payload |
+| `yank-line` | [Register] | Reject | Zero | none | directory: Copy selected entry lines and record a directory copy payload |
+| `yank-collapse-normal-mode` | [Register, Selection, Mode] | Reject | Zero | none | terminal: Copy the review selection, retain it on screen and enter Normal mode; directory: Copy selected entries, collapse the selection and enter Normal mode |
+| `yank-line-collapse-normal-mode` | [Register, Selection, Mode] | Reject | Zero | none | directory: Copy selected entry lines, collapse the selection and enter Normal mode |
+| `paste-after-or-replace` | [Text, Mode, TerminalInput] | Repeat | Zero | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing |
+| `paste-after` | [Text, TerminalInput] | Repeat | Zero | none | terminal: Send register text to the child without changing mode; directory: Stage copies or moves from a directory register into the listing |
+| `replace-with-register` | [Text, Mode] | Reject | Zero | none | directory: Insert rows from a directory-register payload; directory pastes use row insertion rather than text replacement |
+| `paste-before` | [Text, Mode, TerminalInput] | Repeat | Zero | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing |
+| `indent` | [Text] | Reject | Zero | none |  |
+| `unindent` | [Text] | Reject | Zero | none |  |
+| `toggle-comments` | [Text] | Reject | Zero | none |  |
+| `yank-delete-selection` | [Register, Text, Mode] | Reject | Zero | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection |
+| `yank-change-selection` | [Register, Text, Mode] | Reject | Zero | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection |
+| `delete-selection` | [Text, Mode] | Reject | Zero | none |  |
+| `change-selection` | [Text, Mode] | Reject | Zero | none |  |
+| `enter-select-mode` | [Mode, Selection] | Reject | Zero | none | terminal: Toggle Select mode over captured terminal output; media: Toggle selection of PDF text or an image region |
+| `select-line` | [Selection, Mode] | Repeat | Zero | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
+| `extend-line-above` | [Selection, Mode] | Repeat | Zero | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
+| `extend-line-below` | [Selection, Mode] | Repeat | Zero | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
+| `select-line-up` | [Selection, Mode] | Repeat | Zero | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
+| `select-all` | [Selection, Mode] | Reject | Zero | none | terminal: Select all captured terminal output and enter Select mode |
+| `collapse-selection` | [Selection, Mode] | Reject | Zero | none | terminal: Collapse the review selection and enter Normal mode |
+| `flip-selection` | [Selection, Mode] | Reject | Zero | none |  |
+| `expand-syntax-selection` | [Selection, Mode] | Repeat | Zero | none |  |
+| `shrink-syntax-selection` | [Selection, Mode] | Repeat | Zero | none |  |
+| `select-syntax-parent` | [Selection, Mode] | Repeat | Zero | none |  |
+| `select-syntax-child` | [Selection, Mode] | Repeat | Zero | none |  |
+| `select-previous-syntax-sibling` | [Selection, Mode] | Repeat | Zero | none |  |
+| `select-next-syntax-sibling` | [Selection, Mode] | Repeat | Zero | none |  |
+| `select-syntax-function` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-syntax-function` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-syntax-class` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-syntax-class` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-syntax-parameter` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-syntax-parameter` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-around-parentheses` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-parentheses` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-around-square-brackets` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-square-brackets` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-around-braces` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-braces` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-around-angle-brackets` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-angle-brackets` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-around-double-quotes` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-double-quotes` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-around-single-quotes` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-single-quotes` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-around-backticks` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-backticks` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-word` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-around-word` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-long-word` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-around-long-word` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-paragraph` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-around-paragraph` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-around-closest-delimiter` | [Selection, Mode] | Reject | Zero | none |  |
+| `select-inside-closest-delimiter` | [Selection, Mode] | Reject | Zero | none |  |
+| `goto-previous-syntax-function` | [Selection] | Repeat | Zero | none |  |
+| `goto-next-syntax-function` | [Selection] | Repeat | Zero | none |  |
+| `goto-previous-syntax-class` | [Selection] | Repeat | Zero | none |  |
+| `goto-next-syntax-class` | [Selection] | Repeat | Zero | none |  |
+| `goto-previous-syntax-parameter` | [Selection] | Repeat | Zero | none |  |
+| `goto-next-syntax-parameter` | [Selection] | Repeat | Zero | none |  |
+| `document-outline` | [View] | Reject | Zero | none |  |
+| `toggle-syntax-fold` | [View] | Reject | Zero | none |  |
+| `fold-all-syntax` | [View] | Reject | Zero | none |  |
+| `unfold-all-syntax` | [View] | Reject | Zero | none |  |
+| `split-selection-at-line-ends` | [Selection, Mode] | Reject | Zero | none |  |
+| `split-selection-at-line-starts` | [Selection, Mode] | Reject | Zero | none |  |
+| `keep-primary-selection` | [Selection] | Reject | Zero | none | terminal: Keep only the primary review selection |
+| `remove-primary-selection` | [Selection] | Reject | Zero | none |  |
+| `copy-selection-down` | [Selection] | Reject | Zero | none | terminal: Copy the review cursor to the adjacent captured output line |
+| `copy-selection-up` | [Selection] | Reject | Zero | none | terminal: Copy the review cursor to the adjacent captured output line |
+| `copy-selection-down-padded` | [Text, Selection] | Reject | Zero | none |  |
+| `copy-selection-up-padded` | [Text, Selection] | Reject | Zero | none |  |
+| `rotate-selection-forward` | [Selection] | Reject | Zero | none | terminal: Select the next or previous terminal review search match |
+| `rotate-selection-backward` | [Selection] | Reject | Zero | none | terminal: Select the next or previous terminal review search match |
+| `rotate-selection-contents-forward` | [Text, Selection] | Reject | Zero | none |  |
+| `rotate-selection-contents-backward` | [Text, Selection] | Reject | Zero | none |  |
+| `keep-matching-selections` | [Prompt, Selection] | Reject | Zero | none |  |
+| `remove-matching-selections` | [Prompt, Selection] | Reject | Zero | none |  |
+| `align-selections` | [Text, Selection] | Reject | Zero | none |  |
+| `trim-selections` | [Selection] | Reject | Zero | none |  |
+| `trim-trailing-whitespace` | [Text, Selection] | Reject | Zero | none |  |
+| `hard-wrap` | [Text] | Reject | Zero | none |  |
+| `reflow` | [Text] | Reject | Zero | none |  |
+| `join-selections` | [Prompt, Text] | Reject | Zero | none |  |
+| `join-lines` | [Text] | Reject | Zero | none |  |
+| `format-table` | [Text] | Reject | Zero | none |  |
+| `search` | [Prompt, SearchState, Selection, Mode] | Reject | Zero | none | terminal: Prompt for a case-insensitive search of captured output |
+| `search-regex` | [Prompt, SearchState, Selection, Mode] | Reject | Zero | none | terminal: Prompt for a regular-expression search of captured output; directory-tree: Prompt to search visible tree entries |
+| `search-next` | [Selection, Mode] | Reject | Zero | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry |
+| `search-previous` | [Selection, Mode] | Reject | Zero | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry |
+| `search-selection` | [SearchState, Selection, Mode] | Reject | Zero | none |  |
+| `set-search-from-selection` | [SearchState] | Reject | Zero | none |  |
+| `media-show-page` | [View, Mode, Selection] | Reject | Zero | none | pdf-pages: Display the selected PDF page and enter Normal mode |
+| `media-zoom-in` | [View] | Reject | Zero | none |  |
+| `media-zoom-out` | [View] | Reject | Zero | none |  |
+| `media-fit` | [View] | Reject | Zero | none |  |
+| `media-actual-size` | [View] | Reject | Zero | none |  |
+| `media-pan-left` | [View] | Reject | Zero | none |  |
+| `media-pan-right` | [View] | Reject | Zero | none |  |
+| `media-move-up` | [View, Selection] | Repeat | Zero | none |  |
+| `media-move-down` | [View, Selection] | Repeat | Zero | none |  |
+| `media-copy-selection` | [Register] | Reject | Zero | none |  |
+| `media-back` | [View, Mode, Selection] | Reject | Zero | none | media: Enter Normal mode, then fit media, clear selection or leave preview; pdf-pages: Collapse a Select-mode page selection, otherwise open the parent explorer |
+| `media-select-all` | [Selection] | Reject | Zero | none |  |
+| `align-view-center` | [View] | Reject | Zero | none | media: Center the image or PDF in its pane |
+| `align-view-top` | [View] | Reject | Zero | none |  |
+| `align-view-bottom` | [View] | Reject | Zero | none |  |
+| `align-view-middle` | [View] | Reject | Zero | none | media: Center the image or PDF in its pane |
+| `scroll-view-down` | [View] | Repeat | Zero | none | terminal: Capture review and scroll its output; media: Pan the image or PDF vertically |
+| `scroll-view-up` | [View] | Repeat | Zero | none | terminal: Capture review and scroll its output; media: Pan the image or PDF vertically |
+| `goto-window-top` | [Selection] | Reject | Zero | none | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view |
+| `goto-window-center` | [Selection] | Reject | Zero | none | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view |
+| `goto-window-bottom` | [Selection] | Reject | Zero | none | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view |
+| `goto-file` | [File, View, Prompt, Background] | Reject | Zero | none | terminal: Open a path or URL inferred from the review selection and terminal directory |
+| `goto-word` | [Operand, Selection] | Reject | Zero | none | terminal: Label visible captured output words and jump to one; directory-tree: Label visible tree entries and select one |
+| `toggle-soft-wrap` | [View, Configuration] | Reject | Zero | none |  |
+| `toggle-whitespace` | [View, Configuration] | Reject | Zero | none |  |
+| `preview-document` | [Background, View] | Reject | Zero | none |  |
+| `toggle-markdown-render` | [View] | Reject | Zero | none |  |
+| `toggle-focus` | [View, Configuration] | Reject | Zero | none |  |
+| `toggle-zen` | [View] | Reject | Zero | none |  |
+| `toggle-fullscreen` | [View] | Reject | Zero | none |  |
+| `open-explorer` | [File, View, Prompt] | Reject | Zero | none |  |
+| `toggle-directory-tree` | [Pane, View, Mode] | Reject | Zero | none |  |
+| `focus-directory-tree` | [Pane, View, Mode] | Reject | Zero | none |  |
+| `directory-tree-up` | [Selection] | Reject | Zero | none |  |
+| `directory-tree-down` | [Selection] | Reject | Zero | none |  |
+| `directory-tree-left` | [View, Selection] | Reject | Zero | none |  |
+| `directory-tree-right` | [View, Selection] | Reject | Zero | none |  |
+| `directory-tree-first` | [Selection] | Reject | Zero | none |  |
+| `directory-tree-last` | [Selection] | Reject | Zero | none |  |
+| `directory-tree-page-up` | [Selection] | Reject | Zero | none |  |
+| `directory-tree-page-down` | [Selection] | Reject | Zero | none |  |
+| `directory-tree-open` | [File, View, Mode, Prompt, Background] | Reject | Zero | none |  |
+| `directory-tree-close` | [Pane, View, Mode] | Reject | Zero | none |  |
+| `directory-tree-refresh` | [File, View] | Reject | Zero | none |  |
+| `directory-tree-legend` | [View] | Reject | Zero | none |  |
+| `directory-tree-open-vertical` | [File, View, Mode, Prompt, Background, Pane] | Reject | Zero | none |  |
+| `directory-tree-open-horizontal` | [File, View, Mode, Prompt, Background, Pane] | Reject | Zero | none |  |
+| `directory-tree-pane-1` | [File, View, Mode, Prompt, Background] | Reject | Zero | none |  |
+| `directory-tree-pane-2` | [File, View, Mode, Prompt, Background] | Reject | Zero | none |  |
+| `directory-tree-pane-3` | [File, View, Mode, Prompt, Background] | Reject | Zero | none |  |
+| `directory-tree-pane-4` | [File, View, Mode, Prompt, Background] | Reject | Zero | none |  |
+| `directory-tree-pane-5` | [File, View, Mode, Prompt, Background] | Reject | Zero | none |  |
+| `directory-tree-pane-6` | [File, View, Mode, Prompt, Background] | Reject | Zero | none |  |
+| `directory-tree-pane-7` | [File, View, Mode, Prompt, Background] | Reject | Zero | none |  |
+| `directory-tree-pane-8` | [File, View, Mode, Prompt, Background] | Reject | Zero | none |  |
+| `directory-tree-pane-9` | [File, View, Mode, Prompt, Background] | Reject | Zero | none |  |
+| `directory-tree-new` | [Prompt, File] | Reject | Zero | none |  |
+| `directory-tree-rename` | [Prompt, File] | Reject | Zero | none |  |
+| `directory-tree-delete` | [Prompt, File] | Reject | Zero | none |  |
+| `directory-tree-move` | [Prompt, File] | Reject | Zero | none |  |
+| `open-working-directory-explorer` | [File, View, Prompt] | Reject | Zero | explorer [path] |  |
+| `open-file-picker` | [View, Background] | Reject | Zero | none |  |
+| `open-all-files-picker` | [View, Background] | Reject | Zero | none |  |
+| `open-path-file-picker` | [Prompt, View, Background] | Reject | Zero | file-picker-path [path] |  |
+| `open-directory-file-picker` | [View, Background] | Reject | Zero | none |  |
+| `open-fuzzy-grep` | [View, Background] | Reject | Zero | none |  |
+| `open-directory-fuzzy-grep` | [View, Background] | Reject | Zero | none |  |
+| `open-directory-entry` | [File, View, Mode, Selection, Prompt, Background] | Reject | Zero | none |  |
+| `open-parent-directory` | [File, View, Mode, Selection, Prompt] | Reject | Zero | none |  |
+| `refresh-directory` | [File, View, Prompt] | Reject | Zero | none |  |
+| `toggle-hidden-files` | [View, Configuration] | Reject | Zero | none | directory-tree: Show or hide hidden tree entries |
+| `toggle-directory-details` | [View, Configuration] | Reject | Zero | none |  |
+| `choose-explorer-order` | [Prompt, View, Configuration] | Reject | Zero | none |  |
+| `open-explorer-system` | [File, View, Background] | Reject | Zero | none |  |
+| `open-explorer-finder` | [File, View, Background] | Reject | Zero | none |  |
+| `open-changed-file` | [Background, File, View, Prompt] | Reject | Zero | none |  |
+| `stage-all-changed-files` | [Background, File, View] | Reject | Zero | none |  |
+| `checkout-branch` | [Background, File, View, Prompt] | Reject | Zero | none |  |
+| `create-branch` | [Prompt, Background, File] | Reject | Zero | none |  |
+| `delete-branch` | [Prompt, Background, File] | Reject | Zero | none |  |
+| `git-merge-branch` | [Background, File, View, Prompt, Mode] | Reject | Zero | none |  |
+| `git-conflicts` | [Background, File, View, Mode] | Reject | Zero | none |  |
+| `open-git-conflict` | [Background, File, View] | Reject | Zero | none |  |
+| `git-merge-continue` | [Background, File, View, Prompt, Mode] | Reject | Zero | none |  |
+| `git-merge-abort` | [Prompt, Background, File, Mode] | Reject | Zero | none |  |
+| `git-conflict-next` | [Selection, View] | Reject | Zero | none |  |
+| `git-conflict-previous` | [Selection, View] | Reject | Zero | none |  |
+| `git-conflict-keep-current` | [Text] | Reject | Zero | none |  |
+| `git-conflict-take-other` | [Text] | Reject | Zero | none |  |
+| `git-conflict-sides` | [Background, File, View] | Reject | Zero | none |  |
+| `git-conflict-resolve-literal-markers` | [Prompt, Background, File, Mode] | Reject | Zero | none |  |
+| `git-conflict-resolve` | [Prompt, Background, File, Mode] | Reject | Zero | none |  |
+| `git-conflict-list` | [Background, File, View, Mode] | Reject | Zero | none |  |
+| `git-conflict-file-current` | [Prompt, Background, File, Mode] | Reject | Zero | none |  |
+| `git-conflict-file-other` | [Prompt, Background, File, Mode] | Reject | Zero | none |  |
+| `git-review-approve` | [View, Background, File, Mode] | Reject | Zero | none |  |
+| `git-review-cancel` | [View] | Reject | Zero | none |  |
+| `git-review-back` | [View] | Reject | Zero | none |  |
+| `git-review-next` | [Selection] | Reject | Zero | none |  |
+| `git-review-previous` | [Selection] | Reject | Zero | none |  |
+| `git-review-left` | [Selection] | Reject | Zero | none |  |
+| `git-review-right` | [Selection] | Reject | Zero | none |  |
+| `git-review-enter` | [View, Background, File, Mode] | Reject | Zero | none |  |
+| `git-fetch-branch` | [Background, File, View] | Reject | Zero | none |  |
+| `pull-branch` | [Background, File, View, Prompt] | Reject | Zero | none |  |
+| `push-branch` | [Background, File, View] | Reject | Zero | none |  |
+| `open-worktree` | [Background, File, View] | Reject | Zero | none |  |
+| `create-worktree` | [Prompt, Background, File] | Reject | Zero | none |  |
+| `create-new-worktree` | [Prompt, Background, File] | Reject | Zero | none |  |
+| `remove-worktree` | [Prompt, Background, File] | Reject | Zero | none |  |
+| `next-git-network-page` | [Background, File, View, Mode] | Reject | Zero | none |  |
+| `previous-git-network-page` | [View, Mode] | Reject | Zero | none |  |
+| `next-git-log-page` | [Background, File, View, Mode] | Reject | Zero | none |  |
+| `previous-git-log-page` | [Background, File, View, Mode] | Reject | Zero | none |  |
+| `open-git-commit` | [Background, File, View, Mode] | Reject | Zero | none |  |
+| `open-workspace-search-result` | [View, File, Selection] | Reject | Zero | none |  |
+| `override-setting-language` | [Prompt, Configuration] | Reject | Zero | none |  |
+| `override-setting-pattern` | [Prompt, Configuration] | Reject | Zero | none |  |
+| `remove-setting-override` | [Configuration, View] | Reject | Zero | none |  |
+| `activate-setting` | [Prompt, Configuration] | Reject | Zero | none |  |
+| `open-settings` | [View, Mode] | Reject | Zero | none |  |
+| `open-theme-settings` | [Configuration, View] | Reject | Zero | theme [name] |  |
+| `split-vertical` | [Pane, Mode, File, Prompt, Background] | Reject | Zero | vsplit [path] |  |
+| `split-horizontal` | [Pane, Mode, File, Prompt, Background] | Reject | Zero | hsplit [path] |  |
+| `save` | [File, Text, Prompt, Background] | Reject | Zero | write [path] | directory: Review and apply edits to the directory listing as filesystem operations; commit-message: Review staged changes and submit the commit message |
+| `force-save` | [File, Text, Prompt, Background] | Reject | Zero | write! [path] | directory: Review and apply edits to the directory listing as filesystem operations; commit-message: Review staged changes and submit the commit message |
+| `show-help` | [View, Mode] | Reject | Zero | help [topic] | directory-tree: Open directory-tree help |
+| `show-about` | [View] | Reject | Zero | none |  |
+| `show-tutorial` | [View, Pane, Mode] | Reject | Zero | tutorial [reset&#124;sessions&#124;next] |  |
+| `focus-window-left` | [Pane, Mode] | Reject | Zero | none |  |
+| `focus-window-down` | [Pane, Mode] | Reject | Zero | none |  |
+| `focus-window-up` | [Pane, Mode] | Reject | Zero | none |  |
+| `focus-window-right` | [Pane, Mode] | Reject | Zero | none |  |
+| `next-window` | [Pane, Mode] | Reject | Zero | none |  |
+| `swap-window` | [Pane] | Reject | Zero | none |  |
+| `move-window-left` | [Pane] | Reject | Zero | none |  |
+| `move-window-down` | [Pane] | Reject | Zero | none |  |
+| `move-window-up` | [Pane] | Reject | Zero | none |  |
+| `move-window-right` | [Pane] | Reject | Zero | none |  |
+| `close-window` | [Pane, Mode] | Reject | Zero | none | directory-tree: Close the directory tree and restore pane focus |
+| `only-window` | [Pane] | Reject | Zero | none |  |
+| `equalize-windows` | [Pane] | Reject | Zero | none |  |
+| `open-terminal` | [Background, View, Mode] | Reject | Zero | terminal [command] |  |
+| `open-terminal-file-directory` | [Background, View, Mode] | Reject | Zero | terminal-file-directory [command] |  |
+| `open-terminal-directory-root` | [Background, View, Mode] | Reject | Zero | terminal-directory-root [command] |  |
+| `open-terminal-selected-directory` | [Background, View, Mode] | Reject | Zero | terminal-selected-directory [command] |  |
+| `open-terminal-session-directory` | [Background, View, Mode] | Reject | Zero | terminal-session-directory <number&#124;name> |  |
+| `open-terminal-list` | [View] | Reject | Zero | none |  |
+| `show-terminal` | [View, Mode] | Reject | Zero | terminal-show <number&#124;name> |  |
+| `rename-terminal` | [Prompt, Configuration] | Reject | Zero | terminal-rename <name> |  |
+| `leave-terminal` | [View, Mode] | Reject | Zero | none |  |
+| `copy-terminal-output` | [View] | Reject | Zero | none |  |
+| `send-to-terminal` | [TerminalInput] | Reject | Zero | terminal-send [number&#124;name] |  |
+| `delete-word-backward` | [Text] | Reject | Zero | none |  |
+| `delete-word-forward` | [Text] | Reject | Zero | none |  |
+| `delete-to-line-start` | [Text] | Reject | Zero | none |  |
+| `delete-to-line-end` | [Text] | Reject | Zero | none |  |
+| `delete-char-backward` | [Text] | Reject | Zero | none |  |
+| `delete-char-forward` | [Text] | Reject | Zero | none |  |
+| `insert-newline` | [Text] | Reject | Zero | none |  |
+| `insert-indent` | [Text] | Reject | Zero | none |  |
+| `insert-other-indent` | [Text] | Reject | Zero | none |  |
+| `commit-undo-checkpoint` | [History] | Reject | Zero | none |  |
+| `goto-definition` | [Background, View] | Reject | Zero | none |  |
+| `goto-declaration` | [Background, View] | Reject | Zero | none |  |
+| `goto-type-definition` | [Background, View] | Reject | Zero | none |  |
+| `goto-references` | [Background, View] | Reject | Zero | none |  |
+| `goto-implementation` | [Background, View] | Reject | Zero | none |  |
+| `new-buffer` | [View] | Reject | Zero | none |  |
+| `open-navigator` | [View] | Reject | Zero | none |  |
+| `previous-destination` | [View] | Reject | Zero | none |  |
+| `previous-session` | [File, View, Background] | Reject | Zero | none |  |
+| `session-1` | [File, View, Background] | Reject | Zero | none |  |
+| `session-2` | [File, View, Background] | Reject | Zero | none |  |
+| `session-3` | [File, View, Background] | Reject | Zero | none |  |
+| `session-4` | [File, View, Background] | Reject | Zero | none |  |
+| `session-5` | [File, View, Background] | Reject | Zero | none |  |
+| `session-6` | [File, View, Background] | Reject | Zero | none |  |
+| `session-7` | [File, View, Background] | Reject | Zero | none |  |
+| `session-8` | [File, View, Background] | Reject | Zero | none |  |
+| `session-9` | [File, View, Background] | Reject | Zero | none |  |
+| `next-running-session` | [File, View, Background] | Reject | Zero | none |  |
+| `previous-running-session` | [File, View, Background] | Reject | Zero | none |  |
+| `open-session-directory` | [File, View, Background] | Reject | Zero | none |  |
+| `open-explorer-session` | [File, View, Background] | Reject | Zero | none |  |
+| `open-explorer-workspace` | [File, View, Background] | Reject | Zero | none |  |
+| `open-buffer-picker` | [View] | Reject | Zero | none |  |
+| `list-accept` | [View, Prompt] | Reject | Zero | none |  |
+| `list-open-actions` | [View, Prompt] | Reject | Zero | none |  |
+| `list-backspace` | [View] | Reject | Zero | none |  |
+| `list-next` | [Selection] | Reject | Zero | none |  |
+| `list-previous` | [Selection] | Reject | Zero | none |  |
+| `list-page-down` | [Selection] | Reject | Zero | none |  |
+| `list-page-up` | [Selection] | Reject | Zero | none |  |
+| `list-first` | [Selection] | Reject | Zero | none |  |
+| `list-last` | [Selection] | Reject | Zero | none |  |
+| `list-toggle-preview` | [View] | Reject | Zero | none |  |
+| `list-close-target` | [View, Prompt, Background, Text, File] | Reject | Zero | none |  |
+| `list-clear-filter` | [View] | Reject | Zero | none |  |
+| `list-close` | [View] | Reject | Zero | none |  |
+| `open-session-destinations` | [File, View, Background] | Reject | Zero | none |  |
+| `global-search` | [Prompt, Background, View] | Reject | Zero | none |  |
+| `global-search-regex` | [Prompt, Background, View] | Reject | Zero | none |  |
+| `show-documentation` | [Background, View] | Reject | Zero | none |  |
+| `document-symbols` | [Background, View] | Reject | Zero | none |  |
+| `workspace-symbols` | [Prompt, Background, View] | Reject | Zero | none |  |
+| `diagnostics` | [View] | Reject | Zero | none |  |
+| `trigger-completion` | [Background, Prompt, Text, Mode] | Reject | Zero | none |  |
+| `jump-backward` | [View, Selection] | Reject | Zero | none |  |
+| `jump-forward` | [View, Selection] | Reject | Zero | none |  |
+| `jump-backward-buffer` | [View, Selection] | Reject | Zero | none |  |
+| `jump-forward-buffer` | [View, Selection] | Reject | Zero | none |  |
+| `rename-symbol` | [Background, Prompt, Text] | Reject | Zero | none |  |
+| `code-action` | [Background, Prompt, Text] | Reject | Zero | none |  |
+| `clipboard-paste-after` | [Text, Mode, TerminalInput] | Repeat | Zero | none | terminal: Send system clipboard text to the child without changing mode |
+| `clipboard-paste-before` | [Text, Mode, TerminalInput] | Repeat | Zero | none | terminal: Send system clipboard text to the child without changing mode |
+| `clipboard-yank` | [Register] | Reject | Zero | none | terminal: Copy the captured review selection to the system clipboard; media: Copy selected PDF text or an image region |
+| `clipboard-paste` | [Text, TerminalInput] | Reject | Zero | none | terminal: Paste clipboard text or an image reference into the terminal input queue |
+| `select-register` | [Operand, Register] | Reject | One | none |  |
+| `record-macro` | [Operand, Macro] | Reject | One | none |  |
+| `record-default-macro` | [Macro] | Reject | Zero | none |  |
+| `stop-macro-recording` | [Macro] | Reject | Zero | none |  |
+| `replay-macro` | [Operand, Macro, Text] | Repeat | One | none |  |
+| `replay-default-macro` | [Macro, Text] | Repeat | Zero | none |  |
+| `list-macros` | [View] | Reject | Zero | none |  |
+| `shell-pipe` | [Prompt, Background, Text] | Reject | Zero | none |  |
+| `match-bracket` | [Selection] | Reject | Zero | none |  |
+| `cd` | [File, Configuration, Prompt, Background, View, Application] | Reject | Zero | cd [path] |  |
+| `init` | [File, Configuration, Background, View, Application] | Reject | Zero | init [directory] |  |
+| `close` | [View] | Reject | Zero | none |  |
+| `diff-disk` | [File, View] | Reject | Zero | none |  |
+| `diff-remote` | [Background, View] | Reject | Zero | none |  |
+| `diff-off` | [View] | Reject | Zero | none |  |
+| `diff-this` | [View] | Reject | Zero | none |  |
+| `close!` | [View] | Reject | Zero | none |  |
+| `format` | [Background, Text] | Reject | Zero | none |  |
+| `git-compare` | [Background, View] | Reject | Zero | none |  |
+| `git-branches` | [Background, View, Mode] | Reject | Zero | none |  |
+| `git-blame` | [Background, View, Mode] | Reject | Zero | none |  |
+| `git-blame-file` | [Background, View, Mode] | Reject | Zero | none |  |
+| `git-cancel` | [Background] | Reject | Zero | none |  |
+| `git-commit` | [Prompt, Background, File, View, Mode] | Reject | Zero | none |  |
+| `git-diff` | [Background, View] | Reject | Zero | none |  |
+| `git-diff-side-by-side` | [Background, View] | Reject | Zero | none |  |
+| `git-discard` | [Prompt, Background, File] | Reject | Zero | none |  |
+| `git-index` | [Background, View] | Reject | Zero | none |  |
+| `git-log` | [Background, View, Mode] | Reject | Zero | none |  |
+| `git-network` | [Background, View, Mode] | Reject | Zero | none |  |
+| `git-network-head` | [Background, View, Mode] | Reject | Zero | none |  |
+| `git-network-all` | [Background, View, Mode] | Reject | Zero | none |  |
+| `git-network-ref` | [Background, View, Mode] | Reject | Zero | git-network-ref <full-ref> |  |
+| `git-network-choose-ref` | [View] | Reject | Zero | none |  |
+| `git-search-commits` | [Background, View] | Reject | Zero | none |  |
+| `git-refresh` | [Background, View] | Reject | Zero | none |  |
+| `git-stage` | [Background, File] | Reject | Zero | none |  |
+| `git-status` | [Background, View, Mode] | Reject | Zero | none |  |
+| `git-stashes` | [Background, View, Mode] | Reject | Zero | none |  |
+| `git-stash-tracked` | [Prompt, Background, File] | Reject | Zero | git-stash-tracked <name> |  |
+| `git-stash-all` | [Prompt, Background, File] | Reject | Zero | git-stash-all <name> |  |
+| `git-stash-untracked` | [Prompt, Background, File] | Reject | Zero | git-stash-untracked <name> |  |
+| `git-stash-apply` | [Prompt, Background, File] | Reject | Zero | none |  |
+| `git-stash-drop` | [Prompt, Background, File] | Reject | Zero | none |  |
+| `git-stage-hunk` | [Background, File] | Reject | Zero | none |  |
+| `git-unstage-hunk` | [Background, File] | Reject | Zero | none |  |
+| `git-stage-lines` | [Background, File] | Reject | Zero | none |  |
+| `git-unstage` | [Background, File] | Reject | Zero | none |  |
+| `git-worktrees` | [Background, View, Mode] | Reject | Zero | none |  |
+| `config-reload` | [Configuration, Background] | Reject | Zero | none |  |
+| `write-config` | [File] | Reject | Zero | write-config [path] |  |
+| `write-config!` | [File] | Reject | Zero | write-config! [path] |  |
+| `grammar` | [Configuration, Mode, Selection] | Reject | Zero | grammar [runyte] |  |
+| `lsp-trust` | [Prompt, Configuration, Background] | Reject | Zero | none |  |
+| `mcp` | [Prompt, Configuration, Background] | Reject | Zero | mcp [identity] |  |
+| `agent-channel` | [Background, View] | Reject | Zero | none |  |
+| `lsp-restart` | [Background] | Reject | Zero | lsp-restart [language] |  |
+| `log-open` | [View] | Reject | Zero | none |  |
+| `lsp-status` | [Background, View] | Reject | Zero | none |  |
+| `notifications` | [View, Mode] | Reject | Zero | none |  |
+| `open` | [File, View, Prompt, Background] | Reject | Zero | open <path> |  |
+| `path` | [View] | Reject | Zero | none |  |
+| `describe-key` | [Prompt, View, Mode] | Reject | Zero | none |  |
+| `action-browser` | [View, Mode] | Reject | Zero | none |  |
+| `copy-key-binding` | [Register] | Reject | Zero | none |  |
+| `detach` | [Application] | Reject | Zero | none |  |
+| `quit` | [Pane, View, Application] | Reject | Zero | none |  |
+| `quit!` | [Pane, View, Application] | Reject | Zero | none |  |
+| `quit-all` | [Application] | Reject | Zero | none |  |
+| `quit-all!` | [Application] | Reject | Zero | none |  |
+| `quit-all!!` | [Application] | Reject | Zero | none |  |
+| `quit-here` | [Application] | Reject | Zero | none |  |
+| `quit-here!` | [Application] | Reject | Zero | none |  |
+| `reload` | [Prompt, Background, File, Text] | Reject | Zero | none |  |
+| `resize` | [Pane, Prompt, Mode] | Reject | Zero | none |  |
+| `service-health` | [View] | Reject | Zero | none |  |
+| `pipe` | [Background, Text] | Reject | Zero | pipe <shell-command> |  |
+| `pipe-cancel` | [Background] | Reject | Zero | none |  |
+| `plugins` | [View] | Reject | Zero | none |  |
+| `plugin-stop` | [Background] | Reject | Zero | plugin-stop <configured-id> |  |
+| `plugin-restart` | [Background] | Reject | Zero | plugin-restart <configured-id> |  |
+| `write-quit` | [File, Text, View, Application, Prompt, Background] | Reject | Zero | none |  |
+| `write-buffer-close` | [File, Text, View, Prompt, Background] | Reject | Zero | none |  |
+| `session-attach` | [Background, View] | Reject | Zero | session-attach <workspace> |  |
+| `session-list` | [Background, View] | Reject | Zero | none |  |
+| `session-stop` | [Background] | Reject | Zero | session-stop [workspace] |  |
+| `session-rename` | [Background, Configuration] | Reject | Zero | session-rename <workspace> <name> |  |
+| `session-clean` | [Background] | Reject | Zero | none |  |
+<!-- action-reference:end -->
 
 <!-- navigation -->
 [Contents](README.md) · [Previous: Configuration](configuration.md) · [Next: Themes](themes.md)

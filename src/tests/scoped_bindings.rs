@@ -277,7 +277,13 @@ fn cross_mode_aliases_and_scope_action_reference_follow_admission() {
     assert!(reference.contains("### global\n"));
     assert!(reference.contains("`list-next`: list"));
     assert!(reference.contains("### directory-tree\n"));
-    assert!(!reference.contains("`commit-undo-checkpoint`"));
+    assert!(
+        !reference
+            .split("## Action contracts")
+            .next()
+            .unwrap()
+            .contains("`commit-undo-checkpoint`")
+    );
 }
 
 #[test]

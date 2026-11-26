@@ -926,3 +926,9 @@ Once any input has been submitted to a terminal, live close requires confirmatio
 for the remainder of its lifetime: queued prompt reports cannot prove freshness.
 Immediate idle close is limited to newly started, untouched shells with the
 Linux evidence described above. Exited terminals still remove immediately.
+
+Stage 2 action discovery adds provisional palette commands `describe-key`,
+`action-browser`, and `copy-key-binding`, without default key assignments.
+Describe key captures a sequence without executing it; the action browser
+inspects descriptor contracts through the shared picker. Naming and default
+keys remain open under question 7 of the composable key bindings plan (#132).

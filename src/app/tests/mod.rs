@@ -468,3 +468,5 @@ fn startup_constructor_refusals_name_the_configured_mode_and_search_directory() 
         );
     }
 }
+
+mod action_discovery;

@@ -699,6 +699,11 @@ pub(super) fn apply(
                     rule.sequence.clone(),
                     first.target(),
                 );
+                binding.source_paths = vec![vec![
+                    "bind".into(),
+                    mode_name(rule.mode).into(),
+                    rule.source.clone(),
+                ]];
                 binding.actions = rule.actions.clone();
                 binding.description = rule.description.clone().into();
                 candidate.bindings.push(binding);
@@ -833,7 +838,8 @@ pub fn reference() -> String {
         if modes.is_empty() {
             continue;
         }
-        let metadata = command.metadata();
+        let descriptor = command.descriptor();
+        let metadata = descriptor.metadata;
         let _ = writeln!(
             out,
             "| `{}` | {} | {} | {} |",
@@ -862,6 +868,7 @@ pub fn reference() -> String {
         }
     }
     out.push_str(&super::scopes::reference());
+    out.push_str(&crate::command::discovery::descriptor_reference());
     out
 }
 

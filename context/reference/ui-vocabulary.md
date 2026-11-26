@@ -973,3 +973,10 @@ close or Discard changes and close; clean buffers offer Close buffer. Terminal
 and persistent-session choices say Stop terminal and Stop persistent session.
 The message names the captured resource and consequences. Remapped selection,
 acceptance and cancellation keys are rendered from the same UI registry.
+
+Action discovery uses the shared **Actions** picker with an **inspect** primary
+action and a **Current view and mode** filter. Selecting a row opens the
+read-only `[key discovery]` buffer; it does not execute the action. Describe key
+uses a cancellable input capture and opens that same generated buffer. Opening
+the result leaves directory-tree input focus. Details are bounded projections
+of the captured keymap; omitted bindings are counted explicitly.

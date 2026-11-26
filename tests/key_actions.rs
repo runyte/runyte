@@ -131,7 +131,13 @@ fn action_configuration_is_order_independent_and_reference_uses_eligibility() {
     assert!(reference.contains("`extend-line-above`"));
     assert!(reference.contains("`select-line-up`"));
     assert!(reference.contains("`pipe`"));
-    assert!(!reference.contains("`commit-undo-checkpoint`"));
+    assert!(
+        !reference
+            .split("## Action contracts")
+            .next()
+            .unwrap()
+            .contains("`commit-undo-checkpoint`")
+    );
     assert!(actions::editor_modes(C::ListNext).is_empty());
 }
 

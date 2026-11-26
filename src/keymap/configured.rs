@@ -623,6 +623,18 @@ fn resolve(
             .entry(rewritten.clone())
             .or_default()
             .merge(&source);
+        binding.source_paths = source
+            .rebinds
+            .iter()
+            .map(|name| vec!["rebind".into(), name.clone()])
+            .collect();
+        binding.source_paths.sort();
+        if source.leader {
+            binding.source_paths.push(vec!["leader".into()]);
+        }
+        if source.window {
+            binding.source_paths.push(vec!["window".into()]);
+        }
         binding.sequence = rewritten;
         if let Some(alias) = &mut binding.alias {
             let default = alias.clone();

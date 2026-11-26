@@ -4229,6 +4229,7 @@ impl App {
             Some(ListAction::SyntaxOutline { buffer, target }) => {
                 self.jump_to_syntax_outline(buffer, target)
             }
+            Some(ListAction::ActionDetails(text)) => self.open_discovery_page(&text),
             Some(ListAction::Macro(register)) => self.replay_macro(register, 1)?,
             Some(ListAction::GitNetworkRef(reference)) => {
                 self.open_git_network(crate::git::NetworkScope::Ref(reference))

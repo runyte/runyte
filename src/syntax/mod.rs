@@ -14,6 +14,8 @@
 mod background;
 mod grammars;
 mod parse_error;
+mod yaml_locations;
+pub(crate) use yaml_locations::mapping_locations as yaml_mapping_locations;
 
 use parse_error::tree_has_parse_error;
 

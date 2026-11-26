@@ -17,6 +17,8 @@ mod catppuccin;
 mod core_themes;
 mod everforest;
 mod fragments;
+mod key_sources;
+pub use key_sources::KeySources;
 mod imported;
 mod nightfox;
 mod one_off;
@@ -77,6 +79,8 @@ pub struct Config {
         skip_serializing_if = "Option::is_none"
     )]
     pub keys: Option<serde_yaml::Value>,
+    #[serde(skip)]
+    pub key_sources: KeySources,
     /// The theme to start in, or `None` to use [`DEFAULT_THEME`].
     ///
     /// Theme choices made inside the editor are persisted back to this field,
@@ -1228,6 +1232,7 @@ impl Default for Config {
             mcp: McpConfig::default(),
             plugins: Vec::new(),
             keys: None,
+            key_sources: KeySources::default(),
             theme: None,
             themes: built_in_themes(),
         }
@@ -1498,6 +1503,7 @@ impl Config {
             .with_context(|| format!("failed to read config {}", path.display()))?;
         let mut config: Self = serde_yaml::from_str(&source)
             .with_context(|| format!("invalid YAML in {}", path.display()))?;
+        config.key_sources.merge(&source, path, true);
         config.merge_fragments(path)?;
         config.merge_builtin_defaults();
         config
