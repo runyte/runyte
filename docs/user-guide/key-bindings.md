@@ -11,6 +11,17 @@ buffers](files-and-buffers.md#files-and-buffers), [Panes](panes.md#panes), [Term
 [Git](git.md#git), [Language support](language-support.md#language-support), and [Workspaces and
 persistent sessions](workspaces-and-persistent-sessions.md#workspaces-and-persistent-sessions).
 
+### Help and discovery
+
+| Key | Action |
+| --- | --- |
+| `Space ?` | Open contextual help |
+| `Space h k` | Describe a key sequence without executing it (`:describe-key`) |
+| `Space h a` | Browse action descriptions and contracts (`:browse-actions`) |
+
+`Space h` is the Help prefix. Use `:copy-key-binding` after inspecting a binding
+to copy its YAML configuration.
+
 ### Editing
 
 The one-key rows in this table are the complete direct-binding inventory for

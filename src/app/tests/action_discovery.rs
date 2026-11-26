@@ -190,3 +190,20 @@ fn plugin_binding_is_identified_without_claiming_builtin_source_or_yaml() {
     assert!(!text.contains("Source: built-in"));
     assert!(app.described_binding.is_none());
 }
+
+#[test]
+fn default_help_keys_start_discovery_without_executing_inspected_input() {
+    let mut app = app();
+    seed(&mut app, "abc");
+    let source = app.active().buffer;
+    for c in [' ', 'h', 'k'] {
+        press(&mut app, c);
+    }
+    assert!(app.describe_key.is_some());
+    press(&mut app, 'd');
+    assert_eq!(app.buffers[source].text().to_string(), "abc");
+    for c in [' ', 'h', 'a'] {
+        press(&mut app, c);
+    }
+    assert!(app.list.is_some());
+}

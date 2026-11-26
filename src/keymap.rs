@@ -1670,6 +1670,16 @@ fn built_in_bindings() -> Vec<Binding> {
             Command::NextRunningSession,
         ),
         modal([Key::char(' '), Key::char('?')], Command::ShowHelp),
+        Binding::implemented(
+            MODAL,
+            [Key::char(' '), Key::char('h'), Key::char('k')],
+            ColonCommand::DescribeKey,
+        ),
+        Binding::implemented(
+            MODAL,
+            [Key::char(' '), Key::char('h'), Key::char('a')],
+            ColonCommand::ActionBrowser,
+        ),
         // Buffers. `Space b b` repeats the namespace letter the way `Space m m`
         // does: the most-reached-for thing in a group is spelled with the group
         // itself rather than with a second letter to remember.
@@ -2956,6 +2966,7 @@ fn build_keymap(bindings: Vec<Binding>) -> Keymap {
             .with_capability(CommandCapability::GitProject),
         BindingNamespace::global(MODAL, [Key::char(' '), Key::char('l')], "Language (LSP)")
             .with_capability(CommandCapability::LspDocument),
+        BindingNamespace::global(MODAL, [Key::char(' '), Key::char('h')], "Help"),
         BindingNamespace::global(MODAL, [Key::char(' '), Key::char('m')], "Macros"),
         BindingNamespace::global(MODAL, [Key::char(' '), Key::char('o')], "Configuration"),
         BindingNamespace::global(
@@ -4218,17 +4229,16 @@ mod tests {
     }
 
     #[test]
-    fn removed_short_space_actions_stay_unbound_and_splits_keep_their_namespaces() {
+    fn help_prefix_and_removed_short_split_keep_their_namespaces() {
         let keymap = default_keymap();
-        for suffix in ['h', 'v'] {
-            assert!(matches!(
-                keymap.lookup(
-                    Mode::Normal,
-                    &KeySequence::from([Key::char(' '), Key::char(suffix)])
-                ),
-                Lookup::NoMatch
-            ));
-        }
+        assert!(matches!(
+            keymap.lookup(Mode::Normal, &KeySequence::parse("Space v").unwrap()),
+            Lookup::NoMatch
+        ));
+        assert!(matches!(
+            keymap.lookup(Mode::Normal, &KeySequence::parse("Space h").unwrap()),
+            Lookup::Prefix(_)
+        ));
         for (sequence, command) in [
             (
                 KeySequence::from([Key::char(' '), Key::char('w'), Key::char('v')]),

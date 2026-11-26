@@ -106,11 +106,12 @@ impl App {
                 }
                 Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
                     text.push_str(&format!(
-                        "Binding: {}\nAvailability: {:?}\n",
-                        binding.description, binding.availability
+                        "Binding: {}\nAvailability: {}\n",
+                        binding.description,
+                        discovery::display::binding_availability(binding.availability)
                     ));
                     if let crate::keymap::BindingTarget::Plugin(id) = binding.target {
-                        text.push_str(&format!("Source: runtime plugin action {id:?}\n"));
+                        text.push_str(&format!("Source: runtime plugin action {id}\n"));
                     } else if binding.source_paths.is_empty() {
                         text.push_str("Source: built-in keymap\n");
                     } else {
@@ -222,11 +223,11 @@ impl App {
                 || !d.policy.requires_writable_buffer;
             let usable = bindable && writable && availability.is_available();
             let details = format!(
-                "{}\nBinding admission here: {}\nWritable-buffer gate: {}\nCapability/context: {:?}\n",
+                "{}\nBinding admission here: {}\nWritable-buffer gate: {}\nCapability/context: {}\n",
                 discovery::details_indexed(id, mode, scope, &defaults, &effective),
                 bindable,
                 writable,
-                availability
+                discovery::display::command_availability(&availability)
             );
             let index = actions.len();
             let mut item = PickerItem::new(d.metadata.name, d.metadata.description, index)

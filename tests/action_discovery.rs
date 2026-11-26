@@ -193,3 +193,92 @@ fn discovery_descriptors_include_the_result_page_mode_transition() {
         );
     }
 }
+
+#[test]
+fn discovery_defaults_follow_the_help_prefix_and_leader_remapping() {
+    use runyte::command::{ColonCommand, CommandId, EditorCommand};
+    for mode in [Mode::Normal, Mode::Select] {
+        for (sequence, id) in [
+            ("Space h k", CommandId::Colon(ColonCommand::DescribeKey)),
+            ("Space h a", CommandId::Colon(ColonCommand::ActionBrowser)),
+            ("Space ?", CommandId::Editor(EditorCommand::ShowHelp)),
+        ] {
+            let Lookup::Exact(binding) =
+                default_keymap().lookup(mode, &KeySequence::parse(sequence).unwrap())
+            else {
+                panic!("missing {sequence}");
+            };
+            assert_eq!(binding.target.id(), id);
+        }
+    }
+    assert_eq!(
+        ColonCommand::ActionBrowser.descriptor().metadata.name,
+        "browse-actions"
+    );
+    let help = KeySequence::parse("Space h").unwrap();
+    assert!(
+        default_keymap()
+            .namespaces()
+            .iter()
+            .any(|ns| ns.sequence == help && ns.description == "Help")
+    );
+    let section = serde_yaml::from_str("leader: Ctrl-x").unwrap();
+    let compiled = configured::compile(&section, default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    assert!(matches!(
+        compiled
+            .keymap
+            .lookup(Mode::Normal, &KeySequence::parse("Ctrl-x h k").unwrap()),
+        Lookup::Exact(_)
+    ));
+}
+
+#[test]
+fn discovery_uses_shared_readable_contracts_and_grouped_reference() {
+    use discovery::display;
+    use runyte::{
+        command::{CommandId, EditorCommand},
+        keymap::BindingAvailability,
+    };
+    let details = discovery::details(
+        CommandId::Editor(EditorCommand::MoveLeft),
+        default_keymap(),
+        Mode::Normal,
+        BindingScope::Global,
+    );
+    assert!(details.contains("Count: repeats"), "{details}");
+    assert!(details.contains("Character operands: none"), "{details}");
+    assert!(
+        details.contains("Sequence position: can be followed by another action"),
+        "{details}"
+    );
+    assert_eq!(
+        display::binding_availability(BindingAvailability::Planned("later")),
+        "planned: later"
+    );
+    assert_eq!(
+        display::binding_availability(BindingAvailability::Unsupported("platform")),
+        "unsupported: platform"
+    );
+    let reference = runyte::keymap::actions::reference();
+    for heading in [
+        "## Editing actions",
+        "## Movement actions",
+        "## Selection actions",
+    ] {
+        assert!(reference.contains(heading));
+    }
+    for internal in [
+        "[Selection",
+        "| Repeat |",
+        "| Reject |",
+        "| Zero |",
+        "| One |",
+        "| Two |",
+        "ReplacesPrompt",
+        "Planned(",
+    ] {
+        assert!(!reference.contains(internal), "{internal}");
+    }
+    assert!(reference.contains("| repeats | none |"));
+}

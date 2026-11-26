@@ -367,6 +367,25 @@ pub enum CommandCategory {
 }
 
 impl CommandCategory {
+    pub const ALL: &'static [Self] = &[
+        Self::Application,
+        Self::Editing,
+        Self::Movement,
+        Self::Selection,
+        Self::Syntax,
+        Self::Search,
+        Self::View,
+        Self::File,
+        Self::Git,
+        Self::Window,
+        Self::Language,
+        Self::Clipboard,
+        Self::Register,
+        Self::Configuration,
+        Self::Terminal,
+        Self::Help,
+    ];
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::Application => "Application",

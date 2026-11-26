@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Read-only action discovery. Provisional palette names live only here.
+//! Read-only action discovery. Palette names and shared presentation live here.
+pub mod display;
 use super::{ColonCommand, CommandId, EditorCommand, Mode};
 use crate::keymap::{Binding, BindingScope, BindingTarget, Keymap, actions};
 use serde_yaml::{Mapping, Value};
 
 pub const DESCRIBE_KEY: &str = "describe-key";
-pub const ACTION_BROWSER: &str = "action-browser";
+pub const ACTION_BROWSER: &str = "browse-actions";
 pub const COPY_BINDING: &str = "copy-key-binding";
 
 pub fn identities() -> impl Iterator<Item = CommandId> {
@@ -110,15 +111,15 @@ pub fn details_indexed(
         .collect::<Vec<_>>()
         .join(", ");
     let mut text = format!(
-        "{}\n\n{}\n\nView: {}\nMode: {}\nEffects: {:?}\nCount: {:?}\nCharacter operands: {:?}\nSequence position: {:?}\nGlobal configurable modes: {}\nDefault keys here: {}\nEffective keys here: {}\n",
+        "{}\n\n{}\n\nView: {}\nMode: {}\nEffects: {}\nCount: {}\nCharacter operands: {}\nSequence position: {}\nGlobal configurable modes: {}\nDefault keys here: {}\nEffective keys here: {}\n",
         d.metadata.name,
         d.metadata.description,
         scope.name(),
         actions::mode_name(mode),
-        d.policy.effects,
-        d.policy.count,
-        d.policy.operands,
-        d.policy.legacy_sequence_position,
+        display::effects(d.policy.effects),
+        display::count(d.policy.count),
+        display::operands(d.policy.operands),
+        display::position(d.policy.legacy_sequence_position),
         if modes.is_empty() {
             "scope-only or internal"
         } else {
@@ -140,8 +141,10 @@ pub fn details_indexed(
     }
     if let Some(argument) = d.argument() {
         text.push_str(&format!(
-            "Palette argument: {} ({:?}; {:?})\n",
-            argument.usage, argument.syntax, argument.delivery
+            "Palette argument: {} ({}; {})\n",
+            argument.usage,
+            display::arguments(argument.syntax),
+            display::delivery(argument.delivery)
         ));
     } else {
         text.push_str("Palette argument: none\n");
@@ -224,7 +227,10 @@ fn argument_text(value: &super::InvocationParameters) -> String {
         P::Path(path) | P::OptionalPath(Some(path)) => path.display().to_string(),
         P::OptionalText(Some(text)) => text.clone(),
         P::SessionRename { workspace, name } => format!("{} {name}", workspace.display()),
-        P::Grammar(value) => format!("{value:?}"),
+        P::Grammar(value) => value
+            .map(|kind| kind.name())
+            .unwrap_or("current grammar")
+            .into(),
         P::Help(HelpInvocation::ActiveView) => "current view".into(),
         P::Help(HelpInvocation::Manual(topic)) => topic.as_deref().unwrap_or("manual").into(),
     }
@@ -315,11 +321,11 @@ pub fn descriptor_reference() -> String {
         let argument = d.argument().map(|a| a.usage).unwrap_or("none");
         let _ = writeln!(
             out,
-            "| `{}` | {:?} | {:?} | {:?} | {} | {} |",
+            "| `{}` | {} | {} | {} | {} | {} |",
             d.metadata.name,
-            d.policy.effects,
-            d.policy.count,
-            d.policy.operands,
+            display::effects(d.policy.effects),
+            display::count(d.policy.count),
+            display::operands(d.policy.operands),
             argument.replace('|', "&#124;"),
             views.replace('|', "&#124;")
         );
