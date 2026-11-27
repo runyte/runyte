@@ -92,6 +92,7 @@ bind:
     "*": ["search-set-from-selection", "search-select-all-matches", {"action": "mode-enter", "arg": "select"}]
     "Ctrl-s": "save"
     "Ctrl-C": "clipboard-yank"
+    "Super-c": {steps: [clipboard-yank], platforms: [macos]}
     "Ctrl-v": "clipboard-paste"
     "Alt-v": "clipboard-paste"
     "Ctrl-o": "jump-backward"
@@ -335,6 +336,7 @@ bind:
   select: *base_bind_normal_select
   insert: &base_bind_insert_replace
     "Ctrl-C": "clipboard-yank"
+    "Super-c": {steps: [clipboard-yank], platforms: [macos]}
     "Ctrl-v": "clipboard-paste"
     "Alt-v": "clipboard-paste"
     "Ctrl-w n": {"steps": ["open-navigator"], "role": "compatibility"}
@@ -416,6 +418,7 @@ scopes:
       "z l": "media-pan-right"
       "y": "media-copy-selection"
       "Ctrl-C": "media-copy-selection"
+      "Super-c": {steps: [media-copy-selection], platforms: [macos]}
       "Ctrl-c": "media-copy-selection"
       "Esc": "media-back"
       "q": "media-back"

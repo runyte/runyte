@@ -367,6 +367,7 @@ decision revises an earlier one, the earlier entry says so.
 
     | Field/section | Purpose | Later public availability |
     | --- | --- | --- |
+    | `platforms` | Restrict a binding to named build targets (`macos`, `windows`, `linux`); omitted means all targets | No public opening decided |
     | `role` | Primary, fast or compatibility teaching role | No public opening decided |
     | `availability` | Planned/unsupported explanation for discovery | No public opening decided |
     | `target` | Representative identity for a multi-step binding's discovery | No public opening decided |

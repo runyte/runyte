@@ -85,6 +85,30 @@ struct Detail {
     availability: Option<Availability>,
     alias: Option<String>,
     alias_modes: Option<Vec<Mode>>,
+    platforms: Option<Vec<Platform>>,
+}
+/// Embedded-only applicability; all bindings apply everywhere when omitted.
+#[derive(Clone, Copy, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum Platform {
+    Macos,
+    Windows,
+    Linux,
+    #[serde(skip)]
+    Other,
+}
+impl Platform {
+    const fn current() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Macos
+        } else if cfg!(target_os = "windows") {
+            Self::Windows
+        } else if cfg!(target_os = "linux") {
+            Self::Linux
+        } else {
+            Self::Other
+        }
+    }
 }
 #[derive(Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "kebab-case")]
@@ -204,6 +228,7 @@ struct BindingMap {
     availability: Option<Availability>,
     alias: Option<String>,
     alias_modes: Option<Vec<Mode>>,
+    platforms: Option<Vec<Platform>>,
     action: Option<String>,
     arg: Option<Mode>,
     command: Option<String>,
@@ -223,6 +248,7 @@ impl BindingMap {
             || self.availability.is_some()
             || self.alias.is_some()
             || self.alias_modes.is_some()
+            || self.platforms.is_some()
         {
             return Err(E::custom("binding metadata requires steps"));
         }
@@ -281,6 +307,9 @@ impl<'de> Deserialize<'de> for BindingDef {
             fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
                 let mut record =
                     BindingMap::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                if record.platforms.as_ref().is_some_and(Vec::is_empty) {
+                    return Err(serde::de::Error::custom("platforms must not be empty"));
+                }
                 if let Some(steps) = record.steps.take() {
                     if record.action.is_some()
                         || record.arg.is_some()
@@ -302,6 +331,7 @@ impl<'de> Deserialize<'de> for BindingDef {
                         availability: record.availability,
                         alias: record.alias,
                         alias_modes: record.alias_modes,
+                        platforms: record.platforms,
                     }))
                 } else {
                     record.into_step().map(BindingDef::Action)
@@ -524,13 +554,25 @@ fn binding(
     }
     Ok(result)
 }
-fn bindings(bind: &'static ModeTable, scopes: &'static ScopeTable) -> Result<Vec<Binding>, String> {
+fn bindings(
+    bind: &'static ModeTable,
+    scopes: &'static ScopeTable,
+    platform: Platform,
+) -> Result<Vec<Binding>, String> {
     let mut result: Vec<Binding> = Vec::new();
     let mut previous: HashMap<(BindingScope, Mode, &str), (&BindingDef, usize)> = HashMap::new();
     let mut append = |scope, table: &'static ModeTable| -> Result<(), String> {
         for (name, entries) in &table.0 {
             let mode = mode(name)?;
             for (key, value) in &entries.0 {
+                if let BindingDef::Detailed(detail) = value
+                    && detail
+                        .platforms
+                        .as_ref()
+                        .is_some_and(|allowed| !allowed.contains(&platform))
+                {
+                    continue;
+                }
                 let paired = match mode {
                     Mode::Select => Some(Mode::Normal),
                     Mode::Replace => Some(Mode::Insert),
@@ -556,11 +598,22 @@ fn bindings(bind: &'static ModeTable, scopes: &'static ScopeTable) -> Result<Vec
     Ok(result)
 }
 fn compile(document: &'static Preset, fast: bool) -> Result<Keymap, String> {
+    compile_for_platform(document, fast, Platform::current())
+}
+fn compile_for_platform(
+    document: &'static Preset,
+    fast: bool,
+    platform: Platform,
+) -> Result<Keymap, String> {
     #[cfg(feature = "startup-timing")]
     let timer = std::time::Instant::now();
-    let mut bindings = bindings(&document.bind, &document.scopes)?;
+    let mut bindings = bindings(&document.bind, &document.scopes, platform)?;
     if fast {
-        let replacements = self::bindings(&document.fast_pane.bind, &document.fast_pane.scopes)?;
+        let replacements = self::bindings(
+            &document.fast_pane.bind,
+            &document.fast_pane.scopes,
+            platform,
+        )?;
         bindings.retain(|b| {
             b.scope != BindingScope::Global
                 || !replacements
@@ -635,8 +688,20 @@ mod tests {
     #[test]
     fn every_embedded_preset_validates_in_both_variants() {
         assert_eq!(NAMES, ["runyte"]);
-        for fast in [false, true] {
-            validate::assert_valid(&compile(&DOCUMENT, fast).unwrap());
+        for (platform, name) in [
+            (Platform::Macos, "macos"),
+            (Platform::Windows, "windows"),
+            (Platform::Linux, "linux"),
+            (Platform::Other, "other"),
+        ] {
+            let mut preferred = Vec::new();
+            for fast in [false, true] {
+                let map = compile_for_platform(&DOCUMENT, fast, platform).unwrap();
+                validate::assert_valid(&map);
+                parity::assert_registry(&map, fast, name);
+                preferred.extend(parity::preferred_rows(&map, fast));
+            }
+            parity::assert_preferred(preferred);
         }
     }
 
@@ -715,6 +780,7 @@ mod tests {
             "availability: {unsupported: reason}",
             "alias: h",
             "alias-modes: [normal]",
+            "platforms: [macos]",
         ] {
             let value = serde_yaml::from_str(&format!(
                 "bind: {{normal: {{F6: {{steps: [move-left], {extra}}}}}}}"
@@ -739,6 +805,9 @@ mod tests {
     fn preset_schema_rejects_unknown_and_duplicate_authored_fields() {
         for source in [
             "mystery: true",
+            "bind: {normal: {x: {steps: [move-left], platforms: []}}}",
+            "bind: {normal: {x: {steps: [move-left], platforms: [unknown]}}}",
+            "bind: {normal: {x: {command: move-left, platforms: [macos]}}}",
             "bind: {normal: {x: move-left, x: move-right}}",
             "bind: {normal: {x: {steps: [move-left], mystery: true}}}",
             "bind: {normal: {x: {steps: [move-left], role: other}}}",
@@ -820,3 +889,7 @@ static TIMINGS: [std::sync::atomic::AtomicU64; 3] =
 pub fn initialization_timings_ns() -> [u64; 3] {
     std::array::from_fn(|i| TIMINGS[i].load(std::sync::atomic::Ordering::Relaxed))
 }
+
+#[cfg(test)]
+#[path = "../../tests/preset_support/mod.rs"]
+mod parity;
