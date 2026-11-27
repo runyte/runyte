@@ -50,7 +50,10 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
             let expected = match command {
                 C::EnterNormalMode => vec![C::FitSelectionForNormalMode, C::ModeEnter],
                 C::SearchSetFromSelection => vec![command, C::SearchSelectAllMatches, C::ModeEnter],
-                C::SelectAll
+                C::SurroundAdd
+                | C::SurroundReplace
+                | C::SurroundDelete
+                | C::SelectAll
                 | C::CollapseSelection
                 | C::ToggleCase
                 | C::ReplaceChar

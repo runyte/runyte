@@ -1670,9 +1670,9 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `open-line-below` | text, mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
 | `open-line-above` | text, mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
 | `replace-char` | character input, text | not accepted | one character | none |  | atomic operation |
-| `surround-add` | character input, text, mode | not accepted | one character | none |  | pending stage 3 split; then atomic operation |
-| `surround-replace` | character input, text, mode | not accepted | two characters | none |  | pending stage 3 split; then atomic operation |
-| `surround-delete` | character input, text, mode | not accepted | one character | none |  | pending stage 3 split; then atomic operation |
+| `surround-add` | character input, text | not accepted | one character | none |  | atomic operation |
+| `surround-replace` | character input, text | not accepted | two characters | none |  | atomic operation |
+| `surround-delete` | character input, text | not accepted | one character | none |  | atomic operation |
 | `toggle-case` | text | not accepted | none | none |  | atomic operation |
 | `selection-undo` | selection, mode | repeats | none | none | terminal: Restore the previous or next terminal review selection | decision: Restores the selection and mode together from the chosen history entry. |
 | `selection-redo` | selection, mode | repeats | none | none | terminal: Restore the previous or next terminal review selection | decision: Restores the selection and mode together from the chosen history entry. |
@@ -1684,7 +1684,7 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `yank-line-collapse-normal-mode` | register, selection, mode | not accepted | none | none | directory: Copy selected entry lines, collapse the selection and enter Normal mode | pending stage 4 split; then atomic operation |
 | `paste-after-or-replace` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing | pending stage 4 split; then decision: Chooses insertion or replacement independently for each selection range. |
 | `paste-after` | text, selection, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child without changing mode; directory: Stage copies or moves from a directory register into the listing | atomic operation |
-| `replace-with-register` | text, mode | not accepted | none | none | directory: Insert rows from a directory-register payload; directory pastes use row insertion rather than text replacement | pending stage 3 split; then atomic operation |
+| `replace-with-register` | text | not accepted | none | none | directory: Replace listing text from a text register; directory move/copy payloads are refused because entries cannot replace a text selection | atomic operation |
 | `paste-before` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing | pending stage 4 split; then atomic operation |
 | `indent` | text | not accepted | none | none |  | atomic operation |
 | `unindent` | text | not accepted | none | none |  | atomic operation |

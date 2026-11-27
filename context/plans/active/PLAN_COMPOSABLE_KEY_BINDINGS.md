@@ -324,6 +324,20 @@ decision revises an earlier one, the earlier entry says so.
     the exact pending sets for each stage, and descriptor decision reasons
     appear in discovery and the generated action reference.
 
+37. **Separate no-yank delete and change (2026-11-27, delegated).** Keep two
+    mode-preserving decision actions, following decision 32. `delete-selection`
+    retains deletion's caret clamp and transient `x`/`X` whole-row semantics.
+    `delete-selection-for-change` retains the insertion seam, using insertion
+    normalization, and deletes operative spans rather than transient whole rows.
+    Their reason is that delete and change place the caret and treat whole rows
+    differently. Remove `change-selection` and report the replacement
+    `[delete-selection-for-change, mode-enter insert]`; the stage 5 migration-hint
+    follow-up supplies the public argument form. Where configured, the no-yank
+    delete/change keys append Normal/Insert respectively; neither `Alt-d` nor
+    `Alt-c` is a shipped default. Cover deletion of the final character in `ab`
+    and transient `x`/`X` selections with parity tests. This pair follows the
+    surround/register-replacement slice.
+
 ## Model
 
 ```
@@ -613,9 +627,15 @@ its eventual semantic class: it does not certify the current action as atomic.
 | View/pane activation, Git workflow destinations and completion | Decision | Mode belongs to guarded destination/continuation; no unconditional mode tail |
 | Bundled operations listed below | Pending split; underlying semantic class retained separately | Must empty each exact set before its stage is complete |
 
+Surround add/delete/replace now preserve mode; their default `m s`, `m d`,
+and `m r` programs append explicit Normal entry after successful operands.
+`replace-with-register` already preserved mode on successful replacement;
+its descriptor and refusal/gesture paths now consistently reflect that contract.
+These four entries are complete; delete/change remain pending until
+decision 37 is implemented in the next slice.
+
 ### Pending stage 3 splits
 
-`surround-add`, `surround-delete`, `surround-replace`, `replace-with-register`,
 `delete-selection`, `change-selection`, `flip-selection`,
 `split-selection-at-line-ends`, `split-selection-at-line-starts`,
 `expand-syntax-selection`, `shrink-syntax-selection`, `select-syntax-parent`,
