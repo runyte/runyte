@@ -2744,7 +2744,7 @@ impl App {
         pane.scroll_row = 0;
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
     }
 
     /// Opens the local and cached remote branch list, reusing its one buffer.
@@ -2809,7 +2809,7 @@ impl App {
         pane.scroll_row = 0;
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
     }
 
     fn open_git_branches_result(&mut self, branches: BranchList) {
@@ -2843,7 +2843,7 @@ impl App {
         pane.scroll_row = 0;
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
     }
 
     pub(super) fn open_git_worktrees(&mut self) {
@@ -2939,7 +2939,7 @@ impl App {
             pane.scroll_col = 0;
         }
         if activate {
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         }
     }
 
@@ -4273,7 +4273,7 @@ impl App {
             self.active_mut().replace_selection(Selection::point(0));
         }
         if activate {
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         }
     }
 
@@ -4559,7 +4559,7 @@ impl App {
                 .replace_selection(Selection::point(first_commit));
         }
         if activate {
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         }
     }
 
@@ -4697,7 +4697,7 @@ impl App {
             self.active_mut().replace_selection(Selection::point(0));
         }
         self.active_mut().preserve_scroll = false;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         if let Some(origin) = network_origin {
             self.remember_network_return(buffer, origin);
         }
@@ -4830,7 +4830,7 @@ impl App {
         self.push_jump();
         self.active_mut().retarget(buffer);
         self.active_mut().replace_selection(Selection::point(0));
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
     }
 
     pub fn take_workspace_switch(&mut self) -> Option<WorkspaceSwitchRequest> {
@@ -6416,7 +6416,7 @@ impl App {
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
         // The first line is where the message goes, and it is empty.
-        self.mode = Mode::Insert;
+        self.set_editing_role(Mode::Insert);
     }
 
     /// Commits what is staged, using the message in the buffer.

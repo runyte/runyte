@@ -123,13 +123,21 @@ jobs:
           if "0 dependencies had future-incompatible warnings" not in report:
               sys.exit("Native dependencies must have no future-incompatibility warnings")
           PY
+      - name: Report ARM cold preset initialization
+        if: matrix.os == 'ubuntu-24.04-arm'
+        run: |
+          cargo build --locked --features startup-timing --example preset_startup
+          # Match the debug-profile binary used by package acceptance; this is
+          # component initialization, not an end-to-end readiness measurement.
+          target/debug/examples/preset_startup > /dev/null
+          for sample in {1..10}; do target/debug/examples/preset_startup; done | tee "$RUNNER_TEMP/preset-startup.jsonl"
       - name: Package Linux desktop and accept bundled preview
         if: runner.os == 'Linux'
         run: |
           python3 contrib/packaging/package.py linux --binary target/debug/runyte-desktop \
             --output "$RUNNER_TEMP/runyte-desktop"
           xvfb-run -a -s '-screen 0 3200x1800x24' python3 contrib/packaging/check_package.py \
-            "$RUNNER_TEMP/runyte-desktop" --window
+            "$RUNNER_TEMP/runyte-desktop" --window --debug-readiness --output "$RUNNER_TEMP/native-preview-diagnostics"
       - name: Bundled PDF helper without Poppler
         run: python3 tests/native_pdf.py --binary target/debug/runyte-desktop
       - name: macOS block ABI compatibility
@@ -175,6 +183,15 @@ jobs:
           python3 contrib/packaging/check_package.py "$RUNNER_TEMP/Runyte.app"
           python3 contrib/packaging/package.py dmg --app "$RUNNER_TEMP/Runyte.app" --output "$RUNNER_TEMP/Runyte-unsigned.dmg"
           python3 contrib/packaging/check_dmg.py "$RUNNER_TEMP/Runyte-unsigned.dmg"
+      - name: Retain native preview failure diagnostics
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-preview-diagnostics-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/native-preview-diagnostics/
+            ${{ runner.temp }}/preset-startup.jsonl
+          retention-days: 7
       - name: Retain Cargo build timings
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

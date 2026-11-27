@@ -354,7 +354,7 @@ fn removed_action_names_report_migrations_in_both_configuration_forms() {
         );
         for source in [
             format!("bind: {{normal: {{F6: {old}}}}}"),
-            format!("scopes: {{terminal: {{normal: {{F6: {old}}}}}}}"),
+            format!("bind: {{terminal: {{F6: {old}}}}}"),
         ] {
             let value = serde_yaml::from_str(&source).unwrap();
             let result = configured::compile(&value, default_keymap());
@@ -529,7 +529,7 @@ fn scoped_configuration_and_discovery_admit_branch_only_tree_actions() {
     ] {
         let name = command.metadata().name;
         let source = format!(
-            "scopes: {{directory-tree: {{normal: {{F6: {name}}}, select: {{F6: {name}}}}}}}"
+            "bind: {{directory-tree: {{F6: {name}}}, directory-tree-select: {{F6: {name}}}}}"
         );
         let result = configured::compile(&serde_yaml::from_str(&source).unwrap(), default_keymap());
         assert!(result.errors.is_empty(), "{:?}", result.errors);
@@ -555,8 +555,7 @@ fn scoped_admission_preserves_representative_actions_rewritten_as_programs() {
         command::discovery,
         keymap::{BindingScope, configured},
     };
-    let source =
-        serde_yaml::from_str("scopes: {media: {normal: {F6: enter-normal-mode}}}").unwrap();
+    let source = serde_yaml::from_str("bind:\n  media:\n    F6: enter-normal-mode\n").unwrap();
     let result = configured::compile(&source, default_keymap());
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     assert!(discovery::admitted_here(

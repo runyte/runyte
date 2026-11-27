@@ -18,7 +18,7 @@ fn send(app: &mut App, spelling: &str) {
 #[test]
 fn scoped_escape_removal_forwards_old_keys_and_remapped_escape_changes_mode() {
     let (mut app, terminal) = terminal_app(
-        "scopes: {terminal: {insert: {F6: enter-normal-mode, 'Ctrl-4': null, 'Ctrl-\\': null}}}",
+        "bind:\n  terminal-insert:\n    F6: enter-normal-mode\n    Ctrl-4: null\n    Ctrl-\\: null\n",
     );
     for spelling in ["Ctrl-4", "Ctrl-\\", "Esc", "a", "Shift-F6"] {
         let before = app.terminals.get(terminal).unwrap().input_generation();
@@ -41,7 +41,7 @@ fn scoped_escape_removal_forwards_old_keys_and_remapped_escape_changes_mode() {
 
 #[test]
 fn scoped_terminal_prefix_executes_and_cancels_without_leaking_suffixes() {
-    let (mut app, terminal) = terminal_app("scopes: {terminal: {insert: {'F7 z': toggle-zen}}}");
+    let (mut app, terminal) = terminal_app("bind:\n  terminal-insert:\n    F7 z: toggle-zen\n");
     let before = app.terminals.get(terminal).unwrap().input_generation();
     send(&mut app, "F7");
     assert!(!app.grammar.pending_sequence().is_empty());
@@ -71,7 +71,7 @@ fn scoped_terminal_prefix_executes_and_cancels_without_leaking_suffixes() {
 #[cfg(any(unix, windows))]
 fn explicit_session_action_in_standalone_reports_unavailable_without_child_input() {
     let (mut app, terminal) =
-        terminal_app("scopes: {terminal: {insert: {F8: next-running-session}}}");
+        terminal_app("bind:\n  terminal-insert:\n    F8: next-running-session\n");
     let before = app.terminals.get(terminal).unwrap().input_generation();
     send(&mut app, "F8");
     assert_eq!(app.status, "session navigation needs mux mode");
@@ -484,7 +484,12 @@ fn terminal_yank_and_failed_counted_paste_preserve_review_and_modes() {
 #[test]
 fn configured_modal_terminal_binding_replaces_the_default() {
     for mode in ["normal", "select"] {
-        let (mut app, terminal) = terminal_app(&format!("bind: {{{mode}: {{p: yank}}}}"));
+        let owner = if mode == "normal" {
+            "terminal"
+        } else {
+            "terminal-select"
+        };
+        let (mut app, terminal) = terminal_app(&format!("bind: {{{owner}: {{p: yank}}}}"));
         app.apply_terminal_output(TerminalOutput::Bytes {
             id: terminal,
             bytes: b"foo".to_vec(),

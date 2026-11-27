@@ -315,6 +315,7 @@ impl App {
             original_theme_name: self.theme_name.clone(),
             original_grammar: self.grammar.clone(),
             original_mode: self.mode,
+            original_binding_mode: self.binding_mode_name(),
         })));
         self.list = Some(picker);
         self.preview_selected_setting_value();

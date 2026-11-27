@@ -73,10 +73,40 @@ pub struct CompiledKeymap {
     pub errors: Vec<String>,
 }
 
+/// Compile the root mode schema together with the keys section.
+pub fn compile_configuration(config: &crate::config::Config, built_in: &Keymap) -> CompiledKeymap {
+    let empty = Value::Mapping(Mapping::new());
+    let section = config.keys.as_ref().unwrap_or(&empty);
+    match super::named::configure_graph(
+        built_in,
+        config.modes.as_ref(),
+        config.buffer_types.as_ref(),
+        section.get("bind"),
+    ) {
+        Ok(base) => compile(section, &base),
+        Err(reason) => {
+            let mut result = compile(section, built_in);
+            result.errors.insert(
+                0,
+                format!("mode graph rejected; preset graph restored: {reason}"),
+            );
+            result
+        }
+    }
+}
+
 /// Compiles a section for one built-in keymap variant. Invalid entries are
 /// rejected independently and the returned keymap is always usable.
 pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
     let mut errors = Vec::new();
+    let expanded = match super::named::configure_graph(built_in, None, None, section.get("bind")) {
+        Ok(map) => map,
+        Err(reason) => {
+            errors.push(format!("mode graph rejected: {reason}"));
+            built_in.clone()
+        }
+    };
+    let built_in = &expanded;
     let Some(mut parsed) = parse_section(section, &mut errors) else {
         return CompiledKeymap {
             keymap: Arc::new(built_in.clone()),
@@ -156,7 +186,7 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
             &candidate.bindings,
             &candidate.namespaces,
             built_in.all_context_actions(),
-            &super::effective::Overrides::default(),
+            &base.overrides,
             (!defer_policy).then_some(&input_policy),
         );
         // A namespace whose defaults are gone may still be continued by
@@ -169,7 +199,7 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
         // Nothing need be under the leader or window yet, so a key a special
         // view uses on its own would conflict only once `bind` continued the
         // prefix, and `apply` would then reject each entry, not the prefix.
-        if parsed.standalone && violations.is_empty() {
+        if violations.is_empty() {
             let executable = |prefix: KeyStroke, modes: &[Mode]| {
                 candidate.bindings.iter().find(|binding| {
                     binding.sequence.as_slice() == [prefix]
@@ -270,8 +300,14 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
         .with_context_actions(built_in.all_context_actions().to_vec())
         .with_fast_pane_keys_enabled(built_in.fast_pane_keys())
         .with_spelling_metadata(resolution.leader, resolution.window, spelling);
+    keymap.overrides = base.overrides.clone();
+    keymap.rebuild_lookup_index();
     keymap.ui = super::ui::compile(section.get("ui"), keymap.leader(), &mut errors);
-    let keymap = super::actions::apply(section.get("bind"), keymap, &mut errors, defer_policy);
+    let keymap = if keymap.overrides.1.is_some() {
+        super::named::apply(section.get("bind"), keymap, &mut errors, defer_policy)
+    } else {
+        super::actions::apply(section.get("bind"), keymap, &mut errors, defer_policy)
+    };
     if parsed.standalone
         && let Some(missing) = super::actions::missing_way_out(&keymap)
     {
@@ -302,7 +338,12 @@ pub fn compile(section: &Value, built_in: &Keymap) -> CompiledKeymap {
         None => keymap,
     };
     keymap.pointer = super::pointer_actions::compile(section.get("pointer"), &mut errors);
-    keymap = super::scopes::apply(section.get("scopes"), keymap, &mut errors, defer_policy);
+    if section.get("scopes").is_some() {
+        errors.push(
+            "keys.scopes was removed in 0.5; use keys.bind.<mode> and buffer-types role maps"
+                .into(),
+        );
+    }
     if defer_policy {
         let conflict = keymap.ui().input_policy_conflict().or_else(|| {
             validate::with_input_policy(
@@ -945,7 +986,7 @@ mod tests {
         assert!(
             compiled.errors[1..]
                 .iter()
-                .any(|error| error.starts_with("bind.normal \"x\" rejected:")),
+                .any(|error| error.starts_with("bind.normal.x:")),
             "{:?}",
             compiled.errors
         );

@@ -951,8 +951,11 @@ impl App {
             .iter()
             .any(|pane| pane.active && pane.preview.is_some())
         {
-            self.keymap()
-                .native_preview(self.mode, self.key_binding_scope())
+            self.keymap().native_preview_named(
+                self.mode,
+                self.key_binding_scope(),
+                self.current_binding_mode(),
+            )
         } else {
             Default::default()
         };

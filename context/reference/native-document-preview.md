@@ -62,6 +62,25 @@ text, eight captures, five seconds per-request wall time and Linux address-space
 containment.
 Failures remain dismissible diagnostics. This is not an OS security sandbox.
 
+## Isolated Linux acceptance diagnostics
+
+With `--debug-readiness`, the mux preview fixture waits for a painted Normal-mode host,
+then the requested active file and its preview capture before checking pixels.
+Paint acknowledgements must match both publication frame and attachment.
+Release-package acceptance does not enable this debug-only witness.
+It does not retry commands. `RUNYTE_NATIVE_TEST_STATE` is an opt-in debug-only
+directory for bounded, atomically replaced host metadata; it excludes document
+and terminal contents and raw status text. Diagnostic write errors do not affect
+input handling. `RUNYTE_INPUT_TRACE` accepts `{pid}` in a UTF-8 path so the
+fixture's client and hosts do not truncate each other's trace.
+
+`tests/native_window.py --output PATH` retains a failure screenshot, host state,
+readiness observations and bounded fixture log tails. Package acceptance forwards
+this option and Linux CI uploads the isolated artifacts on failure. The ARM job
+also prints ten fresh-process preset initialization samples after one warm-up,
+using the same debug profile as package acceptance. These component timings are
+not end-to-end startup readiness measurements.
+
 ## Engine evidence and integration boundaries
 
 Blitz is pinned to

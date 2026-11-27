@@ -368,7 +368,7 @@ impl App {
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
         pane.preserve_scroll = false;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         self.status("config · Enter edits · Tab offers indentation overrides");
     }
 
@@ -398,7 +398,7 @@ impl App {
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
         pane.preserve_scroll = false;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
     }
 
     pub(super) fn refresh_notification_buffers(&mut self) {
@@ -620,6 +620,7 @@ impl App {
             original_theme_name: self.theme_name.clone(),
             original_grammar: self.grammar.clone(),
             original_mode: self.mode,
+            original_binding_mode: self.binding_mode_name(),
         })));
         self.list = Some(picker);
         self.preview_selected_setting_value();
@@ -663,7 +664,7 @@ impl App {
             SettingValue::Grammar(kind) => {
                 self.reset_program_input();
                 self.grammar = ActiveGrammar::new(kind);
-                self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
+                self.set_editing_role(self.grammar.preferred_mode().unwrap_or(Mode::Normal));
             }
             SettingValue::Text(ref name) if setting == SettingId::Theme => {
                 if let Ok(theme) = self.config.resolve_theme(name) {
@@ -714,7 +715,10 @@ impl App {
         self.replace_theme(preview.original_theme_name, preview.original_theme);
         self.reset_program_input();
         self.grammar = preview.original_grammar;
-        self.mode = preview.original_mode;
+        self.restore_binding_mode(
+            preview.original_mode,
+            preview.original_binding_mode.as_deref(),
+        );
         Some(preview.setting)
     }
 

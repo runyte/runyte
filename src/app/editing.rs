@@ -614,7 +614,7 @@ impl App {
         } else {
             self.refresh_markdown_page(target.buffer);
         }
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         self.status(if backward {
             "jumped back"
         } else {
@@ -1238,6 +1238,9 @@ impl App {
     }
 
     pub(super) fn enter_replace_mode(&mut self) {
+        if !self.require_editing_role(Mode::Replace) {
+            return;
+        }
         let buffer_id = self.active().buffer;
         let selection = self
             .active()
@@ -1249,7 +1252,7 @@ impl App {
             buffer: buffer_id,
             steps: Vec::new(),
         });
-        self.mode = Mode::Replace;
+        self.set_editing_role(Mode::Replace);
     }
 
     /// Overwrites one character at every Replace caret, appending at line end.
@@ -1948,7 +1951,7 @@ impl App {
         let selection = Selection::new(heads.into_iter().map(Range::point).collect(), 0);
         self.active_mut().replace_selection(selection);
         self.append_insert = None;
-        self.mode = Mode::Insert;
+        self.set_editing_role(Mode::Insert);
     }
 
     /// Walks the moving edge of a line selection up one row per press, for
@@ -1983,7 +1986,7 @@ impl App {
         self.active_mut().replace_selection(selection);
         if self.line_select.is_none() {
             self.line_select = Some(self.mode);
-            self.mode = Mode::Select;
+            self.set_editing_role(Mode::Select);
         }
     }
 
@@ -2015,12 +2018,12 @@ impl App {
         self.active_mut().replace_selection(selection);
         if self.line_select.is_none() {
             self.line_select = Some(self.mode);
-            self.mode = Mode::Select;
+            self.set_editing_role(Mode::Select);
         }
     }
 
     pub(super) fn enter_select_mode(&mut self) {
-        self.mode = Mode::Select;
+        self.set_editing_role(Mode::Select);
     }
 
     pub(super) fn select_all(&mut self) {
@@ -2077,6 +2080,8 @@ impl App {
             self.status("no larger syntax selection");
             return Ok(());
         };
+        let name = self.binding_mode_name();
+        self.active_mut().syntax_history.remember_binding_mode(name);
         self.active_mut().replace_selection(expanded);
         self.active_mut()
             .mark_selection_semantics(SelectionSemantics::HalfOpen);
@@ -2092,6 +2097,11 @@ impl App {
             self.mark_unavailable("syntax is unavailable for this buffer");
             return Ok(());
         };
+        let binding_mode = self
+            .active()
+            .syntax_history
+            .binding_mode()
+            .map(str::to_owned);
         let result = self
             .panes
             .get_mut(&pane_id)
@@ -2111,7 +2121,7 @@ impl App {
             } => {
                 self.active_mut().replace_selection(selection);
                 self.active_mut().mark_selection_semantics(semantics);
-                self.mode = mode;
+                self.restore_binding_mode(mode, binding_mode.as_deref());
             }
             ShrinkResult::Empty => self.status("no syntax expansion to shrink"),
             ShrinkResult::Reset(HistoryReset::Stale) => {
@@ -2277,7 +2287,7 @@ impl App {
         pane.mark_selection_semantics(SelectionSemantics::Runyte);
         if self.line_select.is_none() {
             self.line_select = Some(self.mode);
-            self.mode = Mode::Select;
+            self.set_editing_role(Mode::Select);
         }
     }
 
@@ -3623,7 +3633,7 @@ impl App {
     // Bundled until stage 4 supplies separate terminal and document modes.
     pub(super) fn collapse_after_yank(&mut self) {
         self.collapse_selection();
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
     }
 
     pub(super) fn yank_value(&self, transient_line_selection: bool) -> Register {
@@ -3958,7 +3968,7 @@ impl App {
                 .replace_selection(Selection::new(ranges, primary));
         }
         if matches!(paste, Paste::Before | Paste::AfterOrReplace) {
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         }
         self.normalize_buffer(buffer_id);
     }
@@ -4026,7 +4036,7 @@ impl App {
             )?;
         }
         if paste != Paste::After {
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         }
         self.normalize_buffer(buffer_id);
         self.status(format!(

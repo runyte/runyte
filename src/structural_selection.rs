@@ -100,6 +100,7 @@ fn lexical_enclosing_delimiter(
 
 #[derive(Clone, Debug)]
 struct ExpansionFrame {
+    binding_mode: Option<String>,
     before: SelectionSnapshot,
     after: SelectionSnapshot,
 }
@@ -180,6 +181,16 @@ impl SelectionSnapshot {
 }
 
 impl ExpansionHistory {
+    pub(crate) fn remember_binding_mode(&mut self, name: Option<String>) {
+        if let Some(frame) = self.frames.last_mut() {
+            frame.binding_mode = name;
+        }
+    }
+    pub(crate) fn binding_mode(&self) -> Option<&str> {
+        self.frames
+            .last()
+            .and_then(|frame| frame.binding_mode.as_deref())
+    }
     pub(crate) fn clear(&mut self) {
         self.frames.clear();
     }
@@ -221,7 +232,11 @@ impl ExpansionHistory {
             mode,
             SelectionSemantics::HalfOpen,
         )?;
-        self.frames.push(ExpansionFrame { before, after });
+        self.frames.push(ExpansionFrame {
+            before,
+            after,
+            binding_mode: None,
+        });
         Ok(Some(expanded))
     }
 

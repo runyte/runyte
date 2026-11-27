@@ -301,8 +301,7 @@ fn configured_plugin_manager_return_masks_scoped_actions_and_restores_saved_posi
     app.list.as_mut().unwrap().filter = "al".into();
     app.list.as_mut().unwrap().show_preview = false;
     let configure = |app: &mut App, ui: &str| {
-        let source =
-            format!("scopes: {{global: {{list: {{Esc: list-accept, F9: list-accept}}}}}}\n{ui}");
+        let source = format!("bind: {{list: {{Esc: list-accept, F9: list-accept}}}}\n{ui}");
         let compiled = crate::keymap::configured::compile(
             &serde_yaml::from_str(&source).unwrap(),
             &app.keymap,

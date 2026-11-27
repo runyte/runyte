@@ -260,6 +260,8 @@ impl App {
         );
         self.configured_keymaps = Some(maps);
         self.reset_program_input();
+        self.rebind_named_mode();
+        self.reset_program_input();
     }
 
     pub fn parse_command(

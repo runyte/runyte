@@ -67,7 +67,8 @@ impl App {
                 }
                 if !self.directory_tree.focused {
                     self.directory_tree_previous_mode = self.mode;
-                    self.mode = Mode::Normal;
+                    self.directory_tree_previous_binding_mode = self.binding_mode_name();
+                    self.set_editing_role(Mode::Normal);
                     self.directory_tree.focused = true;
                 }
             }
@@ -221,7 +222,7 @@ impl App {
             Command::ShowHelp if self.directory_tree.focused => {
                 self.open_help();
                 self.leave_directory_tree();
-                self.mode = Mode::Normal;
+                self.set_editing_role(Mode::Normal);
             }
             _ if self.directory_tree.focused => {
                 // Document edits and terminal commands cannot reach the
@@ -310,7 +311,8 @@ impl App {
     pub(super) fn enter_directory_tree(&mut self) {
         if !self.directory_tree.focused {
             self.directory_tree_previous_mode = self.mode;
-            self.mode = Mode::Normal;
+            self.directory_tree_previous_binding_mode = self.binding_mode_name();
+            self.set_editing_role(Mode::Normal);
             self.directory_tree.focused = true;
             if self.executing_program {
                 self.grammar.reset_prefix();
@@ -357,7 +359,7 @@ impl App {
         }
         self.directory_tree.focused = false;
         if self.prompt_kind != PromptKind::ExternalProgram {
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         }
         Ok(())
     }
@@ -594,7 +596,8 @@ impl App {
             self.directory_tree_jump_paths.clear();
             self.directory_tree.focused = false;
             if self.mode != Mode::Command {
-                self.mode = self.directory_tree_previous_mode;
+                let name = self.directory_tree_previous_binding_mode.clone();
+                self.restore_binding_mode(self.directory_tree_previous_mode, name.as_deref());
             }
         }
     }

@@ -79,6 +79,19 @@ pub struct Config {
         skip_serializing_if = "Option::is_none"
     )]
     pub keys: Option<serde_yaml::Value>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_present_yaml_value",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub modes: Option<serde_yaml::Value>,
+    #[serde(
+        default,
+        rename = "buffer-types",
+        deserialize_with = "deserialize_present_yaml_value",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub buffer_types: Option<serde_yaml::Value>,
     #[serde(skip)]
     pub key_sources: KeySources,
     /// The theme to start in, or `None` to use [`DEFAULT_THEME`].
@@ -1232,6 +1245,8 @@ impl Default for Config {
             mcp: McpConfig::default(),
             plugins: Vec::new(),
             keys: None,
+            modes: None,
+            buffer_types: None,
             key_sources: KeySources::default(),
             theme: None,
             themes: built_in_themes(),

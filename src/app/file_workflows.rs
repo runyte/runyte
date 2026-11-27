@@ -1330,7 +1330,7 @@ impl App {
             }
             // The inherited mode belonged to the source. The activated wait
             // buffer starts from its own caret in Normal mode.
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
             self.enter_normal_mode();
         }
         Ok(opened)
@@ -1816,7 +1816,7 @@ impl App {
         pane.scroll_row = 0;
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         buffer
     }
 
@@ -3184,7 +3184,7 @@ impl App {
         if let Some(id) = self.pane_neighbor(dx, dy) {
             self.activate_pane(id);
             if self.mode == Mode::Insert && self.active_buffer().is_read_only() {
-                self.mode = Mode::Normal;
+                self.set_editing_role(Mode::Normal);
             }
         }
     }
@@ -3251,7 +3251,7 @@ impl App {
         self.finish_pane_focus(previous_pane, terminal_input);
         if replacing && self.active_pane != previous_pane && self.active_terminal().is_none() {
             if self.active_buffer().is_read_only() {
-                self.mode = Mode::Normal;
+                self.set_editing_role(Mode::Normal);
             } else {
                 self.enter_replace_mode();
             }
@@ -3281,7 +3281,7 @@ impl App {
         self.finish_pane_focus(previous_pane, terminal_input);
         if replacing && self.active_pane != previous_pane && self.active_terminal().is_none() {
             if self.active_buffer().is_read_only() {
-                self.mode = Mode::Normal;
+                self.set_editing_role(Mode::Normal);
             } else {
                 self.enter_replace_mode();
             }
@@ -3308,17 +3308,18 @@ impl App {
     /// focus itself as an input request. Review belongs to the terminal
     /// session, so it survives application-wide mode changes in other panes.
     pub(super) fn settle_terminal_focus(&mut self, id: TerminalId) {
+        let insert_available = self.role_available(Mode::Insert);
         let Some(session) = self.terminals.get_mut(id) else {
             return;
         };
-        if !session.live() {
+        if !session.live() || !insert_available {
             session.begin_review();
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         } else if session.reviewing() {
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         } else {
             session.scroll_to_live();
-            self.mode = Mode::Insert;
+            self.set_editing_role(Mode::Insert);
         }
     }
 
@@ -3382,11 +3383,11 @@ impl App {
             match command {
                 C::MediaShowPage => {
                     self.active_mut().pdf_page_list = None;
-                    self.mode = Mode::Normal;
+                    self.set_editing_role(Mode::Normal);
                 }
                 C::MediaBack => {
                     if self.mode == Mode::Select {
-                        self.mode = Mode::Normal;
+                        self.set_editing_role(Mode::Normal);
                         let head = self.active().selection.primary().head;
                         self.active_mut().replace_selection(Selection::point(head));
                         return true;
@@ -3457,7 +3458,7 @@ impl App {
             // selection is the media's own, not the hidden page rows.
             C::MediaCopySelection | C::ClipboardYank => A::CopySelection,
             C::MediaBack => {
-                self.mode = Mode::Normal;
+                self.set_editing_role(Mode::Normal);
                 A::Back
             }
             C::MediaSelectAll => A::SelectAll,
@@ -3536,7 +3537,7 @@ impl App {
         {
             return;
         }
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         if path
             .extension()
             .is_some_and(|ext| ext.eq_ignore_ascii_case("pdf"))

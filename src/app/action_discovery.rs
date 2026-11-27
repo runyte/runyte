@@ -14,9 +14,25 @@ pub(super) struct Capture {
     pane: usize,
     buffer: usize,
     mode: Mode,
+    named_mode: Option<crate::keymap::mode_graph::ModeId>,
     scope: BindingScope,
     map: Arc<crate::keymap::Keymap>,
     sequence: KeySequence,
+}
+
+impl Capture {
+    fn lookup(&self, sequence: &KeySequence) -> Lookup<'_> {
+        match self.named_mode {
+            Some(id) => self.map.lookup_named(id, sequence),
+            None => self.map.lookup_in(self.mode, self.scope, sequence),
+        }
+    }
+    fn mode_name(&self) -> &str {
+        self.named_mode
+            .and_then(|id| self.map.mode_graph()?.get(id))
+            .map(|mode| mode.name())
+            .unwrap_or(crate::keymap::actions::mode_name(self.mode))
+    }
 }
 
 impl App {
@@ -31,6 +47,7 @@ impl App {
             pane: self.active_pane,
             buffer: self.active().buffer,
             mode: self.mode,
+            named_mode: self.current_binding_mode(),
             scope: self.key_binding_scope(),
             map: self.keymap.clone(),
             sequence: KeySequence::default(),
@@ -45,6 +62,7 @@ impl App {
         if capture.pane != self.active_pane
             || capture.buffer != self.active().buffer
             || capture.mode != self.mode
+            || capture.named_mode != self.current_binding_mode()
             || capture.scope != self.key_binding_scope()
             || !Arc::ptr_eq(&capture.map, &self.keymap)
         {
@@ -69,7 +87,8 @@ impl App {
         let child = capture.sequence.is_empty()
             && capture.scope == BindingScope::Terminal
             && capture.mode == Mode::Insert
-            && capture.map.terminal_input_route(
+            && capture.map.terminal_input_route_named(
+                capture.named_mode,
                 key,
                 self.persistent_session,
                 self.config.editor.fast_pane_keys,
@@ -79,15 +98,12 @@ impl App {
             "Describe key: {}\n\nView: {}\nMode: {}\n\n",
             capture.sequence,
             capture.scope.name(),
-            crate::keymap::actions::mode_name(capture.mode)
+            capture.mode_name()
         );
         if child {
             text.push_str("Terminal input: this key is sent to the child process. Nothing was sent during inspection.\n");
         } else {
-            match capture
-                .map
-                .lookup_in(capture.mode, capture.scope, &capture.sequence)
-            {
+            match capture.lookup(&capture.sequence) {
                 Lookup::Prefix(_) if capture.sequence.len() < 8 => {
                     self.status(format!(
                         "Describe key: {} … · Esc cancels",
@@ -105,6 +121,9 @@ impl App {
                     return;
                 }
                 Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
+                    if let Some(owner) = &binding.binding_mode {
+                        text.push_str(&format!("Supplying mode: {owner}\n"));
+                    }
                     text.push_str(&format!(
                         "Binding: {}\nAvailability: {}\n",
                         binding.description,
@@ -157,9 +176,7 @@ impl App {
                 _ => {
                     let mut prefix = capture.sequence.clone();
                     prefix.pop();
-                    if let Lookup::ExactAndPrefix { exact, .. } =
-                        capture.map.lookup_in(capture.mode, capture.scope, &prefix)
-                    {
+                    if let Lookup::ExactAndPrefix { exact, .. } = capture.lookup(&prefix) {
                         text.push_str(&format!("Prefix {prefix} also binds {}. In Insert/Replace, an unmatched suffix resolves that exact binding and reprocesses the suffix; modal input reports no binding. Neither was executed here.\n", exact.description));
                     }
                     text.push_str(match capture.mode {
@@ -198,7 +215,7 @@ impl App {
         pane.scroll_row = 0;
         pane.scroll_col = 0;
         pane.scroll_wrap = 0;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
     }
 
     pub(super) fn open_action_browser(&mut self) {
@@ -210,7 +227,12 @@ impl App {
             mode,
             scope,
         );
-        let effective = discovery::BindingIndex::new(self.keymap(), mode, scope);
+        let effective = discovery::BindingIndex::new_named(
+            self.keymap(),
+            mode,
+            scope,
+            self.current_binding_mode(),
+        );
         let mut items = Vec::new();
         let mut actions = Vec::new();
         for id in discovery::identities() {

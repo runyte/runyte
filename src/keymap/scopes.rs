@@ -1,16 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
-//! Atomic configuration of the inherited editor/list scope graph.
+//! View names and compatibility action admission during the mode migration.
 
-use super::{
-    Binding, BindingAvailability, BindingScope, BindingTarget, Key, KeySequence, Keymap, actions,
-    scope_includes, validate,
-};
-use crate::{
-    command::Mode,
-    input::{KeyCode, Modifiers},
-};
-use serde_yaml::Value;
-use std::collections::HashSet;
+use super::{BindingAvailability, BindingScope, BindingTarget, actions};
+use crate::command::Mode;
 
 impl BindingScope {
     pub fn name(self) -> &'static str {
@@ -48,273 +40,6 @@ impl BindingScope {
     }
 }
 
-pub(super) fn apply(
-    section: Option<&Value>,
-    base: Keymap,
-    errors: &mut Vec<String>,
-    defer_policy: bool,
-) -> Keymap {
-    let Some(section) = section else {
-        return base;
-    };
-    match compile(section, &base, defer_policy) {
-        Ok(candidate) => candidate,
-        Err(reason) => {
-            errors.push(format!(
-                "scopes rejected: all scoped overrides rolled back: {reason}"
-            ));
-            base
-        }
-    }
-}
-
-fn compile(section: &Value, base: &Keymap, defer_policy: bool) -> Result<Keymap, String> {
-    let scopes = section.as_mapping().ok_or("expected scope mappings")?;
-    if scopes.len() > BindingScope::ALL.len() {
-        return Err("too many scopes".into());
-    }
-    let mut candidate = base.clone();
-    let mut assignments = Vec::new();
-    let mut total = 0;
-    for (name, modes) in scopes {
-        let scope = BindingScope::ALL
-            .iter()
-            .copied()
-            .find(|scope| Some(scope.name()) == name.as_str())
-            .ok_or("unknown scope")?;
-        let modes = modes.as_mapping().ok_or("expected mode mappings")?;
-        if modes.len() > 5 {
-            return Err("too many modes".into());
-        }
-        for (name, mapping) in modes {
-            let mode = match name.as_str() {
-                Some("normal") => Mode::Normal,
-                Some("select") => Mode::Select,
-                Some("insert") => Mode::Insert,
-                Some("replace") => Mode::Replace,
-                Some("list") => Mode::List,
-                _ => return Err("unknown scope mode".into()),
-            };
-            if (scope == BindingScope::Global && mode != Mode::List)
-                || (scope == BindingScope::SessionManager && mode != Mode::List)
-                || (scope != BindingScope::Global
-                    && scope != BindingScope::SessionManager
-                    && mode == Mode::List)
-            {
-                return Err("global and session-manager support list; editor scopes support editor modes (use keys.bind for global editor bindings)".into());
-            }
-            if (scope.is_merge_review() && mode != Mode::Normal)
-                || (scope == BindingScope::Terminal && mode == Mode::Replace)
-            {
-                return Err(
-                    "mode belongs to an input owner awaiting scoped dispatch migration".into(),
-                );
-            }
-            let mapping = mapping.as_mapping().ok_or("expected key mappings")?;
-            total += mapping.len();
-            if total > actions::MAX_BINDINGS {
-                return Err("too many scoped assignments".into());
-            }
-            let mut seen = HashSet::new();
-            for (source, value) in mapping {
-                let source = source
-                    .as_str()
-                    .filter(|source| source.len() <= 512)
-                    .ok_or("key must be a string of at most 512 bytes")?;
-                let tokens = source.split_whitespace().collect::<Vec<_>>();
-                if tokens.is_empty()
-                    || tokens.len() > 8
-                    || (mode == Mode::List && tokens.len() != 1)
-                {
-                    return Err("expected 1 through 8 keys, or one key in list mode".into());
-                }
-                let sequence = KeySequence::new(
-                    tokens
-                        .into_iter()
-                        .map(|token| match token {
-                            "Leader" => Ok(base.leader()),
-                            "Window" => Ok(base.window_prefix()),
-                            _ => Key::parse(token),
-                        })
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|_| "invalid scoped key")?,
-                );
-                // These handlers still own structural input before/after the
-                // registry. Reject misleading assignments and removals until
-                // their action-owning surfaces are migrated.
-                let first = sequence.as_slice()[0];
-                if matches!(mode, Mode::Normal | Mode::Select)
-                    && !scope.is_merge_review()
-                    && scope != BindingScope::DirectoryTree
-                    && first.modifiers.is_empty()
-                    && matches!(first.code, KeyCode::Char('1'..='9'))
-                {
-                    return Err("leading counts remain structural input".into());
-                }
-
-                if ((mode == Mode::List
-                    || (scope.is_merge_review() && scope != BindingScope::GitMergeInput))
-                    && sequence.as_slice().contains(&base.leader()))
-                    || sequence.as_slice().iter().skip(1).any(|key| {
-                        if scope.is_merge_review() {
-                            base.ui()
-                                .lookup(super::ui::Owner::MergePrefix, *key)
-                                .is_some()
-                        } else {
-                            !value.is_null()
-                                && if matches!(mode, Mode::Normal | Mode::Select) {
-                                    base.ui()
-                                        .lookup(super::ui::Owner::GrammarPrefix, *key)
-                                        .is_some()
-                                } else {
-                                    matches!(key.code, KeyCode::Escape | KeyCode::Backspace)
-                                }
-                        }
-                    })
-                {
-                    return Err("key is owned by overlay dismissal or prefix cancellation".into());
-                }
-
-                if (mode == Mode::List
-                    && (matches!(first.code, KeyCode::Char('1'..='9' | ' '))
-                        && !first
-                            .modifiers
-                            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)))
-                    || (matches!(mode, Mode::Normal | Mode::Select)
-                        && !scope.is_merge_review()
-                        && scope != BindingScope::DirectoryTree
-                        && first.code == KeyCode::Tab
-                        && first.modifiers.is_empty()
-                        && base.ui().lookup(super::ui::Owner::ContextLauncher, first).is_some())
-                    || (scope == BindingScope::GitMergeInput
-                        && sequence.as_slice().iter().any(|key| {
-                            base.ui().lookup(super::ui::Owner::MergeAcknowledgment, *key).is_some()
-                                || matches!(key.code, KeyCode::Char(c) if c.is_control() || key.modifiers.is_empty() || key.modifiers == Modifiers::SHIFT)
-                        }))
-                {
-                    return Err(
-                        "key is owned by structural input or an unmigrated UI action".into(),
-                    );
-                }
-                if !seen.insert(sequence.clone()) {
-                    return Err("duplicate normalized scoped key".into());
-                }
-                if super::presets::has_stage5_steps(value) {
-                    return Err(super::presets::STAGE5_DIAGNOSTIC.into());
-                }
-                let target = if value.is_null() {
-                    None
-                } else {
-                    let name = value
-                        .as_str()
-                        .filter(|name| name.len() <= 128)
-                        .ok_or("expected an action name or null")?;
-                    if let Some(replacement) = crate::command::removed_action_replacement(name) {
-                        return Err(format!("{name} was removed; {replacement}"));
-                    }
-                    Some(admit(scope, mode, name).ok_or_else(|| {
-                        format!(
-                            "action is unavailable in {} {}",
-                            scope.name(),
-                            actions::mode_name(mode)
-                        )
-                    })?)
-                };
-                candidate
-                    .overrides
-                    .0
-                    .entry((mode, scope))
-                    .or_default()
-                    .insert(sequence.clone(), target.is_some());
-                if let Some(target) = target {
-                    let mut binding =
-                        Binding::implemented_in(actions::mode_slice(mode), scope, sequence, target);
-                    binding.source_paths = vec![vec![
-                        "scopes".into(),
-                        scope.name().into(),
-                        actions::mode_name(mode).into(),
-                        source.into(),
-                    ]];
-                    assignments.push(binding);
-                }
-            }
-        }
-    }
-    // Two inherited parents have equal precedence. Require an explicit child
-    // decision, even when one parent removes the key and the other assigns it.
-    for &scope in BindingScope::ALL {
-        for mode in [
-            Mode::Normal,
-            Mode::Select,
-            Mode::Insert,
-            Mode::Replace,
-            Mode::List,
-        ] {
-            let mut inherited = HashSet::new();
-            for &parent in BindingScope::ALL {
-                if parent != scope
-                    && scope_includes(scope, parent)
-                    && let Some(entries) = candidate.overrides.0.get(&(mode, parent))
-                {
-                    for sequence in entries.keys() {
-                        if !inherited.insert(sequence)
-                            && !candidate.overrides.contains(mode, scope, sequence)
-                        {
-                            return Err(format!(
-                                "conflicting inherited overrides in {} {}",
-                                scope.name(),
-                                actions::mode_name(mode)
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    candidate.bindings = candidate
-        .bindings
-        .into_iter()
-        .flat_map(|binding| {
-            let retained = binding
-                .modes
-                .iter()
-                .copied()
-                .filter(|&mode| {
-                    !candidate
-                        .overrides
-                        .contains(mode, binding.scope, &binding.sequence)
-                })
-                .collect::<Vec<_>>();
-            if retained.len() == binding.modes.len() {
-                return vec![binding];
-            }
-            retained
-                .into_iter()
-                .map(|mode| {
-                    let mut copy = binding.clone();
-                    copy.modes = actions::mode_slice(mode);
-                    copy
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    candidate.bindings.extend(assignments);
-    let violations = validate::with_input_policy(
-        &candidate.bindings,
-        &candidate.namespaces,
-        &candidate.context_actions,
-        &candidate.overrides,
-        (!defer_policy).then_some(candidate.ui()),
-    );
-    if let Some(violation) = violations.first() {
-        return Err(violation.message.clone());
-    }
-    candidate.rebuild_lookup_index();
-    Ok(candidate)
-}
-
-/// Admit only actions already supported by this owner and mode. A scoped
-/// spelling must not grant a surface another owner's internal transitions.
 pub(crate) fn admit(scope: BindingScope, mode: Mode, name: &str) -> Option<BindingTarget> {
     use std::{collections::HashMap, sync::LazyLock};
     type Inventory = HashMap<(BindingScope, Mode), HashMap<&'static str, BindingTarget>>;
@@ -387,7 +112,7 @@ pub(crate) fn admit(scope: BindingScope, mode: Mode, name: &str) -> Option<Bindi
 pub(super) fn reference() -> String {
     use std::{collections::BTreeMap, fmt::Write};
     let mut out = String::from(
-        "\n## Scoped actions\n\nUse one action name or null in `keys.scopes.<scope>.<mode>`. Ordinary editor\nscopes also support the applicable global actions above. These additional\nactions belong to the indicated owner; raw UI input still has its own scope.\n\n",
+        "\n## Scoped actions\n\nUse an action name or null in `keys.bind.<mode>`. Named modes also support\nthe applicable shared actions above. These additional actions belong to the\nindicated buffer owner; raw UI input remains under `keys.ui`.\n\n",
     );
     let defaults = super::default_keymap();
     for &scope in BindingScope::ALL {
@@ -446,3 +171,79 @@ pub(super) fn reference() -> String {
 #[cfg(test)]
 #[path = "../tests/scoped_bindings.rs"]
 mod tests;
+
+pub(super) fn validate_keys(
+    scope: BindingScope,
+    mode: Mode,
+    sequence: &super::KeySequence,
+    value: &serde_yaml::Value,
+    base: &super::Keymap,
+) -> Result<(), String> {
+    use crate::input::{KeyCode, Modifiers};
+    if mode == Mode::List && sequence.len() != 1 {
+        return Err("list bindings require one key".into());
+    }
+    let first = sequence.as_slice()[0];
+    if scope == BindingScope::Global
+        && !value.is_null()
+        && sequence.len() == 1
+        && (first == base.window_prefix()
+            || (matches!(mode, Mode::Normal | Mode::Select) && first == base.leader()))
+    {
+        return Err("key is reserved for the leader or window prefix".into());
+    }
+
+    if matches!(mode, Mode::Normal | Mode::Select)
+        && !scope.is_merge_review()
+        && scope != BindingScope::DirectoryTree
+        && first.modifiers.is_empty()
+        && matches!(first.code, KeyCode::Char('1'..='9'))
+    {
+        return Err("leading counts remain structural input".into());
+    }
+
+    if ((mode == Mode::List || (scope.is_merge_review() && scope != BindingScope::GitMergeInput))
+        && sequence.as_slice().contains(&base.leader()))
+        || sequence.as_slice().iter().skip(1).any(|key| {
+            if scope.is_merge_review() {
+                base.ui()
+                    .lookup(super::ui::Owner::MergePrefix, *key)
+                    .is_some()
+            } else {
+                !value.is_null()
+                    && if matches!(mode, Mode::Normal | Mode::Select) {
+                        base.ui()
+                            .lookup(super::ui::Owner::GrammarPrefix, *key)
+                            .is_some()
+                    } else {
+                        matches!(key.code, KeyCode::Escape | KeyCode::Backspace)
+                    }
+            }
+        })
+    {
+        return Err("key is owned by overlay dismissal or prefix cancellation".into());
+    }
+
+    if (mode == Mode::List
+                    && (matches!(first.code, KeyCode::Char('1'..='9' | ' '))
+                        && !first
+                            .modifiers
+                            .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER)))
+                    || (matches!(mode, Mode::Normal | Mode::Select)
+                        && !scope.is_merge_review()
+                        && scope != BindingScope::DirectoryTree
+                        && first.code == KeyCode::Tab
+                        && first.modifiers.is_empty()
+                        && base.ui().lookup(super::ui::Owner::ContextLauncher, first).is_some())
+                    || (scope == BindingScope::GitMergeInput
+                        && sequence.as_slice().iter().any(|key| {
+                            base.ui().lookup(super::ui::Owner::MergeAcknowledgment, *key).is_some()
+                                || matches!(key.code, KeyCode::Char(c) if c.is_control() || key.modifiers.is_empty() || key.modifiers == Modifiers::SHIFT)
+                        }))
+                {
+                    return Err(
+                        "key is owned by structural input or an unmigrated UI action".into(),
+                    );
+                }
+    Ok(())
+}

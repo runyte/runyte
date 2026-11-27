@@ -3097,6 +3097,8 @@ async fn run_host_server(
                                         input_trace.as_mut(),
                                         format_args!("published {published:?} on attach"),
                                     )?;
+                                    #[cfg(debug_assertions)]
+                                    native_test_state::record(host.app(), published.map(|(_, id)| id), active.as_ref().map(|client| client.id));
                                     frame_pending = false;
                                 }
                             }
@@ -3285,6 +3287,8 @@ async fn run_host_server(
                             match request {
                             ClientRequest::FrameDrawn { frame } => {
                                 host.acknowledge_frontend_paint(Some(frame.into()));
+                                #[cfg(debug_assertions)]
+                                native_test_state::acknowledge(frame.get(), id);
                             }
                             ClientRequest::MediaNavigate { pane, path, delta } if host.app().native_media => {
                                 host.app_mut().navigate_native_media(pane, &decode_path(path)?, delta);
@@ -3838,6 +3842,12 @@ async fn run_host_server(
                 input_trace.as_mut(),
                 format_args!("published {published:?}"),
             )?;
+            #[cfg(debug_assertions)]
+            native_test_state::record(
+                host.app(),
+                published.map(|(_, id)| id),
+                active.as_ref().map(|client| client.id),
+            );
             frame_pending = false;
         }
     }
@@ -4103,7 +4113,13 @@ fn observe_editor_key_hint(
         key_hints.clear();
         return HintEventResult::Forward;
     };
-    key_hints.observe_in(key, mode, app.key_binding_scope(), app.keymap())
+    key_hints.observe_named(
+        key,
+        mode,
+        app.key_binding_scope(),
+        app.current_binding_mode(),
+        app.keymap(),
+    )
 }
 
 /// Opens the opt-in development trace used to diagnose native key dispatch.
@@ -4116,8 +4132,12 @@ fn open_input_trace() -> Result<Option<fs::File>> {
     let Some(path) = std::env::var_os("RUNYTE_INPUT_TRACE") else {
         return Ok(None);
     };
+    // An inherited trace template keeps host and client file offsets separate.
+    // A client may reopen its stream when switching workspaces in the same process.
+    let append = path.to_str().is_some_and(|path| path.contains("{pid}"));
+    let path = native_test_state::trace_path(path, std::process::id());
     let mut options = fs::OpenOptions::new();
-    options.create(true).write(true);
+    options.create(true).write(true).append(append);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -4133,8 +4153,10 @@ fn open_input_trace() -> Result<Option<fs::File>> {
         file.metadata()?.is_file(),
         "RUNYTE_INPUT_TRACE requires a regular file"
     );
-    file.set_len(0)
-        .context("failed to truncate RUNYTE_INPUT_TRACE")?;
+    if !append {
+        file.set_len(0)
+            .context("failed to truncate RUNYTE_INPUT_TRACE")?;
+    }
     Ok(Some(file))
 }
 
@@ -10322,3 +10344,7 @@ fn assert_one_test_passed(output: &str) {
         "expected exactly one successful fixture test, got: {output}"
     );
 }
+
+#[cfg(debug_assertions)]
+#[path = "tui/native_test_state.rs"]
+mod native_test_state;

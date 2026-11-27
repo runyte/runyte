@@ -463,6 +463,7 @@ pub struct KeyHintState {
     scroll_offset: usize,
     scroll_limit: Cell<Option<usize>>,
     counting: bool,
+    binding_mode: Option<crate::keymap::mode_graph::ModeId>,
 }
 
 impl Default for KeyHintState {
@@ -481,7 +482,45 @@ impl KeyHintState {
             scroll_offset: 0,
             scroll_limit: Cell::new(None),
             counting: false,
+            binding_mode: None,
         }
+    }
+
+    fn lookup<'a>(
+        &self,
+        keymap: &'a Keymap,
+        mode: Mode,
+        scope: BindingScope,
+        sequence: &KeySequence,
+    ) -> Lookup<'a> {
+        match self.binding_mode {
+            Some(id) => keymap.lookup_named(id, sequence),
+            None => keymap.lookup_in(mode, scope, sequence),
+        }
+    }
+
+    pub fn observe_named(
+        &mut self,
+        key: impl Into<KeyStroke>,
+        mode: Mode,
+        scope: BindingScope,
+        named: Option<crate::keymap::mode_graph::ModeId>,
+        keymap: &Keymap,
+    ) -> HintEventResult {
+        self.observe_at_named(key, mode, scope, named, keymap, Instant::now())
+    }
+
+    pub fn rows_named(
+        &self,
+        keymap: &Keymap,
+        mode: Mode,
+        scope: BindingScope,
+        named: Option<crate::keymap::mode_graph::ModeId>,
+    ) -> Vec<KeyHintRow> {
+        if self.binding_mode.is_some() && self.binding_mode != named {
+            return Vec::new();
+        }
+        self.rows_for(keymap, mode, scope, named)
     }
 
     pub fn pending(&self) -> &KeySequence {
@@ -536,7 +575,10 @@ impl KeyHintState {
 
         let mut candidate = self.pending.clone();
         candidate.push(KeyStroke::plain(code));
-        matches!(keymap.lookup_in(mode, scope, &candidate), Lookup::NoMatch)
+        matches!(
+            self.lookup(keymap, mode, scope, &candidate),
+            Lookup::NoMatch
+        )
     }
 
     fn scroll_action(
@@ -665,6 +707,29 @@ impl KeyHintState {
         keymap: &Keymap,
         now: Instant,
     ) -> HintEventResult {
+        self.observe_at_named(
+            key,
+            mode,
+            scope,
+            keymap.named_mode_for(mode, scope),
+            keymap,
+            now,
+        )
+    }
+
+    fn observe_at_named(
+        &mut self,
+        key: impl Into<KeyStroke>,
+        mode: Mode,
+        scope: BindingScope,
+        named: Option<crate::keymap::mode_graph::ModeId>,
+        keymap: &Keymap,
+        now: Instant,
+    ) -> HintEventResult {
+        if self.binding_mode.is_some() && self.binding_mode != named {
+            self.clear();
+        }
+        self.binding_mode = named;
         let key = key.into();
         self.expire_at(now);
         if matches!(mode, Mode::Insert | Mode::Replace)
@@ -733,7 +798,7 @@ impl KeyHintState {
         let inside_prefix = !self.pending.is_empty();
         let mut candidate = self.pending.clone();
         candidate.push(key);
-        match keymap.lookup_in(mode, scope, &candidate) {
+        match self.lookup(keymap, mode, scope, &candidate) {
             Lookup::NoMatch => {
                 self.pending.clear();
                 self.reset_scroll();
@@ -764,6 +829,20 @@ impl KeyHintState {
     }
 
     pub fn rows_in(&self, keymap: &Keymap, mode: Mode, scope: BindingScope) -> Vec<KeyHintRow> {
+        self.rows_for(keymap, mode, scope, keymap.named_mode_for(mode, scope))
+    }
+    fn rows_for(
+        &self,
+        keymap: &Keymap,
+        mode: Mode,
+        scope: BindingScope,
+        named: Option<crate::keymap::mode_graph::ModeId>,
+    ) -> Vec<KeyHintRow> {
+        let mut context = self.clone();
+        context.binding_mode = named;
+        context.build_rows_in(keymap, mode, scope)
+    }
+    fn build_rows_in(&self, keymap: &Keymap, mode: Mode, scope: BindingScope) -> Vec<KeyHintRow> {
         if self.pending.is_empty() {
             return Vec::new();
         }
@@ -775,14 +854,20 @@ impl KeyHintState {
             })
             // A group is offered only when something in it works in this view,
             // by the rule dispatch refuses by and help lists by.
-            .filter(|namespace| {
-                keymap.bindings_for_scope(mode, scope).any(|binding| {
-                    binding.sequence.starts_with(&namespace.sequence)
-                        && crate::keymap::admission::admits(scope, binding.target)
-                })
-            })
+            .filter(
+                |namespace| match self.lookup(keymap, mode, scope, &namespace.sequence) {
+                    Lookup::NoMatch => false,
+                    Lookup::Exact(binding) => {
+                        crate::keymap::admission::admits(scope, binding.target)
+                    }
+                    Lookup::Prefix(bindings) => bindings
+                        .iter()
+                        .any(|binding| crate::keymap::admission::admits(scope, binding.target)),
+                    Lookup::ExactAndPrefix { .. } => true,
+                },
+            )
             .collect::<Vec<_>>();
-        let (exact, continuations) = match keymap.lookup_in(mode, scope, &self.pending) {
+        let (exact, continuations) = match self.lookup(keymap, mode, scope, &self.pending) {
             Lookup::NoMatch => (None, Vec::new()),
             Lookup::Exact(binding) => (Some(binding), Vec::new()),
             Lookup::Prefix(bindings) => (None, bindings),
@@ -817,7 +902,7 @@ impl KeyHintState {
                     .unwrap_or(std::slice::from_ref(&mode))
                     .iter()
                     .all(|&alias_mode| {
-                        matches!(keymap.lookup_in(alias_mode, scope, alias), Lookup::Exact(binding)
+                        matches!(if alias_mode == mode { self.lookup(keymap, mode, scope, alias) } else { keymap.lookup_in(alias_mode, scope, alias) }, Lookup::Exact(binding)
                         if Some(binding.target) == row.target && binding.is_plain_action())
                     });
                 if !valid {
@@ -1396,6 +1481,7 @@ mod tests {
     fn unavailable_rows_preserve_registry_status() {
         const NORMAL: &[Mode] = &[Mode::Normal];
         let unavailable = Binding {
+            binding_mode: None,
             program: crate::keymap::program::Program::single(BindingTarget::Editor(
                 EditorCommand::SelectLine,
             )),

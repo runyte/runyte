@@ -851,7 +851,7 @@ impl App {
             return false;
         }
         self.install_all_search_matches(matches);
-        self.mode = Mode::Select;
+        self.set_editing_role(Mode::Select);
         true
     }
 
@@ -959,7 +959,7 @@ impl App {
         };
         self.search_selection = Some(presentation);
         if !extend {
-            self.mode = Mode::Select;
+            self.set_editing_role(Mode::Select);
         }
         self.status(format!(
             "match {}/{total}: {}",

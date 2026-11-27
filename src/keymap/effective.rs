@@ -8,7 +8,10 @@ use std::collections::{HashMap, HashSet};
 /// True is an explicit assignment, false an exact inherited-key suppression.
 /// Keep identity rather than binding indices so plugin rebuilds retain it.
 #[derive(Clone, Debug, Default)]
-pub(super) struct Overrides(pub HashMap<(Mode, BindingScope), HashMap<KeySequence, bool>>);
+pub(super) struct Overrides(
+    pub HashMap<(Mode, BindingScope), HashMap<KeySequence, bool>>,
+    pub Option<std::sync::Arc<super::named::Tables>>,
+);
 
 impl Overrides {
     pub fn governing(
@@ -64,6 +67,12 @@ pub(super) fn indices(
     mode: Mode,
     scope: BindingScope,
 ) -> Vec<usize> {
+    if let Some(tables) = &overrides.1 {
+        return tables
+            .mode_for(mode, scope)
+            .map(|id| tables.indices(bindings, id))
+            .unwrap_or_default();
+    }
     let governing = overrides.governing(mode, scope);
     let admitted = |binding: &Binding| {
         governing

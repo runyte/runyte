@@ -209,14 +209,11 @@ fn binding_spelling(body: &str, keymap: &Keymap) -> Result<String, String> {
         .unwrap_or(original.modes)
     {
         let mut candidates = keymap
-            .bindings()
-            .iter()
+            .bindings_for_scope(mode, original.scope)
             .filter(|binding| {
                 (binding.program == original.program
                     || (binding.is_plain_action() && original.is_plain_action()))
                     && binding.target == original.target
-                    && binding.scope == original.scope
-                    && binding.is_active_in(mode)
             })
             .map(|binding| &binding.sequence)
             .collect::<Vec<_>>();

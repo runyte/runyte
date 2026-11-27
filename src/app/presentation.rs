@@ -1169,7 +1169,11 @@ impl App {
     fn document_preview_help(&self) -> String {
         let scope = self.key_binding_scope();
         if self.document_previews.contains_key(&self.active_pane) {
-            return self.keymap().native_preview_help(self.mode, scope);
+            return self.keymap().native_preview_help_named(
+                self.mode,
+                scope,
+                self.current_binding_mode(),
+            );
         }
         if matches!(
             scope,
@@ -1216,6 +1220,28 @@ impl App {
             |target| self.plugin_binding_description(target).map(str::to_owned),
         );
         let mut text = document.text().to_owned();
+        if let Some(id) = self.current_binding_mode()
+            && Some(id)
+                != self
+                    .keymap
+                    .named_mode_for(self.mode, self.key_binding_scope())
+        {
+            let name = self
+                .keymap
+                .mode_graph()
+                .and_then(|graph| graph.get(id))
+                .expect("active mode")
+                .name();
+            text.push_str(&format!("\nActive binding mode: {name}\n\n"));
+            for binding in self.keymap.bindings_for_named_mode(id) {
+                if crate::keymap::admission::admits(self.key_binding_scope(), binding.target) {
+                    text.push_str(&format!(
+                        "  {}  {}\n",
+                        binding.sequence, binding.description
+                    ));
+                }
+            }
+        }
         if self.native_media {
             text.push_str(&self.native_window_bindings().help());
             text.push_str(&self.document_preview_help());
@@ -1244,7 +1270,7 @@ impl App {
         pane.scroll_row = 0;
         pane.scroll_wrap = 0;
         pane.scroll_col = 0;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
     }
 
     /// The semantic spans a generated page such as help was rendered with.

@@ -310,19 +310,18 @@ mod tests {
         );
         assert_eq!(compiled.errors.len(), 1);
         compile(
-            "ui: {key-hints: {next: [F8]}}\nscopes: {git-merge-review: {normal: {'F9 F8': git-review-next}}}",
+            "ui:\n  key-hints:\n    next:\n    - F8\nbind:\n  git-merge-review:\n    F9 F8: git-review-next\n",
         );
     }
     #[test]
     fn scoped_removals_release_policy_collisions_before_final_validation() {
-        let base = Keymap::new(vec![Binding::implemented_in(
+        let base = Keymap::named_fixture(vec![Binding::implemented_in(
             &[Mode::Normal],
             BindingScope::Media,
             KeySequence::parse("F9 x").unwrap(),
             EditorCommand::MoveLeft,
-        )])
-        .unwrap();
-        let source = "ui: {grammar-prefix: {cancel: [x]}}\nscopes: {media: {normal: {'F9 x': null, 'F10 Esc': move-right}}}";
+        )]);
+        let source = "ui:\n  grammar-prefix:\n    cancel:\n    - x\nbind:\n  media:\n    F9 x: null\n    F10 Esc: move-right\n";
         let compiled =
             crate::keymap::configured::compile(&serde_yaml::from_str(source).unwrap(), &base);
         assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);

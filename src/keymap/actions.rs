@@ -25,7 +25,7 @@ thread_local! {
 /// with [`with_max_bindings`], so the boundary is checked without compiling
 /// tens of thousands of assignments; release builds always use
 /// [`MAX_BINDINGS`].
-fn max_bindings() -> usize {
+pub(super) fn max_bindings() -> usize {
     #[cfg(test)]
     if let Some(limit) = TEST_MAX_BINDINGS.get() {
         return limit;
@@ -201,12 +201,12 @@ pub(super) fn parse_action(
 }
 
 #[derive(Clone)]
-struct Rule {
-    mode: Mode,
-    sequence: KeySequence,
-    source: String,
-    actions: Vec<Action>,
-    description: String,
+pub(super) struct Rule {
+    pub mode: Mode,
+    pub sequence: KeySequence,
+    pub source: String,
+    pub actions: Vec<Action>,
+    pub description: String,
 }
 
 /// Keeps each namespace only in the modes where some binding still continues
@@ -302,6 +302,16 @@ fn terminal_copies(
         .map(|&mode| {
             let mut terminal = binding.clone();
             terminal.scope = BindingScope::Terminal;
+            if terminal.binding_mode.is_some() {
+                terminal.binding_mode = Some(
+                    if mode == Mode::Insert {
+                        "terminal-insert"
+                    } else {
+                        "terminal-replace"
+                    }
+                    .into(),
+                );
+            }
             terminal.modes = mode_slice(mode);
             terminal.alias = None;
             terminal.alias_modes = None;
@@ -493,20 +503,27 @@ fn reaches_terminal_input(binding: &Binding) -> bool {
 pub(super) fn missing_way_out(keymap: &Keymap) -> Option<String> {
     let reaches = |mode, command| {
         let target = BindingTarget::Editor(command);
-        keymap.bindings_for_mode(mode).any(|binding| {
-            binding.availability == BindingAvailability::Implemented
-                && (binding.target == target
-                    || binding
-                        .program
-                        .iter()
-                        .any(|action| action.target() == target))
-        })
+        keymap
+            .bindings_for_scope(mode, BindingScope::Global)
+            .any(|binding| {
+                binding.availability == BindingAvailability::Implemented
+                    && (binding.target == target
+                        || binding
+                            .program
+                            .iter()
+                            .any(|action| action.target() == target))
+            })
     };
     let mut missing = Vec::new();
     if !reaches(Mode::Normal, EditorCommand::OpenCommandPalette) {
         missing.push("open-command-palette in normal".to_owned());
     }
     for mode in [Mode::Select, Mode::Insert, Mode::Replace] {
+        if keymap.mode_graph().is_some()
+            && keymap.named_mode_for(mode, BindingScope::Global).is_none()
+        {
+            continue;
+        }
         if !reaches(mode, EditorCommand::EnterNormalMode) {
             missing.push(format!("enter-normal-mode in {}", mode_name(mode)));
         }
@@ -526,6 +543,16 @@ fn is_reserved(mode: Mode, sequence: &KeySequence) -> bool {
 }
 
 fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<Rule, String> {
+    parse_rule_in(mode, source, value, base, None)
+}
+
+pub(super) fn parse_rule_in(
+    mode: Mode,
+    source: &str,
+    value: &Value,
+    base: &Keymap,
+    scope: Option<BindingScope>,
+) -> Result<Rule, String> {
     let tokens: Vec<_> = source.split_whitespace().collect();
     if tokens.is_empty() || tokens.len() > 8 {
         return Err("expected 1 through 8 keys".into());
@@ -540,26 +567,31 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
             })
             .collect::<Result<Vec<_>, _>>()?,
     );
-    if sequence.as_slice().iter().enumerate().any(|(index, key)| {
-        (index == 0
-            && matches!(mode, Mode::Normal | Mode::Select)
-            && key.modifiers.is_empty()
-            && (matches!(key.code, KeyCode::Char('1'..='9'))
-                || (key.code == KeyCode::Tab
-                    && base
-                        .ui()
-                        .lookup(super::ui::Owner::ContextLauncher, *key)
-                        .is_some())))
-            || (!value.is_null()
-                && index > 0
-                && if matches!(mode, Mode::Normal | Mode::Select) {
-                    base.ui()
-                        .lookup(super::ui::Owner::GrammarPrefix, *key)
-                        .is_some()
-                } else {
-                    matches!(key.code, KeyCode::Escape | KeyCode::Backspace)
-                })
-    }) {
+    if let Some(scope) = scope {
+        super::scopes::validate_keys(scope, mode, &sequence, value, base)?;
+    }
+    if scope.is_none()
+        && sequence.as_slice().iter().enumerate().any(|(index, key)| {
+            (index == 0
+                && matches!(mode, Mode::Normal | Mode::Select)
+                && key.modifiers.is_empty()
+                && (matches!(key.code, KeyCode::Char('1'..='9'))
+                    || (key.code == KeyCode::Tab
+                        && base
+                            .ui()
+                            .lookup(super::ui::Owner::ContextLauncher, *key)
+                            .is_some())))
+                || (!value.is_null()
+                    && index > 0
+                    && if matches!(mode, Mode::Normal | Mode::Select) {
+                        base.ui()
+                            .lookup(super::ui::Owner::GrammarPrefix, *key)
+                            .is_some()
+                    } else {
+                        matches!(key.code, KeyCode::Escape | KeyCode::Backspace)
+                    })
+        })
+    {
         return Err(
             "sequence uses a reserved count, context-action, or prefix-cancellation key".into(),
         );
@@ -603,7 +635,24 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
     };
     let parsed = values
         .into_iter()
-        .map(|value| parse_action(value, mode, false))
+        .map(|value| {
+            if super::presets::has_stage5_steps(value) {
+                return Err(super::presets::STAGE5_DIAGNOSTIC.into());
+            }
+            let scoped = scope.filter(|scope| *scope != BindingScope::Global || mode == Mode::List);
+            let parsed = parse_action(value, mode, scoped.is_some())?;
+            if let Some(scope) = scoped
+                && super::scopes::admit(scope, mode, parsed.0.target().name()).is_none()
+            {
+                return Err(format!(
+                    "{} is unavailable in {} {}",
+                    parsed.0.target().name(),
+                    scope.name(),
+                    mode_name(mode)
+                ));
+            }
+            Ok(parsed)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     for (action, _) in parsed.iter().take(parsed.len().saturating_sub(1)) {
         if !action.can_continue() {

@@ -21,6 +21,7 @@ struct State {
     selection: Selection,
     semantics: SelectionSemantics,
     mode: Mode,
+    binding_mode: Option<String>,
     line_select: Option<Mode>,
 }
 
@@ -92,6 +93,15 @@ impl App {
         } else {
             Mode::Normal
         };
+        let binding_mode = (mode == source_mode)
+            .then(|| {
+                if self.mode == Mode::Command {
+                    self.prompt_origin_binding_mode.clone()
+                } else {
+                    self.binding_mode_name()
+                }
+            })
+            .flatten();
         if let Some(id) = self.active_terminal() {
             // Live output has no selection; only a review snapshot does.
             let (generation, selection) = self.terminals.get(id)?.review_selection_state()?;
@@ -106,6 +116,7 @@ impl App {
                     selection: selection.clone(),
                     semantics: SelectionSemantics::default(),
                     mode,
+                    binding_mode,
                     line_select: self.line_select,
                 },
             });
@@ -130,6 +141,7 @@ impl App {
                 },
                 semantics: pane.selection_semantics,
                 mode,
+                binding_mode,
                 line_select: self.line_select,
             },
         })
@@ -387,7 +399,7 @@ impl App {
                 }
             }
         }
-        self.mode = target.mode;
+        self.restore_binding_mode(target.mode, target.binding_mode.as_deref());
         self.line_select = target.line_select;
         self.status(if redo {
             "selection redo"

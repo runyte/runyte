@@ -55,6 +55,8 @@ impl App {
     /// embedders and tests that need a keymap smaller than the default one.
     pub fn set_keymap(&mut self, keymap: std::sync::Arc<Keymap>) {
         self.keymap = keymap;
+        self.rebind_named_mode();
+        self.reset_program_input();
     }
 
     /// Points the registry at the variant the current configuration asks for.
@@ -79,6 +81,12 @@ impl App {
                         || !self.config.indentation.files.is_empty(),
                 ),
         );
+        self.rebind_named_mode();
+        // Synchronous configuration steps may refresh presentation while a
+        // binding is executing. The acknowledged cursor owns its continuation.
+        if !self.executing_program {
+            self.reset_program_input();
+        }
     }
 
     /// Replaces the host clipboard boundary. Primarily useful to deterministic
@@ -1470,11 +1478,11 @@ impl App {
                         },
                         button,
                     );
-                    self.mode = if anchor == offset {
+                    self.set_editing_role(if anchor == offset {
                         Mode::Normal
                     } else {
                         Mode::Select
-                    };
+                    });
                     self.dismiss_popups();
                     return Ok(PointerOutcome::Changed);
                 }
@@ -1511,9 +1519,9 @@ impl App {
                     button,
                 );
                 if extend && anchor != offset {
-                    self.mode = Mode::Select;
+                    self.set_editing_role(Mode::Select);
                 } else if matches!(previous_mode, Mode::Insert | Mode::Replace) {
-                    self.mode = previous_mode;
+                    self.set_editing_role(previous_mode);
                     if previous_mode == Mode::Replace {
                         self.replace_session = Some(super::ReplaceSession {
                             buffer: self.active().buffer,
@@ -1521,9 +1529,9 @@ impl App {
                         });
                     }
                 } else if anchor == offset {
-                    self.mode = Mode::Normal;
+                    self.set_editing_role(Mode::Normal);
                 } else {
-                    self.mode = Mode::Select;
+                    self.set_editing_role(Mode::Select);
                 }
                 self.dismiss_popups();
             }
@@ -1556,11 +1564,11 @@ impl App {
                         candidate.replace_selection(selection);
                         candidate.mark_selection_semantics(semantics);
                         candidate.preserve_scroll = true;
-                        self.mode = if anchor == offset {
+                        self.set_editing_role(if anchor == offset {
                             Mode::Normal
                         } else {
                             Mode::Select
-                        };
+                        });
                     }
                     Some(PointerDrag::TerminalSelection {
                         pane,
@@ -1594,11 +1602,11 @@ impl App {
                         if let Some(session) = self.terminals.get_mut(terminal) {
                             session.set_review_selection(anchor, offset);
                         }
-                        self.mode = if anchor == offset {
+                        self.set_editing_role(if anchor == offset {
                             Mode::Normal
                         } else {
                             Mode::Select
-                        };
+                        });
                     }
                     Some(PointerDrag::Resize {
                         first,
@@ -1956,11 +1964,11 @@ impl App {
             if self.active_pane != pane.pane_id {
                 self.enter_normal_mode();
                 self.activate_pane(pane.pane_id);
-                self.mode = if reviewing {
+                self.set_editing_role(if reviewing {
                     Mode::Normal
                 } else {
                     Mode::Insert
-                };
+                });
             }
             let result = self.open_navigation_target(target, Some(directory), true);
             if self.active_terminal().is_none() && self.mode == Mode::Insert {
@@ -2283,7 +2291,8 @@ impl App {
         if self.mode == Mode::Insert
             && let Some(id) = self.active_terminal()
             && self.grammar.pending_sequence().is_empty()
-            && self.keymap.terminal_input_route(
+            && self.keymap.terminal_input_route_named(
+                self.current_binding_mode(),
                 key,
                 self.persistent_session,
                 self.config.editor.fast_pane_keys,
@@ -2573,6 +2582,7 @@ impl App {
         // sequence of commands it runs as they arrive.
         if let Some(id) = self.active_terminal()
             && matches!(self.mode, Mode::Insert)
+            && self.unbound_key_policy() == crate::keymap::mode_graph::UnboundKeys::PassToBuffer
             && let Some(session) = self.terminals.get_mut(id)
         {
             if !session.send_text(text) {
@@ -2591,6 +2601,11 @@ impl App {
                 self.command_cursor += text.chars().count();
                 self.command_selection = 0;
             }
+            Mode::Normal | Mode::Select
+                if self.unbound_key_policy() != crate::keymap::mode_graph::UnboundKeys::Report =>
+            {
+                return self.handle_editor_input(InputEvent::Text(text.to_owned()));
+            }
             Mode::Normal | Mode::Select | Mode::List => {}
         }
         Ok(())
@@ -2599,6 +2614,7 @@ impl App {
     fn program_owner(&self) -> ProgramOwner {
         ProgramOwner {
             binding_generation: self.active().binding_generation,
+            named_mode: self.current_binding_mode(),
             buffer_revision: self.active_buffer().revision(),
             selection_revision: self.active().selection_revision,
             mode: self.mode,
@@ -2621,7 +2637,7 @@ impl App {
                     crate::command::GrammarKind::Runyte
                 )
             {
-                self.mode = Mode::Normal;
+                self.set_editing_role(Mode::Normal);
                 self.action_failed(reason);
                 return Ok(());
             }
@@ -2651,10 +2667,7 @@ impl App {
                     {
                         let mut sequence = self.grammar.pending_sequence().clone();
                         sequence.push(*key);
-                        match self
-                            .keymap
-                            .lookup_in(self.mode, self.key_binding_scope(), &sequence)
-                        {
+                        match self.lookup_active_binding(&sequence) {
                             crate::keymap::Lookup::Exact(binding)
                                 if binding.configured_actions || binding.program.len() > 1 =>
                             {
@@ -2667,6 +2680,7 @@ impl App {
                     }
                 });
             let context = GrammarContext::new(self.mode, self.key_binding_scope(), &self.keymap)
+                .with_binding_mode(self.current_binding_mode())
                 .with_recording_macro(self.recording_macro.is_some());
             let GrammarOutput {
                 intents,
@@ -2791,7 +2805,7 @@ impl App {
             if let Some(mode) = self.grammar.preferred_mode()
                 && matches!(self.mode, Mode::Normal | Mode::Select)
             {
-                self.mode = mode;
+                self.set_editing_role(mode);
             }
 
             let Some(next) = reprocess else {
@@ -2848,7 +2862,7 @@ impl App {
             if self.grammar.condition_starts_program()
                 && let Some(mode) = self.line_select.take()
             {
-                self.mode = mode;
+                self.set_editing_role(mode);
             }
             if !condition.applicable_in(self.key_binding_scope()) {
                 self.action_failed("condition is not available for this buffer type");
@@ -2909,11 +2923,15 @@ impl App {
                 return Ok(Some(self.execute(invocation)?));
             }
             EditorIntent::InsertText(text) => {
+                if self.active_terminal().is_some() {
+                    self.action_failed("literal editing is unavailable in terminal review");
+                    return Ok(None);
+                }
                 if let Some(reason) = self.active_buffer().read_only_reason() {
                     self.action_failed(reason);
                     return Ok(None);
                 }
-                if self.mode == Mode::Replace {
+                if self.unbound_key_policy() == crate::keymap::mode_graph::UnboundKeys::Overwrite {
                     self.replace_mode_text(&text);
                 } else if let Some(character) =
                     typed_character.filter(|character| text == character.to_string())
@@ -3851,7 +3869,7 @@ impl App {
                     self.command_cursor = 0;
                     self.command_selection = 0;
                     self.command_selection_anchor = None;
-                    self.mode = Mode::Normal;
+                    self.set_editing_role(Mode::Normal);
                     self.mark_unavailable(reason.clone());
                     self.report_completed_action(
                         &format!(":{name}"),
@@ -3859,7 +3877,7 @@ impl App {
                         CommandOutcome::Unavailable(reason),
                     );
                     if let Some(mode) = self.grammar.preferred_mode() {
-                        self.mode = mode;
+                        self.set_editing_role(mode);
                     }
                     return Ok(());
                 }
@@ -3891,20 +3909,29 @@ impl App {
                 self.command.clear();
                 self.command_cursor = 0;
                 self.command_selection = 0;
-                self.mode = if matches!(
+                self.set_editing_role(
+                    if matches!(
+                        invocation.id(),
+                        CommandId::Colon(ColonCommand::DescribeKey | ColonCommand::ActionBrowser)
+                    ) {
+                        self.prompt_origin_mode
+                    } else {
+                        Mode::Normal
+                    },
+                );
+                if matches!(
                     invocation.id(),
                     CommandId::Colon(ColonCommand::DescribeKey | ColonCommand::ActionBrowser)
                 ) {
-                    self.prompt_origin_mode
-                } else {
-                    Mode::Normal
-                };
+                    let name = self.prompt_origin_binding_mode.clone();
+                    self.restore_binding_mode(self.prompt_origin_mode, name.as_deref());
+                }
                 let outcome = self.execute(invocation)?;
                 self.report_completed_action(&format!(":{name}"), &description, outcome);
                 if let Some(mode) = self.grammar.preferred_mode()
                     && matches!(self.mode, Mode::Normal | Mode::Select)
                 {
-                    self.mode = mode;
+                    self.set_editing_role(mode);
                 }
             }
             Some(Action::Previous) => self.select_previous_command(),
@@ -4392,8 +4419,23 @@ impl App {
     }
 
     fn execute_editor_command_count(&mut self, command: EditorCommand, count: usize) -> Result<()> {
-        self.finish_atomic_line_selection(command);
         use EditorCommand as Command;
+        let role = match command {
+            Command::EnterInsertMode
+            | Command::AppendAfter
+            | Command::InsertLineStart
+            | Command::InsertLineEnd
+            | Command::OpenLineBelow
+            | Command::OpenLineAbove => Some(Mode::Insert),
+            Command::EnterReplaceMode => Some(Mode::Replace),
+            Command::EnterSelectMode => Some(Mode::Select),
+            Command::EnterNormalMode => Some(Mode::Normal),
+            _ => None,
+        };
+        if role.is_some_and(|role| !self.require_editing_role(role)) {
+            return Ok(());
+        }
+        self.finish_atomic_line_selection(command);
         // These edits need the transient row extent, but retiring the gesture
         // must neither restore a mode nor survive an early refusal.
         let atomic_line_selection = matches!(
@@ -4433,7 +4475,7 @@ impl App {
                     | Command::SelectionRedo
             ) && let Some(mode) = self.line_select.take()
             {
-                self.mode = mode;
+                self.set_editing_role(mode);
             }
             if self.execute_terminal_command_count(id, command, transient_line_selection, count) {
                 return Ok(());
@@ -4450,7 +4492,7 @@ impl App {
                     | Command::DeleteSelection
                     | Command::DeleteSelectionForChange
             ) {
-                self.mode = Mode::Normal;
+                self.set_editing_role(Mode::Normal);
             }
             self.action_failed(reason);
             return Ok(());
@@ -4495,7 +4537,7 @@ impl App {
                     | Command::DeleteSelectionForChange
             )
         {
-            self.mode = mode;
+            self.set_editing_role(mode);
         }
         if self.handle_media_command(command) {
             return Ok(());
@@ -4613,7 +4655,7 @@ impl App {
                 });
                 self.active_mut().replace_selection(selection);
                 self.append_insert = None;
-                self.mode = Mode::Insert;
+                self.set_editing_role(Mode::Insert);
             }
             Command::OpenLineBelow => self.open_line(false),
             Command::OpenLineAbove => self.open_line(true),
@@ -5016,6 +5058,9 @@ impl App {
             Command::TriggerCompletion => {
                 if self.has_language_server() && !matches!(self.mode, Mode::Insert | Mode::Replace)
                 {
+                    if !self.require_editing_role(Mode::Insert) {
+                        return Ok(());
+                    }
                     self.enter_insert(false);
                 }
                 self.start_explicit_lsp_completion();
@@ -5593,8 +5638,9 @@ impl App {
         self.prompt_input_error = None;
         if self.mode != Mode::Command {
             self.prompt_origin_mode = self.mode;
+            self.prompt_origin_binding_mode = self.binding_mode_name();
         }
-        self.mode = Mode::Command;
+        self.set_editing_role(Mode::Command);
         self.prompt_kind = kind;
         self.command.clear();
         self.command_cursor = 0;
@@ -5647,7 +5693,11 @@ impl App {
         self.git_worktree_start = None;
         self.git_worktree_new_branch = None;
         self.git_worktree_upstream = None;
-        self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
+        let mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
+        let name = (mode == self.prompt_origin_mode)
+            .then(|| self.prompt_origin_binding_mode.clone())
+            .flatten();
+        self.restore_binding_mode(mode, name.as_deref());
         if abandoned_terminal_rename && !self.terminals.is_empty() {
             self.open_terminal_list();
         }
@@ -5697,11 +5747,11 @@ impl App {
     }
 
     /// Mode transition housekeeping without Escape's selection conversion.
-    fn enter_mode_preserving_selection(&mut self, mode: Mode) {
+    pub(super) fn enter_mode_preserving_selection(&mut self, mode: Mode) -> bool {
         if let Some(id) = self.active_terminal() {
             if mode == Mode::Replace {
                 self.action_failed("replace mode needs an editable buffer");
-                return;
+                return false;
             }
             let session = self.terminals.get_mut(id).expect("active terminal");
             match mode {
@@ -5710,9 +5760,9 @@ impl App {
                 _ => {}
             }
             self.line_select = None;
-            self.mode = mode;
+            self.set_editing_role(mode);
             self.grammar.reset_prefix();
-            return;
+            return true;
         }
         if matches!(mode, Mode::Insert | Mode::Replace) {
             if matches!(
@@ -5720,16 +5770,17 @@ impl App {
                 crate::keymap::BindingScope::DirectoryTree | crate::keymap::BindingScope::Media
             ) {
                 self.action_failed("this view does not support text input modes");
-                return;
+                return false;
             }
             if let Some(reason) = self.active_buffer().read_only_reason() {
                 self.action_failed(reason);
-                return;
+                return false;
             }
         }
         self.line_select = None;
         if self.mode == mode {
-            return;
+            self.set_editing_role(mode);
+            return true;
         }
         let buffer = self.active().buffer;
         if matches!(self.mode, Mode::Insert | Mode::Replace) {
@@ -5746,8 +5797,9 @@ impl App {
                 });
             }
         }
-        self.mode = mode;
+        self.set_editing_role(mode);
         self.grammar.reset_prefix();
+        true
     }
 
     fn fit_selection_for_normal_mode(&mut self) {
@@ -5778,7 +5830,7 @@ impl App {
         self.active_mut().replace_selection(selection);
         self.replace_session = None;
         self.append_insert = None;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         match self.grammar.kind() {
             crate::command::GrammarKind::Runyte => self
                 .active_mut()
@@ -5789,6 +5841,9 @@ impl App {
     }
 
     fn enter_insert(&mut self, after: bool) {
+        if !self.require_editing_role(Mode::Insert) {
+            return;
+        }
         let buffer_id = self.active().buffer;
         let buffer = &self.buffers[buffer_id];
         let selection = self.active().selection.transform(|range| {
@@ -5808,7 +5863,7 @@ impl App {
             revision: self.buffers[buffer_id].revision(),
             carets: self.active().selection.clone(),
         });
-        self.mode = Mode::Insert;
+        self.set_editing_role(Mode::Insert);
     }
 
     /// Ends the append record when anything but its own edits moved the
@@ -5998,14 +6053,7 @@ impl App {
         if let (EditorCommand::ModeEnter, InvocationParameters::OptionalText(Some(name))) =
             (command, &parameters)
         {
-            let mode = match name.as_str() {
-                "normal" => Mode::Normal,
-                "select" => Mode::Select,
-                "insert" => Mode::Insert,
-                "replace" => Mode::Replace,
-                _ => unreachable!("validated mode argument"),
-            };
-            self.enter_mode_preserving_selection(mode);
+            self.enter_named_binding_mode(name);
             return Ok(());
         }
         if command == EditorCommand::ShowHelp && self.directory_tree.focused {
@@ -6013,7 +6061,7 @@ impl App {
                 InvocationParameters::Help(HelpInvocation::ActiveView) => {
                     self.open_help();
                     self.leave_directory_tree();
-                    self.mode = Mode::Normal;
+                    self.set_editing_role(Mode::Normal);
                     return Ok(());
                 }
                 InvocationParameters::Help(HelpInvocation::Manual(_)) => {

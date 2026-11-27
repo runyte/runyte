@@ -25,6 +25,7 @@ pub enum ViolationKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Violation {
+    pub named_mode: Option<super::mode_graph::ModeId>,
     pub kind: ViolationKind,
     pub mode: Mode,
     pub scope: BindingScope,
@@ -79,6 +80,51 @@ pub(super) fn with_input_policy(
     policy: Option<&super::ui::Bindings>,
 ) -> Vec<Violation> {
     let mut violations = Vec::new();
+    if let Some(tables) = &overrides.1 {
+        let mut owners = HashSet::new();
+        for binding in bindings {
+            if let Some(owner) = &binding.binding_mode
+                && !owners.insert((owner, &binding.sequence))
+            {
+                violations.push(Violation {
+                    named_mode: tables.graph.id(owner),
+                    kind: ViolationKind::DuplicateEffectiveSequence,
+                    mode: Mode::Normal,
+                    scope: binding.scope,
+                    sequences: vec![binding.sequence.clone()],
+                    message: format!("duplicate {} in mode {owner}", binding.sequence),
+                });
+            }
+        }
+        for (id, mode) in tables.graph.modes() {
+            let effective = tables.indices(bindings, id);
+            let exact: HashSet<_> = effective
+                .iter()
+                .map(|&index| &bindings[index].sequence)
+                .collect();
+            for &index in &effective {
+                let binding = &bindings[index];
+                for length in 1..binding.sequence.len() {
+                    let prefix =
+                        KeySequence::new(binding.sequence.as_slice()[..length].iter().copied());
+                    if exact.contains(&prefix) {
+                        violations.push(Violation {
+                            named_mode: Some(id),
+                            kind: ViolationKind::ExactAndPrefix,
+                            mode: Mode::Normal,
+                            scope: binding.scope,
+                            sequences: vec![prefix.clone(), binding.sequence.clone()],
+                            message: format!(
+                                "{prefix} is executable and prefixes {} in mode {}",
+                                binding.sequence,
+                                mode.name()
+                            ),
+                        });
+                    }
+                }
+            }
+        }
+    }
     let mut views: HashMap<(Mode, BindingScope), Vec<&Binding>> = HashMap::new();
     let mut scopes = BindingScope::ALL.to_vec();
     for scope in bindings
@@ -111,6 +157,7 @@ pub(super) fn with_input_policy(
             for binding in &effective {
                 if let Err(message) = binding.program.validate(scope) {
                     violations.push(Violation {
+                        named_mode: None,
                         kind: ViolationKind::InvalidProgram,
                         mode,
                         scope,
@@ -152,6 +199,7 @@ pub(super) fn with_input_policy(
                     });
                 if modal_reservation || hint_reservation {
                     violations.push(Violation {
+                    named_mode: None,
                         kind: ViolationKind::ReservedGrammarKey,
                         mode,
                         scope,
@@ -166,6 +214,7 @@ pub(super) fn with_input_policy(
                 }
                 if let Some(previous) = by_sequence.insert(&binding.sequence, binding) {
                     violations.push(Violation {
+                        named_mode: None,
                         kind: ViolationKind::DuplicateEffectiveSequence,
                         mode,
                         scope,
@@ -195,6 +244,7 @@ pub(super) fn with_input_policy(
             for binding in &effective {
                 if let Some(longer) = proper_prefixes.get(&binding.sequence) {
                     violations.push(Violation {
+                        named_mode: None,
                         kind: ViolationKind::ExactAndPrefix,
                         mode,
                         scope,
@@ -212,7 +262,7 @@ pub(super) fn with_input_policy(
             // Sidebars, merge review and media surfaces own their input independently
             // of ordinary text. Their scoped keys may replace text commands;
             // ordinary buffer scopes still may only add bindings.
-            if scope != BindingScope::Global && !scope.owns_modal_input() {
+            if overrides.1.is_none() && scope != BindingScope::Global && !scope.owns_modal_input() {
                 let globals_by_sequence = globals
                     .iter()
                     .map(|binding| (&binding.sequence, *binding))
@@ -225,6 +275,7 @@ pub(super) fn with_input_policy(
                         && !overrides.contains(mode, scoped.scope, &scoped.sequence)
                     {
                         violations.push(Violation {
+                            named_mode: None,
                             kind: ViolationKind::GlobalScopedShadowing,
                             mode,
                             scope,
@@ -247,8 +298,16 @@ pub(super) fn with_input_policy(
     let mut seen_namespaces = HashSet::new();
     for namespace in namespaces {
         for &mode in namespace.modes {
+            if overrides
+                .1
+                .as_ref()
+                .is_some_and(|tables| tables.mode_for(mode, namespace.scope).is_none())
+            {
+                continue;
+            }
             if !seen_namespaces.insert((mode, namespace.scope, namespace.sequence.clone())) {
                 violations.push(Violation {
+                    named_mode: None,
                     kind: ViolationKind::NamespaceDuplicate,
                     mode,
                     scope: namespace.scope,
@@ -266,6 +325,7 @@ pub(super) fn with_input_policy(
             });
             if exact {
                 violations.push(Violation {
+                    named_mode: None,
                     kind: ViolationKind::NamespaceExecutable,
                     mode,
                     scope: namespace.scope,
@@ -276,6 +336,7 @@ pub(super) fn with_input_policy(
                 && !overrides.affects(mode, namespace.scope, &namespace.sequence, true)
             {
                 violations.push(Violation {
+                    named_mode: None,
                     kind: ViolationKind::NamespaceUnreachable,
                     mode,
                     scope: namespace.scope,
@@ -291,6 +352,13 @@ pub(super) fn with_input_policy(
             continue;
         };
         for &mode in binding.alias_modes.unwrap_or(binding.modes) {
+            if overrides
+                .1
+                .as_ref()
+                .is_some_and(|tables| tables.mode_for(mode, binding.scope).is_none())
+            {
+                continue;
+            }
             let reached = views[&(mode, binding.scope)]
                 .iter()
                 .find(|candidate| candidate.sequence == *alias)
@@ -299,6 +367,7 @@ pub(super) fn with_input_policy(
                 && !overrides.affects(mode, binding.scope, alias, false)
             {
                 violations.push(Violation {
+                    named_mode: None,
                     kind: ViolationKind::AliasBroken,
                     mode,
                     scope: binding.scope,
@@ -318,6 +387,7 @@ pub(super) fn with_input_policy(
     for action in actions {
         if !seen_actions.insert((action.scope, action.mnemonic)) {
             violations.push(Violation {
+                named_mode: None,
                 kind: ViolationKind::ContextActionDuplicate,
                 mode: Mode::Normal,
                 scope: action.scope,

@@ -83,7 +83,7 @@ impl App {
         let exercise = self.tutorial.as_ref().unwrap().exercise_pane;
         self.activate_pane(exercise);
         self.refresh_tutorial_document();
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         Ok(())
     }
 
@@ -195,7 +195,7 @@ impl App {
         let pane = self.panes.get_mut(&exercise_pane).unwrap();
         pane.retarget(scratch_buffer);
         pane.replace_selection(selection);
-        self.mode = scratch_mode;
+        self.set_editing_role(scratch_mode);
     }
 
     fn open_tutorial_motion_picker(&mut self) {
@@ -453,7 +453,7 @@ impl App {
                 pane.jumps = JumpList::default();
             }
         }
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         self.search = SearchQuery::default();
         self.search_selection = None;
     }

@@ -1894,7 +1894,7 @@ impl App {
         match (action, key.code) {
             (Some(Action::Cancel), _) => {
                 let chooser = self.session_navigation.directory.take().unwrap();
-                self.mode = chooser.previous_mode;
+                self.set_editing_role(chooser.previous_mode);
                 self.list = None;
             }
             (Some(Action::Previous), _) => {

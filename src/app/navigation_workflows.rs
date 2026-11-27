@@ -91,6 +91,7 @@ impl App {
     }
 
     pub(super) fn note_destination_activation(&mut self) {
+        self.settle_carried_binding_mode();
         if let Some(worker) = &self.syntax_worker {
             worker.prioritize(self.active().buffer);
         }
@@ -553,7 +554,7 @@ impl App {
         match destination {
             OpenDestination::Buffer(buffer) => {
                 self.switch_buffer(buffer);
-                self.mode = Mode::Normal;
+                self.set_editing_role(Mode::Normal);
             }
             OpenDestination::Terminal(id) => self.show_terminal(id),
         }
@@ -700,7 +701,7 @@ impl App {
         if let Some(buffer) = buffers.first().copied() {
             self.switch_buffer(buffer);
             self.active_mut().covered_terminal = Some((buffer, terminal));
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
             self.status(":wq saves and returns to terminal");
         }
         Ok(())

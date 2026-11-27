@@ -73,7 +73,7 @@ fn palette_discovery_remembers_insert_mode_and_terminal_child_routing() {
     assert_eq!(app.mode, Mode::Insert);
     press(&mut app, 'x');
     let text = app.active_buffer().text().to_string();
-    assert!(text.contains("Mode: insert"), "{text}");
+    assert!(text.contains("Mode: terminal-insert"), "{text}");
     assert!(text.contains("Nothing was sent"), "{text}");
 }
 

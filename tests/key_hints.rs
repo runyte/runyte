@@ -24,6 +24,12 @@ use runyte::{
 };
 use unicode_width::UnicodeWidthStr as _;
 
+fn text_config() -> Config {
+    let mut config = Config::default();
+    config.editor.scratch_markdown = false;
+    config
+}
+
 fn render_buffer(width: u16, height: u16, app: &mut App, hints: &KeyHintState) -> Buffer {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -135,7 +141,7 @@ fn dispatch_with_hints(app: &mut App, hints: &mut KeyHintState, key: KeyStroke) 
 
 #[test]
 fn replacement_space_is_not_observed_as_a_space_command_prefix() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     app.buffers[0].apply(&Transaction::insert(0, "ab"));
     let mut hints = KeyHintState::default();
 
@@ -158,7 +164,7 @@ fn replacement_space_is_not_observed_as_a_space_command_prefix() {
 #[cfg(unix)]
 #[test]
 fn terminal_control_w_starts_the_insert_pane_navigation_prefix() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     render(80, 20, &mut app, &hints);
     type_colon(&mut app, "terminal /bin/cat");
@@ -225,7 +231,7 @@ fn numbered_session_hints_group_with_the_active_leader_and_keep_each_binding() {
                 assert_eq!(binding.target, BindingTarget::Editor(command));
                 assert!(!rows.iter().any(|row| row.target == Some(binding.target)));
             }
-            let app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+            let app = App::new(isolated_startup_config(text_config()), None).unwrap();
             let mut group = groups[0].clone();
             group.apply_capabilities(&app.command_capabilities());
             assert!(group.unavailable_reason.is_some());
@@ -258,7 +264,7 @@ fn remapped_session_destination_keeps_individual_hints() {
 #[test]
 fn prefix_popup_is_readable_at_standard_and_wide_sizes() {
     for (width, height) in [(80, 24), (160, 50)] {
-        let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+        let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
         let mut hints = KeyHintState::default();
         hints.observe(
             stroke(KeyCode::Char(' '), Modifiers::NONE),
@@ -291,7 +297,7 @@ fn standalone_and_attached_hints_share_responsive_grid_boundaries() {
     for prefix in [KeyStroke::char(' '), KeyStroke::ctrl('w')] {
         let mut hints = KeyHintState::default();
         hints.observe(prefix, Mode::Normal, default_keymap());
-        let metrics_app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+        let metrics_app = App::new(isolated_startup_config(text_config()), None).unwrap();
         let (widest_key, widest_description, descriptions) = hint_metrics(&metrics_app, &hints);
         let key_width = widest_key.clamp(12, 20);
         let stride = key_width + 1 + widest_description + 2;
@@ -317,13 +323,13 @@ fn standalone_and_attached_hints_share_responsive_grid_boundaries() {
             let standalone = render_buffer(
                 width,
                 height,
-                &mut App::new(isolated_startup_config(Config::default()), None).unwrap(),
+                &mut App::new(isolated_startup_config(text_config()), None).unwrap(),
                 &hints,
             );
             let attached = render_attached(
                 width,
                 height,
-                App::new(isolated_startup_config(Config::default()), None).unwrap(),
+                App::new(isolated_startup_config(text_config()), None).unwrap(),
                 &hints,
             );
             let standalone_surface = key_hint_surface(&standalone);
@@ -358,7 +364,7 @@ fn standalone_and_attached_hints_share_responsive_grid_boundaries() {
 fn attached_hint_scrolling_uses_the_shared_multicolumn_capacity() {
     let mut hints = KeyHintState::default();
     hints.observe(KeyStroke::char(' '), Mode::Normal, default_keymap());
-    let metrics_app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let metrics_app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let (widest_key, widest_description, descriptions) = hint_metrics(&metrics_app, &hints);
     let width = (2 + 2 * (widest_key.clamp(12, 20) + 1 + widest_description + 2)) as u16;
     let height = 10;
@@ -366,7 +372,7 @@ fn attached_hint_scrolling_uses_the_shared_multicolumn_capacity() {
     let _ = render_buffer(
         width,
         height,
-        &mut App::new(isolated_startup_config(Config::default()), None).unwrap(),
+        &mut App::new(isolated_startup_config(text_config()), None).unwrap(),
         &hints,
     );
     for _ in 0..descriptions.len() {
@@ -386,13 +392,13 @@ fn attached_hint_scrolling_uses_the_shared_multicolumn_capacity() {
     let standalone = render_buffer(
         width,
         height,
-        &mut App::new(isolated_startup_config(Config::default()), None).unwrap(),
+        &mut App::new(isolated_startup_config(text_config()), None).unwrap(),
         &hints,
     );
     let attached = render_attached(
         width,
         height,
-        App::new(isolated_startup_config(Config::default()), None).unwrap(),
+        App::new(isolated_startup_config(text_config()), None).unwrap(),
         &hints,
     );
     assert_eq!(key_hint_surface(&attached), key_hint_surface(&standalone));
@@ -414,7 +420,7 @@ fn attached_hint_scrolling_uses_the_shared_multicolumn_capacity() {
 /// reachable — not that a fixed number of them happen to fit.
 #[test]
 fn the_last_prefix_row_is_reachable_at_the_smallest_supported_size() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     hints.observe(
         stroke(KeyCode::Char(' '), Modifiers::NONE),
@@ -435,7 +441,7 @@ fn the_last_prefix_row_is_reachable_at_the_smallest_supported_size() {
 
 #[test]
 fn unavailable_language_and_syntax_namespaces_are_dimmed_but_navigable() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     hints.observe(
         stroke(KeyCode::Char(' '), Modifiers::NONE),
@@ -462,7 +468,7 @@ fn unavailable_language_and_syntax_namespaces_are_dimmed_but_navigable() {
 
 #[test]
 fn unavailable_git_namespace_is_dimmed_but_navigable() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     hints.observe(
         stroke(KeyCode::Char(' '), Modifiers::NONE),
@@ -487,7 +493,7 @@ fn unavailable_git_namespace_is_dimmed_but_navigable() {
 
 #[test]
 fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     hints.observe(
         stroke(KeyCode::Char(' '), Modifiers::NONE),
@@ -573,7 +579,7 @@ fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
 
     // Each flavour names itself at the prompt rather than sharing one label.
     for (opener, label) in [('s', "search: "), ('/', "search (regex): ")] {
-        let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+        let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
         app.handle_key(stroke(KeyCode::Char(opener), Modifiers::NONE))
             .unwrap();
         let screen = render(100, 40, &mut app, &KeyHintState::default());
@@ -583,7 +589,7 @@ fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
 
 #[test]
 fn every_pending_prefix_opens_the_popup() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     hints.observe(
         stroke(KeyCode::Char('g'), Modifiers::NONE),
@@ -599,7 +605,7 @@ fn every_pending_prefix_opens_the_popup() {
 
 #[test]
 fn a_key_column_separates_the_sequence_from_its_description() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     hints.observe(
         stroke(KeyCode::Char(' '), Modifiers::NONE),
@@ -614,7 +620,7 @@ fn a_key_column_separates_the_sequence_from_its_description() {
 
 #[test]
 fn narrow_popup_is_bounded_and_scrollable() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     hints.observe(
         stroke(KeyCode::Char(' '), Modifiers::NONE),
@@ -642,7 +648,7 @@ fn narrow_popup_is_bounded_and_scrollable() {
 
 #[test]
 fn popup_with_bound_arrows_advertises_only_control_scroll() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     hints.observe(
         stroke(KeyCode::Char('z'), Modifiers::NONE),
@@ -665,7 +671,7 @@ fn popup_with_bound_arrows_advertises_only_control_scroll() {
 
 #[test]
 fn ctrl_w_popup_scrolls_with_arrows_and_advertises_them() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     hints.observe(KeyStroke::ctrl('w'), Mode::Normal, default_keymap());
 
@@ -719,7 +725,7 @@ fn ctrl_w_popup_advertises_terminal_creation_from_the_registry() {
 #[test]
 fn alt_j_and_k_cancel_insert_ctrl_w_instead_of_scrolling() {
     for character in ['j', 'k'] {
-        let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+        let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
         let mut hints = KeyHintState::default();
         app.handle_key(KeyStroke::char('i')).unwrap();
 
@@ -742,7 +748,7 @@ fn alt_j_and_k_cancel_insert_ctrl_w_instead_of_scrolling() {
 #[cfg(unix)]
 #[test]
 fn terminal_ctrl_w_hint_scrolls_with_control_n_and_p_without_dispatching() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     render(40, 10, &mut app, &hints);
     type_colon(&mut app, "terminal /bin/cat");
@@ -764,7 +770,7 @@ fn terminal_ctrl_w_hint_scrolls_with_control_n_and_p_without_dispatching() {
 
 #[test]
 fn repeated_arrow_scroll_saturates_at_the_rendered_end() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     let mut hints = KeyHintState::default();
     hints.observe(
         stroke(KeyCode::Char(' '), Modifiers::NONE),
@@ -808,6 +814,7 @@ fn unavailable_action_is_dimmed_and_labeled() {
     const NORMAL: &[Mode] = &[Mode::Normal];
     let keymap = std::sync::Arc::new(
         Keymap::new(vec![Binding {
+            binding_mode: None,
             program: runyte::keymap::program::Program::single(BindingTarget::Editor(
                 EditorCommand::SelectLine,
             )),
@@ -825,7 +832,7 @@ fn unavailable_action_is_dimmed_and_labeled() {
         }])
         .unwrap(),
     );
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     app.set_keymap(std::sync::Arc::clone(&keymap));
     let mut hints = KeyHintState::default();
     hints.observe(
@@ -852,7 +859,7 @@ fn invalid_sequence_renders_a_concise_message() {
         Mode::Normal,
         default_keymap(),
     );
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
 
     let screen = render(40, 10, &mut app, &hints);
     assert!(screen.contains("No binding: Space z"));
@@ -860,7 +867,7 @@ fn invalid_sequence_renders_a_concise_message() {
 
 #[test]
 fn resolved_bindings_never_open_the_popup() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     for key in [
         stroke(KeyCode::Char('h'), Modifiers::NONE),
         stroke(KeyCode::Char('k'), Modifiers::NONE),
@@ -883,7 +890,7 @@ fn higher_priority_overlays_hide_key_hints() {
         Mode::Normal,
         default_keymap(),
     );
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     app.list = Some(ListPicker::new(
         "Overlay",
         vec![PickerItem::new("only entry", "detail", 0)],
@@ -903,7 +910,7 @@ fn higher_priority_overlays_hide_key_hints() {
 #[test]
 fn a_read_only_buffer_is_marked_on_every_surface() {
     let hints = KeyHintState::default();
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
 
     // An ordinary scratch buffer claims nothing, on either line.
     let editable = render(100, 20, &mut app, &hints);
@@ -949,11 +956,7 @@ fn pane_titles_show_structural_file_and_explorer_types() {
     std::fs::write(&path, "notes").unwrap();
     let hints = KeyHintState::default();
 
-    let mut file = App::new(
-        isolated_startup_config(Config::default()),
-        Some(path.clone()),
-    )
-    .unwrap();
+    let mut file = App::new(isolated_startup_config(text_config()), Some(path.clone())).unwrap();
     let screen = render(180, 20, &mut file, &hints);
     let file_path = path.display().to_string();
     let file_path = file_path.strip_prefix(r"\\?\").unwrap_or(&file_path);
@@ -967,7 +970,7 @@ fn pane_titles_show_structural_file_and_explorer_types() {
     );
 
     let mut explorer = App::new(
-        isolated_startup_config(Config::default()),
+        isolated_startup_config(text_config()),
         Some(directory.clone()),
     )
     .unwrap();
@@ -995,7 +998,7 @@ fn pane_titles_show_structural_file_and_explorer_types() {
 #[test]
 fn a_maximized_pane_is_tagged_with_the_view_it_shows() {
     let hints = KeyHintState::default();
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     app.handle_key(KeyStroke::ctrl('w')).unwrap();
     app.handle_key(KeyStroke::plain(KeyCode::Char('v')))
         .unwrap();
@@ -1030,7 +1033,7 @@ fn a_maximized_pane_is_tagged_with_the_view_it_shows() {
 #[test]
 fn help_for_an_editable_view_is_not_titled_read_only() {
     let hints = KeyHintState::default();
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     app.execute(CommandInvocation::help(HelpInvocation::ActiveView))
         .unwrap();
 
@@ -1048,7 +1051,7 @@ fn help_opens_a_buffer_describing_the_current_view() {
     let directory = std::env::temp_dir().join(format!("runyte-help-{}", std::process::id()));
     std::fs::create_dir_all(directory.join("child")).unwrap();
 
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     app.execute(CommandInvocation::help(HelpInvocation::ActiveView))
         .unwrap();
 
@@ -1062,7 +1065,7 @@ fn help_opens_a_buffer_describing_the_current_view() {
     assert!(normal.contains("Direct keys"), "{normal}");
 
     let mut app = App::new(
-        isolated_startup_config(Config::default()),
+        isolated_startup_config(text_config()),
         Some(directory.clone()),
     )
     .unwrap();
@@ -1100,7 +1103,7 @@ fn rejected_vim_configuration_leaves_runyte_help_and_hints_available() {
     let error = serde_yaml::from_str::<Config>("editor: {grammar: vim}").unwrap_err();
     assert!(error.to_string().contains("vim"));
     assert!(error.to_string().contains("runyte"));
-    let config = Config::default();
+    let config = text_config();
     let mut app = App::new(isolated_startup_config(config), None).unwrap();
     assert_eq!(app.grammar_kind(), GrammarKind::Runyte);
     app.execute(CommandInvocation::help(HelpInvocation::ActiveView))
@@ -1127,7 +1130,7 @@ fn rejected_vim_configuration_leaves_runyte_help_and_hints_available() {
 #[test]
 fn help_is_complete_at_every_terminal_size() {
     let hints = KeyHintState::default();
-    let mut reference = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut reference = App::new(isolated_startup_config(text_config()), None).unwrap();
     reference
         .execute(CommandInvocation::help(HelpInvocation::ActiveView))
         .unwrap();
@@ -1138,7 +1141,7 @@ fn help_is_complete_at_every_terminal_size() {
     );
 
     for (width, height) in [(24, 6), (40, 8), (80, 24)] {
-        let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+        let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
         app.execute(CommandInvocation::help(HelpInvocation::ActiveView))
             .unwrap();
         assert_eq!(app.active_buffer().to_string(), document);
@@ -1157,7 +1160,7 @@ fn help_is_complete_at_every_terminal_size() {
 #[test]
 fn help_scrolls_and_searches_like_any_other_buffer() {
     let hints = KeyHintState::default();
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     app.execute(CommandInvocation::help(HelpInvocation::ActiveView))
         .unwrap();
 
@@ -1180,7 +1183,7 @@ fn help_scrolls_and_searches_like_any_other_buffer() {
 
 #[test]
 fn list_overlay_enter_does_not_become_a_normal_mode_hint() {
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     app.list = Some(ListPicker::new(
         "Sessions",
         vec![PickerItem::new("demo", "Demo workspace", 0)],
@@ -1216,7 +1219,7 @@ fn insert_and_command_modes_hide_normal_mode_hints() {
         ),
     ] {
         let mut hints = KeyHintState::default();
-        let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+        let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
         hints.observe(stroke, app.mode, app.keymap());
         app.handle_key(key).unwrap();
 
@@ -1228,7 +1231,7 @@ fn insert_and_command_modes_hide_normal_mode_hints() {
 #[test]
 fn exact_one_key_action_is_forwarded_without_a_post_factum_hint() {
     let mut hints = KeyHintState::default();
-    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), None).unwrap();
     app.buffers[0].apply(&Transaction::insert(0, "ab"));
     app.panes.get_mut(&0).unwrap().selection = Selection::point(1);
     let key = stroke(KeyCode::Char('h'), Modifiers::NONE);
@@ -1254,7 +1257,7 @@ fn a_binary_argument_opens_the_open_with_prompt_over_its_hints() {
     std::fs::write(&binary, [0x89, b'P', b'N', b'G', 0x00]).unwrap();
 
     let hints = KeyHintState::default();
-    let mut app = App::new(isolated_startup_config(Config::default()), Some(binary)).unwrap();
+    let mut app = App::new(isolated_startup_config(text_config()), Some(binary)).unwrap();
     assert!(app.buffers[0].to_string().is_empty(), "a scratch buffer");
 
     // A cache under the temporary directory, never the person's real one.

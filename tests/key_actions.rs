@@ -10,7 +10,7 @@ fn compile(source: &str) -> configured::CompiledKeymap {
 }
 
 #[test]
-fn action_bindings_override_after_remapping_and_keep_modes_independent() {
+fn action_bindings_override_after_remapping_and_follow_declared_inheritance() {
     let compiled = compile(
         "leader: Ctrl-x\nrebind:\n  Space g: Leader G\nbind:\n  normal:\n    X: select-line-up\n    Leader G z: [select-all, yank]\n    F7: { command: pipe, argument: sort }\n  insert:\n    F8: insert-newline\n  replace:\n    F8: insert-other-indent\n",
     );
@@ -18,7 +18,7 @@ fn action_bindings_override_after_remapping_and_keep_modes_independent() {
     validate::assert_valid(&compiled.keymap);
     for (mode, spelling, target) in [
         (Mode::Normal, "X", C::SelectLineUp),
-        (Mode::Select, "X", C::ExtendLineAbove),
+        (Mode::Select, "X", C::SelectLineUp),
         (Mode::Insert, "F8", C::InsertNewline),
         (Mode::Replace, "F8", C::InsertLiteralTab),
     ] {
@@ -75,21 +75,25 @@ fn action_unbinding_and_replacement_remove_stale_aliases() {
             .lookup(Mode::Normal, &KeySequence::parse(",").unwrap()),
         Lookup::NoMatch
     ));
-    assert!(
-        compiled
-            .keymap
-            .bindings()
+    for mode in [Mode::Normal, Mode::Select] {
+        let mut hints = runyte::key_hints::KeyHintState::default();
+        for key in KeySequence::parse("Space s").unwrap().as_slice() {
+            hints.observe(*key, mode, &compiled.keymap);
+        }
+        let rows = hints.rows(&compiled.keymap, mode);
+        let row = rows
             .iter()
-            .filter(|binding| binding.target == BindingTarget::Editor(C::KeepPrimarySelection))
-            .all(|binding| binding.alias.is_none())
-    );
+            .find(|row| row.sequence == KeySequence::parse("Space s c").unwrap())
+            .expect("the configured selection action is discoverable");
+        assert!(row.alias.is_none());
+    }
 }
 
 #[test]
 fn action_configuration_rejects_malformed_and_oversized_values_nonfatally() {
     for source in [
         "bind: nope",
-        "bind: {terminal: {F1: yank}}",
+        "bind: {normal: [yank]}",
         "bind: {normal: false}",
         "bind: {normal: {1: yank}}",
         "bind: {normal: {F1: []}}",
@@ -111,14 +115,14 @@ fn action_configuration_rejects_malformed_and_oversized_values_nonfatally() {
             .errors
             .is_empty()
     );
-    let rules = (0..257)
+    let rules = (0..=actions::MAX_BINDINGS)
         .map(|i| format!("    F1 a{i}: yank\n"))
         .collect::<String>();
     assert!(
         compile(&format!("bind:\n  normal:\n{rules}"))
             .errors
             .iter()
-            .any(|error| error.contains("256"))
+            .any(|error| error.contains(&actions::MAX_BINDINGS.to_string()))
     );
 }
 
@@ -155,8 +159,7 @@ fn action_binding_hints_keep_sequences_and_teaching_tracks_each_mode() {
     assert_eq!(rows.len(), 1);
     assert!(key_hint_description(&rows[0]).contains("select-all → yank"));
     let prose = runyte::key_spelling::resolve("{binding:Space e}", &compiled.keymap).unwrap();
-    assert!(prose.text.contains("F2 (NOR)"), "{}", prose.text);
-    assert!(prose.text.contains("Space e (SEL)"), "{}", prose.text);
+    assert_eq!(prose.text, "F2");
     let unbound = compile("bind:\n  normal:\n    Space e: null\n  select:\n    Space e: null\n");
     let prose = runyte::key_spelling::resolve("{binding:Space e}", &unbound.keymap).unwrap();
     assert_eq!(prose.text, "[unbound: open-explorer]");

@@ -1449,7 +1449,7 @@ impl App {
                 if let Some(session) = self.terminals.get_mut(terminal) {
                     session.focus_review_selection(rows.max(1), scroll_offset);
                 }
-                self.mode = Mode::Normal;
+                self.set_editing_role(Mode::Normal);
             }
         }
     }

@@ -289,8 +289,10 @@ impl Bindings {
     }
 }
 
+type SourceContext = (Mode, BindingScope, Option<super::mode_graph::ModeId>);
+
 #[derive(Debug, Default)]
-pub(super) struct Cache(Mutex<HashMap<(Mode, BindingScope), Bindings>>);
+pub(super) struct Cache(Mutex<HashMap<SourceContext, Bindings>>);
 impl Clone for Cache {
     fn clone(&self) -> Self {
         Self::default()
@@ -298,7 +300,15 @@ impl Clone for Cache {
 }
 impl Keymap {
     pub fn native_preview_help(&self, mode: Mode, source: BindingScope) -> String {
-        let bindings = self.native_preview(mode, source);
+        self.native_preview_help_named(mode, source, self.named_mode_for(mode, source))
+    }
+    pub fn native_preview_help_named(
+        &self,
+        mode: Mode,
+        source: BindingScope,
+        named: Option<super::mode_graph::ModeId>,
+    ) -> String {
+        let bindings = self.native_preview_named(mode, source, named);
         let mut text = String::from("\nNative document preview\n\n");
         if bindings.unavailable {
             text.push_str("  Preview keymap exceeds its limit; input returns to source\n");
@@ -393,13 +403,21 @@ impl Keymap {
         text
     }
     pub fn native_preview(&self, mode: Mode, source: BindingScope) -> Bindings {
+        self.native_preview_named(mode, source, self.named_mode_for(mode, source))
+    }
+    pub fn native_preview_named(
+        &self,
+        mode: Mode,
+        source: BindingScope,
+        named: Option<super::mode_graph::ModeId>,
+    ) -> Bindings {
         let mut cache = self.preview.0.lock().unwrap();
-        if cache.len() >= 16 && !cache.contains_key(&(mode, source)) {
+        if cache.len() >= 16 && !cache.contains_key(&(mode, source, named)) {
             cache.clear();
         }
         cache
-            .entry((mode, source))
-            .or_insert_with(|| project(self, mode, source))
+            .entry((mode, source, named))
+            .or_insert_with(|| project(self, mode, source, named))
             .clone()
     }
 }
@@ -412,7 +430,12 @@ fn authored(
         || binding.configured_actions
         || factory.get(&binding.sequence) != Some(&(binding.target, binding.is_plain_action()))
 }
-fn project(map: &Keymap, mode: Mode, source: BindingScope) -> Bindings {
+fn project(
+    map: &Keymap,
+    mode: Mode,
+    source: BindingScope,
+    named: Option<super::mode_graph::ModeId>,
+) -> Bindings {
     use ui::{Action as U, Owner};
     let factory = |mode, scope| {
         super::default_keymap()
@@ -459,8 +482,12 @@ fn project(map: &Keymap, mode: Mode, source: BindingScope) -> Bindings {
         .iter()
         .map(|(sequence, _)| sequence.as_slice()[0])
         .collect();
+    let source_bindings = match named {
+        Some(id) => map.bindings_for_named_mode(id).collect::<Vec<_>>(),
+        None => map.bindings_for_scope(mode, source).collect::<Vec<_>>(),
+    };
     let mut forwarding = HashMap::new();
-    for binding in map.bindings_for_scope(mode, source) {
+    for binding in &source_bindings {
         let first = binding.sequence.as_slice()[0];
         if pane(binding) {
             forwarding.insert(first, Action::Forward);
@@ -473,7 +500,7 @@ fn project(map: &Keymap, mode: Mode, source: BindingScope) -> Bindings {
     }
     // Only an exact implemented focus command proves that the host input may
     // intentionally transfer the following queued keystrokes to another pane.
-    for binding in map.bindings_for_scope(mode, source) {
+    for binding in &source_bindings {
         if binding.sequence.len() == 1
             && pane(binding)
             && matches!(
@@ -486,7 +513,10 @@ fn project(map: &Keymap, mode: Mode, source: BindingScope) -> Bindings {
                 )
             )
             && matches!(
-                map.lookup_in(mode, source, &binding.sequence),
+                match named {
+                    Some(id) => map.lookup_named(id, &binding.sequence),
+                    None => map.lookup_in(mode, source, &binding.sequence),
+                },
                 super::Lookup::Exact(_)
             )
         {
@@ -560,6 +590,42 @@ mod tests {
         KeySequence::parse(source).unwrap()
     }
     #[test]
+    fn named_source_modes_keep_distinct_preview_forwarding_and_cached_help() {
+        let config = serde_yaml::from_str(
+            "modes:\n  edit-nav: {inherits: normal}\n  view-nav: {inherits: normal}\nkeys:\n  bind:\n    edit-nav: {j: delete-selection, F8: focus-window-right}\n    view-nav: {F9: focus-window-left}\n",
+        ).unwrap();
+        let compiled = super::super::configured::compile_configuration(
+            &config,
+            super::super::default_keymap(),
+        );
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        let map = compiled.keymap;
+        let edit = map.mode_graph().unwrap().id("edit-nav");
+        let view = map.mode_graph().unwrap().id("view-nav");
+        for _ in 0..2 {
+            let editing = map.native_preview_named(Mode::Normal, BindingScope::Global, edit);
+            let viewing = map.native_preview_named(Mode::Normal, BindingScope::Global, view);
+            assert_eq!(
+                editing.lookup(&sequence("j")),
+                Lookup::Action(Action::DismissAndForward)
+            );
+            assert_eq!(viewing.lookup(&sequence("j")), Lookup::Action(Action::Down));
+            assert_eq!(
+                editing.lookup(&sequence("F8")),
+                Lookup::Action(Action::ForwardFocus)
+            );
+            assert_eq!(viewing.lookup(&sequence("F8")), Lookup::None);
+            assert_eq!(
+                viewing.lookup(&sequence("F9")),
+                Lookup::Action(Action::ForwardFocus)
+            );
+            assert_eq!(editing.lookup(&sequence("F9")), Lookup::None);
+            let edit_help = map.native_preview_help_named(Mode::Normal, BindingScope::Global, edit);
+            let view_help = map.native_preview_help_named(Mode::Normal, BindingScope::Global, view);
+            assert_ne!(edit_help, view_help);
+        }
+    }
+    #[test]
     fn only_exact_effective_focus_bindings_grant_a_focus_handoff() {
         let map = configured(
             "bind: {normal: {F8: focus-window-right, 'F9 h': focus-window-left, 'F9 x': close-window}}",
@@ -599,7 +665,7 @@ mod tests {
             factory.fallback_action(KeyStroke::plain(KeyCode::Escape)),
             Some(Action::Back)
         );
-        let map = configured("scopes: {media: {normal: {j: null, F8: media-move-down}}}");
+        let map = configured("bind:\n  media:\n    j: null\n    F8: media-move-down\n");
         let preview = map.native_preview(Mode::Normal, BindingScope::Global);
         assert_eq!(preview.lookup(&sequence("j")), Lookup::None);
         assert_eq!(
@@ -628,7 +694,7 @@ mod tests {
     #[test]
     fn preview_ui_replacement_suppresses_inherited_aliases_and_keeps_authored_media() {
         let map = configured(
-            "ui: {native-preview: {back: [F8], copy: [], forward-pane: []}}\nscopes: {media: {normal: {F7: media-back}}}",
+            "ui:\n  native-preview:\n    back:\n    - F8\n    copy: []\n    forward-pane: []\nbind:\n  media:\n    F7: media-back\n",
         );
         let preview = map.native_preview(Mode::Normal, BindingScope::Global);
         assert_eq!(

@@ -808,10 +808,8 @@ fn configured_list_acceptance_preserves_plugin_handoff_authority_for_fresh_input
             let mut receiver = commands(&mut app, buffer, value, projection);
             if let Some(binding) = configured {
                 let compiled = crate::keymap::configured::compile(
-                    &serde_yaml::from_str(&format!(
-                        "scopes: {{global: {{list: {{'{binding}': list-accept}}}}}}"
-                    ))
-                    .unwrap(),
+                    &serde_yaml::from_str(&format!("bind: {{list: {{'{binding}': list-accept}}}}"))
+                        .unwrap(),
                     &app.keymap,
                 );
                 assert!(compiled.errors.is_empty());

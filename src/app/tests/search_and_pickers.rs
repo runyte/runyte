@@ -5464,7 +5464,7 @@ fn background_finder_keeps_selected_surviving_result_when_a_terminal_exits() {
 #[test]
 fn configurable_list_actions_execute_without_old_navigation_or_close_handlers() {
     let mut app = App::new(Config::default(), None).unwrap();
-    let section = serde_yaml::from_str("scopes: {global: {list: {Down: null, Ctrl-n: null, F9: list-next, F8: list-previous, Esc: null, Ctrl-c: null, F7: list-close}}}").unwrap();
+    let section = serde_yaml::from_str("bind:\n  list:\n    Down: null\n    Ctrl-n: null\n    F9: list-next\n    F8: list-previous\n    Esc: null\n    Ctrl-c: null\n    F7: list-close\n").unwrap();
     let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
     assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
     app.set_keymap(compiled.keymap);
@@ -5488,7 +5488,7 @@ fn configurable_list_actions_execute_without_old_navigation_or_close_handlers() 
 }
 
 #[test]
-fn configured_markdown_scope_moves_and_removes_actions_without_changing_other_modes() {
+fn configured_markdown_mode_changes_are_inherited_by_markdown_select() {
     let mut config = Config::default();
     config.editor.scratch_markdown = true;
     let mut app = App::new(config, None).unwrap();
@@ -5499,7 +5499,7 @@ fn configured_markdown_scope_moves_and_removes_actions_without_changing_other_mo
         crate::keymap::BindingScope::Markdown
     );
     let section =
-        serde_yaml::from_str("scopes: {markdown: {normal: {j: move-up, k: null}}}").unwrap();
+        serde_yaml::from_str("bind:\n  markdown:\n    j: move-up\n    k: null\n").unwrap();
     let compiled = crate::keymap::configured::compile(&section, crate::keymap::default_keymap());
     assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
     app.set_keymap(compiled.keymap);
@@ -5511,7 +5511,7 @@ fn configured_markdown_scope_moves_and_removes_actions_without_changing_other_mo
     assert_eq!(app.active().selection.primary().head, 4);
     app.mode = Mode::Select;
     press(&mut app, 'k');
-    assert_eq!(app.active().selection.primary().head, 0);
+    assert_eq!(app.active().selection.primary().head, 4);
     assert_eq!(text(&app), "one\ntwo\nthree");
 }
 
@@ -5684,7 +5684,7 @@ fn configured_list_actions_keep_filter_target_and_report_ownership() {
     let mut app = App::new(Config::default(), None).unwrap();
     configure_picker_actions(
         &mut app,
-        "scopes: {global: {list: {Enter: null, Tab: null, Backspace: null, F6: list-backspace, F7: list-open-actions, F8: list-accept}}}",
+        "bind:\n  list:\n    Enter: null\n    Tab: null\n    Backspace: null\n    F6: list-backspace\n    F7: list-open-actions\n    F8: list-accept\n",
     );
     let root = temporary("configured-list-target");
     fs::create_dir_all(&root).unwrap();
@@ -5745,7 +5745,7 @@ fn configured_list_leader_follows_escape_and_consumes_tombstones() {
         let mut app = App::new(Config::default(), None).unwrap();
         configure_picker_actions(
             &mut app,
-            &format!("leader: F12\nscopes: {{global: {{list: {{Esc: {escape}}}}}}}"),
+            &format!("leader: F12\nbind: {{list: {{Esc: {escape}}}}}"),
         );
         app.list = Some(ListPicker::fuzzy(
             "Results",
@@ -5775,7 +5775,7 @@ fn configured_list_acceptance_requires_presented_lsp_permission() {
     let mut app = App::new(Config::default(), None).unwrap();
     configure_picker_actions(
         &mut app,
-        "scopes: {global: {list: {Enter: null, F8: list-accept, Esc: list-accept}}}",
+        "bind:\n  list:\n    Enter: null\n    F8: list-accept\n    Esc: list-accept\n",
     );
     app.list = Some(ListPicker::new(
         "LSP permission",
@@ -5808,7 +5808,7 @@ fn configured_list_acceptance_cannot_override_covering_decision_or_nested_guards
     let mut app = App::new(Config::default(), None).unwrap();
     configure_picker_actions(
         &mut app,
-        "scopes: {global: {list: {Enter: null, F8: list-accept}}}",
+        "bind:\n  list:\n    Enter: null\n    F8: list-accept\n",
     );
     app.list = Some(ListPicker::new(
         "LSP permission",
@@ -5900,7 +5900,7 @@ fn configured_report_hints_follow_removed_arrows_and_rebound_navigation() {
     let mut app = App::new(Config::default(), None).unwrap();
     configure_picker_actions(
         &mut app,
-        "scopes: {global: {list: {Down: null, Ctrl-n: null, F9: list-next}}}",
+        "bind:\n  list:\n    Down: null\n    Ctrl-n: null\n    F9: list-next\n",
     );
     app.list = Some(
         ListPicker::new(

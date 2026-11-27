@@ -806,7 +806,7 @@ fn merge_acknowledgment_actions_preserve_cursor_semantics_and_pending_sequences(
     fixture.review(&mut app, &operations);
     configure_merge_actions(
         &mut app,
-        "ui: {merge-acknowledgment: {move-left: [F2, Enter], move-right: [F3], backspace: [F4], delete: [F5]}}\nscopes: {git-merge-input: {normal: {'F6 F7': git-review-enter, Left: git-review-next}}}",
+        "ui:\n  merge-acknowledgment:\n    move-left:\n    - F2\n    - Enter\n    move-right:\n    - F3\n    backspace:\n    - F4\n    delete:\n    - F5\nbind:\n  git-merge-input:\n    F6 F7: git-review-enter\n    Left: git-review-next\n",
     );
     let review = app.merge_ui.review.as_mut().unwrap();
     review.requires_ack = true;
@@ -879,7 +879,7 @@ fn merge_prefix_reset_preserves_default_alias_policy_and_can_be_reassigned() {
     fixture.review(&mut app, &operations);
     configure_merge_actions(
         &mut app,
-        "scopes: {git-merge-review: {normal: {'F6 F7': git-review-next}}}",
+        "bind:\n  git-merge-review:\n    F6 F7: git-review-next\n",
     );
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
     key(&mut app, KeyCode::Char('c'), Modifiers::CONTROL);
@@ -894,7 +894,7 @@ fn merge_prefix_reset_preserves_default_alias_policy_and_can_be_reassigned() {
     assert!(app.merge_ui.keys.is_empty());
     configure_merge_actions(
         &mut app,
-        "ui: {merge-prefix: {reset-and-continue: [F8]}}\nscopes: {git-merge-review: {normal: {'F6 Esc': git-review-next, F8: git-review-cancel}}}",
+        "ui:\n  merge-prefix:\n    reset-and-continue:\n    - F8\nbind:\n  git-merge-review:\n    F6 Esc: git-review-next\n    F8: git-review-cancel\n",
     );
     app.merge_ui.review.as_mut().unwrap().focus = 0;
     let focus = app.merge_ui.review.as_ref().unwrap().focus;
