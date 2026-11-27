@@ -2034,13 +2034,11 @@ impl App {
         let end = buffer.row_end_offset(buffer.last_row(), false);
         self.active_mut()
             .replace_selection(Selection::single(Range::new(0, end)));
-        self.mode = Mode::Select;
     }
 
     pub(super) fn collapse_selection(&mut self) {
         let selection = self.active().selection.collapse();
         self.active_mut().replace_selection(selection);
-        self.mode = Mode::Normal;
     }
 
     pub(super) fn flip_selection(&mut self) {
@@ -3403,7 +3401,6 @@ impl App {
             })
             .collect();
         self.edit(Transaction::new(changes));
-        self.mode = Mode::Normal;
         self.normalize_buffer(buffer_id);
     }
 
@@ -3430,7 +3427,6 @@ impl App {
             })
             .collect();
         self.edit(Transaction::new(changes));
-        self.mode = Mode::Normal;
         self.normalize_buffer(buffer_id);
     }
 

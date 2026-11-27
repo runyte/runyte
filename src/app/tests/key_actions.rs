@@ -21,8 +21,8 @@ fn action_binding_sequences_execute_and_group_selection_history() {
     assert_eq!(cursor(&app).col, 0);
     key(&mut app, KeyCode::Function(7), Modifiers::NONE);
     assert_eq!(app.registers[&'"'].text, "abc def");
-    // `yank` leaves the selection and mode as `select-all` set them.
-    assert_eq!(app.mode, Mode::Select);
+    // Both actions preserve the binding's starting mode.
+    assert_eq!(app.mode, Mode::Normal);
     assert_eq!(app.active().selection.primary(), Range::new(0, 6));
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
     key(&mut app, KeyCode::Function(8), Modifiers::NONE);
@@ -448,7 +448,7 @@ fn program_counts_skip_nonaccepting_steps_and_drop_unused_counts() {
     press(&mut app, '3');
     key(&mut app, KeyCode::Function(2), Modifiers::NONE);
     assert!(!app.status_error);
-    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.mode, Mode::Normal);
     assert_eq!(
         app.registers[&'"'].text,
         text(&app),
@@ -1187,5 +1187,201 @@ fn jump_label_input_never_runs_an_internal_program_tail() {
         }
         assert!(app.jump.is_none());
         assert_eq!(text(&app), "alpha beta");
+    }
+}
+
+#[test]
+fn atomic_split_defaults_preserve_pasted_ranges_and_linewise_cut_distinctions() {
+    for direction in ['p', 'P'] {
+        let mut app = configured("");
+        seed(&mut app, "abc");
+        register(&mut app, "XY", false);
+        select(&mut app, Range::new(0, 1));
+        press(&mut app, direction);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(
+            app.active().selection.primary(),
+            if direction == 'p' {
+                Range::new(0, 1)
+            } else {
+                Range::new(2, 3)
+            }
+        );
+        assert_eq!(text(&app), if direction == 'p' { "XYc" } else { "XYabc" });
+    }
+    for newline in ["\n", "\r\n"] {
+        for (action, expected_mode, linewise) in
+            [('d', Mode::Normal, true), ('c', Mode::Insert, false)]
+        {
+            let mut app = configured("");
+            seed(&mut app, &format!("abc{newline}def{newline}"));
+            press(&mut app, 'x');
+            press(&mut app, action);
+            assert_eq!(app.mode, expected_mode);
+            let register = &app.registers[&'"'];
+            assert_eq!(register.linewise, linewise);
+            assert_eq!(
+                register.text,
+                if linewise {
+                    format!("abc{newline}")
+                } else {
+                    "abc".into()
+                }
+            );
+            assert_eq!(
+                text(&app),
+                if linewise {
+                    format!("def{newline}")
+                } else {
+                    format!("{newline}def{newline}")
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn explicit_mode_entry_preserves_ranges_and_replaces_transient_line_mode() {
+    let mut app = configured("");
+    seed(&mut app, "abc\ndef");
+    press(&mut app, 'x');
+    let range = app.active().selection.clone();
+    app.execute(CommandInvocation::mode_entry(Mode::Select))
+        .unwrap();
+    assert!(app.line_select.is_none());
+    assert_eq!(app.active().selection, range);
+    press(&mut app, 'l');
+    assert_eq!(app.mode, Mode::Select);
+    let range = app.active().selection.clone();
+    app.execute(CommandInvocation::mode_entry(Mode::Normal))
+        .unwrap();
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.active().selection, range);
+}
+
+#[test]
+fn atomic_selection_and_character_actions_leave_mode_to_the_program() {
+    let mut app = configured(
+        "bind:\n  normal:\n    F1: select-all\n  select:\n    F2: collapse-selection\n    F3: toggle-case\n    F4: replace-char\n",
+    );
+    seed(&mut app, "abc");
+    key(&mut app, KeyCode::Function(1), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    press(&mut app, '%');
+    assert_eq!(app.mode, Mode::Select);
+    key(&mut app, KeyCode::Function(3), Modifiers::NONE);
+    assert_eq!(text(&app), "ABC");
+    assert_eq!(app.mode, Mode::Select);
+    key(&mut app, KeyCode::Function(4), Modifiers::NONE);
+    press(&mut app, 'z');
+    assert_eq!(text(&app), "zzz");
+    assert_eq!(app.mode, Mode::Select);
+    key(&mut app, KeyCode::Function(2), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Select);
+    assert!(app.active().selection.primary().is_empty());
+    press(&mut app, ';');
+    assert_eq!(app.mode, Mode::Normal);
+    press(&mut app, '%');
+    press(&mut app, '~');
+    assert_eq!(app.mode, Mode::Normal);
+    press(&mut app, '%');
+    press(&mut app, 'r');
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(
+        app.mode,
+        Mode::Select,
+        "cancelled operand must not enter Normal"
+    );
+    press(&mut app, 'r');
+    press(&mut app, 'a');
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
+fn mode_entry_rejects_missing_unknown_and_read_only_editing_modes() {
+    use crate::command::parse_named_command;
+    assert!(parse_named_command("mode-enter", None).is_err());
+    assert!(parse_named_command("mode-enter", Some("typo")).is_err());
+    let mut app = configured("bind:\n  normal:\n    F1: mode-enter\n");
+    assert!(app.status_error);
+    app.execute_editor_command(EditorCommand::ShowAbout)
+        .unwrap();
+    let original = text(&app);
+    for mode in [Mode::Insert, Mode::Replace] {
+        let result = app.execute(CommandInvocation::mode_entry(mode)).unwrap();
+        assert!(matches!(result, CommandOutcome::UserError(_)));
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(text(&app), original);
+    }
+}
+
+#[test]
+fn explicit_terminal_modes_own_review_without_editing_the_backing_buffer() {
+    let mut app = configured("");
+    seed(&mut app, "backing text");
+    let terminal = app.terminals.insert_test_session(80, 24);
+    app.active_mut().terminal = Some(terminal);
+    app.execute(CommandInvocation::mode_entry(Mode::Select))
+        .unwrap();
+    assert_eq!(app.mode, Mode::Select);
+    let result = app
+        .execute(CommandInvocation::mode_entry(Mode::Replace))
+        .unwrap();
+    assert!(matches!(result, CommandOutcome::UserError(_)));
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(text(&app), "backing text");
+    app.execute(CommandInvocation::mode_entry(Mode::Insert))
+        .unwrap();
+    assert_eq!(app.mode, Mode::Insert);
+    app.execute(CommandInvocation::mode_entry(Mode::Normal))
+        .unwrap();
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(text(&app), "backing text");
+}
+
+#[test]
+fn selection_fit_is_separate_from_mode_entry_and_keeps_append_escape_behavior() {
+    let mut app = configured("bind: {insert: {F1: fit-selection-for-normal-mode}}");
+    seed(&mut app, "abc");
+    press(&mut app, 'a');
+    press(&mut app, 'X');
+    key(&mut app, KeyCode::Function(1), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Insert);
+    assert_eq!(cursor(&app).col, 1);
+    app.execute(CommandInvocation::mode_entry(Mode::Normal))
+        .unwrap();
+    assert_eq!(cursor(&app).col, 1);
+    assert_eq!(text(&app), "aXbc");
+    press(&mut app, 'u');
+    assert_eq!(text(&app), "abc");
+
+    set_cursor(&mut app, 0, 0);
+    press(&mut app, 'a');
+    press(&mut app, 'Y');
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(cursor(&app).col, 1);
+}
+
+#[test]
+fn atomic_actions_finish_line_selection_without_restoring_its_previous_mode() {
+    for action in [
+        "select-all",
+        "collapse-selection",
+        "toggle-case",
+        "replace-char",
+        "fit-selection-for-normal-mode",
+    ] {
+        let mut app = configured(&format!("bind: {{select: {{F1: {action}}}}}"));
+        seed(&mut app, "abc\ndef");
+        press(&mut app, 'x');
+        key(&mut app, KeyCode::Function(1), Modifiers::NONE);
+        if action == "replace-char" {
+            press(&mut app, 'z');
+        }
+        assert_eq!(app.mode, Mode::Select, "{action}");
+        assert!(app.line_select.is_none(), "{action}");
+        press(&mut app, 'l');
+        assert_eq!(app.mode, Mode::Select, "{action} then motion");
     }
 }

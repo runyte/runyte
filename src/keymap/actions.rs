@@ -305,6 +305,10 @@ fn terminal_copies(
 /// Whether `keys.bind` can recreate `binding` in `mode`: an implemented
 /// built-in action, on a key the grammar does not keep for itself.
 fn is_expressible(binding: &Binding, mode: Mode) -> bool {
+    binding.is_plain_action() && has_configurable_target(binding, mode)
+}
+
+fn has_configurable_target(binding: &Binding, mode: Mode) -> bool {
     binding.availability == BindingAvailability::Implemented
         && binding.sequence.len() <= 8
         && !is_reserved(mode, &binding.sequence)
@@ -335,7 +339,7 @@ fn is_default(binding: &Binding, mode: Mode, fast_pane_keys: bool) -> bool {
         && !(fast_pane_keys && single(super::is_fast_pane_key))
         && !terminal_escape
         && if binding.availability == BindingAvailability::Implemented {
-            is_expressible(binding, mode)
+            has_configurable_target(binding, mode)
         } else {
             !matches!(binding.target, BindingTarget::Plugin(_))
                 && !is_reserved(mode, &binding.sequence)
@@ -1040,6 +1044,36 @@ mod tests {
             .filter_map(|rest| rest.split_once('`'))
             .map(|(name, _)| name.to_owned())
             .collect()
+    }
+
+    #[test]
+    fn internal_mode_programs_are_removed_but_never_exported_as_bare_actions() {
+        use super::{BindingScope, Key, KeySequence, Mode, Value, default_bindings};
+        let defaults = default_bindings(None);
+        for mode in ["normal", "select"] {
+            for key in ["%", ";", "~", "r"] {
+                assert!(!defaults[mode].contains_key(Value::String(key.into())));
+            }
+        }
+        let source: Value = serde_yaml::from_str("defaults: false\nbind:\n  normal:\n    ':': open-command-palette\n  select:\n    Esc: enter-normal-mode\n  insert:\n    Esc: enter-normal-mode\n  replace:\n    Esc: enter-normal-mode\n").unwrap();
+        let compiled = super::super::configured::compile(&source, &super::super::keymap_for(false));
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        for mode in [Mode::Normal, Mode::Select] {
+            for key in [
+                Key::char('%'),
+                Key::char(';'),
+                Key::char('~'),
+                Key::char('r'),
+            ] {
+                assert!(
+                    !compiled
+                        .keymap
+                        .bindings_for_mode(mode)
+                        .any(|binding| binding.scope == BindingScope::Global
+                            && binding.sequence == KeySequence::from(key))
+                );
+            }
+        }
     }
 
     /// The user guide groups the `:help key-actions` inventory by topic, so it

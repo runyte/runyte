@@ -1272,7 +1272,32 @@ const LIST: &[Mode] = &[Mode::List];
 fn modal(sequence: impl Into<KeySequence>, command: EditorCommand) -> Binding {
     let sequence = sequence.into();
     let role = existing_binding_role(&sequence);
-    Binding::implemented(MODAL, sequence, command).with_role(role)
+    split_normal_exit(Binding::implemented(MODAL, sequence, command).with_role(role))
+}
+
+fn split_normal_exit(mut binding: Binding) -> Binding {
+    if binding.target == BindingTarget::Editor(EditorCommand::EnterNormalMode) {
+        binding.program = program::Program::new(vec![
+            actions::Action::Editor(EditorCommand::FitSelectionForNormalMode),
+            actions::Action::Invocation(CommandInvocation::mode_entry(Mode::Normal)),
+        ])
+        .expect("two-step Normal exit");
+    }
+    binding
+}
+
+fn modal_then_mode(
+    sequence: impl Into<KeySequence>,
+    command: EditorCommand,
+    mode: Mode,
+) -> Binding {
+    let mut binding = modal(sequence, command);
+    binding.program = program::Program::new(vec![
+        actions::Action::Editor(command),
+        actions::Action::Invocation(CommandInvocation::mode_entry(mode)),
+    ])
+    .expect("two-step built-in program");
+    binding
 }
 
 fn primary_modal(sequence: impl Into<KeySequence>, target: impl Into<BindingTarget>) -> Binding {
@@ -1339,7 +1364,7 @@ fn settings(sequence: impl Into<KeySequence>, command: EditorCommand) -> Binding
 fn insert(sequence: impl Into<KeySequence>, command: EditorCommand) -> Binding {
     let sequence = sequence.into();
     let role = existing_binding_role(&sequence);
-    Binding::implemented(INSERT, sequence, command).with_role(role)
+    split_normal_exit(Binding::implemented(INSERT, sequence, command).with_role(role))
 }
 
 fn terminal_insert(sequence: impl Into<KeySequence>, command: EditorCommand) -> Binding {
@@ -1420,9 +1445,9 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::char('A'), Command::InsertLineEnd),
         modal(Key::char('o'), Command::OpenLineBelow),
         modal(Key::char('O'), Command::OpenLineAbove),
-        modal(Key::char('r'), Command::ReplaceChar),
+        modal_then_mode(Key::char('r'), Command::ReplaceChar, Mode::Normal),
         modal(Key::char('R'), Command::EnterReplaceMode),
-        modal(Key::char('~'), Command::ToggleCase),
+        modal_then_mode(Key::char('~'), Command::ToggleCase, Mode::Normal),
         modal(Key::alt('u'), Command::SelectionUndo),
         modal(Key::alt('U'), Command::SelectionRedo),
         primary_modal(
@@ -1449,8 +1474,8 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::char('v'), Command::EnterSelectMode),
         modal(Key::char('x'), Command::SelectLine),
         modal(Key::char('X'), Command::ExtendLineAbove),
-        modal(Key::char('%'), Command::SelectAll),
-        modal(Key::char(';'), Command::CollapseSelection),
+        modal_then_mode(Key::char('%'), Command::SelectAll, Mode::Select),
+        modal_then_mode(Key::char(';'), Command::CollapseSelection, Mode::Normal),
         modal(Key::alt(';'), Command::FlipSelection),
         modal(Key::char(','), Command::KeepPrimarySelection),
         modal(Key::alt(','), Command::RemovePrimarySelection),

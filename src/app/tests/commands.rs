@@ -1108,14 +1108,14 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .iter()
             .filter(|exposure| **exposure == CommandExposure::ConfigurableOnly)
             .count(),
-        12
+        13
     );
     assert_eq!(
         exposures
             .iter()
             .filter(|exposure| **exposure == CommandExposure::Bound)
             .count(),
-        EditorCommand::ALL.len() - INTERNAL_EDITOR_COMMANDS.len() - 70
+        EditorCommand::ALL.len() - INTERNAL_EDITOR_COMMANDS.len() - 71
     );
 
     for spec in COMMANDS {

@@ -714,6 +714,17 @@ impl App {
             return false;
         };
         match command {
+            Command::FitSelectionForNormalMode => {
+                if self.mode == Mode::Insert {
+                    session.scroll_to_live();
+                } else {
+                    session.begin_review();
+                    session.collapse_review_selection();
+                    session.focus_review_selection(page, scroll_offset);
+                }
+                self.dismiss_popups();
+                true
+            }
             Command::EnterNormalMode if self.mode == Mode::Insert => {
                 // Terminal Normal is a live, non-input state of its own. The
                 // first Ctrl-\ leaves the child keyboard without freezing its
@@ -758,14 +769,12 @@ impl App {
             Command::SelectAll => {
                 session.select_all_review();
                 session.focus_review_selection(page, scroll_offset);
-                self.mode = Mode::Select;
                 let _ = session;
                 true
             }
             Command::CollapseSelection => {
                 session.collapse_review_selection();
                 session.focus_review_selection(page, scroll_offset);
-                self.mode = Mode::Normal;
                 let _ = session;
                 true
             }

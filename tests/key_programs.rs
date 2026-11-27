@@ -12,7 +12,7 @@ use runyte::{
 };
 
 #[test]
-fn programs_are_nonempty_bounded_and_all_defaults_are_plain_singletons() {
+fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
     assert!(Program::new(vec![]).is_err());
     assert!(Program::new(vec![Action::Editor(C::Yank); MAX_STEPS + 1]).is_err());
     assert_eq!(
@@ -26,9 +26,38 @@ fn programs_are_nonempty_bounded_and_all_defaults_are_plain_singletons() {
         Program::single(C::Yank.into())
     );
     for binding in default_keymap().bindings() {
-        assert_eq!(binding.program.len(), 1, "{}", binding.sequence);
-        assert_eq!(binding.program.last().target(), binding.target);
-        assert!(binding.is_plain_action());
+        assert!((1..=MAX_STEPS).contains(&binding.program.len()));
+        if binding.program.len() == 2 {
+            let BindingTarget::Editor(command) = binding.target else {
+                panic!("unexpected composed default")
+            };
+            let first = match command {
+                C::EnterNormalMode => C::FitSelectionForNormalMode,
+                C::SelectAll | C::CollapseSelection | C::ToggleCase | C::ReplaceChar => command,
+                _ => panic!("unclassified default program: {command:?}"),
+            };
+            assert_eq!(binding.program.get(0), Some(&Action::Editor(first)));
+            let Action::Invocation(mode) = binding.program.last() else {
+                panic!("expected pure mode step")
+            };
+            assert_eq!(mode.id(), CommandId::Editor(C::ModeEnter));
+            assert_eq!(
+                mode.parameters(),
+                &runyte::command::InvocationParameters::OptionalText(Some(
+                    if command == C::SelectAll {
+                        "select"
+                    } else {
+                        "normal"
+                    }
+                    .into()
+                ))
+            );
+            assert!(!binding.is_plain_action());
+        } else {
+            assert_eq!(binding.program.len(), 1);
+            assert_eq!(binding.program.last().target(), binding.target);
+            assert!(binding.is_plain_action());
+        }
         assert!(!binding.configured_actions);
     }
 }

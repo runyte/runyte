@@ -245,6 +245,28 @@ decision revises an earlier one, the earlier entry says so.
     `<Space>`, `<lt>` and modifier forms such as `<C-w>` cover keys that are
     not plain characters.
 
+28. **Pure mode entry (2026-11-27, delegated by the maintainer).** A mode
+    step changes mode without moving or collapsing selections. Normal-mode
+    selection fitting, including Insert-exit caret and append handling, is a
+    separate atomic action. Escape explicitly fits then enters Normal; paste
+    enters Normal without fitting. Pure mode steps remain internal in stage 3;
+    stage 5 exposes `{ action: mode-enter, arg: <mode> }`. Existing public
+    `enter-*-mode` actions remain until then and describe their selection fitting.
+29. **Linewise cuts remain distinct (2026-11-27, delegated by the maintainer).**
+    `x d` cuts whole rows into a linewise register; `x c` cuts operative spans
+    into a non-linewise register. Preserve two documented decision actions in
+    0.5. Revisit explicit linewise arguments in stage 5 rather than inferring
+    behavior from a later mode step.
+30. **Prompts own completion (2026-11-27, delegated by the maintainer).**
+    `search` and `search-regex` remain last-only decision actions; accepting
+    enters Select and their descriptors include Mode. Stage 5 supplied search
+    arguments allow synchronous composition. Resuming a program after an
+    interactive prompt is outside 0.5.
+31. **Native media splits follow 0.5 (2026-11-27, delegated by the maintainer).**
+    `media-back`, `media-move-up` and `media-move-down` remain documented
+    decision actions. Their fit, page and native-selection conditions belong
+    to the frontend; splitting them requires an authoritative state design.
+
 ## Model
 
 ```
@@ -519,15 +541,15 @@ syntax they are `{ action: mode-enter, arg: <mode> }`.
 | `paste-before` | Leaves the mode alone | `P`: `[paste-before, enter-normal-mode]` |
 | `toggle-case`, `replace-char` | Leave the mode alone | `~`, `r`: the action, then `enter-normal-mode`; `r` resumes after its operand |
 | `delete-selection`, `change-selection` | `delete-selection` leaves the mode alone; `change-selection` removed | `Alt-d`, `Alt-c` when bound: `[delete-selection, enter-normal-mode]` or `[delete-selection, enter-insert-mode]` |
-| `yank-delete-selection`, `yank-change-selection` | One decision action, `cut-selection` | `d`: `[cut-selection, enter-normal-mode]`; `c`: `[cut-selection, enter-insert-mode]` |
+| `yank-delete-selection`, `yank-change-selection` | Distinct documented decision actions (decision 29) | Preserve `x d` linewise and `x c` operative-span behavior; revisit arguments in stage 5 |
 | `search-selection` | Removed | `*`: `[search-set-from-selection, search-select-all-matches, enter-select-mode]` |
-| `search`, `search-regex` | Prompt actions; with an argument they run without a prompt | `s`, `/`: unchanged behaviour as programs ending in Select mode |
+| `search`, `search-regex` | Last-only prompt decision actions; stage 5 arguments bypass the prompt | `s`, `/`: prompt-owned acceptance enters Select (decision 30) |
 | `search-next`, `search-previous` | Leave the mode alone; new `search-extend-next`, `search-extend-previous` | `n`, `N`: the action, then `enter-select-mode` |
 | `select-all`, `collapse-selection` | Leave the mode alone | `%`: `[select-all, enter-select-mode]`; `;`: `[collapse-selection, enter-normal-mode]` |
 | `enter-select-mode` (toggles) | `mode-enter` with an argument; toggle as a program | `v`: `{ if: { mode: select }, then: [collapse-selection, enter-normal-mode], else: [enter-select-mode] }` |
 | `clipboard-paste-after`, `clipboard-paste-before` | Mirror the register actions | `Space c p`, `Space c P`: as `p`, `P` |
 | `directory-tree-left`, `directory-tree-right`, `directory-tree-open` | Split into collapse, select-parent, expand, select-first-child, open | Conditional programs in `directory-tree` |
-| `media-back`, `media-move-up`, `media-move-down` | Split into their steps | Conditional programs in `media` |
+| `media-back`, `media-move-up`, `media-move-down` | Documented decision actions through 0.5 | Native-state split deferred until after 0.5 (decision 31) |
 | `record-default-macro` (toggles) | Start only | `{ if: recording-macro, then: [macro-stop-recording], else: [macro-record-default] }` |
 | Terminal interceptions of `yank`, paste and search | Same meaning: described in the descriptor. Different meaning: terminal actions bound in the `terminal` mode (decision 16) | `terminal` `p`: `[paste-after, enter-insert-mode]` |
 | `join-lines`, insert-entry actions (`append-after`, `open-line-below`, ...) | Unchanged | Unchanged |
@@ -568,7 +590,11 @@ where input or help can reach the native frontend.
 5. **Step syntax, arguments and conditionals.** The `{ action:, arg: }` step
    form with `count`, `register` and `extend` fields (decisions 17 and 18),
    arguments that replace operands and prompts, `insert-text`, and
-   conditional steps with the documented condition set.
+   conditional steps with the documented condition set. Add mode-flow validation:
+   validate each step against the mode it will run in, derived from preceding
+   mode steps and independently for each conditional branch, rather than the
+   binding's starting mode. For example, `[enter-insert-mode, insert-newline]`
+   becomes valid.
 6. **Macros in configuration.** `keys.macros`, `macros.d/`, the compact
    notation, `{ macro: ... }` bindings, `:macro-save`, `copy-macro`, and the
    macro list showing keys (decisions 26 and 27).
@@ -649,3 +675,16 @@ YAML Runyte preset (decision 25).
 - `context/reference/startup-performance.md`
 - `context/plans/README.md`
 - `AGENTS.md` glossary (done with decision 15)
+
+### Atomic migration increments
+
+The first atomic increment introduces internal pure mode entry and
+`fit-selection-for-normal-mode`, rewrites Escape, and separates the mode
+steps from `select-all`, `collapse-selection`, `toggle-case` and `replace-char`.
+Public `enter-*-mode` actions retain their existing behavior. Current-format
+exports refuse internal mode programs rather than emitting an incomplete
+binding; commented examples omit them, independently of default removal.
+
+The remaining text, yank/paste, search and conditional default rewrites and
+exhaustive atomic/decision classification remain stage 3b work. Decisions
+29–31 specify the intentional decision actions rather than completed splits.

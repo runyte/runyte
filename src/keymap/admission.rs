@@ -26,6 +26,9 @@ pub fn admits(scope: BindingScope, target: BindingTarget) -> bool {
 /// Whether `command` does anything in `scope`. Every scope not listed here
 /// shows its buffer as text, where every command has its ordinary meaning.
 pub fn admits_command(scope: BindingScope, command: C) -> bool {
+    if command == C::FitSelectionForNormalMode {
+        return admits_command(scope, C::EnterNormalMode);
+    }
     match scope {
         BindingScope::Media => {
             !(addresses_text(command) && !MEDIA.contains(&command))
