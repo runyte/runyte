@@ -757,12 +757,7 @@ impl App {
             }
             Command::EnterSelectMode => {
                 session.begin_review();
-                self.mode = if self.mode == Mode::Select {
-                    session.collapse_review_selection();
-                    Mode::Normal
-                } else {
-                    Mode::Select
-                };
+                self.mode = Mode::Select;
                 session.focus_review_selection(page, scroll_offset);
                 let _ = session;
                 true

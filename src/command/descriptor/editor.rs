@@ -612,7 +612,10 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
-        C::DirectoryTreeLeft | C::DirectoryTreeRight => ActionPolicy {
+        C::DirectoryTreeCollapse
+        | C::DirectoryTreeSelectParent
+        | C::DirectoryTreeExpand
+        | C::DirectoryTreeSelectFirstChild => ActionPolicy {
             global_binding_modes: NONE,
             effects: &[View, Selection],
             count: CountBehavior::Reject,

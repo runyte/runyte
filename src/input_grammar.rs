@@ -105,6 +105,7 @@ pub enum GrammarNotice {
 #[derive(Clone, Eq, PartialEq)]
 pub enum EditorIntent {
     Command(CommandInvocation),
+    EvaluateCondition(crate::keymap::program::Condition),
     InsertText(String),
     Range(RangeIntent),
     Notice(GrammarNotice),
@@ -113,6 +114,10 @@ pub enum EditorIntent {
 impl fmt::Debug for EditorIntent {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::EvaluateCondition(condition) => formatter
+                .debug_tuple("EvaluateCondition")
+                .field(condition)
+                .finish(),
             Self::Command(invocation) => {
                 formatter.debug_tuple("Command").field(invocation).finish()
             }
@@ -201,7 +206,15 @@ struct ProgramExecution {
     program: crate::keymap::program::Program,
     next: usize,
     count: Option<usize>,
+    original_count: Option<usize>,
     count_step: Option<usize>,
+    frames: Vec<(crate::keymap::program::Program, usize)>,
+    pending_branch: Option<(
+        crate::keymap::program::Program,
+        crate::keymap::program::Program,
+    )>,
+    previous_continues: bool,
+    conditional: bool,
     availability: BindingAvailability,
     description: std::borrow::Cow<'static, str>,
     replay_reservation: Option<u64>,
@@ -268,9 +281,27 @@ impl ActiveGrammar {
         }
     }
 
+    pub(crate) fn resolve_condition(&mut self, value: bool) {
+        let Self::Runyte(grammar) = self;
+        grammar.resolve_condition(value);
+    }
+
+    pub(crate) fn condition_starts_program(&self) -> bool {
+        let Self::Runyte(grammar) = self;
+        grammar.program.as_ref().is_some_and(|p| p.next == 0)
+    }
+
+    pub(crate) fn conditional_program(&self) -> bool {
+        let Self::Runyte(grammar) = self;
+        grammar.program.as_ref().is_some_and(|p| p.conditional)
+    }
+
     pub(crate) fn program_repetitions(&self) -> Option<usize> {
         let Self::Runyte(grammar) = self;
         let p = grammar.program.as_ref()?;
+        if p.conditional {
+            return Some(1);
+        }
         if p.program.len() == 1 {
             return None;
         }
@@ -287,7 +318,7 @@ impl ActiveGrammar {
                                 EditorCommand::ReplayMacro | EditorCommand::ReplayDefaultMacro
                             )
                         ))
-                    .then_some(p.count.unwrap_or(1))
+                    .then_some(p.original_count.unwrap_or(1))
                 })
                 .unwrap_or(1),
         )
@@ -478,13 +509,32 @@ impl RunyteGrammar {
         self.program = Some(ProgramExecution {
             program: binding.program.clone(),
             next: 0,
+            original_count: self.count,
             count: self.count.take(),
             count_step: binding.program.count_step(),
+            frames: if binding.program.has_conditions() {
+                vec![(binding.program.clone(), 0)]
+            } else {
+                Vec::new()
+            },
+            pending_branch: None,
+            previous_continues: true,
+            conditional: binding.program.has_conditions(),
             availability: binding.availability,
             description: binding.description.clone(),
             replay_reservation: None,
         });
         Ok(self.next_program_intent()?.into_iter().collect())
+    }
+
+    pub fn resolve_condition(&mut self, value: bool) {
+        if let Some(program) = self.program.as_mut()
+            && let Some((then, otherwise)) = program.pending_branch.take()
+        {
+            program
+                .frames
+                .push((if value { then } else { otherwise }, 0));
+        }
     }
 
     /// Acknowledge successful completion and prepare the next step. Returns
@@ -496,25 +546,54 @@ impl RunyteGrammar {
         let Some(program) = self.program.as_mut() else {
             return Ok(None);
         };
-        // The compiler uses the same rule, but internal/default programs must
-        // not run a tail while a prompt, plugin or deferred operation owns input.
-        if program.next > 0
-            && !program
-                .program
-                .get(program.next - 1)
-                .unwrap()
-                .can_continue()
-        {
+        if program.pending_branch.is_some() {
+            return Ok(None);
+        }
+        if !program.previous_continues {
             self.program = None;
             return Ok(None);
         }
-        let Some(action) = program.program.get(program.next).cloned() else {
-            self.program = None;
-            return Ok(None);
+        let step = if !program.conditional {
+            let Some(step) = program.program.steps().get(program.next).cloned() else {
+                self.program = None;
+                return Ok(None);
+            };
+            step
+        } else {
+            loop {
+                let Some((body, next)) = program.frames.last_mut() else {
+                    self.program = None;
+                    return Ok(None);
+                };
+                if let Some(step) = body.steps().get(*next).cloned() {
+                    *next += 1;
+                    break step;
+                }
+                program.frames.pop();
+            }
         };
-        self.count = program
-            .count
-            .filter(|_| program.count_step == Some(program.next));
+        let action = match step {
+            crate::keymap::program::Step::If {
+                condition,
+                then,
+                otherwise,
+            } => {
+                program.pending_branch = Some((*then, *otherwise));
+                return Ok(Some(EditorIntent::EvaluateCondition(condition)));
+            }
+            crate::keymap::program::Step::Action(action) => action,
+        };
+        self.count = if action
+            .target()
+            .id()
+            .descriptor()
+            .is_some_and(|d| d.policy.count.accepts())
+        {
+            program.count.take()
+        } else {
+            None
+        };
+        program.previous_continues = action.can_continue();
         program.next += 1;
         let availability = program.availability;
         use crate::keymap::actions::Action;

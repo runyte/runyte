@@ -296,6 +296,17 @@ decision revises an earlier one, the earlier entry says so.
     name the bundled actions pending stage 4; that exception list must become
     empty when the postponed splits land.
 
+35. **Settle transient gestures before programs (2026-11-27, delegated by the maintainer).**
+    Before the first program step, the input layer applies the existing
+    per-action transient-gesture housekeeping. A line-selection gesture ends
+    and restores its previous mode unless the first step continues it.
+    Conditions observe that settled mode. This is input lifecycle handling,
+    not a public housekeeping action. `x v` and `X v` retain their selection
+    and enter Select; a second `v` collapses and enters Normal. Collapsing a
+    half-open mouse or syntax selection converts to inclusive endpoints first,
+    consistently with `collapse-selection`; its resulting caret can be one
+    character before the old raw half-open endpoint.
+
 ## Model
 
 ```
@@ -355,6 +366,15 @@ one of:
   which may carry the pending count into the next action in that mode.
 
 Conditions are a fixed, documented set evaluated at that step (decision 14).
+The internal set also includes tree-only `tree-entry-is-root`, needed to keep
+`h` at the root from collapsing it while Enter can still toggle it. Internal
+programs currently allow 16 total nodes across both branches and four levels
+of condition nesting. A skipped branch consumes neither a count nor operands.
+The first executed count-accepting action receives the count. During macro
+replay, conditional programs reserve repeated work at the selected action,
+before that action's effects; an earlier prefix may already have run because
+conditions can depend on its effects. Flat programs retain whole-program
+preflight. Macro replay actions retain their separate frame and depth bounds.
 There are no variables or loops. Nesting depth and total step count are
 bounded; stage 5 sets the numbers, starting from today's 16 actions per
 binding.
@@ -616,7 +636,10 @@ where input or help can reach the native frontend.
    existing family actions (decision 21), reporting old names. Report the old
    configuration shapes. Add `:keymap-export` (no default key) and migrate the
    Runyte preset to the new shape.
-5. **Step syntax, arguments and conditionals.** The `{ action:, arg: }` step
+5. **Step syntax, arguments and conditionals.** Update removed-action migration
+   hints to use the writable mode-argument form and test that every suggested
+   replacement compiles through the public configuration compiler.
+   The `{ action:, arg: }` step
    form with `count`, `register` and `extend` fields (decisions 17 and 18),
    arguments that replace operands and prompts, `insert-text`, and
    conditional steps with the documented condition set. Add mode-flow validation:
@@ -722,3 +745,12 @@ The next increment splits cuts and `*`, adds additive search extension, and
 interprets paste counts in one transaction. Stage 4 completes the postponed
 splits listed in decision 34. Public configuration cannot yet express internal
 pure mode steps, so exports continue to refuse those programs.
+
+The internal-conditional increment rewrites `v`, `Space m m` and directory-tree
+`h`/Left, `l`/Right, Enter, `v` and `s` as programs. Select entry and default
+macro recording are start-only actions; tree collapse, parent selection,
+expansion and first-child selection are separate actions, and tree file opens
+no longer toggle directories. Discovery renders both branches and scoped
+admission includes their leaf actions. Public conditional authoring remains
+stage 5; exhaustive classification and the embedded YAML preset remain the
+next stage 3b slices.

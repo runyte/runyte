@@ -806,3 +806,24 @@ fn system_clipboard_yank_copies_the_media_selection() {
     );
     assert!(!app.status.contains("does not apply"), "{}", app.status);
 }
+
+#[test]
+fn conditional_v_exits_native_media_select_without_changing_hidden_page_selection() {
+    for extension in ["png", "pdf"] {
+        let root = TestRuntimeRoot::new("media-conditional-v").unwrap();
+        let path = root.join(format!("page.{extension}"));
+        fs::write(&path, b"fixture").unwrap();
+        let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+        app.native_media = true;
+        app.open_file(path).unwrap();
+        let selection = app.active().selection.clone();
+        press(&mut app, 'v');
+        assert_eq!(app.mode, Mode::Select);
+        let requests = app.media_requests.len();
+        press(&mut app, 'v');
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(!app.status_error, "{}", app.status);
+        assert_eq!(app.active().selection, selection);
+        assert_eq!(app.media_requests.len(), requests);
+    }
+}

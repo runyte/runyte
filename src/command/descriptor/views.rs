@@ -15,7 +15,7 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
             views!(Terminal: "Leave child input for live Normal mode; otherwise capture review and collapse its selection")
         }
         C::EnterSelectMode => {
-            views!(Terminal: "Toggle Select mode over captured terminal output", Media: "Toggle selection of PDF text or an image region")
+            views!(Terminal: "Enter Select mode over captured terminal output", Media: "Begin selection of PDF text or an image region")
         }
         C::EnterInsertMode
         | C::AppendAfter
@@ -29,7 +29,7 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
             views!(Terminal: "Select all captured terminal output")
         }
         C::CollapseSelection => {
-            views!(Terminal: "Collapse the review selection")
+            views!(Terminal: "Collapse the review selection", Media: "Retain the native media selection; this surface has no document caret to collapse")
         }
         C::SelectLine | C::ExtendLineAbove | C::ExtendLineBelow | C::SelectLineUp => {
             views!(Terminal: "Select or extend captured output lines, entering Select mode for the line selection")

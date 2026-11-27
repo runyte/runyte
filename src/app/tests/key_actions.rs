@@ -1631,3 +1631,252 @@ fn counted_paste_handles_multiple_ranges_before_and_linewise_crlf() {
     assert_eq!(app.active().selection.primary(), Range::new(3, 4));
     assert_eq!(app.mode, Mode::Normal);
 }
+
+fn conditional_app(program: crate::keymap::program::Program) -> App {
+    use crate::keymap::{Binding, Key};
+    let mut app = configured("{}");
+    let mut binding = Binding::implemented(
+        &[Mode::Normal, Mode::Select],
+        Key::plain(KeyCode::Function(6)),
+        EditorCommand::Yank,
+    );
+    binding.program = program;
+    binding.description = "conditional test program".into();
+    let mut bindings = app.keymap.bindings().to_vec();
+    bindings.push(binding);
+    app.keymap = app.keymap.with_test_bindings(bindings).into();
+    app
+}
+
+#[test]
+fn conditional_programs_observe_live_mode_and_route_counts_only_into_taken_branches() {
+    use crate::keymap::{
+        actions::Action as A,
+        program::{Condition as C, Program as P, Step as S},
+    };
+    let program = P::from_steps(vec![
+        S::Action(A::Invocation(CommandInvocation::mode_entry(Mode::Select))),
+        S::If {
+            condition: C::Mode(Mode::Select),
+            then: Box::new(P::single(EditorCommand::MoveRight.into())),
+            otherwise: Box::new(P::single(EditorCommand::FindNextChar.into())),
+        },
+        S::Action(A::Editor(EditorCommand::MoveRight)),
+    ])
+    .unwrap();
+    let mut app = conditional_app(program);
+    seed(&mut app, "abcdef");
+    press(&mut app, '3');
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.active().selection.primary().head, 4);
+    assert!(app.grammar.awaiting_character().is_none());
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    assert_eq!(app.active().selection.primary().head, 0);
+
+    let program = P::from_steps(vec![
+        S::If {
+            condition: C::Mode(Mode::Select),
+            then: Box::new(P::single(EditorCommand::MoveLeft.into())),
+            otherwise: Box::new(P::from_steps(vec![]).unwrap()),
+        },
+        S::Action(A::Editor(EditorCommand::MoveRight)),
+    ])
+    .unwrap();
+    let mut app = conditional_app(program);
+    seed(&mut app, "abcdef");
+    press(&mut app, '3');
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, 3);
+}
+
+#[test]
+fn conditional_operands_resume_outer_tails_and_cancel_the_whole_program() {
+    use crate::keymap::{
+        actions::Action as A,
+        program::{Condition as C, Program as P, Step as S},
+    };
+    for cancel in [false, true] {
+        let program = P::from_steps(vec![
+            S::If {
+                condition: C::Mode(Mode::Normal),
+                then: Box::new(P::single(EditorCommand::FindNextChar.into())),
+                otherwise: Box::new(P::from_steps(vec![]).unwrap()),
+            },
+            S::Action(A::Editor(EditorCommand::MoveRight)),
+        ])
+        .unwrap();
+        let mut app = conditional_app(program);
+        seed(&mut app, "abc def");
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert_eq!(
+            app.grammar.awaiting_character(),
+            Some(EditorCommand::FindNextChar)
+        );
+        if cancel {
+            key(&mut app, KeyCode::Escape, Modifiers::NONE);
+        } else {
+            press(&mut app, 'd');
+        }
+        assert_eq!(
+            app.active().selection.primary().head,
+            if cancel { 0 } else { 5 }
+        );
+        assert!(app.grammar.awaiting_character().is_none());
+    }
+}
+
+#[test]
+fn conditional_edits_share_undo_and_failure_stops_the_outer_tail() {
+    use crate::keymap::{
+        actions::Action as A,
+        program::{Condition as C, Program as P, Step as S},
+    };
+    let program = P::from_steps(vec![
+        S::Action(A::Editor(EditorCommand::ToggleCase)),
+        S::If {
+            condition: C::Mode(Mode::Normal),
+            then: Box::new(
+                P::new(vec![
+                    A::Editor(EditorCommand::MoveRight),
+                    A::Editor(EditorCommand::ToggleCase),
+                ])
+                .unwrap(),
+            ),
+            otherwise: Box::new(P::from_steps(vec![]).unwrap()),
+        },
+    ])
+    .unwrap();
+    let mut app = conditional_app(program);
+    seed(&mut app, "abc");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(text(&app), "ABc");
+    press(&mut app, 'u');
+    assert_eq!(text(&app), "abc");
+
+    let program = P::from_steps(vec![
+        S::If {
+            condition: C::Mode(Mode::Normal),
+            then: Box::new(P::single(EditorCommand::SearchNext.into())),
+            otherwise: Box::new(P::from_steps(vec![]).unwrap()),
+        },
+        S::Action(A::Editor(EditorCommand::ToggleCase)),
+    ])
+    .unwrap();
+    let mut app = conditional_app(program);
+    seed(&mut app, "abc");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(app.status_error);
+    assert_eq!(text(&app), "abc");
+}
+
+#[test]
+fn select_toggle_settles_line_gestures_and_converts_half_open_endpoints() {
+    for line_key in ['x', 'X'] {
+        let mut app = configured("{}");
+        seed(&mut app, "abc\ndef\n");
+        press(&mut app, line_key);
+        let before = app.active().selection.clone();
+        press(&mut app, 'v');
+        assert_eq!(app.mode, Mode::Select);
+        assert_eq!(app.active().selection, before);
+        assert!(app.line_select.is_none());
+        press(&mut app, 'v');
+        assert_eq!(app.mode, Mode::Normal);
+    }
+    let mut app = configured("{}");
+    seed(&mut app, "abc\ndef");
+    app.mode = Mode::Select;
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(0, 4)));
+    app.active_mut()
+        .mark_selection_semantics(SelectionSemantics::HalfOpen);
+    press(&mut app, 'v');
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.active().selection.primary(), Range::point(3));
+}
+
+#[test]
+fn conditional_replay_checks_selected_command_and_range_work_before_effects() {
+    use crate::keymap::program::{Condition, Program};
+    for command in [EditorCommand::MoveRight, EditorCommand::SelectLine] {
+        for (count, budget, expected) in [
+            ("129", None, "per-action limit"),
+            ("3", Some(3), "safety limit"),
+        ] {
+            let mut app = conditional_app(Program::conditional(
+                Condition::Mode(Mode::Normal),
+                Program::single(command.into()),
+                Program::from_steps(vec![]).unwrap(),
+            ));
+            seed(&mut app, "abc\ndef\nghi\n");
+            let selection = app.active().selection.clone();
+            let inputs = count
+                .chars()
+                .map(|c| InputEvent::Key(KeyStroke::new(KeyCode::Char(c), Modifiers::NONE)))
+                .chain(std::iter::once(InputEvent::Key(KeyStroke::new(
+                    KeyCode::Function(6),
+                    Modifiers::NONE,
+                ))))
+                .collect();
+            app.macros.insert(DEFAULT_MACRO_REGISTER, inputs);
+            app.replay_macro(DEFAULT_MACRO_REGISTER, 1).unwrap();
+            if let Some(budget) = budget {
+                app.macro_replay.as_mut().unwrap().remaining_work = budget;
+            }
+            finish_macro_replay(&mut app);
+            assert!(app.status_error);
+            assert!(app.status.contains(expected), "{}", app.status);
+            assert_eq!(app.active().selection, selection);
+            assert!(!app.atomic_program_replay);
+        }
+    }
+}
+
+#[test]
+fn recording_default_is_start_only_but_default_binding_stops_any_recording() {
+    let mut app = configured("{}");
+    app.start_macro_recording('a');
+    app.record_default_macro();
+    assert!(app.status_error);
+    assert_eq!(app.recording_macro, Some('a'));
+    for c in [' ', 'm', 'm'] {
+        press(&mut app, c);
+    }
+    assert!(app.recording_macro.is_none());
+    assert!(app.macro_staging.is_empty());
+    assert!(app.macros[&'a'].is_empty());
+}
+
+#[test]
+fn conditional_macro_calls_keep_frame_scheduling_beyond_atomic_repeat_limit() {
+    use crate::keymap::program::{Condition, Program};
+    let mut app = conditional_app(Program::conditional(
+        Condition::Mode(Mode::Normal),
+        Program::single(EditorCommand::ReplayDefaultMacro.into()),
+        Program::from_steps(vec![]).unwrap(),
+    ));
+    seed(&mut app, &"a".repeat(160));
+    app.macros.insert(
+        DEFAULT_MACRO_REGISTER,
+        vec![InputEvent::Key(KeyStroke::new(
+            KeyCode::Char('l'),
+            Modifiers::NONE,
+        ))],
+    );
+    app.macros.insert(
+        'a',
+        "129"
+            .chars()
+            .map(|c| InputEvent::Key(KeyStroke::new(KeyCode::Char(c), Modifiers::NONE)))
+            .chain(std::iter::once(InputEvent::Key(KeyStroke::new(
+                KeyCode::Function(6),
+                Modifiers::NONE,
+            ))))
+            .collect(),
+    );
+    app.replay_macro('a', 1).unwrap();
+    finish_macro_replay(&mut app);
+    assert!(!app.status_error, "{}", app.status);
+    assert_eq!(app.active().selection.primary().head, 129);
+}

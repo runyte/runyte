@@ -77,6 +77,7 @@ fn addresses_text(command: C) -> bool {
 /// which is how a count before `g g` reaches a page. The jump list and macros
 /// work across buffers rather than inside this one.
 const MEDIA: &[C] = &[
+    C::CollapseSelection,
     C::EnterSelectMode,
     C::ClipboardYank,
     C::MoveLeft,
@@ -116,8 +117,10 @@ const TREE: &[C] = &[
     C::FocusDirectoryTree,
     C::DirectoryTreeUp,
     C::DirectoryTreeDown,
-    C::DirectoryTreeLeft,
-    C::DirectoryTreeRight,
+    C::DirectoryTreeCollapse,
+    C::DirectoryTreeSelectParent,
+    C::DirectoryTreeExpand,
+    C::DirectoryTreeSelectFirstChild,
     C::DirectoryTreeFirst,
     C::DirectoryTreeLast,
     C::DirectoryTreePageUp,

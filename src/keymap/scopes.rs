@@ -337,7 +337,11 @@ pub(crate) fn admit(scope: BindingScope, mode: Mode, name: &str) -> Option<Bindi
                                     == super::terminal_input::Route::EditorGrammar
                             })
                     })
-                    .map(|binding| (binding.target.name(), binding.target))
+                    .flat_map(|binding| {
+                        std::iter::once(binding.target)
+                            .chain(binding.program.iter().map(|action| action.target()))
+                            .map(|target| (target.name(), target))
+                    })
                     .collect::<HashMap<_, _>>();
                 if matches!(mode, Mode::Normal | Mode::Select) {
                     actions.extend(
@@ -401,7 +405,10 @@ pub(super) fn reference() -> String {
             }
             let targets = defaults
                 .bindings_for_scope(mode, scope)
-                .map(|binding| binding.target)
+                .flat_map(|binding| {
+                    std::iter::once(binding.target)
+                        .chain(binding.program.iter().map(|action| action.target()))
+                })
                 .chain(defaults.context_actions(scope).map(|action| action.target))
                 .chain((mode == Mode::List).then_some(BindingTarget::Editor(
                     crate::command::EditorCommand::ListClearFilter,

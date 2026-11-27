@@ -27,6 +27,22 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
     );
     for binding in default_keymap().bindings() {
         assert!((1..=MAX_STEPS).contains(&binding.program.len()));
+        if binding.program.has_conditions() {
+            assert!(matches!(
+                binding.target,
+                BindingTarget::Editor(
+                    C::EnterSelectMode
+                        | C::RecordDefaultMacro
+                        | C::DirectoryTreeCollapse
+                        | C::DirectoryTreeExpand
+                        | C::DirectoryTreeOpen
+                        | C::DirectoryTreeVertical
+                        | C::DirectoryTreeHorizontal
+                )
+            ));
+            assert!(!binding.is_plain_action());
+            continue;
+        }
         if binding.program.len() > 1 {
             let BindingTarget::Editor(command) = binding.target else {
                 panic!("unexpected composed default")
@@ -161,7 +177,7 @@ fn every_binding_kind_silently_drops_a_count_when_no_step_accepts_it() {
             let mut binding = Binding::implemented(
                 &[Mode::Normal],
                 Key::char('x'),
-                program.as_slice()[0].target(),
+                program.iter().next().unwrap().target(),
             );
             binding.program = program.clone();
             binding.configured_actions = configured;
@@ -333,4 +349,148 @@ fn paste_yank_cut_and_search_classification_names_postponed_stage_4_bundles() {
             assert!(binding.is_plain_action(), "{command:?}");
         }
     }
+}
+
+#[test]
+fn conditional_program_bounds_scope_and_continuation_cover_every_branch() {
+    use runyte::keymap::{
+        BindingScope as S,
+        program::{Condition as Cnd, MAX_DEPTH, Step},
+    };
+    let empty = || Program::from_steps(vec![]).unwrap();
+    let leaf = || Program::single(C::MoveRight.into());
+    assert!(empty().validate(S::Global).is_err());
+    let conditional = Program::conditional(Cnd::Mode(Mode::Select), leaf(), empty());
+    assert!(conditional.validate(S::Global).is_ok());
+    assert_eq!(conditional.iter().count(), 1);
+    for condition in [
+        Cnd::TreeEntryExpanded,
+        Cnd::TreeEntryIsDirectory,
+        Cnd::TreeEntryIsRoot,
+    ] {
+        let program = Program::conditional(condition, leaf(), empty());
+        assert!(program.validate(S::Global).is_err());
+        assert!(program.validate(S::DirectoryTree).is_ok());
+    }
+    let mut nested = leaf();
+    for _ in 0..MAX_DEPTH {
+        nested = Program::conditional(Cnd::RecordingMacro, nested, empty());
+    }
+    assert!(
+        Program::from_steps(vec![Step::If {
+            condition: Cnd::RecordingMacro,
+            then: Box::new(nested),
+            otherwise: Box::new(empty())
+        }])
+        .is_err()
+    );
+    let eight = Program::new(vec![Action::Editor(C::Yank); 8]).unwrap();
+    assert!(
+        Program::from_steps(vec![Step::If {
+            condition: Cnd::RecordingMacro,
+            then: Box::new(eight.clone()),
+            otherwise: Box::new(eight)
+        }])
+        .is_err()
+    );
+    for stop in [C::Search, C::ReplayDefaultMacro] {
+        let branch =
+            Program::conditional(Cnd::RecordingMacro, Program::single(stop.into()), leaf());
+        assert!(branch.validate(S::Global).is_ok());
+        let mut steps = branch.steps().to_vec();
+        steps.push(Step::Action(Action::Editor(C::MoveRight)));
+        assert!(
+            Program::from_steps(steps)
+                .unwrap()
+                .validate(S::Global)
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn conditional_discovery_shows_both_branches_and_refuses_incomplete_exports() {
+    use runyte::{command::discovery, keymap::BindingScope};
+    let map = default_keymap();
+    let binding = map
+        .bindings()
+        .iter()
+        .find(|b| b.target == C::EnterSelectMode.into())
+        .unwrap();
+    let rendered = discovery::binding_steps(binding, BindingScope::Global);
+    for expected in [
+        "mode: select",
+        "collapse-selection",
+        "mode-enter",
+        "enter-select-mode",
+        "else",
+    ] {
+        assert!(rendered.contains(expected), "{rendered}");
+    }
+    assert!(
+        discovery::binding_yaml(binding, Mode::Normal, None, map)
+            .unwrap_err()
+            .contains("conditional")
+    );
+    let only_conditional = Keymap::new(vec![binding.clone()]).unwrap();
+    for command in [C::EnterSelectMode, C::CollapseSelection, C::ModeEnter] {
+        assert!(
+            discovery::details(
+                CommandId::Editor(command),
+                &only_conditional,
+                Mode::Normal,
+                BindingScope::Global
+            )
+            .contains("mode: select")
+        );
+    }
+}
+
+#[test]
+fn scoped_configuration_and_discovery_admit_branch_only_tree_actions() {
+    use runyte::{
+        command::discovery,
+        keymap::{BindingScope, configured},
+    };
+    for command in [
+        C::DirectoryTreeSelectParent,
+        C::DirectoryTreeSelectFirstChild,
+    ] {
+        let name = command.metadata().name;
+        let source = format!(
+            "scopes: {{directory-tree: {{normal: {{F6: {name}}}, select: {{F6: {name}}}}}}}"
+        );
+        let result = configured::compile(&serde_yaml::from_str(&source).unwrap(), default_keymap());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        for mode in [Mode::Normal, Mode::Select] {
+            assert!(discovery::admitted_here(
+                CommandId::Editor(command),
+                mode,
+                BindingScope::DirectoryTree
+            ));
+        }
+        assert!(!discovery::admitted_here(
+            CommandId::Editor(command),
+            Mode::Normal,
+            BindingScope::Global
+        ));
+        assert!(discovery::guide_reference().contains(&format!("- `{name}`: normal, select")));
+    }
+}
+
+#[test]
+fn scoped_admission_preserves_representative_actions_rewritten_as_programs() {
+    use runyte::{
+        command::discovery,
+        keymap::{BindingScope, configured},
+    };
+    let source =
+        serde_yaml::from_str("scopes: {media: {normal: {F6: enter-normal-mode}}}").unwrap();
+    let result = configured::compile(&source, default_keymap());
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+    assert!(discovery::admitted_here(
+        CommandId::Editor(C::EnterNormalMode),
+        Mode::Normal,
+        BindingScope::Media
+    ));
 }

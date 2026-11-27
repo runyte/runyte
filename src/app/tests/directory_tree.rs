@@ -1848,3 +1848,64 @@ fn inherited_previous_search_program_preserves_tree_mode() {
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.directory_tree.focused);
 }
+
+#[test]
+fn conditional_tree_keys_preserve_root_directory_file_and_split_behavior() {
+    let (mut app, root) = isolated("tree-conditional-keys");
+    let sub = root.join("sub");
+    let file = sub.join("inner.txt");
+    fs::create_dir(&sub).unwrap();
+    fs::write(&file, "inner").unwrap();
+    chord(&mut app, 'd');
+    app.directory_tree.refresh(root.clone());
+    wait_for_tree_rows(&mut app, 2);
+    app.directory_tree.selected = root.clone();
+    press(&mut app, 'h');
+    assert!(tree_row_expanded(&app, &root));
+    assert_eq!(app.directory_tree.selected, root);
+    key(&mut app, KeyCode::Enter, Modifiers::NONE);
+    assert!(!tree_row_expanded(&app, &root));
+    key(&mut app, KeyCode::Right, Modifiers::NONE);
+    wait_for_tree_rows(&mut app, 2);
+    press(&mut app, 'l');
+    assert_eq!(app.directory_tree.selected, sub);
+    press(&mut app, 'v');
+    wait_for_tree_rows(&mut app, 3);
+    assert!(tree_row_expanded(&app, &sub));
+    assert_eq!(app.panes.len(), 1);
+    press(&mut app, 's');
+    assert!(!tree_row_expanded(&app, &sub));
+    assert_eq!(app.panes.len(), 1);
+    press(&mut app, 'l');
+    wait_for_tree_rows(&mut app, 3);
+    press(&mut app, 'l');
+    assert_eq!(app.directory_tree.selected, file);
+    press(&mut app, 'l');
+    assert_eq!(
+        app.directory_tree.selected, file,
+        "right on a file is a no-op"
+    );
+    key(&mut app, KeyCode::Left, Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, sub);
+    press(&mut app, 'h');
+    assert!(!tree_row_expanded(&app, &sub));
+    press(&mut app, 'h');
+    assert_eq!(app.directory_tree.selected, root);
+    for open in [KeyCode::Char('v'), KeyCode::Char('s'), KeyCode::Enter] {
+        app.directory_tree.selected = sub.clone();
+        press(&mut app, 'l');
+        wait_for_tree_rows(&mut app, 3);
+        app.directory_tree.selected = file.clone();
+        let panes = app.panes.len();
+        key(&mut app, open, Modifiers::NONE);
+        if panes > 1 {
+            assert!(app.directory_tree_destination.is_some());
+            press(&mut app, '1');
+        }
+        assert_eq!(app.active_buffer().path.as_deref(), Some(file.as_path()));
+        assert!(!app.directory_tree.focused);
+        assert_eq!(app.panes.len(), panes + usize::from(open != KeyCode::Enter));
+        chord(&mut app, 'd');
+    }
+    fs::remove_dir_all(root).unwrap();
+}

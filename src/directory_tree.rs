@@ -452,34 +452,37 @@ impl DirectoryTree {
         }
     }
 
-    pub fn collapse_or_parent(&mut self) {
-        if self.selected != self.root && self.expanded.remove(&self.selected) {
-            self.sync_monitor();
-            return;
-        }
-        if let Some(parent) = self
-            .selected
-            .parent()
-            .filter(|path| path.starts_with(&self.root))
-        {
+    pub fn selected_expanded(&self) -> bool {
+        self.expanded.contains(&self.selected)
+    }
+
+    pub fn collapse_selected(&mut self) {
+        self.expanded.remove(&self.selected);
+        self.sync_monitor();
+    }
+
+    pub fn select_parent(&mut self) {
+        if let Some(parent) = self.selected.parent().filter(|p| p.starts_with(&self.root)) {
             self.selected = parent.to_path_buf();
         }
     }
 
-    pub fn expand_or_child(&mut self, show_hidden: bool) {
+    pub fn expand_selected(&mut self, show_hidden: bool) {
+        if self.kind(&self.selected) == Some(EntryKind::Directory) {
+            self.expand(self.selected.clone(), show_hidden);
+        }
+    }
+
+    pub fn select_first_child(&mut self) {
         if self.kind(&self.selected) != Some(EntryKind::Directory) {
             return;
         }
-        if self.expanded.contains(&self.selected) {
-            let rows = self.rows();
-            if let Some(index) = rows.iter().position(|row| row.path == self.selected)
-                && let Some(child) = rows.get(index + 1)
-                && child.depth == rows[index].depth + 1
-            {
-                self.selected = child.path.clone();
-            }
-        } else {
-            self.expand(self.selected.clone(), show_hidden);
+        let rows = self.rows();
+        if let Some(index) = rows.iter().position(|row| row.path == self.selected)
+            && let Some(child) = rows.get(index + 1)
+            && child.depth == rows[index].depth + 1
+        {
+            self.selected = child.path.clone();
         }
     }
 
@@ -960,14 +963,14 @@ mod tests {
         tree.expand(folder.join("nested"), false);
         until(&mut tree, |_| true).await;
         tree.selected = folder.clone();
-        tree.collapse_or_parent();
+        tree.collapse_selected();
         assert_eq!(
             tree.monitor.lock().unwrap().targets,
             HashSet::from([root.0.clone()])
         );
         let file = folder.join("new");
         fs::write(&file, "new").unwrap();
-        tree.expand_or_child(false);
+        tree.expand_selected(false);
         until(&mut tree, |tree| tree.kind(&file).is_some()).await;
         tree.hide();
         assert!(tree.monitor.lock().unwrap().targets.is_empty());
@@ -1085,8 +1088,8 @@ mod tests {
         );
         tree.select_relative(1);
         assert_eq!(tree.selected, root.0.join("a"));
-        tree.expand_or_child(false);
-        tree.collapse_or_parent();
+        tree.expand_selected(false);
+        tree.collapse_selected();
         assert_eq!(tree.selected, root.0.join("a"));
         tree.reveal(&root.0.join(".hidden"), false).unwrap();
         await_rows(&mut tree, 4);
