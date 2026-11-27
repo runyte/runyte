@@ -667,7 +667,7 @@ jobs:
       # taking the runner's CPU. Release mode is the user-facing build, and one
       # test thread gives every budget the machine rather than a noisy share.
       - name: Test serialized release budgets
-        run: cargo test --release --locked --test performance -- --ignored --test-threads=1
+        run: cargo test --release --locked --features startup-timing --test performance -- --ignored --test-threads=1
       - name: Test serialized incremental reparse budget
         run: cargo test --release --locked --test syntax incremental_reparse_is_far_cheaper_than_a_full_parse -- --ignored --exact --test-threads=1
 

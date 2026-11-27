@@ -350,7 +350,15 @@ fn parse_section(section: &Value, errors: &mut Vec<String>) -> Option<Parsed> {
         };
         if !matches!(
             key,
-            "leader" | "window" | "rebind" | "bind" | "defaults" | "pointer" | "ui" | "scopes"
+            "preset"
+                | "leader"
+                | "window"
+                | "rebind"
+                | "bind"
+                | "defaults"
+                | "pointer"
+                | "ui"
+                | "scopes"
         ) {
             errors.push(format!("keys section rejected: unknown member {key:?}"));
             return None;
@@ -364,6 +372,19 @@ fn parse_section(section: &Value, errors: &mut Vec<String>) -> Option<Parsed> {
             Some(_) => Err(format!("keys section rejected: {name} must be a string")),
         }
     };
+    match string("preset") {
+        Ok(None) => {}
+        Ok(Some(name)) if super::presets::NAMES.contains(&name.as_str()) => {}
+        Ok(Some(name)) => {
+            errors.push(format!(
+                "keys.preset: unknown embedded preset {name:?}; using runyte"
+            ));
+        }
+        Err(error) => {
+            errors.push(error);
+            return None;
+        }
+    }
     let leader_source = match string("leader") {
         Ok(value) => value,
         Err(error) => {

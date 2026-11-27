@@ -115,7 +115,14 @@ pub(super) fn mode_slice(mode: Mode) -> &'static [Mode] {
     }
 }
 
-fn parse_action(value: &Value, mode: Mode) -> Result<(Action, String), String> {
+pub(super) fn parse_action(
+    value: &Value,
+    mode: Mode,
+    preset: bool,
+) -> Result<(Action, String), String> {
+    if !preset && super::presets::has_stage5_steps(value) {
+        return Err(super::presets::STAGE5_DIAGNOSTIC.into());
+    }
     let (name, argument) = match value {
         Value::String(name) => (name.as_str(), None),
         Value::Mapping(mapping)
@@ -150,7 +157,7 @@ fn parse_action(value: &Value, mode: Mode) -> Result<(Action, String), String> {
         .copied()
         .find(|command| command.metadata().name == name);
     let action = if let Some(command) = editor {
-        if !editor_modes(command).contains(&mode) {
+        if !preset && !editor_modes(command).contains(&mode) {
             return Err(format!(
                 "{name} is not a configurable {} action",
                 mode_name(mode)
@@ -172,13 +179,14 @@ fn parse_action(value: &Value, mode: Mode) -> Result<(Action, String), String> {
         let invocation =
             command::parse_named_command(name, argument).map_err(|error| error.to_string())?;
         if let CommandId::Editor(command) = invocation.id() {
-            if !editor_modes(command).contains(&mode) {
+            if !preset && !editor_modes(command).contains(&mode) {
                 return Err(format!(
                     "{name} is not a configurable {} action",
                     mode_name(mode)
                 ));
             }
         } else if let CommandId::Colon(command) = invocation.id()
+            && !preset
             && !command.action_policy().global_binding_modes.contains(&mode)
         {
             return Err("colon-only commands require normal or select mode".into());
@@ -318,7 +326,7 @@ fn has_configurable_target(binding: &Binding, mode: Mode) -> bool {
             // without searching the command inventory for it.
             BindingTarget::Editor(command) => editor_modes(command).contains(&mode),
             BindingTarget::Colon(_) => {
-                parse_action(&Value::String(binding.target.name().into()), mode).is_ok()
+                parse_action(&Value::String(binding.target.name().into()), mode, false).is_ok()
             }
         }
 }
@@ -556,6 +564,33 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
             "sequence uses a reserved count, context-action, or prefix-cancellation key".into(),
         );
     }
+    let authored_description = if value.get("steps").is_some() {
+        let map = value.as_mapping().unwrap();
+        if !value.get("steps").is_some_and(Value::is_sequence) {
+            return Err("steps must be a nonempty action sequence".into());
+        }
+        if map
+            .keys()
+            .any(|key| !matches!(key.as_str(), Some("steps" | "description")))
+        {
+            return Err("binding metadata is reserved for embedded presets".into());
+        }
+        value
+            .get("description")
+            .map(|v| {
+                let label = v.as_str().ok_or("description must be a string")?;
+                if label.len() > 1024 || label.chars().any(char::is_control) {
+                    return Err(
+                        "description must be at most 1024 bytes without control characters",
+                    );
+                }
+                Ok(label)
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    let value = value.get("steps").unwrap_or(value);
     let values: Vec<&Value> = match value {
         Value::Null => Vec::new(),
         Value::Sequence(values) if !values.is_empty() && values.len() <= MAX_ACTIONS => {
@@ -568,7 +603,7 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
     };
     let parsed = values
         .into_iter()
-        .map(|value| parse_action(value, mode))
+        .map(|value| parse_action(value, mode, false))
         .collect::<Result<Vec<_>, _>>()?;
     for (action, _) in parsed.iter().take(parsed.len().saturating_sub(1)) {
         if !action.can_continue() {
@@ -578,11 +613,13 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
             ));
         }
     }
-    let description = parsed
-        .iter()
-        .map(|(_, label)| label.as_str())
-        .collect::<Vec<_>>()
-        .join(" → ");
+    let description = authored_description.map(str::to_owned).unwrap_or_else(|| {
+        parsed
+            .iter()
+            .map(|(_, label)| label.as_str())
+            .collect::<Vec<_>>()
+            .join(" → ")
+    });
     Ok(Rule {
         mode,
         sequence,

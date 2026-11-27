@@ -1,0 +1,2 @@
+# Pre-#152 src/keymap.rs (90dba021) has no windows-only bindings.
+# The complete registry is the shared runyte[-fast].txt fixture, with no additions.

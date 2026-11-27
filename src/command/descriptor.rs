@@ -11,8 +11,8 @@ mod editor;
 mod views;
 
 use super::{
-    COMMANDS, ColonCommand, CommandCategory, CommandContext, CommandId, CommandMetadata,
-    CommandSpec, EditorCommand, Mode,
+    ColonCommand, CommandCategory, CommandContext, CommandId, CommandMetadata, CommandSpec,
+    EditorCommand, Mode,
 };
 use crate::keymap::{BindingScope, BindingTarget, admission};
 
@@ -237,6 +237,12 @@ impl EditorCommand {
     }
 
     pub fn descriptor(self) -> ActionDescriptor {
+        CommandId::Editor(self)
+            .descriptor()
+            .expect("built-in action descriptor")
+    }
+
+    fn build_descriptor(self) -> ActionDescriptor {
         let id = CommandId::Editor(self);
         ActionDescriptor {
             id,
@@ -253,6 +259,12 @@ impl EditorCommand {
 
 impl ColonCommand {
     pub fn descriptor(self) -> ActionDescriptor {
+        CommandId::Colon(self)
+            .descriptor()
+            .expect("built-in action descriptor")
+    }
+
+    fn build_descriptor(self) -> ActionDescriptor {
         let id = CommandId::Colon(self);
         let spec = palette(id).expect("every colon action has a palette specification");
         ActionDescriptor {
@@ -363,14 +375,59 @@ impl ColonCommand {
 impl CommandId {
     /// Plugins have runtime metadata and are not part of the built-in catalog.
     pub fn descriptor(self) -> Option<ActionDescriptor> {
-        match self {
-            Self::Editor(c) => Some(c.descriptor()),
-            Self::Colon(c) => Some(c.descriptor()),
-            Self::Plugin(_) => None,
-        }
+        static DESCRIPTORS: std::sync::LazyLock<
+            std::collections::HashMap<CommandId, ActionDescriptor>,
+        > = std::sync::LazyLock::new(|| {
+            EditorCommand::ALL
+                .iter()
+                .copied()
+                .map(|c| (CommandId::Editor(c), c.build_descriptor()))
+                .chain(
+                    ColonCommand::ALL
+                        .iter()
+                        .copied()
+                        .map(|c| (CommandId::Colon(c), c.build_descriptor())),
+                )
+                .collect()
+        });
+        DESCRIPTORS.get(&self).copied()
     }
 }
 
 fn palette(id: CommandId) -> Option<&'static CommandSpec> {
-    COMMANDS.iter().find(|spec| spec.id == id)
+    super::command_spec(id)
+}
+
+#[cfg(test)]
+mod indexed_tests {
+    use super::*;
+    #[test]
+    fn cached_descriptors_retain_every_action_contract() {
+        for &command in EditorCommand::ALL {
+            assert_eq!(
+                format!("{:?}", command.descriptor()),
+                format!("{:?}", command.build_descriptor())
+            );
+        }
+        for &command in ColonCommand::ALL {
+            assert_eq!(
+                format!("{:?}", command.descriptor()),
+                format!("{:?}", command.build_descriptor())
+            );
+        }
+        assert!(CommandId::Plugin(42).descriptor().is_none());
+        for spec in super::super::COMMANDS {
+            for name in spec.names() {
+                let expected = super::super::COMMANDS
+                    .iter()
+                    .find(|s| s.name == name || s.aliases.contains(&name))
+                    .unwrap();
+                assert_eq!(
+                    format!("{:?}", super::super::resolve_command(name).unwrap()),
+                    format!("{expected:?}")
+                );
+            }
+        }
+        assert!(super::super::resolve_command("not-a-command").is_none());
+    }
 }

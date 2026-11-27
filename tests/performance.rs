@@ -17,7 +17,7 @@
 //! Wall-clock budgets are meaningful only when these heavyweight cases do not
 //! compete with one another. They are ignored by the ordinary debug suite and
 //! run serially in release mode by CI. The equivalent local command is:
-//! `cargo test --release --test performance -- --ignored --test-threads=1`.
+//! `cargo test --release --features startup-timing --test performance -- --ignored --test-threads=1`.
 
 use runyte::test_support::isolated_startup_config;
 
@@ -1157,4 +1157,55 @@ fn initial_syntax_does_not_delay_large_document_edits() {
         budget(FRAME),
     );
     assert!(editor.has_pending_syntax());
+}
+
+// Fresh processes prevent other performance cases from warming the preset's
+// LazyLocks. Only the in-process parse + program counters count toward this
+// ceiling: process launch and the pre-existing index are deliberately excluded.
+#[cfg(feature = "startup-timing")]
+#[test]
+#[ignore = "run serially in the release performance job"]
+fn embedded_preset_construction_stays_bounded() {
+    let elapsed = median_of("embedded preset parse + programs", 5, || {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "embedded_preset_phase_fixture",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("RUNYTE_PRESET_PHASE_FIXTURE", "1")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let ns = stdout
+            .lines()
+            .find_map(|line| line.strip_prefix("preset_ns="))
+            .expect("phase fixture must report its measurement")
+            .parse::<u64>()
+            .unwrap();
+        Duration::from_nanos(ns)
+    });
+    // Around 3 ms locally; leave room for shared runners and slower CPUs,
+    // consistent with the pathological-regression ceilings in this suite.
+    within(
+        "embedded preset parse + programs",
+        elapsed,
+        budget(Duration::from_millis(15)),
+    );
+}
+
+#[cfg(feature = "startup-timing")]
+#[test]
+#[ignore = "owned by the cold-process preset performance test"]
+fn embedded_preset_phase_fixture() {
+    if std::env::var_os("RUNYTE_PRESET_PHASE_FIXTURE").is_none() {
+        return;
+    }
+    std::hint::black_box(runyte::keymap::default_keymap());
+    let [yaml, programs, _index] = runyte::keymap::presets::initialization_timings_ns();
+    assert!(yaml > 0 && programs > 0);
+    println!("\npreset_ns={}", yaml + programs);
 }

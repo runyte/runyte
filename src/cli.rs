@@ -2438,10 +2438,9 @@ async fn run(
                     app.apply_event(HostEvent::Syntax(event));
                     #[cfg(feature = "startup-timing")]
                     if app.syntax.first().is_some_and(Option::is_some)
-                        && startup.note_initial_syntax_ready() {
-                        if let Err(error) = startup.write_requested() {
-                            app.report_host_error(format!("failed to write startup timing report: {error}"));
-                        }
+                        && startup.note_initial_syntax_ready()
+                        && let Err(error) = startup.write_requested() {
+                        app.report_host_error(format!("failed to write startup timing report: {error}"));
                     }
                 } else {
                     app.syntax_worker_stopped();
@@ -3559,10 +3558,9 @@ async fn run_host_server(
                     host.apply_event(HostEvent::Syntax(event));
                     #[cfg(feature = "startup-timing")]
                     if host.syntax.first().is_some_and(Option::is_some)
-                        && startup.note_initial_syntax_ready() {
-                        if let Err(error) = startup.write_requested() {
-                            host.report_host_error(format!("failed to write startup timing report: {error}"));
-                        }
+                        && startup.note_initial_syntax_ready()
+                        && let Err(error) = startup.write_requested() {
+                        host.report_host_error(format!("failed to write startup timing report: {error}"));
                     }
                     changed = true;
                 } else {
