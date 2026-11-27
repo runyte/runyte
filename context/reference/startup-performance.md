@@ -18,6 +18,43 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — ARM debug named-mode initialization
+
+The repeated ARM native-preview acceptance failure on
+[#153](https://github.com/runyte/runyte/pull/153) prompted a same-runner
+comparison with merged #152 (`5766b8f3`). These are isolated
+`preset_startup` measurements, not end-to-end editor readiness. Both binaries
+use `cargo build --locked --features startup-timing --example preset_startup`
+on GitHub's `ubuntu-24.04-arm` runner. Each comparison discards one warm-up per
+binary, then alternates ten fresh-process samples per binary.
+
+Before the optimization, [run 46079777228](https://github.com/runyte/runyte/actions/runs/46079777228)
+measured 119.718 ms baseline versus 160.124 ms at `5a1bed90`: +40.406 ms
+(+33.75%). Construction/indexing accounted for +36.977 ms. Empty named
+children repeatedly resolved the same inheritance chain before sharing their
+lookup index.
+
+The construction-local cache in `f4613782` skips nodes with neither bindings
+nor tombstones when resolving an effective list. Nodes with either still walk
+the complete raw inheritance chain; descendant tombstones can expose an
+ancestor's longer sequence. Named identity and input policy remain separate.
+No disk cache is introduced.
+
+[Run 46081041091](https://github.com/runyte/runyte/actions/runs/46081041091)
+measured the optimized version against the same baseline:
+
+| Phase | #152 baseline ms | Optimized #153 ms |
+| --- | ---: | ---: |
+| Typed YAML parsing | 15.385 (15.243–15.481) | 17.328 (17.118–17.478) |
+| Programs and metadata | 5.953 (5.911–5.993) | 7.153 (7.135–7.182) |
+| Construction and lookup index | 97.650 (96.576–98.132) | 89.420 (89.120–89.701) |
+| Total keymap initialization | 119.034 (117.750–119.404) | 113.935 (113.689–114.130) |
+
+Cells are median (min–max). Total median improves by 5.099 ms (4.28%).
+Debug-profile timings do not establish release or desktop readiness costs.
+The preview fixture now waits for the expected host state and its acknowledged
+painted frame instead of assuming a fixed pause is sufficient.
+
 ## 2026-11-27 — named binding modes (stage 4a)
 
 Stage 4a of [#132](https://github.com/runyte/runyte/issues/132), based on
