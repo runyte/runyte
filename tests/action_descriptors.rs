@@ -3,32 +3,32 @@
 use runyte::command::EditorCommand;
 use runyte::keymap::{BindingTarget, actions};
 
-// Captured before stage 1 from the stage 0 implementation. This is a migration
-// contract, not a generated expectation: changing descriptor policy must not
-// silently change configuration admission or semantic invocation validation.
+// Every built-in identity follows the same effect rule, including colon-only
+// actions. Operands are resumable; prompts and deferred work own the tail.
 #[test]
-fn legacy_action_contract_is_preserved() {
-    let actual: String = EditorCommand::ALL
+fn continuation_follows_effects_for_every_builtin_action() {
+    use runyte::command::{
+        ColonCommand, CommandId, InvocationParameters, descriptor::ActionEffect,
+    };
+    for id in EditorCommand::ALL
         .iter()
-        .map(|&c| {
-            format!(
-                "{:?}\t{}\t{:?}\t{}\t{}\t{}\t{:?}\t{}\t{}\n",
-                c,
-                c.metadata().name,
-                actions::editor_modes(c),
-                c.accepts_count(),
-                actions::can_continue(BindingTarget::Editor(c)),
-                c.is_mutating(),
-                c.category(),
-                c.takes_character(),
-                c.takes_second_character()
-            )
-        })
-        .collect();
-    assert_eq!(
-        actual,
-        include_str!("fixtures/action_descriptor_legacy.tsv")
-    );
+        .copied()
+        .map(CommandId::Editor)
+        .chain(ColonCommand::ALL.iter().copied().map(CommandId::Colon))
+    {
+        let d = id.descriptor().unwrap();
+        let expected = !d
+            .policy
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, ActionEffect::Prompt | ActionEffect::Background));
+        assert_eq!(
+            d.can_continue(&InvocationParameters::None),
+            expected,
+            "{id:?}"
+        );
+    }
+    assert!(!actions::can_continue(BindingTarget::Plugin(42)));
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn every_builtin_identity_has_a_complete_descriptor() {
 }
 
 #[test]
-fn descriptors_distinguish_effects_from_legacy_admission() {
+fn descriptors_distinguish_effects_from_writable_admission() {
     use EditorCommand as C;
     use runyte::command::{ColonCommand, descriptor::*};
     assert_eq!(
@@ -127,9 +127,13 @@ fn descriptors_distinguish_effects_from_legacy_admission() {
         BufferMutation::MayMutate
     );
     assert!(!C::AlignSelections.is_mutating());
-    for c in [C::EnterInsertMode, C::SplitVertical] {
-        assert!(!actions::can_continue(BindingTarget::Editor(c)));
-    }
+    assert!(actions::can_continue(BindingTarget::Editor(
+        C::EnterInsertMode
+    )));
+    // A split can also open a path, which has prompt/background effects.
+    assert!(!actions::can_continue(BindingTarget::Editor(
+        C::SplitVertical
+    )));
     assert!(
         C::EnterInsertMode
             .action_policy()
@@ -192,10 +196,9 @@ fn palette_arguments_and_interactive_operands_remain_separate() {
 }
 
 #[test]
-fn configuration_still_rejects_legacy_sequence_and_mode_boundaries() {
+fn configuration_rejects_blocking_effects_and_retains_mode_boundaries() {
     use runyte::keymap::{configured, default_keymap};
     for source in [
-        "bind: {normal: {F8: [enter-insert-mode, move-left]}}",
         "bind: {normal: {F8: [split-vertical, move-left]}}",
         "bind: {normal: {F8: [{command: pipe, argument: sort}, move-left]}}",
         "bind: {normal: {F8: list-next}}",
@@ -437,4 +440,18 @@ fn owned_continuations_and_specialized_mode_transitions_are_described() {
             .effects
             .contains(&E::Configuration)
     );
+}
+
+#[test]
+fn explicit_plugin_invocations_are_always_last() {
+    use runyte::command::{
+        CommandExecutionContext, CommandId, CommandInvocation, InvocationParameters,
+    };
+    let invocation = CommandInvocation::from_parts(
+        CommandId::Plugin(42),
+        InvocationParameters::None,
+        CommandExecutionContext::default(),
+    )
+    .unwrap();
+    assert!(!actions::Action::Invocation(invocation).can_continue());
 }

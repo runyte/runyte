@@ -1,10 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Exhaustive editor action policies. Adding an identity requires classifying
 //! it here; no default category guesses or scans of the built-in keys occur.
-use super::{
-    ActionEffect::*, ActionPolicy, BufferMutation, CountBehavior, LegacySequencePosition,
-    OperandArity,
-};
+use super::{ActionEffect::*, ActionPolicy, BufferMutation, CountBehavior, OperandArity};
 use crate::command::{EditorCommand as C, Mode};
 const ALL: &[Mode] = &[Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace];
 const NORMAL_SELECT: &[Mode] = &[Mode::Normal, Mode::Select];
@@ -20,7 +17,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenCommandPalette => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -29,7 +25,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::MoveLeft | C::MoveRight | C::MoveUp | C::MoveDown | C::PageUp | C::PageDown => {
             ActionPolicy {
@@ -39,7 +34,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
                 operands: OperandArity::Zero,
                 requires_writable_buffer: false,
                 buffer_mutation: BufferMutation::Unchanged,
-                legacy_sequence_position: LegacySequencePosition::Continue,
             }
         }
         C::MoveLineStart | C::MoveLineEnd => ActionPolicy {
@@ -49,7 +43,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::MoveFirstNonWhitespace
         | C::KeepPrimarySelection
@@ -68,7 +61,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::MoveFileStart | C::MoveFileEnd => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -77,7 +69,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::MoveWordForward
         | C::MoveWordBackward
@@ -95,7 +86,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::FindNextChar | C::FindPreviousChar | C::FindTillNextChar | C::FindTillPreviousChar => {
             ActionPolicy {
@@ -105,7 +95,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
                 operands: OperandArity::One,
                 requires_writable_buffer: false,
                 buffer_mutation: BufferMutation::Unchanged,
-                legacy_sequence_position: LegacySequencePosition::Last,
             }
         }
         C::HalfPageUp | C::HalfPageDown => ActionPolicy {
@@ -115,7 +104,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::EnterInsertMode
         | C::EnterReplaceMode
@@ -128,7 +116,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenLineBelow | C::OpenLineAbove => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -137,7 +124,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ReplaceChar | C::SurroundAdd | C::SurroundDelete => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -146,7 +132,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::One,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::SurroundReplace => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -155,7 +140,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Two,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ToggleCase | C::ReplaceWithRegister | C::DeleteSelection => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -164,7 +148,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::Undo | C::PasteAfter => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -173,7 +156,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::Redo => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -182,7 +164,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::Yank | C::YankLine => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -191,7 +172,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::YankCollapseNormalMode | C::YankLineCollapseNormalMode => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -200,7 +180,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::PasteAfterOrReplace | C::PasteBefore => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -209,7 +188,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::Indent | C::Unindent => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -218,7 +196,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::ToggleComments => ActionPolicy {
             global_binding_modes: ALL,
@@ -227,7 +204,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::YankDeleteSelection => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -236,7 +212,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::YankChangeSelection => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -245,7 +220,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ChangeSelection => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -254,7 +228,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::EnterSelectMode => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -263,7 +236,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::SelectLine | C::ExtendLineAbove | C::ExtendLineBelow | C::SelectLineUp => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -272,7 +244,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::SelectAll
         | C::CollapseSelection
@@ -287,7 +258,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::ExpandSyntaxSelection
         | C::ShrinkSyntaxSelection
@@ -301,7 +271,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::SelectSyntaxFunction
         | C::SelectInsideSyntaxFunction
@@ -337,7 +306,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::GotoPreviousSyntaxFunction
         | C::GotoNextSyntaxFunction
@@ -351,7 +319,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::DocumentOutline
         | C::ToggleSyntaxFold
@@ -375,7 +342,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::CopySelectionDownPadded | C::CopySelectionUpPadded | C::AlignSelections => {
             ActionPolicy {
@@ -385,7 +351,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
                 operands: OperandArity::Zero,
                 requires_writable_buffer: false,
                 buffer_mutation: BufferMutation::MayMutate,
-                legacy_sequence_position: LegacySequencePosition::Continue,
             }
         }
         C::RotateSelectionContentsForward | C::RotateSelectionContentsBackward => ActionPolicy {
@@ -395,7 +360,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::KeepMatchingSelections | C::RemoveMatchingSelections => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -404,7 +368,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::TrimTrailingWhitespace => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -413,7 +376,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::HardWrap | C::Reflow | C::JoinLines | C::FormatTable => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -422,7 +384,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::JoinSelections => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -431,7 +392,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::Search | C::SearchRegex => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -440,7 +400,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::SearchSelection => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -449,7 +408,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::SetSearchFromSelection => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -458,7 +416,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::MediaShowPage | C::MediaBack => ActionPolicy {
             global_binding_modes: NONE,
@@ -467,7 +424,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::MediaZoomIn
         | C::MediaZoomOut
@@ -490,7 +446,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::MediaMoveUp | C::MediaMoveDown => ActionPolicy {
             global_binding_modes: NONE,
@@ -499,7 +454,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::MediaCopySelection => ActionPolicy {
             global_binding_modes: NONE,
@@ -508,7 +462,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::MediaSelectAll
         | C::DirectoryTreeUp
@@ -533,7 +486,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ScrollViewDown | C::ScrollViewUp => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -542,7 +494,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::GotoFile => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -551,16 +502,15 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::GotoWord => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Operand, Selection],
+            // Jump labels own input outside the resumable character-operand grammar.
+            effects: &[Prompt, Selection],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ToggleSoftWrap | C::ToggleWhitespace => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -569,7 +519,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::PreviewDocument => ActionPolicy {
             global_binding_modes: NONE,
@@ -578,7 +527,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ToggleFocus | C::ToggleHiddenFiles | C::ToggleDirectoryDetails => ActionPolicy {
             global_binding_modes: NONE,
@@ -587,7 +535,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenExplorer | C::OpenWorkingDirectoryExplorer => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -596,7 +543,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ToggleDirectoryTree | C::FocusDirectoryTree => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -605,7 +551,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::DirectoryTreeLeft | C::DirectoryTreeRight => ActionPolicy {
             global_binding_modes: NONE,
@@ -614,7 +559,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::DirectoryTreeOpen
         | C::DirectoryTreePane1
@@ -632,7 +576,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::DirectoryTreeClose => ActionPolicy {
             global_binding_modes: NONE,
@@ -641,7 +584,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::DirectoryTreeRefresh => ActionPolicy {
             global_binding_modes: NONE,
@@ -650,7 +592,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::DirectoryTreeVertical | C::DirectoryTreeHorizontal => ActionPolicy {
             global_binding_modes: NONE,
@@ -659,7 +600,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::DirectoryTreeNew
         | C::DirectoryTreeRename
@@ -671,7 +611,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenFilePicker | C::OpenAllFilesPicker => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -680,7 +619,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenPathFilePicker => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -689,7 +627,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenDirectoryFilePicker | C::OpenFuzzyGrep | C::OpenDirectoryFuzzyGrep => ActionPolicy {
             global_binding_modes: NONE,
@@ -698,7 +635,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenDirectoryEntry => ActionPolicy {
             global_binding_modes: NONE,
@@ -707,7 +643,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenParentDirectory => ActionPolicy {
             global_binding_modes: NONE,
@@ -716,7 +651,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::RefreshDirectory => ActionPolicy {
             global_binding_modes: NONE,
@@ -725,7 +659,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ChooseExplorerOrder => ActionPolicy {
             global_binding_modes: NONE,
@@ -734,7 +667,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenExplorerSystem
         | C::OpenExplorerFinder
@@ -748,7 +680,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenChangedFile | C::CheckoutBranch | C::PullBranch => ActionPolicy {
             global_binding_modes: NONE,
@@ -757,7 +688,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::StageAllChangedFiles
         | C::OpenGitConflict
@@ -771,7 +701,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::CreateBranch
         | C::DeleteBranch
@@ -784,7 +713,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::MergeBranch | C::ContinueMerge => ActionPolicy {
             global_binding_modes: NONE,
@@ -793,7 +721,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenGitConflicts => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -802,7 +729,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::AbortMerge
         | C::ResolveConflictLiteralMarkers
@@ -815,7 +741,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::NextConflict | C::PreviousConflict => ActionPolicy {
             global_binding_modes: NONE,
@@ -824,7 +749,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::KeepConflictCurrent | C::TakeConflictOther => ActionPolicy {
             global_binding_modes: NONE,
@@ -833,7 +757,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ReturnToGitConflicts
         | C::NextGitNetworkPage
@@ -846,7 +769,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::MergeReviewApprove | C::MergeReviewEnter => ActionPolicy {
             global_binding_modes: NONE,
@@ -855,7 +777,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::PreviousGitNetworkPage | C::ShowTerminal => ActionPolicy {
             global_binding_modes: NONE,
@@ -864,7 +785,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenWorkspaceSearchResult => ActionPolicy {
             global_binding_modes: NONE,
@@ -873,7 +793,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OverrideSettingLanguage | C::OverrideSettingPattern | C::ActivateSetting => {
             ActionPolicy {
@@ -883,7 +802,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
                 operands: OperandArity::Zero,
                 requires_writable_buffer: false,
                 buffer_mutation: BufferMutation::Unchanged,
-                legacy_sequence_position: LegacySequencePosition::Last,
             }
         }
         C::RemoveSettingOverride => ActionPolicy {
@@ -893,7 +811,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenSettings | C::ShowHelp | C::LeaveTerminal => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -902,7 +819,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenThemeSettings => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -911,7 +827,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::SplitVertical | C::SplitHorizontal => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -920,7 +835,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::Save => ActionPolicy {
             global_binding_modes: ALL,
@@ -929,7 +843,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ForceSave => ActionPolicy {
             global_binding_modes: NONE,
@@ -938,7 +851,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ShowTutorial => ActionPolicy {
             global_binding_modes: NONE,
@@ -947,7 +859,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::FocusWindowLeft
         | C::FocusWindowDown
@@ -960,7 +871,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::SwapWindow
         | C::MoveWindowLeft
@@ -973,7 +883,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::CloseWindow => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -982,7 +891,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OnlyWindow | C::EqualizeWindows => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -991,7 +899,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenTerminal => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -1000,7 +907,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenTerminalFileDirectory
         | C::OpenTerminalDirectoryRoot
@@ -1012,7 +918,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::RenameTerminal => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -1021,7 +926,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::SendToTerminal => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -1030,7 +934,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::DeleteWordBackward
         | C::DeleteWordForward
@@ -1047,7 +950,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Continue,
         },
         C::CommitUndoCheckpoint => ActionPolicy {
             global_binding_modes: NONE,
@@ -1056,7 +958,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::GotoDefinition
         | C::GotoDeclaration
@@ -1071,7 +972,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::OpenNavigator | C::PreviousDestination => ActionPolicy {
             global_binding_modes: ALL,
@@ -1080,7 +980,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::PreviousSession | C::NextRunningSession | C::PreviousRunningSession => ActionPolicy {
             global_binding_modes: ALL,
@@ -1089,7 +988,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::Session1
         | C::Session2
@@ -1106,7 +1004,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ListAccept | C::ListOpenActions => ActionPolicy {
             global_binding_modes: NONE,
@@ -1115,7 +1012,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ListCloseTarget => ActionPolicy {
             global_binding_modes: NONE,
@@ -1124,7 +1020,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::GlobalSearch | C::GlobalSearchRegex | C::WorkspaceSymbols => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -1133,7 +1028,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::TriggerCompletion => ActionPolicy {
             global_binding_modes: ALL,
@@ -1142,7 +1036,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::JumpBackward | C::JumpForward | C::JumpBackwardBuffer | C::JumpForwardBuffer => {
             ActionPolicy {
@@ -1152,7 +1045,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
                 operands: OperandArity::Zero,
                 requires_writable_buffer: false,
                 buffer_mutation: BufferMutation::Unchanged,
-                legacy_sequence_position: LegacySequencePosition::Last,
             }
         }
         C::RenameSymbol | C::CodeAction => ActionPolicy {
@@ -1162,7 +1054,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ClipboardPasteAfter | C::ClipboardPasteBefore => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -1171,7 +1062,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ClipboardYank => ActionPolicy {
             global_binding_modes: ALL,
@@ -1180,7 +1070,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ClipboardPaste => ActionPolicy {
             global_binding_modes: ALL,
@@ -1189,7 +1078,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::SelectRegister => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -1198,7 +1086,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::One,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::RecordMacro => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -1207,7 +1094,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::One,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::RecordDefaultMacro => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -1216,7 +1102,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::StopMacroRecording => ActionPolicy {
             global_binding_modes: NONE,
@@ -1225,25 +1110,22 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ReplayMacro => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Operand, Macro, Text],
+            effects: &[Operand, Macro, Text, Background],
             count: CountBehavior::Repeat,
             operands: OperandArity::One,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ReplayDefaultMacro => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Macro, Text],
+            effects: &[Macro, Text, Background],
             count: CountBehavior::Repeat,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::ShellPipe => ActionPolicy {
             global_binding_modes: NONE,
@@ -1252,7 +1134,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::MayMutate,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
         C::MatchBracket => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
@@ -1261,7 +1142,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
-            legacy_sequence_position: LegacySequencePosition::Last,
         },
     }
 }

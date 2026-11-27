@@ -946,3 +946,13 @@ The 2026-11-26 discovery decision adds `describe-key` on `Space h k` and
 `Space ?` remains contextual `show-help`; `copy-key-binding` copies an inspected
 binding. `:keymap-export` has no default key and is deferred to stage 4 of #132,
 when it can export the merged binding table.
+
+### Program continuation
+
+Configured action lists now derive continuation from descriptor effects.
+Synchronous mode, view and pane actions can precede another step; character
+operands resume the remaining steps after input. Prompts, background work and
+plugin commands remain last-only. A prompt-replacing argument removes only the
+prompt effect. Mixed-effect actions retain all their constraints, including
+path-taking splits; queued macro replay is background work. Default key
+spellings and their single-action behavior are unchanged in this slice of #132.

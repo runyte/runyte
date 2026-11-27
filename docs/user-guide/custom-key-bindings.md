@@ -807,14 +807,31 @@ the commented built-in examples, since none are underneath.
 A list runs its actions directly, one after another. It never types keys or
 triggers other bindings.
 
-**Order.** Each action in the reference is marked `continue` or `last`.
+**Order.** Continuation follows each action's effects, including effects in
+specialized buffer types. Selection, text, mode, view, pane and other synchronous
+effects can continue. A character operand pauses the list; after it arrives,
+the next step runs. Escape cancels the remaining steps.
 
-- A `continue` action can be followed by another action.
-- A `last` action must end the list. These are actions that open a prompt,
-  wait for a character, change mode, or start background work.
-- So a list can end with `find-next-char`, which then waits for a character,
-  or with `enter-insert-mode`, which then accepts typing.
-- Nothing continues automatically after a prompt or background operation.
+Prompt and background effects must end the list. A supplied argument that
+replaces a prompt removes that prompt requirement, but does not remove background
+work. For example, `{ command: rename-terminal, argument: build }` can continue;
+`file-picker-path` still starts a scan and `pipe` still starts a worker, even
+with arguments. Plugin commands and queued macro replay must be last. The `goto-word` label
+chooser also owns input and remains last-only.
+
+Previously rejected lists such as `[enter-insert-mode, move-right,
+enter-normal-mode]`, `[find-next-char, yank]`, `[surround-replace, yank]`,
+`[focus-window-right, move-left]`, and `[show-help, move-file-end]` are now
+accepted. Colon commands with only synchronous effects can also continue.
+Mixed-effect actions such as `split-vertical` and `split-horizontal` remain
+last-only because their path-taking forms can prompt or start background work.
+All steps must still be bindable in the binding's starting mode; mode-flow
+validation is not yet part of the binding format.
+
+Nothing resumes a list after a prompt, confirmation, or background operation.
+If an earlier step opens a list or popup, a subsequent character-operand action
+is unavailable while that surface owns input; the program stops without leaving
+a pending operand behind.
 
 **Failure.** An error or unavailable action stops the list. So does
 `search-next` or `search-previous` finding no match, so the actions after it
@@ -917,24 +934,24 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `enter-normal-mode` | normal, select, insert, replace | must be the last action | Return to normal mode |
+| `enter-normal-mode` | normal, select, insert, replace | can be followed by another action | Return to normal mode |
 | `open-command-palette` | normal, select | must be the last action | Open the command palette |
 
 #### Editing actions
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `enter-insert-mode` | normal, select | must be the last action | Insert before the selection |
-| `enter-replace-mode` | normal, select | must be the last action | Replace text from each selection head |
-| `append-after` | normal, select | must be the last action | Insert after the selection |
-| `insert-line-start` | normal, select | must be the last action | Insert at line start |
-| `insert-line-end` | normal, select | must be the last action | Insert at line end |
-| `open-line-below` | normal, select | must be the last action | Open a line below |
-| `open-line-above` | normal, select | must be the last action | Open a line above |
-| `replace-char` | normal, select | must be the last action | Replace selection with a character |
-| `surround-add` | normal, select | must be the last action | Surround selections with a pair |
-| `surround-replace` | normal, select | must be the last action | Replace the surrounding pair |
-| `surround-delete` | normal, select | must be the last action | Delete the surrounding pair |
+| `enter-insert-mode` | normal, select | can be followed by another action | Insert before the selection |
+| `enter-replace-mode` | normal, select | can be followed by another action | Replace text from each selection head |
+| `append-after` | normal, select | can be followed by another action | Insert after the selection |
+| `insert-line-start` | normal, select | can be followed by another action | Insert at line start |
+| `insert-line-end` | normal, select | can be followed by another action | Insert at line end |
+| `open-line-below` | normal, select | can be followed by another action | Open a line below |
+| `open-line-above` | normal, select | can be followed by another action | Open a line above |
+| `replace-char` | normal, select | can be followed by another action | Replace selection with a character |
+| `surround-add` | normal, select | can be followed by another action | Surround selections with a pair |
+| `surround-replace` | normal, select | can be followed by another action | Replace the surrounding pair |
+| `surround-delete` | normal, select | can be followed by another action | Delete the surrounding pair |
 | `toggle-case` | normal, select | can be followed by another action | Switch case of the selection |
 | `undo` | normal, select | can be followed by another action | Undo the last change |
 | `redo` | normal, select | can be followed by another action | Redo the last change |
@@ -950,15 +967,15 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `unindent` | normal, select | can be followed by another action | Unindent the selected lines |
 | `toggle-comments` | normal, select, insert, replace | can be followed by another action | Comment or uncomment the selected lines |
 | `yank-delete-selection` | normal, select | can be followed by another action | Yank, then delete the selection or character |
-| `yank-change-selection` | normal, select | must be the last action | Yank, then change the selection or character |
+| `yank-change-selection` | normal, select | can be followed by another action | Yank, then change the selection or character |
 | `delete-selection` | normal, select | can be followed by another action | Delete the selection or character without yanking |
-| `change-selection` | normal, select | must be the last action | Change the selection or character without yanking |
-| `trim-trailing-whitespace` | normal, select | must be the last action | Delete trailing whitespace from every selected line |
-| `hard-wrap` | normal, select | must be the last action | Hard-wrap the selection |
-| `reflow` | normal, select | must be the last action | Reflow paragraphs in the selection |
+| `change-selection` | normal, select | can be followed by another action | Change the selection or character without yanking |
+| `trim-trailing-whitespace` | normal, select | can be followed by another action | Delete trailing whitespace from every selected line |
+| `hard-wrap` | normal, select | can be followed by another action | Hard-wrap the selection |
+| `reflow` | normal, select | can be followed by another action | Reflow paragraphs in the selection |
 | `join-selections` | normal, select | must be the last action | Join the selected lines with a typed delimiter |
-| `join-lines` | normal, select | must be the last action | Join the selected lines, or the line below, with a space |
-| `format-table` | normal, select | must be the last action | Align the columns of the selected table |
+| `join-lines` | normal, select | can be followed by another action | Join the selected lines, or the line below, with a space |
+| `format-table` | normal, select | can be followed by another action | Align the columns of the selected table |
 | `delete-word-backward` | insert, replace | can be followed by another action | Delete the previous word |
 | `delete-word-forward` | insert, replace | can be followed by another action | Delete the next word |
 | `delete-to-line-start` | insert, replace | can be followed by another action | Delete to the start of the line |
@@ -990,10 +1007,10 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `move-long-word-end` | normal, select | can be followed by another action | Move to next WORD end |
 | `goto-next-paragraph` | normal, select | can be followed by another action | Go to the next paragraph |
 | `goto-previous-paragraph` | normal, select | can be followed by another action | Go to the previous paragraph |
-| `find-next-char` | normal, select | must be the last action | Find next character |
-| `find-previous-char` | normal, select | must be the last action | Find previous character |
-| `find-till-next-char` | normal, select | must be the last action | Find before next character |
-| `find-till-previous-char` | normal, select | must be the last action | Find after previous character |
+| `find-next-char` | normal, select | can be followed by another action | Find next character |
+| `find-previous-char` | normal, select | can be followed by another action | Find previous character |
+| `find-till-next-char` | normal, select | can be followed by another action | Find before next character |
+| `find-till-previous-char` | normal, select | can be followed by another action | Find after previous character |
 | `page-up` | normal, select, insert, replace | can be followed by another action | Move one page up |
 | `page-down` | normal, select, insert, replace | can be followed by another action | Move one page down |
 | `half-page-up` | normal, select | can be followed by another action | Move half a page up |
@@ -1003,10 +1020,10 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `goto-window-bottom` | normal, select | can be followed by another action | Move to the bottom of the view |
 | `goto-file` | normal, select | must be the last action | Open the file or web link under the cursor |
 | `goto-word` | normal, select | must be the last action | Label visible words by proximity and jump to one |
-| `jump-backward` | normal, select | must be the last action | Jump to the previous position |
-| `jump-forward` | normal, select | must be the last action | Jump to the next position |
-| `jump-backward-buffer` | normal, select | must be the last action | Jump to the previous buffer or terminal surface |
-| `jump-forward-buffer` | normal, select | must be the last action | Jump to the next buffer or terminal surface |
+| `jump-backward` | normal, select | can be followed by another action | Jump to the previous position |
+| `jump-forward` | normal, select | can be followed by another action | Jump to the next position |
+| `jump-backward-buffer` | normal, select | can be followed by another action | Jump to the previous buffer or terminal surface |
+| `jump-forward-buffer` | normal, select | can be followed by another action | Jump to the next buffer or terminal surface |
 
 #### Selection actions
 
@@ -1014,7 +1031,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | --- | --- | --- | --- |
 | `selection-undo` | normal, select | can be followed by another action | Undo the last selection change |
 | `selection-redo` | normal, select | can be followed by another action | Redo the last selection change |
-| `enter-select-mode` | normal, select | must be the last action | Toggle select mode |
+| `enter-select-mode` | normal, select | can be followed by another action | Toggle select mode |
 | `select-line` | normal, select | can be followed by another action | Select the current line, then extend downward |
 | `extend-line-above` | normal, select | can be followed by another action | Extend whole lines above |
 | `extend-line-below` | normal, select | can be followed by another action | Extend whole lines below |
@@ -1022,28 +1039,28 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `select-all` | normal, select | can be followed by another action | Select all text |
 | `collapse-selection` | normal, select | can be followed by another action | Collapse selection to the cursor |
 | `flip-selection` | normal, select | can be followed by another action | Flip the selection anchor and cursor |
-| `select-around-parentheses` | normal, select | must be the last action | Select around parentheses |
-| `select-inside-parentheses` | normal, select | must be the last action | Select inside parentheses |
-| `select-around-square-brackets` | normal, select | must be the last action | Select around square brackets |
-| `select-inside-square-brackets` | normal, select | must be the last action | Select inside square brackets |
-| `select-around-braces` | normal, select | must be the last action | Select around braces |
-| `select-inside-braces` | normal, select | must be the last action | Select inside braces |
-| `select-around-angle-brackets` | normal, select | must be the last action | Select around angle brackets |
-| `select-inside-angle-brackets` | normal, select | must be the last action | Select inside angle brackets |
-| `select-around-double-quotes` | normal, select | must be the last action | Select around double quotes |
-| `select-inside-double-quotes` | normal, select | must be the last action | Select inside double quotes |
-| `select-around-single-quotes` | normal, select | must be the last action | Select around single quotes |
-| `select-inside-single-quotes` | normal, select | must be the last action | Select inside single quotes |
-| `select-around-backticks` | normal, select | must be the last action | Select around backticks |
-| `select-inside-backticks` | normal, select | must be the last action | Select inside backticks |
-| `select-inside-word` | normal, select | must be the last action | Select the word under the cursor |
-| `select-around-word` | normal, select | must be the last action | Select the word under the cursor and the space beside it |
-| `select-inside-long-word` | normal, select | must be the last action | Select the WORD under the cursor |
-| `select-around-long-word` | normal, select | must be the last action | Select the WORD under the cursor and the space beside it |
-| `select-inside-paragraph` | normal, select | must be the last action | Select the paragraph's lines |
-| `select-around-paragraph` | normal, select | must be the last action | Select the paragraph's lines and the blank lines beside them |
-| `select-around-closest-delimiter` | normal, select | must be the last action | Select around the closest delimiter pair |
-| `select-inside-closest-delimiter` | normal, select | must be the last action | Select inside the closest delimiter pair |
+| `select-around-parentheses` | normal, select | can be followed by another action | Select around parentheses |
+| `select-inside-parentheses` | normal, select | can be followed by another action | Select inside parentheses |
+| `select-around-square-brackets` | normal, select | can be followed by another action | Select around square brackets |
+| `select-inside-square-brackets` | normal, select | can be followed by another action | Select inside square brackets |
+| `select-around-braces` | normal, select | can be followed by another action | Select around braces |
+| `select-inside-braces` | normal, select | can be followed by another action | Select inside braces |
+| `select-around-angle-brackets` | normal, select | can be followed by another action | Select around angle brackets |
+| `select-inside-angle-brackets` | normal, select | can be followed by another action | Select inside angle brackets |
+| `select-around-double-quotes` | normal, select | can be followed by another action | Select around double quotes |
+| `select-inside-double-quotes` | normal, select | can be followed by another action | Select inside double quotes |
+| `select-around-single-quotes` | normal, select | can be followed by another action | Select around single quotes |
+| `select-inside-single-quotes` | normal, select | can be followed by another action | Select inside single quotes |
+| `select-around-backticks` | normal, select | can be followed by another action | Select around backticks |
+| `select-inside-backticks` | normal, select | can be followed by another action | Select inside backticks |
+| `select-inside-word` | normal, select | can be followed by another action | Select the word under the cursor |
+| `select-around-word` | normal, select | can be followed by another action | Select the word under the cursor and the space beside it |
+| `select-inside-long-word` | normal, select | can be followed by another action | Select the WORD under the cursor |
+| `select-around-long-word` | normal, select | can be followed by another action | Select the WORD under the cursor and the space beside it |
+| `select-inside-paragraph` | normal, select | can be followed by another action | Select the paragraph's lines |
+| `select-around-paragraph` | normal, select | can be followed by another action | Select the paragraph's lines and the blank lines beside them |
+| `select-around-closest-delimiter` | normal, select | can be followed by another action | Select around the closest delimiter pair |
+| `select-inside-closest-delimiter` | normal, select | can be followed by another action | Select inside the closest delimiter pair |
 | `split-selection-at-line-ends` | normal, select | can be followed by another action | Place a cursor at the end of every selected line |
 | `split-selection-at-line-starts` | normal, select | can be followed by another action | Place a cursor at the start of every selected line |
 | `keep-primary-selection` | normal, select | can be followed by another action | Drop every selection except the primary |
@@ -1054,8 +1071,8 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `copy-selection-up-padded` | normal, select | can be followed by another action | Add a cursor on the line above, padding it when needed |
 | `rotate-selection-forward` | normal, select | can be followed by another action | Make the next selection primary |
 | `rotate-selection-backward` | normal, select | can be followed by another action | Make the previous selection primary |
-| `rotate-selection-contents-forward` | normal, select | must be the last action | Rotate selected text forward |
-| `rotate-selection-contents-backward` | normal, select | must be the last action | Rotate selected text backward |
+| `rotate-selection-contents-forward` | normal, select | can be followed by another action | Rotate selected text forward |
+| `rotate-selection-contents-backward` | normal, select | can be followed by another action | Rotate selected text backward |
 | `keep-matching-selections` | normal, select | must be the last action | Keep selections matching a regular expression |
 | `remove-matching-selections` | normal, select | must be the last action | Remove selections matching a regular expression |
 | `align-selections` | normal, select | can be followed by another action | Pad with spaces so every cursor shares the rightmost column |
@@ -1065,28 +1082,28 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `expand-syntax-selection` | normal, select | must be the last action | Expand to the enclosing syntax node |
-| `shrink-syntax-selection` | normal, select | must be the last action | Shrink the syntax selection |
-| `select-syntax-parent` | normal, select | must be the last action | Select the enclosing syntax node |
-| `select-syntax-child` | normal, select | must be the last action | Select the first child syntax node |
-| `select-previous-syntax-sibling` | normal, select | must be the last action | Select the previous sibling syntax node |
-| `select-next-syntax-sibling` | normal, select | must be the last action | Select the next sibling syntax node |
-| `select-syntax-function` | normal, select | must be the last action | Select the enclosing function |
-| `select-inside-syntax-function` | normal, select | must be the last action | Select inside the enclosing function |
-| `select-syntax-class` | normal, select | must be the last action | Select the enclosing class-like item |
-| `select-inside-syntax-class` | normal, select | must be the last action | Select inside the enclosing class-like item |
-| `select-syntax-parameter` | normal, select | must be the last action | Select the enclosing parameter |
-| `select-inside-syntax-parameter` | normal, select | must be the last action | Select inside the enclosing parameter |
-| `goto-previous-syntax-function` | normal, select | must be the last action | Go to the previous function |
-| `goto-next-syntax-function` | normal, select | must be the last action | Go to the next function |
-| `goto-previous-syntax-class` | normal, select | must be the last action | Go to the previous class-like item |
-| `goto-next-syntax-class` | normal, select | must be the last action | Go to the next class-like item |
-| `goto-previous-syntax-parameter` | normal, select | must be the last action | Go to the previous parameter |
-| `goto-next-syntax-parameter` | normal, select | must be the last action | Go to the next parameter |
-| `document-outline` | normal, select | must be the last action | Open the document outline |
-| `toggle-syntax-fold` | normal, select | must be the last action | Toggle the syntax fold at the cursor |
-| `fold-all-syntax` | normal, select | must be the last action | Fold every syntax region |
-| `unfold-all-syntax` | normal, select | must be the last action | Unfold every syntax region |
+| `expand-syntax-selection` | normal, select | can be followed by another action | Expand to the enclosing syntax node |
+| `shrink-syntax-selection` | normal, select | can be followed by another action | Shrink the syntax selection |
+| `select-syntax-parent` | normal, select | can be followed by another action | Select the enclosing syntax node |
+| `select-syntax-child` | normal, select | can be followed by another action | Select the first child syntax node |
+| `select-previous-syntax-sibling` | normal, select | can be followed by another action | Select the previous sibling syntax node |
+| `select-next-syntax-sibling` | normal, select | can be followed by another action | Select the next sibling syntax node |
+| `select-syntax-function` | normal, select | can be followed by another action | Select the enclosing function |
+| `select-inside-syntax-function` | normal, select | can be followed by another action | Select inside the enclosing function |
+| `select-syntax-class` | normal, select | can be followed by another action | Select the enclosing class-like item |
+| `select-inside-syntax-class` | normal, select | can be followed by another action | Select inside the enclosing class-like item |
+| `select-syntax-parameter` | normal, select | can be followed by another action | Select the enclosing parameter |
+| `select-inside-syntax-parameter` | normal, select | can be followed by another action | Select inside the enclosing parameter |
+| `goto-previous-syntax-function` | normal, select | can be followed by another action | Go to the previous function |
+| `goto-next-syntax-function` | normal, select | can be followed by another action | Go to the next function |
+| `goto-previous-syntax-class` | normal, select | can be followed by another action | Go to the previous class-like item |
+| `goto-next-syntax-class` | normal, select | can be followed by another action | Go to the next class-like item |
+| `goto-previous-syntax-parameter` | normal, select | can be followed by another action | Go to the previous parameter |
+| `goto-next-syntax-parameter` | normal, select | can be followed by another action | Go to the next parameter |
+| `document-outline` | normal, select | can be followed by another action | Open the document outline |
+| `toggle-syntax-fold` | normal, select | can be followed by another action | Toggle the syntax fold at the cursor |
+| `fold-all-syntax` | normal, select | can be followed by another action | Fold every syntax region |
+| `unfold-all-syntax` | normal, select | can be followed by another action | Unfold every syntax region |
 
 #### Search actions
 
@@ -1096,7 +1113,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `search-regex` | normal, select | must be the last action | Search with a regular expression |
 | `search-next` | normal, select | can be followed by another action | Select only the next search match |
 | `search-previous` | normal, select | can be followed by another action | Select only the previous search match |
-| `search-selection` | normal, select | must be the last action | Select every match of the selection or word |
+| `search-selection` | normal, select | can be followed by another action | Select every match of the selection or word |
 | `set-search-from-selection` | normal, select | can be followed by another action | Use the selection or word as the search |
 | `global-search` | normal, select | must be the last action | Search the workspace, ignoring case |
 | `global-search-regex` | normal, select | must be the last action | Search the workspace with a regular expression |
@@ -1105,32 +1122,32 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `align-view-center` | normal, select | must be the last action | Center the cursor line in the view |
-| `align-view-top` | normal, select | must be the last action | Align the cursor line at the top |
-| `align-view-bottom` | normal, select | must be the last action | Align the cursor line at the bottom |
-| `align-view-middle` | normal, select | must be the last action | Center the cursor column in the view |
-| `scroll-view-down` | normal, select | must be the last action | Scroll the view down |
-| `scroll-view-up` | normal, select | must be the last action | Scroll the view up |
-| `toggle-soft-wrap` | normal, select | must be the last action | Toggle soft wrapping |
-| `toggle-whitespace` | normal, select | must be the last action | Toggle whitespace markers |
-| `toggle-zen` | normal, select | must be the last action | Toggle the centred, maximized writing view |
-| `toggle-fullscreen` | normal, select | must be the last action | Toggle the active pane across the whole editor area |
+| `align-view-center` | normal, select | can be followed by another action | Center the cursor line in the view |
+| `align-view-top` | normal, select | can be followed by another action | Align the cursor line at the top |
+| `align-view-bottom` | normal, select | can be followed by another action | Align the cursor line at the bottom |
+| `align-view-middle` | normal, select | can be followed by another action | Center the cursor column in the view |
+| `scroll-view-down` | normal, select | can be followed by another action | Scroll the view down |
+| `scroll-view-up` | normal, select | can be followed by another action | Scroll the view up |
+| `toggle-soft-wrap` | normal, select | can be followed by another action | Toggle soft wrapping |
+| `toggle-whitespace` | normal, select | can be followed by another action | Toggle whitespace markers |
+| `toggle-zen` | normal, select | can be followed by another action | Toggle the centred, maximized writing view |
+| `toggle-fullscreen` | normal, select | can be followed by another action | Toggle the active pane across the whole editor area |
 
 #### File actions
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
 | `open-explorer` | normal, select | must be the last action | Open file explorer in the active buffer's directory |
-| `toggle-directory-tree` | normal, select | must be the last action | Show or hide the directory tree |
-| `focus-directory-tree` | normal, select | must be the last action | Reveal the active file in the directory tree |
+| `toggle-directory-tree` | normal, select | can be followed by another action | Show or hide the directory tree |
+| `focus-directory-tree` | normal, select | can be followed by another action | Reveal the active file in the directory tree |
 | `open-working-directory-explorer` | normal, select | must be the last action | Open file explorer in the working directory |
 | `open-file-picker` | normal, select | must be the last action | Open the finder over the project's files, buffers, and terminals |
 | `open-all-files-picker` | normal, select | must be the last action | Open the finder over the project, including files Git ignores |
 | `open-path-file-picker` | normal, select | must be the last action | Open the finder in a chosen path, including files Git ignores |
 | `save` | normal, select, insert, replace | must be the last action | Write the active buffer |
-| `new-buffer` | normal, select | must be the last action | Open a new scratch buffer |
-| `open-navigator` | normal, select, insert, replace | must be the last action | Navigate open buffers and terminals |
-| `previous-destination` | normal, select, insert, replace | must be the last action | Return to the previous destination in this pane |
+| `new-buffer` | normal, select | can be followed by another action | Open a new scratch buffer |
+| `open-navigator` | normal, select, insert, replace | can be followed by another action | Navigate open buffers and terminals |
+| `previous-destination` | normal, select, insert, replace | can be followed by another action | Return to the previous destination in this pane |
 | `previous-session` | normal, select, insert, replace | must be the last action | Return to the previously visited persistent session |
 | `session-1` | normal, select | must be the last action | Attach to persistent session 1 |
 | `session-2` | normal, select | must be the last action | Attach to persistent session 2 |
@@ -1143,7 +1160,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `session-9` | normal, select | must be the last action | Attach to persistent session 9 |
 | `next-running-session` | normal, select, insert, replace | must be the last action | Visit the next running persistent session |
 | `previous-running-session` | normal, select, insert, replace | must be the last action | Visit the previous running persistent session |
-| `open-buffer-picker` | normal, select | must be the last action | Open the buffer picker |
+| `open-buffer-picker` | normal, select | can be followed by another action | Open the buffer picker |
 
 #### Git actions
 
@@ -1157,19 +1174,19 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | --- | --- | --- | --- |
 | `split-vertical` | normal, select | must be the last action | Create a side-by-side split |
 | `split-horizontal` | normal, select | must be the last action | Create a stacked split |
-| `focus-window-left` | normal, select, insert, replace | must be the last action | Focus the pane to the left |
-| `focus-window-down` | normal, select, insert, replace | must be the last action | Focus the pane below |
-| `focus-window-up` | normal, select, insert, replace | must be the last action | Focus the pane above |
-| `focus-window-right` | normal, select, insert, replace | must be the last action | Focus the pane to the right |
-| `next-window` | normal, select, insert, replace | must be the last action | Focus the next pane |
-| `swap-window` | normal, select, insert, replace | must be the last action | Swap this pane's content with the previously focused pane |
-| `move-window-left` | normal, select, insert, replace | must be the last action | Move pane to the left edge, full height |
-| `move-window-down` | normal, select, insert, replace | must be the last action | Move pane to the bottom edge, full width |
-| `move-window-up` | normal, select, insert, replace | must be the last action | Move pane to the top edge, full width |
-| `move-window-right` | normal, select, insert, replace | must be the last action | Move pane to the right edge, full height |
-| `close-window` | normal, select | must be the last action | Close the active pane |
-| `only-window` | normal, select | must be the last action | Close every pane except the active pane |
-| `equalize-windows` | normal, select | must be the last action | Equalize pane widths, then pane heights within each column |
+| `focus-window-left` | normal, select, insert, replace | can be followed by another action | Focus the pane to the left |
+| `focus-window-down` | normal, select, insert, replace | can be followed by another action | Focus the pane below |
+| `focus-window-up` | normal, select, insert, replace | can be followed by another action | Focus the pane above |
+| `focus-window-right` | normal, select, insert, replace | can be followed by another action | Focus the pane to the right |
+| `next-window` | normal, select, insert, replace | can be followed by another action | Focus the next pane |
+| `swap-window` | normal, select, insert, replace | can be followed by another action | Swap this pane's content with the previously focused pane |
+| `move-window-left` | normal, select, insert, replace | can be followed by another action | Move pane to the left edge, full height |
+| `move-window-down` | normal, select, insert, replace | can be followed by another action | Move pane to the bottom edge, full width |
+| `move-window-up` | normal, select, insert, replace | can be followed by another action | Move pane to the top edge, full width |
+| `move-window-right` | normal, select, insert, replace | can be followed by another action | Move pane to the right edge, full height |
+| `close-window` | normal, select | can be followed by another action | Close the active pane |
+| `only-window` | normal, select | can be followed by another action | Close every pane except the active pane |
+| `equalize-windows` | normal, select | can be followed by another action | Equalize pane widths, then pane heights within each column |
 
 #### Language actions
 
@@ -1183,61 +1200,61 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `show-documentation` | normal, select | must be the last action | Show documentation |
 | `document-symbols` | normal, select | must be the last action | Open document symbols |
 | `workspace-symbols` | normal, select | must be the last action | Open workspace symbols |
-| `diagnostics` | normal, select | must be the last action | Open diagnostics |
+| `diagnostics` | normal, select | can be followed by another action | Open diagnostics |
 | `trigger-completion` | normal, select, insert, replace | must be the last action | Ask the language server for completions |
 | `rename-symbol` | normal, select | must be the last action | Rename symbol |
 | `code-action` | normal, select | must be the last action | Apply a code action |
-| `match-bracket` | normal, select | must be the last action | Go to the matching syntax bracket |
+| `match-bracket` | normal, select | can be followed by another action | Go to the matching syntax bracket |
 
 #### Clipboard actions
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `clipboard-paste-after` | normal, select | must be the last action | Paste from the system clipboard |
-| `clipboard-paste-before` | normal, select | must be the last action | Paste before from the system clipboard |
-| `clipboard-yank` | normal, select, insert, replace | must be the last action | Yank to the system clipboard |
-| `clipboard-paste` | normal, select, insert, replace | must be the last action | Paste an image or text from the clipboard |
+| `clipboard-paste-after` | normal, select | can be followed by another action | Paste from the system clipboard |
+| `clipboard-paste-before` | normal, select | can be followed by another action | Paste before from the system clipboard |
+| `clipboard-yank` | normal, select, insert, replace | can be followed by another action | Yank to the system clipboard |
+| `clipboard-paste` | normal, select, insert, replace | can be followed by another action | Paste an image or text from the clipboard |
 
 #### Register actions
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `select-register` | normal, select | must be the last action | Select a register |
-| `record-macro` | normal, select | must be the last action | Record a macro named by the next key |
-| `record-default-macro` | normal, select | must be the last action | Record the default macro, or stop recording |
+| `select-register` | normal, select | can be followed by another action | Select a register |
+| `record-macro` | normal, select | can be followed by another action | Record a macro named by the next key |
+| `record-default-macro` | normal, select | can be followed by another action | Record the default macro, or stop recording |
 | `replay-macro` | normal, select | must be the last action | Replay the macro named by the next key |
 | `replay-default-macro` | normal, select | must be the last action | Replay the default macro |
-| `list-macros` | normal, select | must be the last action | List the recorded macros |
+| `list-macros` | normal, select | can be followed by another action | List the recorded macros |
 
 #### Configuration actions
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `open-settings` | normal, select | must be the last action | Open editor settings |
-| `open-theme-settings` | normal, select | must be the last action | Choose and save the editor theme |
+| `open-settings` | normal, select | can be followed by another action | Open editor settings |
+| `open-theme-settings` | normal, select | can be followed by another action | Choose and save the editor theme |
 
 #### Terminal actions
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
 | `open-terminal` | normal, select | must be the last action | Start a terminal in this pane |
-| `open-terminal-list` | normal, select | must be the last action | Show the running terminals |
-| `rename-terminal` | normal, select | must be the last action | Name the active terminal session |
-| `leave-terminal` | normal, select | must be the last action | Show this pane's buffer again |
-| `copy-terminal-output` | normal, select | must be the last action | Open this terminal's output as a buffer |
-| `send-to-terminal` | normal, select | must be the last action | Send the selection to a terminal |
+| `open-terminal-list` | normal, select | can be followed by another action | Show the running terminals |
+| `rename-terminal` | normal, select | last unless an argument supplies the prompt input | Name the active terminal session |
+| `leave-terminal` | normal, select | can be followed by another action | Show this pane's buffer again |
+| `copy-terminal-output` | normal, select | can be followed by another action | Open this terminal's output as a buffer |
+| `send-to-terminal` | normal, select | can be followed by another action | Send the selection to a terminal |
 
 #### Help actions
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `show-help` | normal, select | must be the last action | Open general or contextual Runyte help |
+| `show-help` | normal, select | can be followed by another action | Open general or contextual Runyte help |
 
 #### Colon commands
 
 These accept the same arguments as the command palette, supplied separately
 as `{ command: name, argument: text }`. They are available in Normal and
-Select modes and must end a sequence. Required arguments must be supplied.
+Select modes. Prompt and background effects must end a sequence; supplying prompt input removes only that prompt. Required arguments must be supplied.
 
 | Command | Usage | Description |
 | --- | --- | --- |
@@ -1558,7 +1575,7 @@ actions belong to the indicated owner; raw UI input still has its own scope.
 
 #### Action contracts
 
-Generated from built-in descriptors. Effects include owned continuations and specialized views; they do not change the current sequence rules. Character operands and palette arguments are separate.
+Generated from built-in descriptors. Effects include owned continuations and specialized views; remaining prompt and background effects require the last step. Character operands and palette arguments are separate.
 
 | Action | Effects | Count | Character operands | Palette argument | View differences |
 | --- | --- | --- | --- | --- | --- |
@@ -1722,7 +1739,7 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `goto-window-center` | selection | not accepted | none | none | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view |
 | `goto-window-bottom` | selection | not accepted | none | none | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view |
 | `goto-file` | file, view, prompt, background work | not accepted | none | none | terminal: Open a path or URL inferred from the review selection and terminal directory |
-| `goto-word` | character input, selection | not accepted | none | none | terminal: Label visible captured output words and jump to one; directory-tree: Label visible tree entries and select one |
+| `goto-word` | prompt, selection | not accepted | none | none | terminal: Label visible captured output words and jump to one; directory-tree: Label visible tree entries and select one |
 | `toggle-soft-wrap` | view, configuration | not accepted | none | none |  |
 | `toggle-whitespace` | view, configuration | not accepted | none | none |  |
 | `preview-document` | background work, view | not accepted | none | none |  |
@@ -1922,8 +1939,8 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `record-macro` | character input, macro | not accepted | one character | none |  |
 | `record-default-macro` | macro | not accepted | none | none |  |
 | `stop-macro-recording` | macro | not accepted | none | none |  |
-| `replay-macro` | character input, macro, text | repeats | one character | none |  |
-| `replay-default-macro` | macro, text | repeats | none | none |  |
+| `replay-macro` | character input, macro, text, background work | repeats | one character | none |  |
+| `replay-default-macro` | macro, text, background work | repeats | none | none |  |
 | `list-macros` | view | not accepted | none | none |  |
 | `shell-pipe` | prompt, background work, text | not accepted | none | none |  |
 | `match-bracket` | selection | not accepted | none | none |  |

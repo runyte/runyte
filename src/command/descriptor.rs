@@ -2,8 +2,8 @@
 
 //! Descriptive action contracts shared by configuration and discovery.
 //!
-//! Stage 1 preserves the executor: effects describe possible work, not a new
-//! scheduling rule. In particular, a bundled action can still change modes.
+//! Effects govern program continuation. Bundled actions can still change modes
+//! until the atomic-action migration.
 //! Scoped admission is independent of global binding modes until stage 4.
 
 mod editor;
@@ -66,14 +66,6 @@ pub enum BufferMutation {
     MayMutate,
 }
 
-/// Temporary compatibility policy, removed in stage 3 when the executor and
-/// validator switch to the effect-derived program continuation rule together.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum LegacySequencePosition {
-    Continue,
-    Last,
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ActionPolicy {
     /// Only `keys.bind` admission. Empty for scope-only/internal actions.
@@ -81,7 +73,7 @@ pub struct ActionPolicy {
     pub global_binding_modes: &'static [Mode],
     /// Possible semantic effects across supported views, including bundled
     /// steps and owned continuations, but not unrelated later picker actions
-    /// or ubiquitous normalization/redraw bookkeeping. Not a scheduling rule;
+    /// or ubiquitous normalization/redraw bookkeeping. Blocking effects determine continuation;
     /// view descriptions explain differences between implementations. Generic
     /// dispatchers such as ListAccept describe only dispatch itself: callers
     /// must consult the selected action for its effects.
@@ -93,7 +85,6 @@ pub struct ActionPolicy {
     pub buffer_mutation: BufferMutation,
     /// The existing read-only text-buffer gate, after specialized interception.
     pub requires_writable_buffer: bool,
-    pub legacy_sequence_position: LegacySequencePosition,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,6 +126,24 @@ pub struct ActionDescriptor {
 }
 
 impl ActionDescriptor {
+    /// Continue only when no input owner or deferred work remains. Supplying
+    /// prompt input removes that prompt, never independent background work.
+    pub fn can_continue(self, parameters: &super::InvocationParameters) -> bool {
+        let supplies_prompt = self.argument().is_some_and(|argument| {
+            argument.delivery == ArgumentDelivery::ReplacesPrompt
+                && matches!(
+                    parameters,
+                    super::InvocationParameters::OptionalText(Some(_))
+                        | super::InvocationParameters::OptionalPath(Some(_))
+                )
+        });
+        !self.policy.effects.iter().any(|effect| match effect {
+            ActionEffect::Background => true,
+            ActionEffect::Prompt => !supplies_prompt,
+            _ => false,
+        })
+    }
+
     pub fn argument(self) -> Option<ActionArgument> {
         let spec = self.palette?;
         spec.arguments
@@ -299,7 +308,6 @@ impl ColonCommand {
                 BufferMutation::Unchanged
             },
             requires_writable_buffer: false,
-            legacy_sequence_position: LegacySequencePosition::Last,
         }
     }
 }

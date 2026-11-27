@@ -611,10 +611,15 @@ Cancellation, failure and unrelated edits close the owned checkpoints. Explicit
 undo, redo and checkpoint actions remain history barriers. Selection-only
 programs retain one selection-history step, including cancelled counted replay.
 
-Stage 3b still owns effect-derived continuation and removal of the legacy policy, atomic splits and default
-program rewrites, and the embedded YAML Runyte preset (decision 25). Until
-those land, operands and mode changes retain their existing last-step
-restrictions.
+The continuation slice derives admission and execution from descriptor effects,
+removing the legacy sequence policy and its frozen migration fixture. Operand
+waits and synchronous effects can continue; remaining prompt/background effects
+and plugins are last-only. Supplying prompt input removes only that prompt,
+not independent background work. Queued macro replay describes its background
+effect explicitly. Mixed-effect bundled actions remain last-only until narrowed.
+
+Stage 3b still owns atomic splits and default program rewrites, and the embedded
+YAML Runyte preset (decision 25).
 
 ## Verification
 

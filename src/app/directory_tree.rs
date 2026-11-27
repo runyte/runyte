@@ -310,7 +310,11 @@ impl App {
             self.directory_tree_previous_mode = self.mode;
             self.mode = Mode::Normal;
             self.directory_tree.focused = true;
-            self.reset_program_input();
+            if self.executing_program {
+                self.grammar.reset_prefix();
+            } else {
+                self.reset_program_input();
+            }
         }
     }
 

@@ -284,3 +284,25 @@ fn discovery_uses_shared_readable_contracts_and_grouped_reference() {
     }
     assert!(reference.contains("| repeats | none |"));
 }
+
+#[test]
+fn discovery_explains_effect_and_argument_continuation() {
+    use runyte::command::{CommandId, EditorCommand as C};
+    for (command, expected) in [
+        (C::FindNextChar, "can be followed by another action"),
+        (C::EnterInsertMode, "can be followed by another action"),
+        (
+            C::RenameTerminal,
+            "last unless an argument supplies the prompt input",
+        ),
+        (C::ReplayDefaultMacro, "must be the last action"),
+    ] {
+        let details = discovery::details(
+            CommandId::Editor(command),
+            default_keymap(),
+            Mode::Normal,
+            BindingScope::Global,
+        );
+        assert!(details.contains(expected), "{details}");
+    }
+}

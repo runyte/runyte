@@ -2889,6 +2889,14 @@ impl App {
                     GrammarNotice::NoBinding(sequence) => {
                         self.error_unretained(format!("No binding: {sequence}"));
                     }
+                    GrammarNotice::AwaitingCharacter(_)
+                    | GrammarNotice::AwaitingSecondCharacter { .. }
+                        if self.has_input_overlay() || self.mode == Mode::Command =>
+                    {
+                        self.action_failed(
+                            "character action unavailable while an overlay owns input",
+                        );
+                    }
                     GrammarNotice::AwaitingCharacter(command) => {
                         self.status(command.metadata().description);
                     }
@@ -6561,8 +6569,12 @@ impl App {
     }
 
     pub(super) fn select_grammar(&mut self, kind: crate::command::GrammarKind) {
-        self.reset_program_input();
-        self.grammar = ActiveGrammar::new(kind);
+        if self.executing_program && self.grammar.kind() == kind {
+            self.grammar.reset_prefix();
+        } else {
+            self.reset_program_input();
+            self.grammar = ActiveGrammar::new(kind);
+        }
         match kind {
             crate::command::GrammarKind::Runyte => {
                 self.active_mut()
