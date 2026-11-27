@@ -3110,7 +3110,7 @@ fn completed_actions_keep_specific_success_details() {
 }
 
 #[test]
-fn counted_colon_binding_echoes_failure_and_retains_its_info_notification() {
+fn counted_colon_binding_runs_and_echoes_the_actions_actual_failure() {
     let mut app = App::new(Config::default(), None).unwrap();
 
     press(&mut app, '2');
@@ -3118,14 +3118,10 @@ fn counted_colon_binding_echoes_failure_and_retains_its_info_notification() {
     press(&mut app, 'r');
 
     assert!(app.status_error);
-    assert_eq!(
-        app.status,
-        "Reload the active view does not support a count"
-    );
+    assert_eq!(app.status, "buffer is not a file");
     assert_eq!(
         app.displayed_status_message(),
-        "2 Space r (Reload the active view · failed: Reload the active view does not \
-             support a count)"
+        "2 Space r (Reload the active view · failed: buffer is not a file)"
     );
     assert!(app.displayed_status_message_is_error());
     assert_eq!(app.unread_notification_counts().infos, 1);
