@@ -8,8 +8,8 @@ use crate::pasted_image::ImageFormat;
 
 // Application-module dependencies:
 use super::{
-    App, BindingScope, BindingTarget, DEFAULT_MACRO_REGISTER, EditorCommand, InputGrammar,
-    ListAction, ListPicker, MACRO_REPLAY_BATCH_INPUTS, MAX_MACRO_REPLAY_ATOMIC_REPETITIONS,
+    App, BindingScope, BindingTarget, DEFAULT_MACRO_REGISTER, EditorCommand, ListAction,
+    ListPicker, MACRO_REPLAY_BATCH_INPUTS, MAX_MACRO_REPLAY_ATOMIC_REPETITIONS,
     MAX_MACRO_REPLAY_DEPTH, MAX_MACRO_REPLAY_WORK, MacroReplay, MacroReplayAction,
     MacroReplayCommand, MacroReplayFrame, Mode, PickerItem, Range, Register, Result, SearchMode,
     SearchQuery, SearchRegion, SearchSelectionPresentation, Selection, SelectionSemantics,
@@ -394,19 +394,43 @@ impl App {
             }
             let outcome = match action {
                 MacroReplayAction::Input(input) => self.handle_replayed_input(input),
-                MacroReplayAction::Command(invocation) => self.execute(invocation).map(|_| ()),
+                MacroReplayAction::Command(invocation, owner, finished) => {
+                    self.program_undo = owner;
+                    let previous = self.executing_program;
+                    self.executing_program = self.program_undo.is_some();
+                    let result = self.execute(invocation).map(|_| ());
+                    self.executing_program = previous;
+                    if finished || result.is_err() || self.status_error || self.sequence_halted {
+                        self.finish_program_undo(
+                            result.is_ok() && !self.status_error && !self.sequence_halted,
+                        );
+                        if !finished && let Some(replay) = self.macro_replay.as_mut() {
+                            replay.commands.pop();
+                            self.finish_program_selection_history();
+                        }
+                    } else if let Some(command) = self
+                        .macro_replay
+                        .as_mut()
+                        .and_then(|r| r.commands.last_mut())
+                    {
+                        command.program_undo = self.program_undo.take();
+                    }
+                    result
+                }
             };
             if let Err(error) = outcome {
+                self.finish_deferred_program_undo();
                 self.macro_replay = None;
-                self.grammar.reset();
+                self.reset_program_input();
                 return Err(error);
             }
             if let Some(replay) = self.macro_replay.as_mut() {
                 replay.last_action_error = self.status_error;
             }
             if self.should_quit || self.workspace_switch.is_some() {
+                self.finish_deferred_program_undo();
                 self.macro_replay = None;
-                self.grammar.reset();
+                self.reset_program_input();
                 return Ok(true);
             }
         }
@@ -463,11 +487,13 @@ impl App {
                     return None;
                 }
                 let invocation = command.invocation.clone();
+                let owner = command.program_undo.take();
                 command.repetitions_remaining -= 1;
+                let finished = command.repetitions_remaining == 0;
                 if command.repetitions_remaining == 0 {
                     replay.commands.pop();
                 }
-                return Some((MacroReplayAction::Command(invocation), 1));
+                return Some((MacroReplayAction::Command(invocation, owner, finished), 1));
             }
             let frame = replay.frames.last_mut()?;
             if frame.inputs.is_empty() || frame.repetitions_remaining == 0 {
@@ -551,6 +577,7 @@ impl App {
         replay.commands.push(MacroReplayCommand {
             invocation,
             repetitions_remaining: repetitions,
+            program_undo: None,
         });
     }
 
@@ -571,10 +598,11 @@ impl App {
 
     /// Cancels generated input but keeps actions that already completed.
     pub fn cancel_macro_replay(&mut self) -> bool {
+        self.finish_deferred_program_undo();
         let Some(replay) = self.macro_replay.take() else {
             return false;
         };
-        self.grammar.reset();
+        self.reset_program_input();
         self.status(format!(
             "macro replay @{} cancelled after {} work unit(s)",
             replay.root_register, replay.processed_work
@@ -583,13 +611,15 @@ impl App {
     }
 
     fn abort_macro_replay(&mut self, reason: String) {
+        self.finish_deferred_program_undo();
         self.macro_replay = None;
-        self.grammar.reset();
+        self.reset_program_input();
         self.action_failed(reason);
     }
 
     pub(super) fn undo(&mut self) {
         let buffer_id = self.active().buffer;
+        self.commit_edit_checkpoint(buffer_id);
         let diff_before = self
             .diffs
             .iter()
@@ -615,6 +645,7 @@ impl App {
 
     pub(super) fn redo(&mut self) {
         let buffer_id = self.active().buffer;
+        self.commit_edit_checkpoint(buffer_id);
         let diff_before = self
             .diffs
             .iter()

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::App;
-use crate::input_grammar::InputGrammar;
 use crate::{
     buffer::{Buffer, GeneratedViewIdentity},
     plugin::{application as api, view},
@@ -226,7 +225,7 @@ impl App {
                 query_revision: self.plugin_view_query_revision(buffer),
             })
             .collect();
-        self.grammar.reset();
+        self.reset_program_input();
         true
     }
 

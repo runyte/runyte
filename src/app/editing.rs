@@ -1038,6 +1038,7 @@ impl App {
     /// selection through it, so panes sharing a buffer stay consistent.
     pub(crate) fn edit(&mut self, transaction: Transaction) -> bool {
         let buffer_id = self.active().buffer;
+        self.interrupt_program_edit(buffer_id);
         if matches!(self.mode, Mode::Insert | Mode::Replace) {
             self.buffers[buffer_id].begin_undo_group();
         }
@@ -1064,6 +1065,9 @@ impl App {
     /// text consistent — the syntax tree, the servers, and every pane's
     /// selection — happens here and nowhere else.
     pub(crate) fn apply_to_buffer(&mut self, buffer_id: usize, transaction: &Transaction) -> bool {
+        if !transaction.is_empty() && !self.buffers[buffer_id].is_read_only() {
+            self.prepare_program_edit(buffer_id);
+        }
         let language_before = buffer_language(&self.buffers[buffer_id], &self.registry);
         // Both the syntax tree and `didChange` need the pre-edit text: one to
         // convert character offsets into tree-sitter's bytes, the other into

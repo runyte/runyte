@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Native read-only discovery over the current keymap.
 use super::{
-    App, Buffer, InputEvent, InputGrammar, KeyCode, KeySequence, KeyStroke, ListAction, ListPicker,
-    Mode, PickerItem, Selection,
+    App, Buffer, InputEvent, KeyCode, KeySequence, KeyStroke, ListAction, ListPicker, Mode,
+    PickerItem, Selection,
 };
 use crate::{
     command::discovery,
@@ -25,7 +25,7 @@ impl App {
             self.action_failed("Close the active overlay before describing a key");
             return;
         }
-        self.grammar.reset();
+        self.reset_program_input();
         self.described_binding = None;
         self.describe_key = Some(Capture {
             pane: self.active_pane,
@@ -62,7 +62,7 @@ impl App {
             }
         };
         if key.code == KeyCode::Escape {
-            self.grammar.reset();
+            self.reset_program_input();
             self.status("Describe key cancelled");
             return;
         }

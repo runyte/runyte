@@ -316,6 +316,7 @@ pub(crate) mod plugin_recovery;
 mod plugin_views;
 pub(crate) mod plugin_workflows;
 mod presentation;
+mod program_history;
 mod prompt_editing;
 mod search_history;
 mod search_preview;
@@ -2808,12 +2809,17 @@ struct MacroReplayFrame {
 struct MacroReplayCommand {
     invocation: CommandInvocation,
     repetitions_remaining: usize,
+    program_undo: Option<program_history::ProgramUndo>,
 }
 
 #[derive(Clone, Debug)]
 enum MacroReplayAction {
     Input(InputEvent),
-    Command(CommandInvocation),
+    Command(
+        CommandInvocation,
+        Option<program_history::ProgramUndo>,
+        bool,
+    ),
 }
 
 #[derive(Clone, Debug)]
@@ -3311,6 +3317,8 @@ pub struct App {
     macro_replay_generation: u64,
     /// Bounded composed-program repetitions already charged to the replay budget.
     atomic_program_replay: bool,
+    program_undo: Option<program_history::ProgramUndo>,
+    executing_program: bool,
     /// Last successfully invoked command reached through the effective leader
     /// namespace. The semantic invocation is replayed against current state;
     /// window-prefix aliases never enter this history.
@@ -4061,6 +4069,8 @@ impl App {
             macro_replay: None,
             macro_replay_generation: 0,
             atomic_program_replay: false,
+            program_undo: None,
+            executing_program: false,
             jump: None,
             line_select: None,
             selection_action_depth: 0,

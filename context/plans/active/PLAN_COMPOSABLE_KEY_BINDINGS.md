@@ -602,13 +602,19 @@ selection, mode and binding scope must still match when its operand arrives.
 Escape cancels the remaining steps, and replay reservations belong to a specific
 replay run. Internal constructed programs test operands in the middle of a
 program; public admission retains the existing last-step restrictions until the
-continuation-policy slice. Text undo boundaries are unchanged in this slice.
+continuation-policy slice.
 
-Stage 3b still owns program undo ownership, effect-derived
-continuation and removal of the legacy policy, atomic splits and default
+The next stage 3b slice gives each binding undo ownership in every buffer it
+edits. Ownership survives operand waits and deferred counted replay commands;
+completion commits it or hands the active document's group to Insert/Replace.
+Cancellation, failure and unrelated edits close the owned checkpoints. Explicit
+undo, redo and checkpoint actions remain history barriers. Selection-only
+programs retain one selection-history step, including cancelled counted replay.
+
+Stage 3b still owns effect-derived continuation and removal of the legacy policy, atomic splits and default
 program rewrites, and the embedded YAML Runyte preset (decision 25). Until
 those land, operands and mode changes retain their existing last-step
-restrictions and text edits retain their existing undo boundaries.
+restrictions.
 
 ## Verification
 

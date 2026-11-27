@@ -6,9 +6,9 @@
 use super::{
     ActionEntry, App, Assoc, BTreeMap, Buffer, BufferAction, BufferKind, Change, ChangeSync,
     Completion, CompletionSource, CompletionState, ContextAction, ContextActionMenu, DocumentEdit,
-    DocumentState, Encoding, FailureClass, HashMap, HashSet, HoverState, InputGrammar, KeyCode,
-    KeyStroke, ListAction, ListPicker, ListPurpose, LspCommand, LspEvent, LspHandle, LspRange,
-    Mode, Modifiers, Offset, PATH_COMPLETION_ITEM_LIMIT_PER_ROOT, Path, PathActionMenu, PathBuf,
+    DocumentState, Encoding, FailureClass, HashMap, HashSet, HoverState, KeyCode, KeyStroke,
+    ListAction, ListPicker, ListPurpose, LspCommand, LspEvent, LspHandle, LspRange, Mode,
+    Modifiers, Offset, PATH_COMPLETION_ITEM_LIMIT_PER_ROOT, Path, PathActionMenu, PathBuf,
     PathClipboardTarget, PathPopup, PendingRequest, PickerItem, PromptKind, Range, Register,
     RequestKind, Response, Result, SPECIAL_BUFFER_RETENTION_LIMIT, SearchMode, Selection,
     SelectionSemantics, ServerId, ServerState, SignatureContext, SignatureState, TerminalAction,
@@ -2403,6 +2403,9 @@ impl App {
                 return Err(DocumentEditFailure::OverlappingEdits { path });
             }
             let transaction = Transaction::new(changes);
+            if !self.executing_program && buffer_id.is_some_and(|id| self.owns_program_buffer(id)) {
+                staged.commit_undo_group();
+            }
             if !staged.apply(&transaction) {
                 continue;
             }
@@ -2423,6 +2426,7 @@ impl App {
         for edit in planned {
             match edit.target {
                 PlannedTarget::Existing { buffer_id, staged } => {
+                    self.interrupt_program_edit(buffer_id);
                     let language_before = buffer_language(&self.buffers[buffer_id], &self.registry);
                     let watched = self.syntax[buffer_id].is_some()
                         || self.pending_syntax.contains_key(&buffer_id)
@@ -3382,7 +3386,7 @@ impl App {
             actions,
             selected: 0,
         });
-        self.grammar.reset();
+        self.reset_program_input();
         true
     }
 

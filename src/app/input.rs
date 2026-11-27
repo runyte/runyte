@@ -971,7 +971,7 @@ impl App {
                         && self.active_terminal().is_none()
                         && self.mode != Mode::Command
                     {
-                        self.grammar.reset();
+                        self.reset_program_input();
                         self.execute_editor_command(EditorCommand::ClipboardPaste)?;
                     }
                     Ok(())
@@ -1175,7 +1175,7 @@ impl App {
                     }
                     // As outside the tree, a press cancels any pending
                     // prefix, which would otherwise outlive a double click.
-                    self.grammar.reset();
+                    self.reset_program_input();
                     let row = usize::from(event.row.saturating_sub(area.y.saturating_add(1)));
                     let mut double_click = false;
                     if let Some(selected) = view.tree_rows.get(row) {
@@ -1257,7 +1257,7 @@ impl App {
         {
             self.invalidate_all_partial_guards();
             self.cancel_program_on_focus_change(pane_id);
-            self.grammar.reset();
+            self.reset_program_input();
             self.jump = None;
             self.activate_pane_from_pointer(pane_id);
             self.pointer_drag = None;
@@ -1274,7 +1274,7 @@ impl App {
                 self.active_mut().program_selection_origin = None;
             }
             self.invalidate_all_partial_guards();
-            self.grammar.reset();
+            self.reset_program_input();
             self.jump = None;
             self.status_error = false;
             // A followed link is a completed action like `gf`, so it gets its
@@ -1343,7 +1343,7 @@ impl App {
                 self.status("jump cancelled");
                 self.report_input_feedback();
             }
-            self.grammar.reset();
+            self.reset_program_input();
             self.pointer_drag = None;
             let column = usize::from(event.column - view.geometry.editor.x);
             if let Some(label) = strip
@@ -1376,7 +1376,7 @@ impl App {
                 self.status("jump cancelled");
                 self.report_input_feedback();
             }
-            self.grammar.reset();
+            self.reset_program_input();
             let PointerEventKind::Down(button) = event.kind else {
                 unreachable!("resize press")
             };
@@ -1404,12 +1404,12 @@ impl App {
                     self.report_input_feedback();
                 }
                 let Some(pane_id) = pointer_pane(view, event.column, event.row) else {
-                    self.grammar.reset();
+                    self.reset_program_input();
                     self.pointer_drag = None;
                     return Ok(PointerOutcome::Changed);
                 };
                 self.cancel_program_on_focus_change(pane_id);
-                self.grammar.reset();
+                self.reset_program_input();
                 self.activate_pane_from_pointer(pane_id);
                 // Native preview clicks focus the pane without placing a caret
                 // in the source text hidden underneath its document surface.
@@ -1731,7 +1731,7 @@ impl App {
                     return Ok(PointerOutcome::Changed);
                 }
                 self.jump = None;
-                self.grammar.reset();
+                self.reset_program_input();
                 let terminal_review = self
                     .terminal_of_pane(self.active_pane)
                     .and_then(|terminal| self.terminals.get(terminal))
@@ -2125,7 +2125,7 @@ impl App {
 
     pub(super) fn cancel_program_on_focus_change(&mut self, pane: usize) {
         if pane != self.active_pane && self.grammar.awaiting_character().is_some() {
-            self.grammar.reset();
+            self.reset_program_input();
             self.active_mut().program_owner = None;
             self.active_mut().program_selection_origin = None;
             self.report_program_focus_cancellation();
@@ -2151,7 +2151,7 @@ impl App {
                 .as_ref()
                 .is_some_and(|owner| *owner != self.program_owner())
         {
-            self.grammar.reset();
+            self.reset_program_input();
             self.active_mut().program_owner = None;
             self.status("binding cancelled: its view changed while waiting for a character");
             return Ok(());
@@ -2465,7 +2465,7 @@ impl App {
             && !self.has_input_overlay()
             && self.grammar.awaiting_character().is_some()
         {
-            self.grammar.reset();
+            self.reset_program_input();
             self.action_failed("expected a character key; binding cancelled");
             return Ok(());
         }
@@ -2667,6 +2667,9 @@ impl App {
                 post_action,
                 resolved_binding,
             } = self.grammar.translate(input, context)?;
+            if self.grammar.program_description().is_none() {
+                self.finish_program_undo(false);
+            }
             // Counted programs must finish their accepting step before their
             // tail. Reserve bounded atomic work up front instead of letting
             // singleton macro scheduling defer repetitions past that tail.
@@ -2678,13 +2681,18 @@ impl App {
                     .program_reserved_for(self.macro_replay_generation)
                 && !self.reserve_macro_replay_range_work(program_repetitions.unwrap_or(1))
             {
-                self.grammar.reset();
+                self.reset_program_input();
                 return Ok(());
             }
             if self.macro_replay.is_some() {
                 self.grammar
                     .reserve_program_for(self.macro_replay_generation);
             }
+            if self.grammar.program_description().is_some() && self.program_undo.is_none() {
+                self.begin_program_undo();
+            }
+            let previous_executing = self.executing_program;
+            self.executing_program = self.program_undo.is_some();
             let previous_atomic = self.atomic_program_replay;
             self.atomic_program_replay |= atomic;
             let result = (|| -> Result<Option<CommandOutcome>> {
@@ -2712,7 +2720,11 @@ impl App {
                             )
                         )
                     {
-                        self.grammar.reset();
+                        self.reset_program_input();
+                        self.finish_deferred_program_undo();
+                        if let Some(replay) = self.macro_replay.as_mut() {
+                            replay.commands.clear();
+                        }
                         break;
                     }
                     next = match pending_intents.next() {
@@ -2723,10 +2735,11 @@ impl App {
                 Ok(command_outcome)
             })();
             self.atomic_program_replay = previous_atomic;
+            self.executing_program = previous_executing;
             let command_outcome = match result {
                 Ok(outcome) => outcome,
                 Err(error) => {
-                    self.grammar.reset();
+                    self.reset_program_input();
                     return Err(error);
                 }
             };
@@ -2735,6 +2748,15 @@ impl App {
                 self.grammar
                     .retain_operand_context(resolved_binding, post_action, reprocess);
                 return Ok(());
+            }
+            if let Some(command) = self
+                .macro_replay
+                .as_mut()
+                .and_then(|r| r.commands.last_mut())
+            {
+                command.program_undo = self.program_undo.take();
+            } else {
+                self.finish_program_undo(!self.status_error && !self.sequence_halted);
             }
             self.grammar.complete(post_action, self.mode);
             if let Some((sequence, target)) = resolved_binding {
@@ -5503,7 +5525,7 @@ impl App {
     pub(super) fn enter_normal_mode(&mut self) {
         let buffer_id = self.active().buffer;
         if matches!(self.mode, Mode::Insert | Mode::Replace) {
-            self.buffers[buffer_id].commit_undo_group();
+            self.commit_edit_checkpoint(buffer_id);
         }
         let selection = self.normal_mode_selection(
             buffer_id,
@@ -6539,6 +6561,7 @@ impl App {
     }
 
     pub(super) fn select_grammar(&mut self, kind: crate::command::GrammarKind) {
+        self.reset_program_input();
         self.grammar = ActiveGrammar::new(kind);
         match kind {
             crate::command::GrammarKind::Runyte => {

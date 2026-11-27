@@ -28,6 +28,13 @@ its pane. It is also cancelled if its document or terminal review,
 selection, mode or binding scope changed before the operand arrived. Default
 spellings and public continuation admission are unchanged in this slice.
 
+A binding's text edits now share one undo checkpoint per edited buffer, across
+operand waits and cooperative counted replay. Ending in Insert or Replace
+hands the checkpoint to typing until the mode is left; nonediting completion
+requests preserve ordinary Insert grouping. Explicit undo, redo and checkpoint
+actions keep their existing history meaning. Selection-only programs remain
+one selection-history step, including completed movement before replay cancellation.
+
 Target: [Helix master keymap](https://docs.helix-editor.com/master/keymap.html),
 verified 2026-07-27.
 

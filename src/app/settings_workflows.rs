@@ -661,6 +661,7 @@ impl App {
         self.sync_inactive_theme();
         match value {
             SettingValue::Grammar(kind) => {
+                self.reset_program_input();
                 self.grammar = ActiveGrammar::new(kind);
                 self.mode = self.grammar.preferred_mode().unwrap_or(Mode::Normal);
             }
@@ -711,6 +712,7 @@ impl App {
         self.sync_keymap();
         self.sync_inactive_theme();
         self.replace_theme(preview.original_theme_name, preview.original_theme);
+        self.reset_program_input();
         self.grammar = preview.original_grammar;
         self.mode = preview.original_mode;
         Some(preview.setting)

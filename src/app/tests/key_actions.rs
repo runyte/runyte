@@ -557,7 +557,7 @@ fn counted_program_replay_reserves_remaining_budget_before_prefix_effects() {
 
 /// Internal programs exercise the executor before the public continuation
 /// policy is widened in the following stage 3b slice.
-fn program_app(commands: &[EditorCommand]) -> App {
+pub(super) fn program_app(commands: &[EditorCommand]) -> App {
     use crate::keymap::{Binding, Key, actions::Action, program::Program};
     let mut app = configured("{}");
     let mut binding = Binding::implemented(

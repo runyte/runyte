@@ -8,7 +8,7 @@ use std::{
 
 const FADE_DURATION: Duration = Duration::from_millis(160);
 
-use super::{App, InputEvent, InputGrammar, Layout, Mode, Rect};
+use super::{App, InputEvent, Layout, Mode, Rect};
 use crate::keymap::ui::{Action, Owner};
 use crate::snapshot::{PaneSnapshot, ResizePaneSnapshot, ResizeSnapshot};
 
@@ -282,7 +282,7 @@ impl App {
             return;
         }
         self.dismiss_popups();
-        self.grammar.reset();
+        self.reset_program_input();
         self.jump = None;
         self.mode = Mode::Normal;
         self.pane_resize = Some(preview);

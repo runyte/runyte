@@ -5000,3 +5000,69 @@ fn a_restart_that_moves_a_document_still_closes_the_old_servers_popups() {
 
     fs::remove_dir_all(workspace.parent().unwrap()).unwrap();
 }
+
+#[test]
+fn server_edits_during_a_program_wait_keep_separate_undo_and_atomic_validation() {
+    for accepted in [false, true] {
+        let (mut app, path, mut queue) = rust_app("abcde\n");
+        ready(&mut app, Encoding::Utf8);
+        app.keymap = super::key_actions::program_app(&[
+            EditorCommand::DeleteSelection,
+            EditorCommand::FindNextChar,
+            EditorCommand::DeleteSelection,
+        ])
+        .keymap;
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        deliver_document_edits(
+            &mut app,
+            &mut queue,
+            vec![DocumentEdit {
+                path,
+                version: None,
+                edits: vec![if accepted {
+                    edit(0, 0, 0, "x")
+                } else {
+                    edit(100, 0, 0, "x")
+                }],
+            }],
+            true,
+        );
+        if accepted {
+            assert_eq!(app.awaiting_character_command(), None);
+            assert_eq!(text(&app), "xbcde\n");
+            app.execute_editor_command(EditorCommand::Undo).unwrap();
+            assert_eq!(text(&app), "bcde\n");
+            app.execute_editor_command(EditorCommand::Undo).unwrap();
+            assert_eq!(text(&app), "abcde\n");
+        } else {
+            assert_eq!(
+                app.awaiting_character_command(),
+                Some(EditorCommand::FindNextChar)
+            );
+            assert_eq!(text(&app), "bcde\n");
+            press(&mut app, 'd');
+            app.execute_editor_command(EditorCommand::Undo).unwrap();
+            assert_eq!(text(&app), "abcde\n");
+        }
+    }
+}
+
+#[test]
+fn requested_completion_does_not_split_default_insert_undo() {
+    let (mut app, _, mut queue) = rust_app("");
+    ready(&mut app, Encoding::Utf8);
+    press(&mut app, 'i');
+    for c in "foo".chars() {
+        press(&mut app, c);
+    }
+    drain(&mut queue);
+    key(&mut app, KeyCode::Char('x'), Modifiers::CONTROL);
+    assert!(!app.lsp_requests.is_empty());
+    for c in "bar".chars() {
+        press(&mut app, c);
+    }
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(text(&app), "foobar");
+    app.execute_editor_command(EditorCommand::Undo).unwrap();
+    assert_eq!(text(&app), "");
+}
