@@ -110,7 +110,8 @@ enter Select temporarily; the next non-line gesture restores the invoking mode.
 Whole-line extent stays with the selection through pure mode changes, selection
 history and text-coordinate mapping. A motion or collapse makes it characterwise
 again. The paragraph actions use the same extent; their default keys add the same
-temporary Select step.
+temporary Select step. Copying a linewise selection to the system clipboard
+includes each selected row’s terminating newline, just like a linewise register.
 
 #### Selection history
 
