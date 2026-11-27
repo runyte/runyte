@@ -17,11 +17,11 @@ use super::{
     InputGrammar, Instant, InvocationParameters, KeyCode, KeySequence, KeyStroke, Keymap,
     LineDirection, ListPicker, LspCommand, MaximizedView, Mode, Modifiers, Motion, Offset, Path,
     PathBuf, PathHint, PickerTarget, PointerDrag, PointerEvent, PointerEventKind, PointerOutcome,
-    PreparedView, ProgramAction, ProgramActionMenu, ProgramChoice, PromptKind, Range, RangeIntent,
-    RequestKind, Result, SearchMode, SearchQuery, Selection, SelectionSemantics, SettingId,
-    SettingType, SettingValue, SignatureContext, StashScope, SyntaxObject, SyntaxObjectPart,
-    SyntaxSelectionTransform, SystemClipboard, TextObjectPart, ViewAlignment, buffer_language,
-    char_to_byte, display_path, enclosing_area, expand_home_path, external_open,
+    PreparedView, ProgramAction, ProgramActionMenu, ProgramChoice, ProgramOwner, PromptKind, Range,
+    RangeIntent, RequestKind, Result, SearchMode, SearchQuery, Selection, SelectionSemantics,
+    SettingId, SettingType, SettingValue, SignatureContext, StashScope, SyntaxObject,
+    SyntaxObjectPart, SyntaxSelectionTransform, SystemClipboard, TextObjectPart, ViewAlignment,
+    buffer_language, char_to_byte, display_path, enclosing_area, expand_home_path, external_open,
     hint_is_not_before, hover_content_rows, is_path_separator, is_path_token_boundary, is_word,
     is_word_completion_character, keymap_for, mapped_applied_path, operative_span,
     persistent_session_availability, pointer_pane, pointer_resize_pair, prompt_backspace,
@@ -1256,6 +1256,9 @@ impl App {
                 .is_some_and(|preview| preview.source == self.panes[&pane_id].buffer)
         {
             self.invalidate_all_partial_guards();
+            if pane_id != self.active_pane && self.grammar.awaiting_character().is_some() {
+                self.active_mut().paused_grammar = Some(self.grammar.clone());
+            }
             self.grammar.reset();
             self.jump = None;
             self.activate_pane_from_pointer(pane_id);
@@ -1394,13 +1397,15 @@ impl App {
                     self.status("jump cancelled");
                     self.report_input_feedback();
                 }
-                // A pointer press cancels any modal prefix/operator/register
-                // state before it establishes a new spatial interaction.
-                self.grammar.reset();
                 let Some(pane_id) = pointer_pane(view, event.column, event.row) else {
+                    self.grammar.reset();
                     self.pointer_drag = None;
                     return Ok(PointerOutcome::Changed);
                 };
+                if pane_id != self.active_pane && self.grammar.awaiting_character().is_some() {
+                    self.active_mut().paused_grammar = Some(self.grammar.clone());
+                }
+                self.grammar.reset();
                 self.activate_pane_from_pointer(pane_id);
                 // Native preview clicks focus the pane without placing a caret
                 // in the source text hidden underneath its document surface.
@@ -2115,6 +2120,23 @@ impl App {
     }
 
     fn handle_key_stroke(&mut self, mut key: KeyStroke) -> Result<()> {
+        if self.grammar.program_description().is_none()
+            && let Some(grammar) = self.active_mut().paused_grammar.take()
+        {
+            self.grammar = grammar;
+        }
+        if self.grammar.awaiting_character().is_some()
+            && self
+                .active()
+                .program_owner
+                .as_ref()
+                .is_some_and(|owner| *owner != self.program_owner())
+        {
+            self.grammar.reset();
+            self.active_mut().program_owner = None;
+            self.status("binding cancelled: its view changed while waiting for a character");
+            return Ok(());
+        }
         if let KeyCode::Char(character) = key.code
             && character.is_control()
             && self.has_single_line_text_input()
@@ -2226,6 +2248,10 @@ impl App {
             return Ok(());
         }
         self.hover = None;
+
+        if self.grammar.awaiting_character().is_some() {
+            return self.handle_editor_input(InputEvent::Key(key));
+        }
 
         // A pending sequence is already owned by the editor grammar.
         if self.mode == Mode::Insert
@@ -2416,6 +2442,14 @@ impl App {
     }
 
     fn handle_text(&mut self, text: &str) -> Result<()> {
+        if !text.is_empty()
+            && !self.has_input_overlay()
+            && self.grammar.awaiting_character().is_some()
+        {
+            self.grammar.reset();
+            self.action_failed("expected a character key; binding cancelled");
+            return Ok(());
+        }
         if self.has_single_line_text_input()
             && self.reject_prompt_controls(
                 text,
@@ -2536,6 +2570,17 @@ impl App {
         Ok(())
     }
 
+    fn program_owner(&self) -> ProgramOwner {
+        ProgramOwner {
+            binding_generation: self.active().binding_generation,
+            buffer_revision: self.active_buffer().revision(),
+            selection_revision: self.active().selection_revision,
+            mode: self.mode,
+            scope: self.key_binding_scope(),
+            selection: self.capture_selection_origin(),
+        }
+    }
+
     fn handle_editor_input(&mut self, mut input: InputEvent) -> Result<()> {
         loop {
             if matches!(self.mode, Mode::Insert | Mode::Replace)
@@ -2557,6 +2602,7 @@ impl App {
             if let InputEvent::Key(key) = &input
                 && matches!(self.mode, Mode::Insert | Mode::Replace)
                 && self.grammar.pending_sequence().is_empty()
+                && self.grammar.awaiting_character().is_none()
                 && self.handle_completion_key(*key)
             {
                 return Ok(());
@@ -2569,25 +2615,31 @@ impl App {
                 },
                 _ => None,
             };
-            let configured_description = if let InputEvent::Key(key) = &input
-                && self.grammar.awaiting_character().is_none()
-            {
-                let mut sequence = self.grammar.pending_sequence().clone();
-                sequence.push(*key);
-                match self
-                    .keymap
-                    .lookup_in(self.mode, self.key_binding_scope(), &sequence)
-                {
-                    crate::keymap::Lookup::Exact(binding)
-                        if binding.configured_actions || binding.program.len() > 1 =>
+            let configured_description = self
+                .grammar
+                .program_description()
+                .map(str::to_owned)
+                .or_else(|| {
+                    if let InputEvent::Key(key) = &input
+                        && self.grammar.awaiting_character().is_none()
                     {
-                        Some(binding.description.to_string())
+                        let mut sequence = self.grammar.pending_sequence().clone();
+                        sequence.push(*key);
+                        match self
+                            .keymap
+                            .lookup_in(self.mode, self.key_binding_scope(), &sequence)
+                        {
+                            crate::keymap::Lookup::Exact(binding)
+                                if binding.configured_actions || binding.program.len() > 1 =>
+                            {
+                                Some(binding.description.to_string())
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
                     }
-                    _ => None,
-                }
-            } else {
-                None
-            };
+                });
             let context = GrammarContext::new(self.mode, self.key_binding_scope(), &self.keymap)
                 .with_recording_macro(self.recording_macro.is_some());
             let GrammarOutput {
@@ -2599,54 +2651,72 @@ impl App {
             // Counted programs must finish their accepting step before their
             // tail. Reserve bounded atomic work up front instead of letting
             // singleton macro scheduling defer repetitions past that tail.
-            let atomic = intents.len() > 1 && self.macro_replay.is_some();
-            if atomic {
-                let repetitions = intents.iter().map(|intent| match intent {
-                    EditorIntent::Command(invocation)
-                        if matches!(invocation.id(), CommandId::Editor(command)
-                            if command.action_policy().count == crate::command::descriptor::CountBehavior::Repeat
-                                && !matches!(command, EditorCommand::ReplayMacro | EditorCommand::ReplayDefaultMacro)) =>
-                        invocation.execution().repetitions(),
-                    EditorIntent::Range(RangeIntent::SelectLine { count, .. }) => count.get(),
-                    _ => 1,
-                }).max().unwrap_or(1);
-                if !self.reserve_macro_replay_range_work(repetitions) {
-                    self.grammar.reset();
-                    return Ok(());
-                }
+            let program_repetitions = self.grammar.program_repetitions();
+            let atomic = program_repetitions.is_some() && self.macro_replay.is_some();
+            if atomic
+                && !self
+                    .grammar
+                    .program_reserved_for(self.macro_replay_generation)
+                && !self.reserve_macro_replay_range_work(program_repetitions.unwrap_or(1))
+            {
+                self.grammar.reset();
+                return Ok(());
+            }
+            if self.macro_replay.is_some() {
+                self.grammar
+                    .reserve_program_for(self.macro_replay_generation);
             }
             let previous_atomic = self.atomic_program_replay;
             self.atomic_program_replay |= atomic;
             let result = (|| -> Result<Option<CommandOutcome>> {
                 let mut command_outcome = None;
-                for intent in intents {
+                let mut pending_intents = intents.into_iter();
+                let mut next = pending_intents.next();
+                while let Some(intent) = next {
                     self.sequence_halted = false;
                     command_outcome = self
                         .apply_editor_intent(intent, typed_character)?
                         .or(command_outcome);
                     self.reconcile_search_selection_presentation();
-                    if configured_description.is_some()
-                        && (self.status_error
-                            || self.sequence_halted
-                            || matches!(
-                                command_outcome,
-                                Some(
-                                    CommandOutcome::UserError(_)
-                                        | CommandOutcome::Unavailable(_)
-                                        | CommandOutcome::Confirmation(_)
-                                        | CommandOutcome::Prompt(_)
-                                        | CommandOutcome::AsynchronousRequest(_)
-                                )
-                            ))
+                    if self.status_error
+                        || self.sequence_halted
+                        || self.should_quit
+                        || self.workspace_switch.is_some()
+                        || matches!(
+                            command_outcome,
+                            Some(
+                                CommandOutcome::UserError(_)
+                                    | CommandOutcome::Unavailable(_)
+                                    | CommandOutcome::Confirmation(_)
+                                    | CommandOutcome::Prompt(_)
+                                    | CommandOutcome::AsynchronousRequest(_)
+                            )
+                        )
                     {
                         self.grammar.reset();
                         break;
                     }
+                    next = match pending_intents.next() {
+                        Some(intent) => Some(intent),
+                        None => self.grammar.next_program_intent()?,
+                    };
                 }
                 Ok(command_outcome)
             })();
             self.atomic_program_replay = previous_atomic;
-            let command_outcome = result?;
+            let command_outcome = match result {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    self.grammar.reset();
+                    return Err(error);
+                }
+            };
+            if self.grammar.awaiting_character().is_some() {
+                self.active_mut().program_owner = Some(self.program_owner());
+                self.grammar
+                    .retain_operand_context(resolved_binding, post_action, reprocess);
+                return Ok(());
+            }
             self.grammar.complete(post_action, self.mode);
             if let Some((sequence, target)) = resolved_binding {
                 let outcome = command_outcome.unwrap_or_else(|| {
@@ -5431,7 +5501,7 @@ impl App {
                 .active_mut()
                 .mark_selection_semantics(SelectionSemantics::Runyte),
         }
-        self.grammar.reset();
+        self.grammar.reset_prefix();
         self.dismiss_popups();
     }
 

@@ -506,8 +506,22 @@ struct MarkdownOrigin {
     page_revision: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProgramOwner {
+    binding_generation: u64,
+    buffer_revision: u64,
+    selection_revision: u64,
+    mode: Mode,
+    scope: crate::keymap::BindingScope,
+    selection: Option<selection_history::Origin>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Pane {
+    /// A paused binding belongs to this pane, never to the next focused view.
+    paused_grammar: Option<ActiveGrammar>,
+    program_selection_origin: Option<selection_history::Origin>,
+    program_owner: Option<ProgramOwner>,
     pub buffer: usize,
     /// Show the PDF page projection instead of its native preview in this pane.
     pdf_page_list: Option<usize>,
@@ -597,6 +611,9 @@ impl Pane {
         Self {
             buffer,
             pdf_page_list: None,
+            paused_grammar: None,
+            program_selection_origin: None,
+            program_owner: None,
             buffer_history: Vec::new(),
             saved_view_positions: BTreeMap::new(),
             destination_history: Vec::new(),
@@ -3293,6 +3310,7 @@ pub struct App {
     /// moment its sequence completes, in the order it arrived.
     macro_staging: Vec<InputEvent>,
     macro_replay: Option<MacroReplay>,
+    macro_replay_generation: u64,
     /// Bounded composed-program repetitions already charged to the replay budget.
     atomic_program_replay: bool,
     /// Last successfully invoked command reached through the effective leader
@@ -4043,6 +4061,7 @@ impl App {
             recording_macro: None,
             macro_staging: Vec::new(),
             macro_replay: None,
+            macro_replay_generation: 0,
             atomic_program_replay: false,
             jump: None,
             line_select: None,

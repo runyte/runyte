@@ -329,6 +329,7 @@ impl App {
             return Ok(());
         }
 
+        self.macro_replay_generation = self.macro_replay_generation.wrapping_add(1);
         self.macro_replay = Some(MacroReplay {
             root_register: register,
             frames: vec![frame],
@@ -396,6 +397,7 @@ impl App {
                 MacroReplayAction::Command(invocation) => self.execute(invocation).map(|_| ()),
             };
             if let Err(error) = outcome {
+                self.cancel_paused_replay_programs();
                 self.macro_replay = None;
                 self.grammar.reset();
                 return Err(error);
@@ -404,6 +406,7 @@ impl App {
                 replay.last_action_error = self.status_error;
             }
             if self.should_quit || self.workspace_switch.is_some() {
+                self.cancel_paused_replay_programs();
                 self.macro_replay = None;
                 self.grammar.reset();
                 return Ok(true);
@@ -573,6 +576,7 @@ impl App {
         let Some(replay) = self.macro_replay.take() else {
             return false;
         };
+        self.cancel_paused_replay_programs();
         self.grammar.reset();
         self.status(format!(
             "macro replay @{} cancelled after {} work unit(s)",
@@ -581,7 +585,21 @@ impl App {
         true
     }
 
+    fn cancel_paused_replay_programs(&mut self) {
+        for pane in self.panes.values_mut() {
+            if pane
+                .paused_grammar
+                .as_ref()
+                .is_some_and(|grammar| grammar.program_reserved_for(self.macro_replay_generation))
+            {
+                pane.paused_grammar = None;
+                pane.program_selection_origin = None;
+            }
+        }
+    }
+
     fn abort_macro_replay(&mut self, reason: String) {
+        self.cancel_paused_replay_programs();
         self.macro_replay = None;
         self.grammar.reset();
         self.action_failed(reason);

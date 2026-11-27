@@ -31,7 +31,7 @@ enum Subject {
     Terminal(TerminalId),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct Origin {
     pane: usize,
     subject: Subject,
@@ -161,8 +161,14 @@ impl App {
                 None => {}
             }
         }
+        let origin_pane = self.active_pane;
         let before = (outer && self.selection_prompt_origin.is_none())
-            .then(|| self.capture_selection_origin())
+            .then(|| {
+                self.active_mut()
+                    .program_selection_origin
+                    .clone()
+                    .or_else(|| self.capture_selection_origin())
+            })
             .flatten();
         let epoch = self.selection_history_epoch;
         self.selection_action_depth += 1;
@@ -170,7 +176,22 @@ impl App {
         self.selection_action_depth -= 1;
         if outer {
             self.follow_append_insert();
-            if self.mode == Mode::Command {
+            if self.active_pane != origin_pane && self.mode != Mode::Command {
+                self.selection_prompt_origin = None;
+            }
+        }
+        if outer
+            && self.active_pane != origin_pane
+            && let Some(pane) = self.panes.get_mut(&origin_pane)
+            && pane.paused_grammar.is_none()
+        {
+            pane.program_selection_origin = None;
+        }
+        if outer && self.active_pane == origin_pane {
+            if self.awaiting_character_command().is_some() {
+                self.active_mut().program_selection_origin = before;
+            } else if self.mode == Mode::Command {
+                self.active_mut().program_selection_origin = None;
                 // A prompt is part of the operation it collects, not a
                 // sequence of selection changes. Retain one bounded origin.
                 if self.selection_prompt_origin.is_none()
@@ -182,6 +203,7 @@ impl App {
                     });
                 }
             } else {
+                self.active_mut().program_selection_origin = None;
                 let before = match self.selection_prompt_origin.take() {
                     Some(prompt) if !prompt.cancelled => Some(prompt.origin),
                     Some(_) => None,

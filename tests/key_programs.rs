@@ -72,6 +72,7 @@ fn authored_programs_execute_all_steps_without_configuration_provenance() {
     let output = grammar
         .translate(runyte::input::InputEvent::Key(Key::char('x')), context)
         .unwrap();
+    let output = acknowledge(output, &mut grammar);
     let commands = output
         .intents
         .iter()
@@ -130,12 +131,14 @@ fn every_binding_kind_silently_drops_a_count_when_no_step_accepts_it() {
             let uncounted = grammar
                 .translate(runyte::input::InputEvent::Key(Key::char('x')), context)
                 .unwrap();
+            let uncounted = acknowledge(uncounted, &mut grammar);
             grammar
                 .translate(runyte::input::InputEvent::Key(Key::char('3')), context)
                 .unwrap();
             let counted = grammar
                 .translate(runyte::input::InputEvent::Key(Key::char('x')), context)
                 .unwrap();
+            let counted = acknowledge(counted, &mut grammar);
             assert_eq!(
                 counted.intents, uncounted.intents,
                 "{program:?}, configured={configured}"
@@ -149,6 +152,7 @@ fn every_binding_kind_silently_drops_a_count_when_no_step_accepts_it() {
             let next = grammar
                 .translate(runyte::input::InputEvent::Key(Key::char('l')), context)
                 .unwrap();
+            let next = acknowledge(next, &mut grammar);
             let [EditorIntent::Command(next)] = next.intents.as_slice() else {
                 panic!("expected movement")
             };
@@ -183,9 +187,20 @@ fn singleton_and_composed_parameterized_steps_receive_the_same_accepted_count() 
         let output = grammar
             .translate(runyte::input::InputEvent::Key(Key::char('x')), context)
             .unwrap();
+        let output = acknowledge(output, &mut grammar);
         let EditorIntent::Command(invocation) = output.intents.last().unwrap() else {
             panic!("expected movement")
         };
         assert_eq!(invocation.execution().count(), Some(3));
     }
+}
+
+fn acknowledge(
+    mut output: runyte::input_grammar::GrammarOutput,
+    grammar: &mut RunyteGrammar,
+) -> runyte::input_grammar::GrammarOutput {
+    while let Some(intent) = grammar.next_program_intent().unwrap() {
+        output.intents.push(intent);
+    }
+    output
 }

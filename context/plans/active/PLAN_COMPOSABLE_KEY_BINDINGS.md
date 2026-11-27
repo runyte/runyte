@@ -593,7 +593,17 @@ provenance for input ownership. Every program routes a count to its first
 accepting step, or drops it silently when none accepts it, following
 decision 9.
 
-Stage 3b owns resumable execution, program undo ownership, effect-derived
+The first stage 3b slice replaces eager program translation with an acknowledged
+cursor: the application executes a step before preparing the next one. Operand
+waits retain the cursor, count recipient, feedback and selection-history origin.
+Each pane can retain one paused program; its document or terminal review,
+selection, mode and binding scope must still match when its operand arrives.
+Escape cancels the remaining steps, and replay reservations belong to a specific
+replay run. Internal constructed programs test operands in the middle of a
+program; public admission retains the existing last-step restrictions until the
+continuation-policy slice. Text undo boundaries are unchanged in this slice.
+
+Stage 3b still owns program undo ownership, effect-derived
 continuation and removal of the legacy policy, atomic splits and default
 program rewrites, and the embedded YAML Runyte preset (decision 25). Until
 those land, operands and mode changes retain their existing last-step

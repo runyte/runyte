@@ -2366,6 +2366,9 @@ impl App {
         let new = self.next_pane;
         self.next_pane += 1;
         let mut pane = self.panes[&old].clone();
+        pane.paused_grammar = None;
+        pane.program_selection_origin = None;
+        pane.program_owner = None;
         // Expansion is an interaction chain owned by the pane where it was
         // started. A split copies the current selection but starts its own
         // empty chain, avoiding coupling through the application-wide mode.
@@ -3087,9 +3090,20 @@ impl App {
         let order = self.advance_pane_history();
         self.pane_activated_at.insert(pane, order);
         if pane != self.active_pane {
+            if self.grammar.awaiting_character().is_some() {
+                self.active_mut().paused_grammar = Some(self.grammar.clone());
+                self.grammar.reset();
+            } else {
+                self.grammar.reset_prefix();
+            }
             self.previously_focused_pane = Some(self.active_pane);
         }
         self.active_pane = pane;
+        if self.grammar.program_description().is_none()
+            && let Some(grammar) = self.active_mut().paused_grammar.take()
+        {
+            self.grammar = grammar;
+        }
         if let Some(id) = self.terminal_of_pane(pane) {
             self.note_terminal_focused(id);
         }
@@ -3280,7 +3294,7 @@ impl App {
         }
         if let Some(id) = self.active_terminal() {
             self.settle_terminal_focus(id);
-            self.grammar.reset();
+            self.grammar.reset_prefix();
         } else if terminal_input {
             self.enter_normal_mode();
         }
