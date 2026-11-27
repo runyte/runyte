@@ -1300,6 +1300,25 @@ fn modal_then_mode(
     binding
 }
 
+fn modal_program(
+    sequence: impl Into<KeySequence>,
+    target: EditorCommand,
+    commands: &[EditorCommand],
+    mode: Mode,
+) -> Binding {
+    let mut binding = modal(sequence, target);
+    let mut steps = commands
+        .iter()
+        .copied()
+        .map(actions::Action::Editor)
+        .collect::<Vec<_>>();
+    steps.push(actions::Action::Invocation(CommandInvocation::mode_entry(
+        mode,
+    )));
+    binding.program = program::Program::new(steps).expect("bounded default program");
+    binding
+}
+
 fn primary_modal(sequence: impl Into<KeySequence>, target: impl Into<BindingTarget>) -> Binding {
     Binding::implemented(MODAL, sequence, target)
 }
@@ -1469,8 +1488,8 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::char('>'), Command::Indent),
         modal(Key::char('<'), Command::Unindent),
         modal(Key::ctrl('c'), Command::ToggleComments),
-        modal(Key::char('d'), Command::YankDeleteSelection),
-        modal(Key::char('c'), Command::YankChangeSelection),
+        modal_then_mode(Key::char('d'), Command::CutSelection, Mode::Normal),
+        modal_then_mode(Key::char('c'), Command::CutSelectionForChange, Mode::Insert),
         modal(Key::char('v'), Command::EnterSelectMode),
         modal(Key::char('x'), Command::SelectLine),
         modal(Key::char('X'), Command::ExtendLineAbove),
@@ -1529,7 +1548,15 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::char('/'), Command::SearchRegex),
         modal(Key::char('n'), Command::SearchNext),
         modal(Key::char('N'), Command::SearchPrevious),
-        modal(Key::char('*'), Command::SearchSelection),
+        modal_program(
+            Key::char('*'),
+            Command::SearchSetFromSelection,
+            &[
+                Command::SearchSetFromSelection,
+                Command::SearchSelectAllMatches,
+            ],
+            Mode::Select,
+        ),
         // Ctrl-s was Runyte's original save shortcut. Helix assigns it to
         // save_selection; Runyte retains the global save compatibility key.
         modal(Key::ctrl('s'), Command::Save),

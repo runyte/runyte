@@ -212,7 +212,8 @@ fn binding_spelling(body: &str, keymap: &Keymap) -> Result<String, String> {
             .bindings()
             .iter()
             .filter(|binding| {
-                binding.is_plain_action()
+                (binding.program == original.program
+                    || (binding.is_plain_action() && original.is_plain_action()))
                     && binding.target == original.target
                     && binding.scope == original.scope
                     && binding.is_active_in(mode)
@@ -414,6 +415,45 @@ mod tests {
         let compiled = crate::keymap::configured::compile(&value, default_keymap());
         let rendered = resolve("{binding:Space g l}", &compiled.keymap).unwrap();
         assert_eq!(rendered.text, "Ctrl-x G l");
+    }
+
+    #[test]
+    fn equivalent_plain_invocation_keeps_the_authored_spelling() {
+        let compiled = crate::keymap::configured::compile(
+            &serde_yaml::from_str(
+                "bind: {normal: {'Space r': null, F6: reload}, select: {'Space r': null, F6: reload}}",
+            )
+            .unwrap(),
+            default_keymap(),
+        );
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        assert_eq!(
+            resolve("{binding:Space r}", &compiled.keymap).unwrap().text,
+            "F6"
+        );
+    }
+
+    #[test]
+    fn composed_default_spelling_requires_the_whole_program() {
+        let mut bindings = default_keymap().bindings().to_vec();
+        for binding in &mut bindings {
+            if binding.sequence == KeySequence::parse("d").unwrap() {
+                binding.sequence = KeySequence::parse("F6").unwrap();
+            }
+        }
+        let rebound = Keymap::new(bindings).unwrap();
+        assert_eq!(resolve("{binding:d}", &rebound).unwrap().text, "F6");
+
+        let replaced = crate::keymap::configured::compile(
+            &serde_yaml::from_str("bind: {normal: {d: cut-selection}, select: {d: cut-selection}}")
+                .unwrap(),
+            default_keymap(),
+        );
+        assert!(replaced.errors.is_empty(), "{:?}", replaced.errors);
+        assert_eq!(
+            resolve("{binding:d}", &replaced.keymap).unwrap().text,
+            "[unbound: cut-selection]"
+        );
     }
 
     #[test]

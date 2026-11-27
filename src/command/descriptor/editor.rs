@@ -181,7 +181,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
         },
-        C::Undo | C::PasteAfter => ActionPolicy {
+        C::Undo => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[Text, TerminalInput],
             count: CountBehavior::Repeat,
@@ -213,10 +213,18 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
+        C::PasteAfter => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[Text, Selection, TerminalInput],
+            count: CountBehavior::Interpret,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: true,
+            buffer_mutation: BufferMutation::MayMutate,
+        },
         C::PasteAfterOrReplace | C::PasteBefore => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Text, Mode, TerminalInput],
-            count: CountBehavior::Repeat,
+            effects: &[Text, Selection, Mode, TerminalInput],
+            count: CountBehavior::Interpret,
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
@@ -237,17 +245,17 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
         },
-        C::YankDeleteSelection => ActionPolicy {
+        C::CutSelection => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Register, Text, Mode],
+            effects: &[Register, Text, Selection],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
         },
-        C::YankChangeSelection => ActionPolicy {
+        C::CutSelectionForChange => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Register, Text, Mode],
+            effects: &[Register, Text, Selection],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
@@ -285,18 +293,16 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
-        C::FlipSelection
-        | C::SplitSelectionAtLineEnds
-        | C::SplitSelectionAtLineStarts
-        | C::SearchNext
-        | C::SearchPrevious => ActionPolicy {
-            global_binding_modes: NORMAL_SELECT,
-            effects: &[Selection, Mode],
-            count: CountBehavior::Reject,
-            operands: OperandArity::Zero,
-            requires_writable_buffer: false,
-            buffer_mutation: BufferMutation::Unchanged,
-        },
+        C::FlipSelection | C::SplitSelectionAtLineEnds | C::SplitSelectionAtLineStarts => {
+            ActionPolicy {
+                global_binding_modes: NORMAL_SELECT,
+                effects: &[Selection, Mode],
+                count: CountBehavior::Reject,
+                operands: OperandArity::Zero,
+                requires_writable_buffer: false,
+                buffer_mutation: BufferMutation::Unchanged,
+            }
+        }
         C::ExpandSyntaxSelection
         | C::ShrinkSyntaxSelection
         | C::SelectSyntaxParent
@@ -439,15 +445,31 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
-        C::SearchSelection => ActionPolicy {
+        C::SearchNext | C::SearchPrevious => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[SearchState, Selection, Mode],
+            effects: &[Selection, View, Mode],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
-        C::SetSearchFromSelection => ActionPolicy {
+        C::SearchExtendNext | C::SearchExtendPrevious => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[Selection, View],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::SearchSelectAllMatches => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[Selection, View],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::SearchSetFromSelection => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[SearchState],
             count: CountBehavior::Reject,
@@ -1095,8 +1117,8 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::ClipboardPasteAfter | C::ClipboardPasteBefore => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Text, Mode, TerminalInput],
-            count: CountBehavior::Repeat,
+            effects: &[Text, Selection, Mode, TerminalInput],
+            count: CountBehavior::Interpret,
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,

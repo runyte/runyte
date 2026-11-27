@@ -864,6 +864,27 @@ is subject to the existing 128-repetition atomic limit; exceeding that limit
 stops replay before any step runs. Dropped counts consume no repetition work.
 Singleton counted commands retain their cooperative replay scheduling.
 
+Paste actions interpret a count as N copies in one transaction, deciding once
+whether each range is replaced or receives an insertion. The existing
+`p`, `P`, `Space c p` and `Space c P` actions still enter Normal after
+successful document paste. A counted paste selects the entire replacement.
+For example, Select mode on `a` in `abc`, register `x`, and `3p` produces
+`xxxbc` with `xxx` selected. Earlier versions left a caret after repeated
+invocations; longer registers could repeatedly replace the same range instead
+of inserting all copies. Expanded paste payloads are limited to 64 MiB across
+all selections (1 MiB for terminal input).
+
+Removed action names report their replacements: `yank-delete-selection`
+and `yank-change-selection` become
+`cut-selection` and `cut-selection-for-change` followed by Normal or Insert.
+`set-search-from-selection` is now `search-set-from-selection`.
+`search-selection` becomes query setup, `search-select-all-matches`, and pure
+Select entry. These exact default programs require internal mode steps until
+the public binding format supports pure mode entry. The additive
+`search-extend-next`/`search-extend-previous` actions preserve mode;
+`search-next` and `search-previous` still enter Select in documents. Extension retains existing ranges and makes the added
+match primary, wrapping through the query's matches.
+
 **Undo.**
 
 - A list of selection-only actions is one selection-history step.
@@ -979,8 +1000,8 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `indent` | normal, select | can be followed by another action | Indent the selected lines |
 | `unindent` | normal, select | can be followed by another action | Unindent the selected lines |
 | `toggle-comments` | normal, select, insert, replace | can be followed by another action | Comment or uncomment the selected lines |
-| `yank-delete-selection` | normal, select | can be followed by another action | Yank, then delete the selection or character |
-| `yank-change-selection` | normal, select | can be followed by another action | Yank, then change the selection or character |
+| `cut-selection` | normal, select | can be followed by another action | Yank, then delete the selection or character |
+| `cut-selection-for-change` | normal, select | can be followed by another action | Yank, then change the selection or character |
 | `delete-selection` | normal, select | can be followed by another action | Delete the selection or character without yanking |
 | `change-selection` | normal, select | can be followed by another action | Change the selection or character without yanking |
 | `trim-trailing-whitespace` | normal, select | can be followed by another action | Delete trailing whitespace from every selected line |
@@ -1127,8 +1148,10 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `search-regex` | normal, select | must be the last action | Search with a regular expression |
 | `search-next` | normal, select | can be followed by another action | Select only the next search match |
 | `search-previous` | normal, select | can be followed by another action | Select only the previous search match |
-| `search-selection` | normal, select | can be followed by another action | Select every match of the selection or word |
-| `set-search-from-selection` | normal, select | can be followed by another action | Use the selection or word as the search |
+| `search-extend-next` | normal, select | can be followed by another action | Add the next search match as the primary selection |
+| `search-extend-previous` | normal, select | can be followed by another action | Add the previous search match as the primary selection |
+| `search-select-all-matches` | normal, select | can be followed by another action | Select every match of the current search |
+| `search-set-from-selection` | normal, select | can be followed by another action | Use the selection or word as the search |
 | `global-search` | normal, select | must be the last action | Search the workspace, ignoring case |
 | `global-search-regex` | normal, select | must be the last action | Search the workspace with a regular expression |
 
@@ -1642,15 +1665,15 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `yank-line` | register | not accepted | none | none | directory: Copy selected entry lines and record a directory copy payload |
 | `yank-collapse-normal-mode` | register, selection, mode | not accepted | none | none | terminal: Copy the review selection, retain it on screen and enter Normal mode; directory: Copy selected entries, collapse the selection and enter Normal mode |
 | `yank-line-collapse-normal-mode` | register, selection, mode | not accepted | none | none | directory: Copy selected entry lines, collapse the selection and enter Normal mode |
-| `paste-after-or-replace` | text, mode, terminal input | repeats | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing |
-| `paste-after` | text, terminal input | repeats | none | none | terminal: Send register text to the child without changing mode; directory: Stage copies or moves from a directory register into the listing |
+| `paste-after-or-replace` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing |
+| `paste-after` | text, selection, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child without changing mode; directory: Stage copies or moves from a directory register into the listing |
 | `replace-with-register` | text, mode | not accepted | none | none | directory: Insert rows from a directory-register payload; directory pastes use row insertion rather than text replacement |
-| `paste-before` | text, mode, terminal input | repeats | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing |
+| `paste-before` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing |
 | `indent` | text | not accepted | none | none |  |
 | `unindent` | text | not accepted | none | none |  |
 | `toggle-comments` | text | not accepted | none | none |  |
-| `yank-delete-selection` | register, text, mode | not accepted | none | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection |
-| `yank-change-selection` | register, text, mode | not accepted | none | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection |
+| `cut-selection` | register, text, selection | not accepted | none | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection |
+| `cut-selection-for-change` | register, text, selection | not accepted | none | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection |
 | `delete-selection` | text, mode | not accepted | none | none |  |
 | `change-selection` | text, mode | not accepted | none | none |  |
 | `enter-select-mode` | mode, selection | not accepted | none | none | terminal: Toggle Select mode over captured terminal output; media: Toggle selection of PDF text or an image region |
@@ -1729,10 +1752,12 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `format-table` | text | not accepted | none | none |  |
 | `search` | prompt, search state, selection, mode | not accepted | none | none | terminal: Prompt for a case-insensitive search of captured output |
 | `search-regex` | prompt, search state, selection, mode | not accepted | none | none | terminal: Prompt for a regular-expression search of captured output; directory-tree: Prompt to search visible tree entries |
-| `search-next` | selection, mode | not accepted | none | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry |
-| `search-previous` | selection, mode | not accepted | none | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry |
-| `search-selection` | search state, selection, mode | not accepted | none | none |  |
-| `set-search-from-selection` | search state | not accepted | none | none |  |
+| `search-next` | selection, view, mode | not accepted | none | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry |
+| `search-previous` | selection, view, mode | not accepted | none | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry |
+| `search-extend-next` | selection, view | not accepted | none | none |  |
+| `search-extend-previous` | selection, view | not accepted | none | none |  |
+| `search-select-all-matches` | selection, view | not accepted | none | none |  |
+| `search-set-from-selection` | search state | not accepted | none | none |  |
 | `media-show-page` | view, mode, selection | not accepted | none | none | pdf-pages: Display the selected PDF page and enter Normal mode |
 | `media-zoom-in` | view | not accepted | none | none |  |
 | `media-zoom-out` | view | not accepted | none | none |  |
@@ -1947,8 +1972,8 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `jump-forward-buffer` | view, selection | not accepted | none | none |  |
 | `rename-symbol` | background work, prompt, text | not accepted | none | none |  |
 | `code-action` | background work, prompt, text | not accepted | none | none |  |
-| `clipboard-paste-after` | text, mode, terminal input | repeats | none | none | terminal: Send system clipboard text to the child without changing mode |
-| `clipboard-paste-before` | text, mode, terminal input | repeats | none | none | terminal: Send system clipboard text to the child without changing mode |
+| `clipboard-paste-after` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send system clipboard text to the child without changing mode |
+| `clipboard-paste-before` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send system clipboard text to the child without changing mode |
 | `clipboard-yank` | register | not accepted | none | none | terminal: Copy the captured review selection to the system clipboard; media: Copy selected PDF text or an image region |
 | `clipboard-paste` | text, terminal input | not accepted | none | none | terminal: Paste clipboard text or an image reference into the terminal input queue |
 | `select-register` | character input, register | not accepted | one character | none |  |

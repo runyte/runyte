@@ -295,7 +295,7 @@ impl App {
                     && matches!(
                         action,
                         Some(CommandId::Editor(
-                            EditorCommand::YankDeleteSelection | EditorCommand::DeleteSelection
+                            EditorCommand::CutSelection | EditorCommand::DeleteSelection
                         ))
                     )
             }

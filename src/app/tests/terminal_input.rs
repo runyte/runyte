@@ -97,7 +97,7 @@ fn terminal_review_refuses_exactly_what_help_leaves_out() {
         app.status.clear();
         app.panes.get_mut(&app.active_pane).unwrap().terminal = Some(terminal);
         assert_eq!(app.key_binding_scope(), BindingScope::Terminal);
-        let consumed = app.execute_terminal_command(terminal, command, false);
+        let consumed = app.execute_terminal_command_count(terminal, command, false, 1);
         let refusal = app.status.contains("needs a buffer");
         if admits_command(BindingScope::Terminal, command) {
             if refusal {
@@ -423,4 +423,96 @@ fn selection_history_keeps_terminal_search_steps_in_step() {
     assert_eq!(anchor(&app), 1);
     send(&mut app, "N");
     assert_eq!(anchor(&app), 0);
+}
+
+#[test]
+fn terminal_yank_and_failed_counted_paste_preserve_review_and_modes() {
+    let (mut app, terminal) = terminal_app("{}");
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"foo bar foo".to_vec(),
+    });
+    app.mode = Mode::Select;
+    app.terminals
+        .get_mut(terminal)
+        .unwrap()
+        .search_review("foo", false)
+        .unwrap();
+    let selected = app
+        .terminals
+        .get_mut(terminal)
+        .unwrap()
+        .review_selection_text();
+    send(&mut app, "y");
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(
+        app.terminals
+            .get_mut(terminal)
+            .unwrap()
+            .review_selection_text(),
+        selected
+    );
+    for key in ["n", "N"] {
+        send(&mut app, key);
+        assert_eq!(app.mode, Mode::Normal);
+    }
+    app.registers.insert(
+        '"',
+        Register {
+            text: "x".into(),
+            linewise: false,
+            directory: None,
+        },
+    );
+    for key in ["p", "P"] {
+        app.mode = Mode::Select;
+        send(&mut app, "3");
+        send(&mut app, key);
+        assert_eq!(app.mode, Mode::Select);
+        assert!(app.status.contains("terminal input queue"));
+    }
+    app.set_system_clipboard(Box::new(MemoryClipboard(Arc::new(Mutex::new("x".into())))));
+    for key in ["p", "P"] {
+        app.mode = Mode::Select;
+        for key in ["3", "Space", "c", key] {
+            send(&mut app, key);
+        }
+        assert_eq!(app.mode, Mode::Select);
+    }
+}
+
+#[test]
+fn configured_modal_terminal_binding_replaces_the_default() {
+    for mode in ["normal", "select"] {
+        let (mut app, terminal) = terminal_app(&format!("bind: {{{mode}: {{p: yank}}}}"));
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id: terminal,
+            bytes: b"foo".to_vec(),
+        });
+        app.mode = if mode == "normal" {
+            Mode::Normal
+        } else {
+            Mode::Select
+        };
+        app.terminals
+            .get_mut(terminal)
+            .unwrap()
+            .search_review("foo", false)
+            .unwrap();
+        let before = app.terminals.get(terminal).unwrap().input_generation();
+        send(&mut app, "p");
+        assert_eq!(
+            app.terminals.get(terminal).unwrap().input_generation(),
+            before
+        );
+        assert_eq!(app.registers[&'"'].text, "foo");
+        assert_eq!(
+            app.mode,
+            if mode == "normal" {
+                Mode::Normal
+            } else {
+                Mode::Select
+            }
+        );
+    }
 }

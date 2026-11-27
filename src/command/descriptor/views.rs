@@ -106,7 +106,7 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
         C::YankLineCollapseNormalMode => {
             views!(Directory: "Copy selected entry lines, collapse the selection and enter Normal mode")
         }
-        C::YankDeleteSelection | C::YankChangeSelection => {
+        C::CutSelection | C::CutSelectionForChange => {
             views!(Directory: "Record selected entries as a move payload without removing files; delete or change the listing selection")
         }
         C::PasteAfter => {

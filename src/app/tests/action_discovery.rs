@@ -164,9 +164,9 @@ fn copy_inspected_binding_uses_clipboard_and_new_capture_clears_it() {
     let mut app = app();
     let clipboard = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     app.set_system_clipboard(Box::new(MemoryClipboard(clipboard.clone())));
-    inspect(&mut app, &['d']);
+    inspect(&mut app, &['l']);
     app.execute_command(discovery::COPY_BINDING).unwrap();
-    assert!(clipboard.lock().unwrap().contains("delete-selection"));
+    assert!(clipboard.lock().unwrap().contains("move-right"));
     app.start_describe_key();
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
     assert!(app.described_binding.is_none());

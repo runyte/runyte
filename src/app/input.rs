@@ -4277,6 +4277,10 @@ impl App {
                 | EditorCommand::ToggleCase
                 | EditorCommand::ReplaceChar
                 | EditorCommand::FitSelectionForNormalMode
+                | EditorCommand::SearchSetFromSelection
+                | EditorCommand::SearchExtendNext
+                | EditorCommand::SearchExtendPrevious
+                | EditorCommand::SearchSelectAllMatches
         ) {
             // These actions no longer own a mode transition. End the transient
             // line gesture without letting it restore its previous mode later.
@@ -4285,6 +4289,10 @@ impl App {
     }
 
     fn execute_editor_command_action(&mut self, command: EditorCommand) -> Result<()> {
+        self.execute_editor_command_count(command, 1)
+    }
+
+    fn execute_editor_command_count(&mut self, command: EditorCommand, count: usize) -> Result<()> {
         self.finish_atomic_line_selection(command);
         use EditorCommand as Command;
         if self.handle_merge_command(command) {
@@ -4318,14 +4326,19 @@ impl App {
             {
                 self.mode = mode;
             }
-            if self.execute_terminal_command(id, command, transient_line_selection) {
+            if self.execute_terminal_command_count(id, command, transient_line_selection, count) {
                 return Ok(());
             }
         }
         if let Some(reason) = self.active_buffer().read_only_reason()
             && command.is_mutating()
         {
-            self.mode = Mode::Normal;
+            if !matches!(
+                command,
+                Command::CutSelection | Command::CutSelectionForChange
+            ) {
+                self.mode = Mode::Normal;
+            }
             self.action_failed(reason);
             return Ok(());
         }
@@ -4359,6 +4372,10 @@ impl App {
                 | Command::SelectionUndo
                 | Command::SelectionRedo
         ) && let Some(mode) = self.line_select.take()
+            && !matches!(
+                command,
+                Command::CutSelection | Command::CutSelectionForChange
+            )
         {
             self.mode = mode;
         }
@@ -4501,26 +4518,29 @@ impl App {
                     self.collapse_after_yank();
                 }
             }
-            Command::PasteAfterOrReplace => self.paste(
+            Command::PasteAfterOrReplace => self.paste_count(
                 super::editing::Paste::AfterOrReplace,
                 transient_line_selection,
+                count,
             ),
-            Command::PasteAfter => {
-                self.paste(super::editing::Paste::After, transient_line_selection)
-            }
+            Command::PasteAfter => self.paste_count(
+                super::editing::Paste::After,
+                transient_line_selection,
+                count,
+            ),
             Command::ReplaceWithRegister => {
                 self.paste(super::editing::Paste::Replace, transient_line_selection)
             }
-            Command::PasteBefore => {
-                self.paste(super::editing::Paste::Before, transient_line_selection)
-            }
+            Command::PasteBefore => self.paste_count(
+                super::editing::Paste::Before,
+                transient_line_selection,
+                count,
+            ),
             Command::Indent => self.indent(false),
             Command::Unindent => self.indent(true),
             Command::ToggleComments => self.toggle_comments(),
-            Command::YankDeleteSelection => {
-                self.delete_selection_or_char(false, transient_line_selection, true)
-            }
-            Command::YankChangeSelection => self.delete_selection_or_char(true, false, true),
+            Command::CutSelection => self.cut_selection(false, transient_line_selection),
+            Command::CutSelectionForChange => self.cut_selection(true, false),
             Command::DeleteSelection => {
                 self.delete_selection_or_char(false, transient_line_selection, false)
             }
@@ -4674,8 +4694,12 @@ impl App {
             Command::SearchRegex => self.open_prompt(PromptKind::Search(SearchMode::Regex)),
             Command::SearchNext => self.repeat_search(false),
             Command::SearchPrevious => self.repeat_search(true),
-            Command::SearchSelection => self.search_selection(),
-            Command::SetSearchFromSelection => self.set_search_from_selection(),
+            Command::SearchExtendNext => self.extend_search(false),
+            Command::SearchExtendPrevious => self.extend_search(true),
+            Command::SearchSelectAllMatches => {
+                self.search_select_all_matches();
+            }
+            Command::SearchSetFromSelection => self.set_search_from_selection(),
             Command::AlignViewCenter => self.align_view(ViewAlignment::Center),
             Command::AlignViewTop => self.align_view(ViewAlignment::Top),
             Command::AlignViewBottom => self.align_view(ViewAlignment::Bottom),
@@ -4944,8 +4968,12 @@ impl App {
             Command::LeaveTerminal => self.leave_terminal(),
             Command::CopyTerminalOutput => self.copy_terminal_output(),
             Command::SendToTerminal => self.send_to_terminal(),
-            Command::ClipboardPasteAfter => self.clipboard_paste(false, transient_line_selection),
-            Command::ClipboardPasteBefore => self.clipboard_paste(true, transient_line_selection),
+            Command::ClipboardPasteAfter => {
+                self.clipboard_paste_count(false, transient_line_selection, count)
+            }
+            Command::ClipboardPasteBefore => {
+                self.clipboard_paste_count(true, transient_line_selection, count)
+            }
             Command::ClipboardYank => self.clipboard_yank(),
             Command::ClipboardPaste => self.clipboard_paste_any(transient_line_selection),
             Command::ShellPipe => {
@@ -6151,6 +6179,18 @@ impl App {
         if command == EditorCommand::ReplayDefaultMacro {
             self.replay_macro(DEFAULT_MACRO_REGISTER, execution.repetitions())?;
             return Ok(());
+        }
+        if matches!(
+            command,
+            EditorCommand::PasteAfterOrReplace
+                | EditorCommand::PasteBefore
+                | EditorCommand::PasteAfter
+                | EditorCommand::ClipboardPasteAfter
+                | EditorCommand::ClipboardPasteBefore
+        ) {
+            return self.with_selection_action(|app| {
+                app.execute_editor_command_count(command, execution.repetitions())
+            });
         }
         let repetitions = if self.macro_replay.is_some() && !self.atomic_program_replay {
             1

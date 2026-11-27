@@ -698,8 +698,8 @@ editor_commands! {
     Indent => ("indent", "Indent the selected lines"),
     Unindent => ("unindent", "Unindent the selected lines"),
     ToggleComments => ("toggle-comments", "Comment or uncomment the selected lines"),
-    YankDeleteSelection => ("yank-delete-selection", "Yank, then delete the selection or character"),
-    YankChangeSelection => ("yank-change-selection", "Yank, then change the selection or character"),
+    CutSelection => ("cut-selection", "Yank, then delete the selection or character"),
+    CutSelectionForChange => ("cut-selection-for-change", "Yank, then change the selection or character"),
     DeleteSelection => ("delete-selection", "Delete the selection or character without yanking"),
     ChangeSelection => ("change-selection", "Change the selection or character without yanking"),
 
@@ -846,8 +846,10 @@ editor_commands! {
     SearchRegex => ("search-regex", "Search with a regular expression"),
     SearchNext => ("search-next", "Select only the next search match"),
     SearchPrevious => ("search-previous", "Select only the previous search match"),
-    SearchSelection => ("search-selection", "Select every match of the selection or word"),
-    SetSearchFromSelection => ("set-search-from-selection", "Use the selection or word as the search"),
+    SearchExtendNext => ("search-extend-next", "Add the next search match as the primary selection"),
+    SearchExtendPrevious => ("search-extend-previous", "Add the previous search match as the primary selection"),
+    SearchSelectAllMatches => ("search-select-all-matches", "Select every match of the current search"),
+    SearchSetFromSelection => ("search-set-from-selection", "Use the selection or word as the search"),
 
     MediaShowPage => ("media-show-page", "Display the selected PDF page"),
     MediaZoomIn => ("media-zoom-in", "Zoom into the image or PDF"),
@@ -1320,8 +1322,8 @@ impl EditorCommand {
             | Self::Indent
             | Self::Unindent
             | Self::ToggleComments
-            | Self::YankDeleteSelection
-            | Self::YankChangeSelection
+            | Self::CutSelection
+            | Self::CutSelectionForChange
             | Self::DeleteSelection
             | Self::ChangeSelection
             | Self::DeleteWordBackward
@@ -1415,8 +1417,10 @@ impl EditorCommand {
             | Self::SearchRegex
             | Self::SearchNext
             | Self::SearchPrevious
-            | Self::SearchSelection
-            | Self::SetSearchFromSelection
+            | Self::SearchExtendNext
+            | Self::SearchExtendPrevious
+            | Self::SearchSelectAllMatches
+            | Self::SearchSetFromSelection
             | Self::OpenFuzzyGrep
             | Self::OpenDirectoryFuzzyGrep
             | Self::GlobalSearch
@@ -3461,6 +3465,10 @@ fn validate_editor_execution(
 pub enum CommandParseError {
     Empty,
     Unknown(String),
+    Removed {
+        name: String,
+        replacement: &'static str,
+    },
     MissingArgument(&'static str),
     UnexpectedArgument(&'static str),
     UnbalancedPathQuote(&'static str),
@@ -3478,6 +3486,9 @@ impl fmt::Display for CommandParseError {
         match self {
             Self::Empty => formatter.write_str("empty command"),
             Self::Unknown(name) => write!(formatter, "unknown command: {name}"),
+            Self::Removed { name, replacement } => {
+                write!(formatter, "{name} was removed; {replacement}")
+            }
             Self::MissingArgument(name) => write!(formatter, "{name} requires an argument"),
             Self::UnexpectedArgument(name) => write!(formatter, "{name} does not take arguments"),
             Self::UnbalancedPathQuote(name) => {
@@ -3526,12 +3537,35 @@ pub fn parse_colon_command(input: &str) -> Result<CommandInvocation, CommandPars
 ///
 /// Protocol frontends use this entry point so command identity is not encoded
 /// as a line of colon-command text.
+/// Migration advice shared by the palette and both key configuration forms.
+pub fn removed_action_replacement(name: &str) -> Option<&'static str> {
+    match name {
+        "yank-delete-selection" => Some(
+            "use [cut-selection, mode-enter normal]; pure mode steps require the future binding format",
+        ),
+        "yank-change-selection" => Some(
+            "use [cut-selection-for-change, mode-enter insert]; pure mode steps require the future binding format",
+        ),
+        "set-search-from-selection" => Some("use search-set-from-selection"),
+        "search-selection" => Some(
+            "use [search-set-from-selection, search-select-all-matches, mode-enter select]; pure mode steps are internal until the stage 5 binding format",
+        ),
+        _ => None,
+    }
+}
+
 pub fn parse_named_command(
     name: &str,
     argument: Option<&str>,
 ) -> Result<CommandInvocation, CommandParseError> {
     if name.is_empty() {
         return Err(CommandParseError::Empty);
+    }
+    if let Some(replacement) = removed_action_replacement(name) {
+        return Err(CommandParseError::Removed {
+            name: name.into(),
+            replacement,
+        });
     }
     let spec = resolve_command(name).ok_or_else(|| CommandParseError::Unknown(name.to_owned()))?;
     let argument = parse_argument(spec, argument.unwrap_or_default())?;
