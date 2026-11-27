@@ -112,6 +112,9 @@ history and text-coordinate mapping. A motion or collapse makes it characterwise
 again. The paragraph actions use the same extent; their default keys add the same
 temporary Select step. Copying a linewise selection to the system clipboard
 includes each selected row’s terminating newline, just like a linewise register.
+For example, on a row containing `alpha`, `x` then `Space c y` copies
+`"alpha\n"`; previously the clipboard received `"alpha"` after the temporary
+Select mode ended.
 
 #### Selection history
 
