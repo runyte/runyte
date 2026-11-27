@@ -3,8 +3,9 @@
 //! Presentation-neutral translation from owned input into editor intent.
 //!
 //! A grammar owns only interpretation state: prefixes, counts, and character
-//! operands. Buffer state and presentation stay with the application, which
-//! applies the resulting intent through shared editor commands.
+//! operands, and a bounded cursor through a resolved binding. Buffer state and
+//! presentation stay with the application, which applies each intent and only
+//! requests the next step after successful completion.
 
 use std::{fmt, num::NonZeroUsize};
 
@@ -188,6 +189,22 @@ pub struct RunyteGrammar {
     /// The first operand of an awaited two-character command, once typed.
     first_operand: Option<char>,
     awaiting_binding: Option<(KeySequence, BindingTarget)>,
+    program: Option<ProgramExecution>,
+    awaiting_post_action: GrammarPostAction,
+    awaiting_reprocess: Option<InputEvent>,
+}
+
+/// A resolved binding advances only after the application acknowledges its
+/// current step. In particular, a later operand cannot steal input early.
+#[derive(Clone, Debug)]
+struct ProgramExecution {
+    program: crate::keymap::program::Program,
+    next: usize,
+    count: Option<usize>,
+    count_step: Option<usize>,
+    availability: BindingAvailability,
+    description: std::borrow::Cow<'static, str>,
+    replay_reservation: Option<u64>,
 }
 
 /// The active, owned input interpreter. Unsupported grammar names are
@@ -220,6 +237,86 @@ impl ActiveGrammar {
                 .as_ref()
                 .map(|(sequence, _)| (sequence, grammar.first_operand.is_some())),
         }
+    }
+
+    pub(crate) fn next_program_intent(
+        &mut self,
+    ) -> Result<Option<EditorIntent>, CommandInvocationError> {
+        match self {
+            Self::Runyte(grammar) => grammar.next_program_intent(),
+        }
+    }
+
+    pub(crate) fn program_description(&self) -> Option<&str> {
+        match self {
+            Self::Runyte(grammar) => grammar.program.as_ref().map(|p| p.description.as_ref()),
+        }
+    }
+
+    pub(crate) fn program_reserved_for(&self, generation: u64) -> bool {
+        let Self::Runyte(grammar) = self;
+        grammar
+            .program
+            .as_ref()
+            .is_some_and(|p| p.replay_reservation == Some(generation))
+    }
+
+    pub(crate) fn reserve_program_for(&mut self, generation: u64) {
+        let Self::Runyte(grammar) = self;
+        if let Some(p) = grammar.program.as_mut() {
+            p.replay_reservation = Some(generation);
+        }
+    }
+
+    pub(crate) fn program_repetitions(&self) -> Option<usize> {
+        let Self::Runyte(grammar) = self;
+        let p = grammar.program.as_ref()?;
+        if p.program.len() == 1 {
+            return None;
+        }
+        Some(
+            p.count_step
+                .filter(|index| *index >= p.next.saturating_sub(1))
+                .and_then(|index| {
+                    let command = p.program.get(index)?.target();
+                    let policy = command.id().descriptor()?.policy;
+                    (policy.count == crate::command::descriptor::CountBehavior::Repeat
+                        && !matches!(
+                            command,
+                            BindingTarget::Editor(
+                                EditorCommand::ReplayMacro | EditorCommand::ReplayDefaultMacro
+                            )
+                        ))
+                    .then_some(p.count.unwrap_or(1))
+                })
+                .unwrap_or(1),
+        )
+    }
+
+    pub(crate) fn retain_operand_context(
+        &mut self,
+        binding: Option<(KeySequence, BindingTarget)>,
+        post_action: GrammarPostAction,
+        reprocess: Option<InputEvent>,
+    ) {
+        let Self::Runyte(grammar) = self;
+        if binding.is_some() {
+            grammar.awaiting_binding = binding;
+        }
+        if post_action != GrammarPostAction::None {
+            grammar.awaiting_post_action = post_action;
+        }
+        if reprocess.is_some() {
+            grammar.awaiting_reprocess = reprocess;
+        }
+    }
+
+    /// Mode actions clear prefixes without cancelling the program invoking them.
+    pub(crate) fn reset_prefix(&mut self) {
+        let Self::Runyte(grammar) = self;
+        grammar.pending.clear();
+        grammar.count = None;
+        grammar.count_keys.clear();
     }
 
     pub const fn kind(&self) -> GrammarKind {
@@ -383,36 +480,57 @@ impl RunyteGrammar {
         &mut self,
         binding: &crate::keymap::Binding,
     ) -> Result<Vec<EditorIntent>, CommandInvocationError> {
-        let count = self.count.take();
-        let count_step = binding.program.count_step();
-        binding
-            .program
-            .iter()
-            .enumerate()
-            .map(|(index, action)| {
-                self.count = count.filter(|_| count_step == Some(index));
-                if let crate::keymap::actions::Action::Invocation(invocation) = action
-                    && let Some(count) = self.count.take()
-                {
-                    return Ok(EditorIntent::Command(CommandInvocation::from_parts(
+        self.program = Some(ProgramExecution {
+            program: binding.program.clone(),
+            next: 0,
+            count: self.count.take(),
+            count_step: binding.program.count_step(),
+            availability: binding.availability,
+            description: binding.description.clone(),
+            replay_reservation: None,
+        });
+        Ok(self.next_program_intent()?.into_iter().collect())
+    }
+
+    /// Acknowledge successful completion and prepare the next step. Returns
+    /// `None` at an operand wait or the end; errors/cancellation must call reset.
+    pub fn next_program_intent(&mut self) -> Result<Option<EditorIntent>, CommandInvocationError> {
+        if self.awaiting_character.is_some() {
+            return Ok(None);
+        }
+        let Some(program) = self.program.as_mut() else {
+            return Ok(None);
+        };
+        let Some(action) = program.program.get(program.next).cloned() else {
+            self.program = None;
+            return Ok(None);
+        };
+        self.count = program
+            .count
+            .filter(|_| program.count_step == Some(program.next));
+        program.next += 1;
+        let availability = program.availability;
+        use crate::keymap::actions::Action;
+        let intent = match action {
+            Action::Editor(command) => self.editor_binding_intent(command, availability)?,
+            Action::Target(target) => self.binding_intent(target, availability)?,
+            Action::Invocation(invocation) => {
+                let invocation = if let Some(count) = self.count.take() {
+                    CommandInvocation::from_parts(
                         invocation.id(),
                         invocation.parameters().clone(),
                         CommandExecutionContext::resolved(
                             NonZeroUsize::new(count).expect("positive count"),
                             None,
                         ),
-                    )?));
-                }
-                use crate::keymap::actions::Action;
-                match action {
-                    Action::Editor(command) => {
-                        self.editor_binding_intent(*command, binding.availability)
-                    }
-                    Action::Target(target) => self.binding_intent(*target, binding.availability),
-                    Action::Invocation(invocation) => Ok(EditorIntent::Command(invocation.clone())),
-                }
-            })
-            .collect()
+                    )?
+                } else {
+                    invocation
+                };
+                EditorIntent::Command(invocation)
+            }
+        };
+        Ok(Some(intent))
     }
 
     fn translate_insert(
@@ -528,13 +646,13 @@ impl RunyteGrammar {
                 .lookup(crate::keymap::ui::Owner::CharacterInput, key)
                 == Some(crate::keymap::ui::Action::Cancel)
             {
-                self.awaiting_binding = None;
+                self.reset();
                 return Ok(GrammarOutput::one(EditorIntent::Notice(
                     GrammarNotice::CharacterInputCancelled,
                 )));
             }
             let KeyCode::Char(character) = key.code else {
-                self.awaiting_binding = None;
+                self.reset();
                 return Ok(GrammarOutput::one(EditorIntent::Notice(
                     GrammarNotice::ExpectedCharacter,
                 )));
@@ -569,7 +687,8 @@ impl RunyteGrammar {
                     command, execution,
                 )?)],
                 resolved_binding,
-                ..GrammarOutput::default()
+                post_action: std::mem::take(&mut self.awaiting_post_action),
+                reprocess: self.awaiting_reprocess.take(),
             });
         }
 
@@ -674,6 +793,11 @@ impl InputGrammar for RunyteGrammar {
         input: InputEvent,
         context: GrammarContext<'_>,
     ) -> Result<GrammarOutput, CommandInvocationError> {
+        if self.awaiting_character.is_some()
+            && let InputEvent::Key(key) = input
+        {
+            return self.translate_modal(key, context);
+        }
         match context.mode() {
             Mode::Insert | Mode::Replace => self.translate_insert(input, context),
             Mode::Normal | Mode::Select => match input {
@@ -713,6 +837,9 @@ impl InputGrammar for RunyteGrammar {
         self.awaiting_character = None;
         self.first_operand = None;
         self.awaiting_binding = None;
+        self.program = None;
+        self.awaiting_post_action = GrammarPostAction::None;
+        self.awaiting_reprocess = None;
     }
 }
 

@@ -329,6 +329,7 @@ impl App {
             return Ok(());
         }
 
+        self.macro_replay_generation = self.macro_replay_generation.wrapping_add(1);
         self.macro_replay = Some(MacroReplay {
             root_register: register,
             frames: vec![frame],

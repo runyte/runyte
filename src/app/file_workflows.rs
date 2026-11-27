@@ -2361,11 +2361,14 @@ impl App {
             ))
             .into());
         }
+        let cancelled_program = self.grammar.awaiting_character().is_some();
         let old = self.active_pane;
         self.refresh_background_buffer(self.panes[&old].buffer);
         let new = self.next_pane;
         self.next_pane += 1;
         let mut pane = self.panes[&old].clone();
+        pane.program_selection_origin = None;
+        pane.program_owner = None;
         // Expansion is an interaction chain owned by the pane where it was
         // started. A split copies the current selection but starts its own
         // empty chain, avoiding coupling through the application-wide mode.
@@ -2393,6 +2396,9 @@ impl App {
             self.open_file(path)?;
         }
         self.status(split_status(axis));
+        if cancelled_program {
+            self.report_program_focus_cancellation();
+        }
         Ok(())
     }
 
@@ -2409,6 +2415,7 @@ impl App {
     /// uses Normal mode without asking the terminal session to capture a
     /// review snapshot.
     pub(super) fn split_window(&mut self, axis: Axis) -> Result<()> {
+        let cancelled_program = self.grammar.awaiting_character().is_some();
         let insert_mode = self.mode == Mode::Insert;
         // What the source pane is showing right now is the question, not
         // which buffer the pane kept behind a terminal.
@@ -2427,6 +2434,9 @@ impl App {
             self.status(split_status(axis));
         }
         self.finish_insert_window_command(insert_mode, terminal_input);
+        if cancelled_program {
+            self.report_program_focus_cancellation();
+        }
         Ok(())
     }
 
@@ -2909,6 +2919,9 @@ impl App {
     /// then follows the active content to `previous`'s position. The split tree and
     /// its pane geometry remain untouched.
     pub(super) fn swap_pane_contents(&mut self, previous: usize) {
+        let cancelled_program =
+            previous != self.active_pane && self.grammar.awaiting_character().is_some();
+        self.cancel_program_on_focus_change(previous);
         let active = self.active_pane;
         let active_content = self
             .panes
@@ -2954,6 +2967,9 @@ impl App {
         self.activate_pane(previous);
         self.finish_pane_focus(active, terminal_input);
         self.status("swapped pane contents");
+        if cancelled_program {
+            self.report_program_focus_cancellation();
+        }
     }
 
     /// Lays the active pane along one whole side of the layout, spanning
@@ -3087,6 +3103,8 @@ impl App {
         let order = self.advance_pane_history();
         self.pane_activated_at.insert(pane, order);
         if pane != self.active_pane {
+            self.cancel_program_on_focus_change(pane);
+            self.grammar.reset_prefix();
             self.previously_focused_pane = Some(self.active_pane);
         }
         self.active_pane = pane;
@@ -3280,7 +3298,7 @@ impl App {
         }
         if let Some(id) = self.active_terminal() {
             self.settle_terminal_focus(id);
-            self.grammar.reset();
+            self.grammar.reset_prefix();
         } else if terminal_input {
             self.enter_normal_mode();
         }

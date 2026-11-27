@@ -21,6 +21,13 @@ operands, global binding modes and specialized view behavior. It preserves all
 current keys, sequence admission and read-only gates. Descriptive effects do
 not yet replace the legacy continuation policy; scoped admission is unchanged.
 
+Stage 3b's executor advances programs after each successful step. Character
+operands remain literal keys; Escape cancels the pending binding. A paused
+binding is cancelled with a status message when pointer or command focus leaves
+its pane. It is also cancelled if its document or terminal review,
+selection, mode or binding scope changed before the operand arrived. Default
+spellings and public continuation admission are unchanged in this slice.
+
 Target: [Helix master keymap](https://docs.helix-editor.com/master/keymap.html),
 verified 2026-07-27.
 
