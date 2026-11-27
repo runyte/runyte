@@ -52,6 +52,19 @@ Repository-local skills live in `skills/`; read the relevant skill's `SKILL.md` 
 - User-facing lifecycle commands use the `session` namespace. Keep workspace
   terminology for project roots, workspace identity and selectors,
   `workspace.mode`, `WorkspaceHost`, and workspace switching.
+- A **buffer type** is the kind of content a pane shows: text, terminal,
+  directory, directory tree, media, a Git list, settings and so on. Older code
+  calls it a view or binding scope (`BindingScope`); user-facing text says
+  buffer type.
+- A **mode** is a persistent input state with its own key bindings, such as
+  Normal, Select, Insert or Replace. A **submode** is a short-lived mode
+  entered for a few keys and left automatically, such as an operator-pending
+  mode. Keep *mode* for the persistent states.
+- In key bindings, an **action** is one semantic operation with a descriptor,
+  a **program** is a bounded list of steps a binding runs, a **macro** is a
+  sequence of keys replayed through the keymap, and a **preset** is a
+  complete set of modes and bindings. See
+  `context/plans/active/PLAN_COMPOSABLE_KEY_BINDINGS.md`.
 
 ## Storage boundary
 
