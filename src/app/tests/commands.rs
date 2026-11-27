@@ -3124,7 +3124,7 @@ fn counted_colon_binding_runs_and_echoes_the_actions_actual_failure() {
         "2 Space r (Reload the active view · failed: buffer is not a file)"
     );
     assert!(app.displayed_status_message_is_error());
-    assert_eq!(app.unread_notification_counts().infos, 1);
+    assert_eq!(app.unread_notification_counts().errors, 1);
 }
 
 #[test]
