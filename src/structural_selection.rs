@@ -195,11 +195,7 @@ impl ExpansionHistory {
     ) -> Result<Option<Selection>, SyntaxError> {
         if let Some(frame) = self.frames.last() {
             let connected = match frame.after.resolve(syntax, text) {
-                Ok(after) => {
-                    after == *selection
-                        && frame.after.mode == mode
-                        && frame.after.semantics == semantics
-                }
+                Ok(after) => after == *selection && frame.after.semantics == semantics,
                 Err(SyntaxError::StaleRevision { .. } | SyntaxError::ForeignDocument) => false,
                 Err(error) => return Err(error),
             };
@@ -222,7 +218,7 @@ impl ExpansionHistory {
             syntax,
             text,
             &expanded,
-            Mode::Select,
+            mode,
             SelectionSemantics::HalfOpen,
         )?;
         self.frames.push(ExpansionFrame { before, after });
@@ -234,7 +230,6 @@ impl ExpansionHistory {
         syntax: &DocumentSyntax,
         text: &Text,
         selection: &Selection,
-        mode: Mode,
         semantics: SelectionSemantics,
     ) -> Result<ShrinkResult, SyntaxError> {
         let Some(frame) = self.frames.last() else {
@@ -248,7 +243,7 @@ impl ExpansionHistory {
             }
             Err(error) => return Err(error),
         };
-        if after != *selection || frame.after.mode != mode || frame.after.semantics != semantics {
+        if after != *selection || frame.after.semantics != semantics {
             self.clear();
             return Ok(ShrinkResult::Reset(HistoryReset::Mismatch));
         }
@@ -482,13 +477,7 @@ mod tests {
 
         assert_eq!(
             history
-                .shrink(
-                    &syntax,
-                    &text,
-                    &expanded,
-                    Mode::Select,
-                    SelectionSemantics::HalfOpen,
-                )
+                .shrink(&syntax, &text, &expanded, SelectionSemantics::HalfOpen)
                 .unwrap(),
             ShrinkResult::Restored {
                 selection,
@@ -752,7 +741,6 @@ mod tests {
                     &syntax,
                     &text,
                     &Selection::point(0),
-                    Mode::Select,
                     SelectionSemantics::HalfOpen,
                 )
                 .unwrap(),
@@ -760,13 +748,7 @@ mod tests {
         );
         assert_eq!(
             history
-                .shrink(
-                    &syntax,
-                    &text,
-                    &expanded,
-                    Mode::Select,
-                    SelectionSemantics::HalfOpen,
-                )
+                .shrink(&syntax, &text, &expanded, SelectionSemantics::HalfOpen)
                 .unwrap(),
             ShrinkResult::Empty
         );
@@ -788,13 +770,7 @@ mod tests {
         assert!(syntax.update(&before, &text, &transaction, &registry));
         assert_eq!(
             history
-                .shrink(
-                    &syntax,
-                    &text,
-                    &expanded,
-                    Mode::Select,
-                    SelectionSemantics::HalfOpen,
-                )
+                .shrink(&syntax, &text, &expanded, SelectionSemantics::HalfOpen)
                 .unwrap(),
             ShrinkResult::Reset(HistoryReset::Stale)
         );
@@ -832,13 +808,7 @@ mod tests {
 
         assert_eq!(
             history
-                .shrink(
-                    &syntax,
-                    &text,
-                    &expanded,
-                    Mode::Select,
-                    SelectionSemantics::HalfOpen,
-                )
+                .shrink(&syntax, &text, &expanded, SelectionSemantics::HalfOpen)
                 .unwrap(),
             ShrinkResult::Restored {
                 selection: fresh,
@@ -848,13 +818,7 @@ mod tests {
         );
         assert_eq!(
             history
-                .shrink(
-                    &syntax,
-                    &text,
-                    &first,
-                    Mode::Normal,
-                    SelectionSemantics::Runyte,
-                )
+                .shrink(&syntax, &text, &first, SelectionSemantics::Runyte)
                 .unwrap(),
             ShrinkResult::Empty
         );

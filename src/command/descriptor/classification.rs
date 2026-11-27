@@ -281,9 +281,10 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
             ),
             pending_split: None,
         },
-        C::FlipSelection
-        | C::ExpandSyntaxSelection
-        | C::ShrinkSyntaxSelection
+        C::ExpandSyntaxSelection
+        | C::FlipSelection
+        | C::SplitSelectionAtLineEnds
+        | C::SplitSelectionAtLineStarts
         | C::SelectSyntaxParent
         | C::SelectSyntaxChild
         | C::SelectPreviousSyntaxSibling
@@ -312,16 +313,20 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
         | C::SelectAroundWord
         | C::SelectInsideLongWord
         | C::SelectAroundLongWord
-        | C::SelectInsideParagraph
-        | C::SelectAroundParagraph
         | C::SelectAroundClosestDelimiter
-        | C::SelectInsideClosestDelimiter
-        | C::SplitSelectionAtLineEnds
-        | C::SplitSelectionAtLineStarts => ActionClassification {
+        | C::SelectInsideClosestDelimiter => ActionClassification {
             semantic: SemanticClass::Atomic,
-            pending_split: Some(SplitStage::Stage3),
+            pending_split: None,
         },
-        C::YankCollapseNormalMode
+        C::ShrinkSyntaxSelection => ActionClassification {
+            semantic: SemanticClass::Decision(
+                "Restores selection and mode from expansion history that is not visible between program steps.",
+            ),
+            pending_split: None,
+        },
+        C::SelectInsideParagraph
+        | C::SelectAroundParagraph
+        | C::YankCollapseNormalMode
         | C::YankLineCollapseNormalMode
         | C::PasteBefore
         | C::SelectLine

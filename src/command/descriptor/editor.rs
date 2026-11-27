@@ -310,7 +310,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         C::FlipSelection | C::SplitSelectionAtLineEnds | C::SplitSelectionAtLineStarts => {
             ActionPolicy {
                 global_binding_modes: NORMAL_SELECT,
-                effects: &[Selection, Mode],
+                effects: &[Selection],
                 count: CountBehavior::Reject,
                 operands: OperandArity::Zero,
                 requires_writable_buffer: false,
@@ -318,13 +318,12 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             }
         }
         C::ExpandSyntaxSelection
-        | C::ShrinkSyntaxSelection
         | C::SelectSyntaxParent
         | C::SelectSyntaxChild
         | C::SelectPreviousSyntaxSibling
         | C::SelectNextSyntaxSibling => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Selection, Mode],
+            effects: &[Selection],
             count: CountBehavior::Repeat,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
@@ -354,10 +353,24 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         | C::SelectAroundWord
         | C::SelectInsideLongWord
         | C::SelectAroundLongWord
-        | C::SelectInsideParagraph
-        | C::SelectAroundParagraph
         | C::SelectAroundClosestDelimiter
         | C::SelectInsideClosestDelimiter => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[Selection],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::ShrinkSyntaxSelection => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[Selection, Mode],
+            count: CountBehavior::Repeat,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::SelectInsideParagraph | C::SelectAroundParagraph => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[Selection, Mode],
             count: CountBehavior::Reject,

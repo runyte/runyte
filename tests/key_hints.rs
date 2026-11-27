@@ -507,8 +507,8 @@ fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
     );
     let selections = render(100, 40, &mut app, &hints);
     for entry in [
-        "split selection at line ends",
-        "split selection at line starts",
+        "Place a cursor at the end",
+        "Place a cursor at the start",
         "Drop every selection except the primary",
         "keep matching selections",
         "remove matching selections",

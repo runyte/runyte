@@ -964,3 +964,12 @@ changes remain bundled until separate terminal and directory-tree modes land.
 Unbound `search-extend-next` and
 `search-extend-previous` add a match and make it primary while retaining the
 existing selections.
+
+The composable selection actions for words, delimiters, syntax objects and
+syntax expansion and relations, selection flipping, and line-edge splitting preserve mode.
+Their default programs enter Select explicitly, or Normal for line-edge splits.
+No-result selection steps retain their informational status and stop the program;
+a count that produced a selection before exhausting navigation still completes
+its mode step. Syntax shrink restores the selection, coordinate semantics and
+mode captured by expansion. Paragraph whole-row state and mode restoration
+remain bundled until the stage 4 line-selection split.
