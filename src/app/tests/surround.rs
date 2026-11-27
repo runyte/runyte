@@ -186,3 +186,96 @@ fn surround_edits_are_refused_in_a_read_only_buffer() {
         assert_eq!(app.status, "help is read-only", "{keys}");
     }
 }
+
+fn atomic_surround_app(source: &str) -> App {
+    let config = Config {
+        keys: Some(serde_yaml::from_str(
+            "bind: {normal: {F1: surround-add, F2: surround-replace, F3: surround-delete}, select: {F1: surround-add, F2: surround-replace, F3: surround-delete}}",
+        ).unwrap()),
+        ..Config::default()
+    };
+    let mut app = App::new(config, None).unwrap();
+    seed(&mut app, source);
+    app
+}
+
+#[test]
+fn surround_actions_preserve_mode_while_defaults_add_normal_entry() {
+    for mode in [Mode::Normal, Mode::Select] {
+        for (function, prefix, operands, expected) in [
+            (1, "ms", "[", "([x])"),
+            (2, "mr", "([", "[x]"),
+            (3, "md", "(", "x"),
+        ] {
+            let mut atomic = atomic_surround_app("(x)");
+            let mut default = plain_app("(x)");
+            for app in [&mut atomic, &mut default] {
+                set_cursor(app, 0, 1);
+                app.mode = mode;
+            }
+            key(&mut atomic, KeyCode::Function(function), Modifiers::NONE);
+            type_keys(&mut default, prefix);
+            assert_eq!(atomic.mode, mode);
+            assert_eq!(default.mode, mode, "operand wait cannot run the mode tail");
+            type_keys(&mut atomic, operands);
+            type_keys(&mut default, operands);
+            assert_eq!(text(&atomic), expected);
+            assert_eq!(text(&default), expected);
+            assert_eq!(atomic.mode, mode);
+            assert_eq!(default.mode, Mode::Normal);
+            assert_eq!(atomic.active().selection, default.active().selection);
+            press(&mut default, 'u');
+            assert_eq!(text(&default), "(x)", "default is one undo unit");
+        }
+    }
+}
+
+#[test]
+fn surround_failed_or_cancelled_operands_do_not_run_the_mode_tail() {
+    for prefix in ["ms", "mr", "mr(", "md"] {
+        let mut app = plain_app("(x)");
+        set_cursor(&mut app, 0, 1);
+        app.mode = Mode::Select;
+        type_keys(&mut app, prefix);
+        key(&mut app, KeyCode::Escape, Modifiers::NONE);
+        assert_eq!(app.mode, Mode::Select, "{prefix}");
+        assert_eq!(text(&app), "(x)");
+        press(&mut app, 'l');
+        assert_eq!(text(&app), "(x)", "no resumed operand after cancellation");
+    }
+    for keys in ["md(", "mr([", "mdz"] {
+        let mut app = plain_app("x");
+        app.mode = Mode::Select;
+        type_keys(&mut app, keys);
+        assert!(app.status_error, "{keys}");
+        assert_eq!(app.mode, Mode::Select, "{keys}");
+        assert_eq!(text(&app), "x");
+    }
+    for keys in ["ms[", "mr([", "md("] {
+        let mut app = plain_app("(x)");
+        app.open_help();
+        app.mode = Mode::Select;
+        let original = text(&app);
+        type_keys(&mut app, keys);
+        assert!(app.status_error, "{keys}");
+        assert_eq!(app.mode, Mode::Select, "{keys}");
+        assert_eq!(text(&app), original);
+    }
+}
+
+#[test]
+fn atomic_surround_retires_transient_line_mode_before_later_motion() {
+    let mut app = atomic_surround_app("abc\ndef");
+    press(&mut app, 'x');
+    let mode = app.mode;
+    assert!(app.line_select.is_some());
+    key(&mut app, KeyCode::Function(1), Modifiers::NONE);
+    press(&mut app, '[');
+    assert_eq!(app.mode, mode);
+    assert!(app.line_select.is_none());
+    press(&mut app, 'l');
+    assert_eq!(
+        app.mode, mode,
+        "a later motion must not restore a stale mode"
+    );
+}

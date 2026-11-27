@@ -157,7 +157,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::SurroundAdd | C::SurroundDelete => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Operand, Text, Mode],
+            effects: &[Operand, Text],
             count: CountBehavior::Reject,
             operands: OperandArity::One,
             requires_writable_buffer: true,
@@ -165,7 +165,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::SurroundReplace => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Operand, Text, Mode],
+            effects: &[Operand, Text],
             count: CountBehavior::Reject,
             operands: OperandArity::Two,
             requires_writable_buffer: true,
@@ -179,7 +179,15 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
         },
-        C::ReplaceWithRegister | C::DeleteSelection => ActionPolicy {
+        C::ReplaceWithRegister => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[Text],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: true,
+            buffer_mutation: BufferMutation::MayMutate,
+        },
+        C::DeleteSelection => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[Text, Mode],
             count: CountBehavior::Reject,

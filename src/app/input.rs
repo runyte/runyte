@@ -4326,7 +4326,10 @@ impl App {
     fn finish_atomic_line_selection(&mut self, command: EditorCommand) {
         if matches!(
             command,
-            EditorCommand::SelectAll
+            EditorCommand::SurroundAdd
+                | EditorCommand::SurroundReplace
+                | EditorCommand::SurroundDelete
+                | EditorCommand::SelectAll
                 | EditorCommand::CollapseSelection
                 | EditorCommand::ToggleCase
                 | EditorCommand::ReplaceChar
@@ -4349,6 +4352,10 @@ impl App {
     fn execute_editor_command_count(&mut self, command: EditorCommand, count: usize) -> Result<()> {
         self.finish_atomic_line_selection(command);
         use EditorCommand as Command;
+        // Replacement needs the transient row extent, but retiring the gesture
+        // must neither restore a mode nor survive an early refusal.
+        let replacement_line_selection =
+            (command == Command::ReplaceWithRegister).then(|| self.line_select.take().is_some());
         if self.handle_merge_command(command) {
             return Ok(());
         }
@@ -4367,7 +4374,8 @@ impl App {
         // it is not a document at all, and the buffer whose permissions that
         // check reads is the one hidden behind it.
         if let Some(id) = self.active_terminal() {
-            let transient_line_selection = self.line_select.is_some();
+            let transient_line_selection =
+                replacement_line_selection.unwrap_or_else(|| self.line_select.is_some());
             if !matches!(
                 command,
                 Command::SelectLine
@@ -4389,7 +4397,9 @@ impl App {
         {
             if !matches!(
                 command,
-                Command::CutSelection | Command::CutSelectionForChange
+                Command::CutSelection
+                    | Command::CutSelectionForChange
+                    | Command::ReplaceWithRegister
             ) {
                 self.mode = Mode::Normal;
             }
@@ -4413,7 +4423,8 @@ impl App {
         if !matches!(command, Command::ShowDocumentation) {
             self.hover = None;
         }
-        let transient_line_selection = self.line_select.is_some();
+        let transient_line_selection =
+            replacement_line_selection.unwrap_or_else(|| self.line_select.is_some());
         // A line selection lives only for as long as `x`/`X` keep arriving.
         // Anything else ends it and hands the mode back, so `j` after `x` is a
         // plain motion rather than an extension.
@@ -4428,7 +4439,9 @@ impl App {
         ) && let Some(mode) = self.line_select.take()
             && !matches!(
                 command,
-                Command::CutSelection | Command::CutSelectionForChange
+                Command::CutSelection
+                    | Command::CutSelectionForChange
+                    | Command::ReplaceWithRegister
             )
         {
             self.mode = mode;

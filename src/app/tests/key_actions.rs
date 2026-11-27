@@ -1880,3 +1880,44 @@ fn conditional_macro_calls_keep_frame_scheduling_beyond_atomic_repeat_limit() {
     assert!(!app.status_error, "{}", app.status);
     assert_eq!(app.active().selection.primary().head, 129);
 }
+
+#[test]
+fn replace_with_register_preserves_mode_on_refusal_and_consumes_line_selection() {
+    let mut app = configured(
+        "bind: {normal: {F6: replace-with-register}, select: {F6: replace-with-register}}",
+    );
+    seed(&mut app, "abc\ndef");
+    register(&mut app, "XY\n", true);
+    press(&mut app, 'x');
+    let mode = app.mode;
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(text(&app), "XY\ndef");
+    assert_eq!(app.mode, mode);
+    assert!(app.line_select.is_none());
+    press(&mut app, 'l');
+    assert_eq!(app.mode, mode);
+
+    app.open_help();
+    press(&mut app, 'x');
+    let mode = app.mode;
+    assert!(app.line_select.is_some());
+    let original = text(&app);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(app.status_error);
+    assert_eq!(app.mode, mode);
+    assert!(app.line_select.is_none());
+    assert_eq!(text(&app), original);
+    press(&mut app, 'l');
+    assert_eq!(app.mode, mode);
+
+    let terminal = app.terminals.insert_test_session(80, 24);
+    app.active_mut().terminal = Some(terminal);
+    app.mode = Mode::Normal;
+    press(&mut app, 'x');
+    let mode = app.mode;
+    assert!(app.line_select.is_some());
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(app.status_error);
+    assert_eq!(app.mode, mode);
+    assert!(app.line_select.is_none());
+}

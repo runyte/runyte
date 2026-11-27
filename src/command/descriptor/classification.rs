@@ -6,7 +6,11 @@ use crate::command::{ColonCommand, EditorCommand};
 pub(super) const fn editor_classification(command: EditorCommand) -> ActionClassification {
     use EditorCommand as C;
     match command {
-        C::FitSelectionForNormalMode
+        C::SurroundAdd
+        | C::SurroundReplace
+        | C::SurroundDelete
+        | C::ReplaceWithRegister
+        | C::FitSelectionForNormalMode
         | C::OpenCommandPalette
         | C::MoveLeft
         | C::MoveRight
@@ -271,11 +275,7 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
                 pending_split: Some(SplitStage::Stage5),
             }
         }
-        C::SurroundAdd
-        | C::SurroundReplace
-        | C::SurroundDelete
-        | C::ReplaceWithRegister
-        | C::DeleteSelection
+        C::DeleteSelection
         | C::ChangeSelection
         | C::FlipSelection
         | C::ExpandSyntaxSelection

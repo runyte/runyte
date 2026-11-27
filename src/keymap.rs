@@ -2690,9 +2690,21 @@ fn built_in_bindings() -> Vec<Binding> {
         // Surround editing names its pairs with the keys that follow, as
         // `r` names its replacement, so they are operands rather than more
         // of the sequence.
-        modal([Key::char('m'), Key::char('s')], Command::SurroundAdd),
-        modal([Key::char('m'), Key::char('r')], Command::SurroundReplace),
-        modal([Key::char('m'), Key::char('d')], Command::SurroundDelete),
+        modal_then_mode(
+            [Key::char('m'), Key::char('s')],
+            Command::SurroundAdd,
+            Mode::Normal,
+        ),
+        modal_then_mode(
+            [Key::char('m'), Key::char('r')],
+            Command::SurroundReplace,
+            Mode::Normal,
+        ),
+        modal_then_mode(
+            [Key::char('m'), Key::char('d')],
+            Command::SurroundDelete,
+            Mode::Normal,
+        ),
         // Text objects, spelled as Helix spells them. Words, paragraphs, and
         // delimiter pairs work in every buffer; functions, types, and
         // arguments need a syntax tree.

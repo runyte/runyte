@@ -8,8 +8,8 @@
 //! never disagree about which pair encloses a cursor.
 
 use super::{
-    App, Change, DelimiterPair, Mode, Range, Result, Selection, SelectionSemantics,
-    SyntaxObjectPart, Transaction, enclosing_delimiter,
+    App, Change, DelimiterPair, Range, Result, Selection, SelectionSemantics, SyntaxObjectPart,
+    Transaction, enclosing_delimiter,
 };
 use crate::syntax::SyntaxRange;
 
@@ -115,7 +115,6 @@ impl App {
             .replace_selection(Selection::new(ranges, primary));
         self.active_mut()
             .mark_selection_semantics(SelectionSemantics::Runyte);
-        self.mode = Mode::Normal;
         self.normalize_buffer(buffer_id);
     }
 
@@ -163,7 +162,6 @@ impl App {
         // first of each identical change, so the pair is edited once.
         let buffer_id = self.active().buffer;
         self.edit(Transaction::new(changes));
-        self.mode = Mode::Normal;
         self.normalize_buffer(buffer_id);
     }
 
@@ -219,7 +217,6 @@ impl App {
         let Some(reason) = self.active_buffer().read_only_reason() else {
             return false;
         };
-        self.mode = Mode::Normal;
         self.action_failed(reason);
         true
     }

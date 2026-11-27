@@ -116,7 +116,7 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
             views!(Terminal: "Send register text to the child and enter Insert mode after successful queueing", Directory: "Stage copies or moves from a directory register into the listing")
         }
         C::ReplaceWithRegister => {
-            views!(Directory: "Insert rows from a directory-register payload; directory pastes use row insertion rather than text replacement")
+            views!(Directory: "Replace listing text from a text register; directory move/copy payloads are refused because entries cannot replace a text selection")
         }
         C::ClipboardYank => {
             views!(Terminal: "Copy the captured review selection to the system clipboard", Media: "Copy selected PDF text or an image region")
