@@ -93,11 +93,17 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         | C::MoveLongWordBackward
         | C::MoveLongWordEnd
         | C::GotoNextParagraph
-        | C::GotoPreviousParagraph
-        | C::SelectionUndo
-        | C::SelectionRedo => ActionPolicy {
+        | C::GotoPreviousParagraph => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[Selection],
+            count: CountBehavior::Repeat,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::SelectionUndo | C::SelectionRedo => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[Selection, Mode],
             count: CountBehavior::Repeat,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
@@ -372,16 +378,29 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         | C::AlignViewTop
         | C::AlignViewBottom
         | C::AlignViewMiddle
-        | C::ToggleZen
-        | C::ToggleFullscreen
         | C::OpenTerminalList
-        | C::CopyTerminalOutput
         | C::NewBuffer
         | C::OpenBufferPicker
         | C::Diagnostics
         | C::ListMacros => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[View],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::ToggleZen | C::ToggleFullscreen => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[View, Mode],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::CopyTerminalOutput => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[View, Mode],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
@@ -491,17 +510,23 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         | C::MediaActualSize
         | C::MediaPanLeft
         | C::MediaPanRight
-        | C::ToggleMarkdownRender
         | C::DirectoryTreeLegend
         | C::MergeReviewCancel
         | C::MergeReviewBack
-        | C::ShowAbout
         | C::ListBackspace
         | C::ListTogglePreview
         | C::ListClearFilter
         | C::ListClose => ActionPolicy {
             global_binding_modes: NONE,
             effects: &[View],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::ToggleMarkdownRender | C::ShowAbout => ActionPolicy {
+            global_binding_modes: NONE,
+            effects: &[View, Mode],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
@@ -935,18 +960,24 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
-        C::SwapWindow
-        | C::MoveWindowLeft
-        | C::MoveWindowDown
-        | C::MoveWindowUp
-        | C::MoveWindowRight => ActionPolicy {
+        C::SwapWindow => ActionPolicy {
             global_binding_modes: ALL,
-            effects: &[Pane],
+            effects: &[Pane, Mode],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
+        C::MoveWindowLeft | C::MoveWindowDown | C::MoveWindowUp | C::MoveWindowRight => {
+            ActionPolicy {
+                global_binding_modes: ALL,
+                effects: &[Pane],
+                count: CountBehavior::Reject,
+                operands: OperandArity::Zero,
+                requires_writable_buffer: false,
+                buffer_mutation: BufferMutation::Unchanged,
+            }
+        }
         C::CloseWindow => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[Pane, Mode],
@@ -1036,9 +1067,17 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
-        C::OpenNavigator | C::PreviousDestination => ActionPolicy {
+        C::OpenNavigator => ActionPolicy {
             global_binding_modes: ALL,
             effects: &[View],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::PreviousDestination => ActionPolicy {
+            global_binding_modes: ALL,
+            effects: &[View, Mode],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
@@ -1078,15 +1117,23 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::ListCloseTarget => ActionPolicy {
             global_binding_modes: NONE,
-            effects: &[View, Prompt, Background, Text, File],
+            effects: &[View, Prompt, Background, Text, File, Mode],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::MayMutate,
         },
-        C::GlobalSearch | C::GlobalSearchRegex | C::WorkspaceSymbols => ActionPolicy {
+        C::WorkspaceSymbols => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[Prompt, Background, View],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::GlobalSearchRegex | C::GlobalSearch => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[Prompt, Background, View, Mode],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
@@ -1103,7 +1150,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         C::JumpBackward | C::JumpForward | C::JumpBackwardBuffer | C::JumpForwardBuffer => {
             ActionPolicy {
                 global_binding_modes: NORMAL_SELECT,
-                effects: &[View, Selection],
+                effects: &[View, Selection, Mode],
                 count: CountBehavior::Reject,
                 operands: OperandArity::Zero,
                 requires_writable_buffer: false,
@@ -1136,7 +1183,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::ClipboardPaste => ActionPolicy {
             global_binding_modes: ALL,
-            effects: &[Text, TerminalInput],
+            effects: &[Text, TerminalInput, Mode],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: true,

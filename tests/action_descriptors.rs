@@ -402,6 +402,22 @@ fn effects_distinguish_synchronous_views_from_owned_async_and_prompt_work() {
 fn owned_continuations_and_specialized_mode_transitions_are_described() {
     use runyte::command::{ColonCommand, EditorCommand as C, descriptor::ActionEffect as E};
     for c in [
+        C::SelectionUndo,
+        C::SelectionRedo,
+        C::ListCloseTarget,
+        C::ToggleZen,
+        C::ToggleFullscreen,
+        C::ShowAbout,
+        C::CopyTerminalOutput,
+        C::ToggleMarkdownRender,
+        C::GlobalSearch,
+        C::GlobalSearchRegex,
+        C::JumpBackward,
+        C::JumpForward,
+        C::JumpBackwardBuffer,
+        C::JumpForwardBuffer,
+        C::PreviousDestination,
+        C::SwapWindow,
         C::FocusWindowLeft,
         C::SplitVertical,
         C::ShowHelp,
@@ -457,4 +473,21 @@ fn explicit_plugin_invocations_are_always_last() {
     )
     .unwrap();
     assert!(!actions::Action::Invocation(invocation).can_continue());
+}
+
+#[test]
+fn generated_page_destinations_describe_owned_mode_transitions() {
+    use runyte::command::{ColonCommand as C, descriptor::ActionEffect as E};
+    for command in [
+        C::AgentChannel,
+        C::LogOpen,
+        C::GitCompare,
+        C::GitDiff,
+        C::GitIndex,
+    ] {
+        assert!(
+            command.action_policy().effects.contains(&E::Mode),
+            "{command:?}"
+        );
+    }
 }
