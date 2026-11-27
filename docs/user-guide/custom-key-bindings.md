@@ -1631,458 +1631,458 @@ actions belong to the indicated owner; raw UI input still has its own scope.
 
 Generated from built-in descriptors. Effects include owned continuations and specialized views; remaining prompt and background effects require the last step. Character operands and palette arguments are separate.
 
-| Action | Effects | Count | Character operands | Palette argument | View differences |
-| --- | --- | --- | --- | --- | --- |
-| `fit-selection-for-normal-mode` | selection, view | not accepted | none | none |  |
-| `mode-enter` | mode | not accepted | none | none |  |
-| `enter-normal-mode` | mode, selection | not accepted | none | none | terminal: Leave child input for live Normal mode; otherwise capture review and collapse its selection |
-| `open-command-palette` | prompt | not accepted | none | none |  |
-| `move-left` | selection, view | repeats | none | none | terminal: Move or extend the cursor in captured output; media: Pan horizontally, or extend the media selection in Select mode |
-| `move-right` | selection, view | repeats | none | none | terminal: Move or extend the cursor in captured output; media: Pan horizontally, or extend the media selection in Select mode |
-| `move-up` | selection, view | repeats | none | none | terminal: Move or extend the cursor in captured output; media: Pan vertically, change PDF page at fit, or extend the media selection |
-| `move-down` | selection, view | repeats | none | none | terminal: Move or extend the cursor in captured output; media: Pan vertically, change PDF page at fit, or extend the media selection |
-| `move-line-start` | selection | not accepted | none | none | terminal: Move or extend the review selection within captured output |
-| `move-line-end` | selection | not accepted | none | none | terminal: Move or extend the review selection within captured output |
-| `move-first-non-whitespace` | selection | not accepted | none | none | terminal: Move or extend the review selection within captured output |
-| `move-file-start` | selection, view | interpreted as an address or extent | none | none | terminal: Move to the captured output boundary; media: Select a PDF page by address or move to its first or last page |
-| `move-file-end` | selection, view | interpreted as an address or extent | none | none | terminal: Move to the captured output boundary; media: Select a PDF page by address or move to its first or last page |
-| `move-word-forward` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output |
-| `move-word-backward` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output |
-| `move-word-end` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output |
-| `move-long-word-forward` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output |
-| `move-long-word-backward` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output |
-| `move-long-word-end` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output |
-| `goto-next-paragraph` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output |
-| `goto-previous-paragraph` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output |
-| `find-next-char` | character input, selection | not accepted | one character | none | terminal: Find the supplied character within captured output |
-| `find-previous-char` | character input, selection | not accepted | one character | none | terminal: Find the supplied character within captured output |
-| `find-till-next-char` | character input, selection | not accepted | one character | none | terminal: Find the supplied character within captured output |
-| `find-till-previous-char` | character input, selection | not accepted | one character | none | terminal: Find the supplied character within captured output |
-| `page-up` | selection, view | repeats | none | none | terminal: Move the review cursor by a page of captured output; media: Move to the previous or next PDF page |
-| `page-down` | selection, view | repeats | none | none | terminal: Move the review cursor by a page of captured output; media: Move to the previous or next PDF page |
-| `half-page-up` | selection, view | repeats | none | none | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page |
-| `half-page-down` | selection, view | repeats | none | none | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page |
-| `enter-insert-mode` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child |
-| `enter-replace-mode` | mode, selection | not accepted | none | none |  |
-| `append-after` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child |
-| `insert-line-start` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child |
-| `insert-line-end` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child |
-| `open-line-below` | text, mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child |
-| `open-line-above` | text, mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child |
-| `replace-char` | character input, text | not accepted | one character | none |  |
-| `surround-add` | character input, text, mode | not accepted | one character | none |  |
-| `surround-replace` | character input, text, mode | not accepted | two characters | none |  |
-| `surround-delete` | character input, text, mode | not accepted | one character | none |  |
-| `toggle-case` | text | not accepted | none | none |  |
-| `selection-undo` | selection | repeats | none | none | terminal: Restore the previous or next terminal review selection |
-| `selection-redo` | selection | repeats | none | none | terminal: Restore the previous or next terminal review selection |
-| `undo` | text, terminal input | repeats | none | none | terminal: Ask the child to erase the last text Runyte sent, if it has not been submitted |
-| `redo` | text | repeats | none | none |  |
-| `yank` | register | not accepted | none | none | terminal: Copy the review selection to the selected register and retain its selection and mode; directory: Copy selected entries and record a directory copy payload |
-| `yank-line` | register | not accepted | none | none | directory: Copy selected entry lines and record a directory copy payload |
-| `yank-collapse-normal-mode` | register, selection, mode | not accepted | none | none | terminal: Copy the review selection, retain it on screen and enter Normal mode; directory: Copy selected entries, collapse the selection and enter Normal mode |
-| `yank-line-collapse-normal-mode` | register, selection, mode | not accepted | none | none | directory: Copy selected entry lines, collapse the selection and enter Normal mode |
-| `paste-after-or-replace` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing |
-| `paste-after` | text, selection, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child without changing mode; directory: Stage copies or moves from a directory register into the listing |
-| `replace-with-register` | text, mode | not accepted | none | none | directory: Insert rows from a directory-register payload; directory pastes use row insertion rather than text replacement |
-| `paste-before` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing |
-| `indent` | text | not accepted | none | none |  |
-| `unindent` | text | not accepted | none | none |  |
-| `toggle-comments` | text | not accepted | none | none |  |
-| `cut-selection` | register, text, selection | not accepted | none | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection |
-| `cut-selection-for-change` | register, text, selection | not accepted | none | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection |
-| `delete-selection` | text, mode | not accepted | none | none |  |
-| `change-selection` | text, mode | not accepted | none | none |  |
-| `enter-select-mode` | mode, selection | not accepted | none | none | terminal: Enter Select mode over captured terminal output; media: Begin selection of PDF text or an image region |
-| `select-line` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
-| `extend-line-above` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
-| `extend-line-below` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
-| `select-line-up` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
-| `select-all` | selection | not accepted | none | none | terminal: Select all captured terminal output |
-| `collapse-selection` | selection | not accepted | none | none | terminal: Collapse the review selection; media: Retain the native media selection; this surface has no document caret to collapse |
-| `flip-selection` | selection, mode | not accepted | none | none |  |
-| `expand-syntax-selection` | selection, mode | repeats | none | none |  |
-| `shrink-syntax-selection` | selection, mode | repeats | none | none |  |
-| `select-syntax-parent` | selection, mode | repeats | none | none |  |
-| `select-syntax-child` | selection, mode | repeats | none | none |  |
-| `select-previous-syntax-sibling` | selection, mode | repeats | none | none |  |
-| `select-next-syntax-sibling` | selection, mode | repeats | none | none |  |
-| `select-syntax-function` | selection, mode | not accepted | none | none |  |
-| `select-inside-syntax-function` | selection, mode | not accepted | none | none |  |
-| `select-syntax-class` | selection, mode | not accepted | none | none |  |
-| `select-inside-syntax-class` | selection, mode | not accepted | none | none |  |
-| `select-syntax-parameter` | selection, mode | not accepted | none | none |  |
-| `select-inside-syntax-parameter` | selection, mode | not accepted | none | none |  |
-| `select-around-parentheses` | selection, mode | not accepted | none | none |  |
-| `select-inside-parentheses` | selection, mode | not accepted | none | none |  |
-| `select-around-square-brackets` | selection, mode | not accepted | none | none |  |
-| `select-inside-square-brackets` | selection, mode | not accepted | none | none |  |
-| `select-around-braces` | selection, mode | not accepted | none | none |  |
-| `select-inside-braces` | selection, mode | not accepted | none | none |  |
-| `select-around-angle-brackets` | selection, mode | not accepted | none | none |  |
-| `select-inside-angle-brackets` | selection, mode | not accepted | none | none |  |
-| `select-around-double-quotes` | selection, mode | not accepted | none | none |  |
-| `select-inside-double-quotes` | selection, mode | not accepted | none | none |  |
-| `select-around-single-quotes` | selection, mode | not accepted | none | none |  |
-| `select-inside-single-quotes` | selection, mode | not accepted | none | none |  |
-| `select-around-backticks` | selection, mode | not accepted | none | none |  |
-| `select-inside-backticks` | selection, mode | not accepted | none | none |  |
-| `select-inside-word` | selection, mode | not accepted | none | none |  |
-| `select-around-word` | selection, mode | not accepted | none | none |  |
-| `select-inside-long-word` | selection, mode | not accepted | none | none |  |
-| `select-around-long-word` | selection, mode | not accepted | none | none |  |
-| `select-inside-paragraph` | selection, mode | not accepted | none | none |  |
-| `select-around-paragraph` | selection, mode | not accepted | none | none |  |
-| `select-around-closest-delimiter` | selection, mode | not accepted | none | none |  |
-| `select-inside-closest-delimiter` | selection, mode | not accepted | none | none |  |
-| `goto-previous-syntax-function` | selection | repeats | none | none |  |
-| `goto-next-syntax-function` | selection | repeats | none | none |  |
-| `goto-previous-syntax-class` | selection | repeats | none | none |  |
-| `goto-next-syntax-class` | selection | repeats | none | none |  |
-| `goto-previous-syntax-parameter` | selection | repeats | none | none |  |
-| `goto-next-syntax-parameter` | selection | repeats | none | none |  |
-| `document-outline` | view | not accepted | none | none |  |
-| `toggle-syntax-fold` | view | not accepted | none | none |  |
-| `fold-all-syntax` | view | not accepted | none | none |  |
-| `unfold-all-syntax` | view | not accepted | none | none |  |
-| `split-selection-at-line-ends` | selection, mode | not accepted | none | none |  |
-| `split-selection-at-line-starts` | selection, mode | not accepted | none | none |  |
-| `keep-primary-selection` | selection | not accepted | none | none | terminal: Keep only the primary review selection |
-| `remove-primary-selection` | selection | not accepted | none | none |  |
-| `copy-selection-down` | selection | not accepted | none | none | terminal: Copy the review cursor to the adjacent captured output line |
-| `copy-selection-up` | selection | not accepted | none | none | terminal: Copy the review cursor to the adjacent captured output line |
-| `copy-selection-down-padded` | text, selection | not accepted | none | none |  |
-| `copy-selection-up-padded` | text, selection | not accepted | none | none |  |
-| `rotate-selection-forward` | selection | not accepted | none | none | terminal: Select the next or previous terminal review search match |
-| `rotate-selection-backward` | selection | not accepted | none | none | terminal: Select the next or previous terminal review search match |
-| `rotate-selection-contents-forward` | text, selection | not accepted | none | none |  |
-| `rotate-selection-contents-backward` | text, selection | not accepted | none | none |  |
-| `keep-matching-selections` | prompt, selection | not accepted | none | none |  |
-| `remove-matching-selections` | prompt, selection | not accepted | none | none |  |
-| `align-selections` | text, selection | not accepted | none | none |  |
-| `trim-selections` | selection | not accepted | none | none |  |
-| `trim-trailing-whitespace` | text, selection | not accepted | none | none |  |
-| `hard-wrap` | text | not accepted | none | none |  |
-| `reflow` | text | not accepted | none | none |  |
-| `join-selections` | prompt, text | not accepted | none | none |  |
-| `join-lines` | text | not accepted | none | none |  |
-| `format-table` | text | not accepted | none | none |  |
-| `search` | prompt, search state, selection, mode | not accepted | none | none | terminal: Prompt for a case-insensitive search of captured output |
-| `search-regex` | prompt, search state, selection, mode | not accepted | none | none | terminal: Prompt for a regular-expression search of captured output; directory-tree: Prompt to search visible tree entries |
-| `search-next` | selection, view, mode | not accepted | none | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry |
-| `search-previous` | selection, view, mode | not accepted | none | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry |
-| `search-extend-next` | selection, view | not accepted | none | none |  |
-| `search-extend-previous` | selection, view | not accepted | none | none |  |
-| `search-select-all-matches` | selection, view | not accepted | none | none |  |
-| `search-set-from-selection` | search state | not accepted | none | none |  |
-| `media-show-page` | view, mode, selection | not accepted | none | none | pdf-pages: Display the selected PDF page and enter Normal mode |
-| `media-zoom-in` | view | not accepted | none | none |  |
-| `media-zoom-out` | view | not accepted | none | none |  |
-| `media-fit` | view | not accepted | none | none |  |
-| `media-actual-size` | view | not accepted | none | none |  |
-| `media-pan-left` | view | not accepted | none | none |  |
-| `media-pan-right` | view | not accepted | none | none |  |
-| `media-move-up` | view, selection | repeats | none | none |  |
-| `media-move-down` | view, selection | repeats | none | none |  |
-| `media-copy-selection` | register | not accepted | none | none |  |
-| `media-back` | view, mode, selection | not accepted | none | none | media: Enter Normal mode, then fit media, clear selection or leave preview; pdf-pages: Collapse a Select-mode page selection, otherwise open the parent explorer |
-| `media-select-all` | selection | not accepted | none | none |  |
-| `align-view-center` | view | not accepted | none | none | media: Center the image or PDF in its pane |
-| `align-view-top` | view | not accepted | none | none |  |
-| `align-view-bottom` | view | not accepted | none | none |  |
-| `align-view-middle` | view | not accepted | none | none | media: Center the image or PDF in its pane |
-| `scroll-view-down` | view | repeats | none | none | terminal: Capture review and scroll its output; media: Pan the image or PDF vertically |
-| `scroll-view-up` | view | repeats | none | none | terminal: Capture review and scroll its output; media: Pan the image or PDF vertically |
-| `goto-window-top` | selection | not accepted | none | none | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view |
-| `goto-window-center` | selection | not accepted | none | none | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view |
-| `goto-window-bottom` | selection | not accepted | none | none | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view |
-| `goto-file` | file, view, prompt, background work | not accepted | none | none | terminal: Open a path or URL inferred from the review selection and terminal directory |
-| `goto-word` | prompt, selection | not accepted | none | none | terminal: Label visible captured output words and jump to one; directory-tree: Label visible tree entries and select one |
-| `toggle-soft-wrap` | view, configuration | not accepted | none | none |  |
-| `toggle-whitespace` | view, configuration | not accepted | none | none |  |
-| `preview-document` | background work, view | not accepted | none | none |  |
-| `toggle-markdown-render` | view | not accepted | none | none |  |
-| `toggle-focus` | view, configuration | not accepted | none | none |  |
-| `toggle-zen` | view | not accepted | none | none |  |
-| `toggle-fullscreen` | view | not accepted | none | none |  |
-| `open-explorer` | file, view, prompt | not accepted | none | none |  |
-| `toggle-directory-tree` | pane, view, mode | not accepted | none | none |  |
-| `focus-directory-tree` | pane, view, mode | not accepted | none | none |  |
-| `directory-tree-up` | selection | not accepted | none | none |  |
-| `directory-tree-down` | selection | not accepted | none | none |  |
-| `directory-tree-collapse` | view, selection | not accepted | none | none |  |
-| `directory-tree-select-parent` | view, selection | not accepted | none | none |  |
-| `directory-tree-expand` | view, selection | not accepted | none | none |  |
-| `directory-tree-select-first-child` | view, selection | not accepted | none | none |  |
-| `directory-tree-first` | selection | not accepted | none | none |  |
-| `directory-tree-last` | selection | not accepted | none | none |  |
-| `directory-tree-page-up` | selection | not accepted | none | none |  |
-| `directory-tree-page-down` | selection | not accepted | none | none |  |
-| `directory-tree-open` | file, view, mode, prompt, background work | not accepted | none | none |  |
-| `directory-tree-close` | pane, view, mode | not accepted | none | none |  |
-| `directory-tree-refresh` | file, view | not accepted | none | none |  |
-| `directory-tree-legend` | view | not accepted | none | none |  |
-| `directory-tree-open-vertical` | file, view, mode, prompt, background work, pane | not accepted | none | none |  |
-| `directory-tree-open-horizontal` | file, view, mode, prompt, background work, pane | not accepted | none | none |  |
-| `directory-tree-pane-1` | file, view, mode, prompt, background work | not accepted | none | none |  |
-| `directory-tree-pane-2` | file, view, mode, prompt, background work | not accepted | none | none |  |
-| `directory-tree-pane-3` | file, view, mode, prompt, background work | not accepted | none | none |  |
-| `directory-tree-pane-4` | file, view, mode, prompt, background work | not accepted | none | none |  |
-| `directory-tree-pane-5` | file, view, mode, prompt, background work | not accepted | none | none |  |
-| `directory-tree-pane-6` | file, view, mode, prompt, background work | not accepted | none | none |  |
-| `directory-tree-pane-7` | file, view, mode, prompt, background work | not accepted | none | none |  |
-| `directory-tree-pane-8` | file, view, mode, prompt, background work | not accepted | none | none |  |
-| `directory-tree-pane-9` | file, view, mode, prompt, background work | not accepted | none | none |  |
-| `directory-tree-new` | prompt, file | not accepted | none | none |  |
-| `directory-tree-rename` | prompt, file | not accepted | none | none |  |
-| `directory-tree-delete` | prompt, file | not accepted | none | none |  |
-| `directory-tree-move` | prompt, file | not accepted | none | none |  |
-| `open-working-directory-explorer` | file, view, prompt | not accepted | none | explorer [path] |  |
-| `open-file-picker` | view, background work | not accepted | none | none |  |
-| `open-all-files-picker` | view, background work | not accepted | none | none |  |
-| `open-path-file-picker` | prompt, view, background work | not accepted | none | file-picker-path [path] |  |
-| `open-directory-file-picker` | view, background work | not accepted | none | none |  |
-| `open-fuzzy-grep` | view, background work | not accepted | none | none |  |
-| `open-directory-fuzzy-grep` | view, background work | not accepted | none | none |  |
-| `open-directory-entry` | file, view, mode, selection, prompt, background work | not accepted | none | none |  |
-| `open-parent-directory` | file, view, mode, selection, prompt | not accepted | none | none |  |
-| `refresh-directory` | file, view, prompt | not accepted | none | none |  |
-| `toggle-hidden-files` | view, configuration | not accepted | none | none | directory-tree: Show or hide hidden tree entries |
-| `toggle-directory-details` | view, configuration | not accepted | none | none |  |
-| `choose-explorer-order` | prompt, view, configuration | not accepted | none | none |  |
-| `open-explorer-system` | file, view, background work | not accepted | none | none |  |
-| `open-explorer-finder` | file, view, background work | not accepted | none | none |  |
-| `open-changed-file` | background work, file, view, prompt | not accepted | none | none |  |
-| `stage-all-changed-files` | background work, file, view | not accepted | none | none |  |
-| `checkout-branch` | background work, file, view, prompt | not accepted | none | none |  |
-| `create-branch` | prompt, background work, file | not accepted | none | none |  |
-| `delete-branch` | prompt, background work, file | not accepted | none | none |  |
-| `git-merge-branch` | background work, file, view, prompt, mode | not accepted | none | none |  |
-| `git-conflicts` | background work, file, view, mode | not accepted | none | none |  |
-| `open-git-conflict` | background work, file, view | not accepted | none | none |  |
-| `git-merge-continue` | background work, file, view, prompt, mode | not accepted | none | none |  |
-| `git-merge-abort` | prompt, background work, file, mode | not accepted | none | none |  |
-| `git-conflict-next` | selection, view | not accepted | none | none |  |
-| `git-conflict-previous` | selection, view | not accepted | none | none |  |
-| `git-conflict-keep-current` | text | not accepted | none | none |  |
-| `git-conflict-take-other` | text | not accepted | none | none |  |
-| `git-conflict-sides` | background work, file, view | not accepted | none | none |  |
-| `git-conflict-resolve-literal-markers` | prompt, background work, file, mode | not accepted | none | none |  |
-| `git-conflict-resolve` | prompt, background work, file, mode | not accepted | none | none |  |
-| `git-conflict-list` | background work, file, view, mode | not accepted | none | none |  |
-| `git-conflict-file-current` | prompt, background work, file, mode | not accepted | none | none |  |
-| `git-conflict-file-other` | prompt, background work, file, mode | not accepted | none | none |  |
-| `git-review-approve` | view, background work, file, mode | not accepted | none | none |  |
-| `git-review-cancel` | view | not accepted | none | none |  |
-| `git-review-back` | view | not accepted | none | none |  |
-| `git-review-next` | selection | not accepted | none | none |  |
-| `git-review-previous` | selection | not accepted | none | none |  |
-| `git-review-left` | selection | not accepted | none | none |  |
-| `git-review-right` | selection | not accepted | none | none |  |
-| `git-review-enter` | view, background work, file, mode | not accepted | none | none |  |
-| `git-fetch-branch` | background work, file, view | not accepted | none | none |  |
-| `pull-branch` | background work, file, view, prompt | not accepted | none | none |  |
-| `push-branch` | background work, file, view | not accepted | none | none |  |
-| `open-worktree` | background work, file, view | not accepted | none | none |  |
-| `create-worktree` | prompt, background work, file | not accepted | none | none |  |
-| `create-new-worktree` | prompt, background work, file | not accepted | none | none |  |
-| `remove-worktree` | prompt, background work, file | not accepted | none | none |  |
-| `next-git-network-page` | background work, file, view, mode | not accepted | none | none |  |
-| `previous-git-network-page` | view, mode | not accepted | none | none |  |
-| `next-git-log-page` | background work, file, view, mode | not accepted | none | none |  |
-| `previous-git-log-page` | background work, file, view, mode | not accepted | none | none |  |
-| `open-git-commit` | background work, file, view, mode | not accepted | none | none |  |
-| `open-workspace-search-result` | view, file, selection | not accepted | none | none |  |
-| `override-setting-language` | prompt, configuration | not accepted | none | none |  |
-| `override-setting-pattern` | prompt, configuration | not accepted | none | none |  |
-| `remove-setting-override` | configuration, view | not accepted | none | none |  |
-| `activate-setting` | prompt, configuration | not accepted | none | none |  |
-| `open-settings` | view, mode | not accepted | none | none |  |
-| `open-theme-settings` | configuration, view | not accepted | none | theme [name] |  |
-| `split-vertical` | pane, mode, file, prompt, background work | not accepted | none | vsplit [path] |  |
-| `split-horizontal` | pane, mode, file, prompt, background work | not accepted | none | hsplit [path] |  |
-| `save` | file, text, prompt, background work | not accepted | none | write [path] | directory: Review and apply edits to the directory listing as filesystem operations; commit-message: Review staged changes and submit the commit message |
-| `force-save` | file, text, prompt, background work | not accepted | none | write! [path] | directory: Review and apply edits to the directory listing as filesystem operations; commit-message: Review staged changes and submit the commit message |
-| `show-help` | view, mode | not accepted | none | help [topic] | directory-tree: Open directory-tree help |
-| `show-about` | view | not accepted | none | none |  |
-| `show-tutorial` | view, pane, mode | not accepted | none | tutorial [reset&#124;sessions&#124;next] |  |
-| `focus-window-left` | pane, mode | not accepted | none | none |  |
-| `focus-window-down` | pane, mode | not accepted | none | none |  |
-| `focus-window-up` | pane, mode | not accepted | none | none |  |
-| `focus-window-right` | pane, mode | not accepted | none | none |  |
-| `next-window` | pane, mode | not accepted | none | none |  |
-| `swap-window` | pane | not accepted | none | none |  |
-| `move-window-left` | pane | not accepted | none | none |  |
-| `move-window-down` | pane | not accepted | none | none |  |
-| `move-window-up` | pane | not accepted | none | none |  |
-| `move-window-right` | pane | not accepted | none | none |  |
-| `close-window` | pane, mode | not accepted | none | none | directory-tree: Close the directory tree and restore pane focus |
-| `only-window` | pane | not accepted | none | none |  |
-| `equalize-windows` | pane | not accepted | none | none |  |
-| `open-terminal` | background work, view, mode | not accepted | none | terminal [command] |  |
-| `open-terminal-file-directory` | background work, view, mode | not accepted | none | terminal-file-directory [command] |  |
-| `open-terminal-directory-root` | background work, view, mode | not accepted | none | terminal-directory-root [command] |  |
-| `open-terminal-selected-directory` | background work, view, mode | not accepted | none | terminal-selected-directory [command] |  |
-| `open-terminal-session-directory` | background work, view, mode | not accepted | none | terminal-session-directory <number&#124;name> |  |
-| `open-terminal-list` | view | not accepted | none | none |  |
-| `show-terminal` | view, mode | not accepted | none | terminal-show <number&#124;name> |  |
-| `rename-terminal` | prompt, configuration | not accepted | none | terminal-rename <name> |  |
-| `leave-terminal` | view, mode | not accepted | none | none |  |
-| `copy-terminal-output` | view | not accepted | none | none |  |
-| `send-to-terminal` | terminal input | not accepted | none | terminal-send [number&#124;name] |  |
-| `delete-word-backward` | text | not accepted | none | none |  |
-| `delete-word-forward` | text | not accepted | none | none |  |
-| `delete-to-line-start` | text | not accepted | none | none |  |
-| `delete-to-line-end` | text | not accepted | none | none |  |
-| `delete-char-backward` | text | not accepted | none | none |  |
-| `delete-char-forward` | text | not accepted | none | none |  |
-| `insert-newline` | text | not accepted | none | none |  |
-| `insert-indent` | text | not accepted | none | none |  |
-| `insert-other-indent` | text | not accepted | none | none |  |
-| `commit-undo-checkpoint` | history | not accepted | none | none |  |
-| `goto-definition` | background work, view | not accepted | none | none |  |
-| `goto-declaration` | background work, view | not accepted | none | none |  |
-| `goto-type-definition` | background work, view | not accepted | none | none |  |
-| `goto-references` | background work, view | not accepted | none | none |  |
-| `goto-implementation` | background work, view | not accepted | none | none |  |
-| `new-buffer` | view | not accepted | none | none |  |
-| `open-navigator` | view | not accepted | none | none |  |
-| `previous-destination` | view | not accepted | none | none |  |
-| `previous-session` | file, view, background work | not accepted | none | none |  |
-| `session-1` | file, view, background work | not accepted | none | none |  |
-| `session-2` | file, view, background work | not accepted | none | none |  |
-| `session-3` | file, view, background work | not accepted | none | none |  |
-| `session-4` | file, view, background work | not accepted | none | none |  |
-| `session-5` | file, view, background work | not accepted | none | none |  |
-| `session-6` | file, view, background work | not accepted | none | none |  |
-| `session-7` | file, view, background work | not accepted | none | none |  |
-| `session-8` | file, view, background work | not accepted | none | none |  |
-| `session-9` | file, view, background work | not accepted | none | none |  |
-| `next-running-session` | file, view, background work | not accepted | none | none |  |
-| `previous-running-session` | file, view, background work | not accepted | none | none |  |
-| `open-session-directory` | file, view, background work | not accepted | none | none |  |
-| `open-explorer-session` | file, view, background work | not accepted | none | none |  |
-| `open-explorer-workspace` | file, view, background work | not accepted | none | none |  |
-| `open-buffer-picker` | view | not accepted | none | none |  |
-| `list-accept` | view, prompt | not accepted | none | none |  |
-| `list-open-actions` | view, prompt | not accepted | none | none |  |
-| `list-backspace` | view | not accepted | none | none |  |
-| `list-next` | selection | not accepted | none | none |  |
-| `list-previous` | selection | not accepted | none | none |  |
-| `list-page-down` | selection | not accepted | none | none |  |
-| `list-page-up` | selection | not accepted | none | none |  |
-| `list-first` | selection | not accepted | none | none |  |
-| `list-last` | selection | not accepted | none | none |  |
-| `list-toggle-preview` | view | not accepted | none | none |  |
-| `list-close-target` | view, prompt, background work, text, file | not accepted | none | none |  |
-| `list-clear-filter` | view | not accepted | none | none |  |
-| `list-close` | view | not accepted | none | none |  |
-| `open-session-destinations` | file, view, background work | not accepted | none | none |  |
-| `global-search` | prompt, background work, view | not accepted | none | none |  |
-| `global-search-regex` | prompt, background work, view | not accepted | none | none |  |
-| `show-documentation` | background work, view | not accepted | none | none |  |
-| `document-symbols` | background work, view | not accepted | none | none |  |
-| `workspace-symbols` | prompt, background work, view | not accepted | none | none |  |
-| `diagnostics` | view | not accepted | none | none |  |
-| `trigger-completion` | background work, prompt, text, mode | not accepted | none | none |  |
-| `jump-backward` | view, selection | not accepted | none | none |  |
-| `jump-forward` | view, selection | not accepted | none | none |  |
-| `jump-backward-buffer` | view, selection | not accepted | none | none |  |
-| `jump-forward-buffer` | view, selection | not accepted | none | none |  |
-| `rename-symbol` | background work, prompt, text | not accepted | none | none |  |
-| `code-action` | background work, prompt, text | not accepted | none | none |  |
-| `clipboard-paste-after` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send system clipboard text to the child without changing mode |
-| `clipboard-paste-before` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send system clipboard text to the child without changing mode |
-| `clipboard-yank` | register | not accepted | none | none | terminal: Copy the captured review selection to the system clipboard; media: Copy selected PDF text or an image region |
-| `clipboard-paste` | text, terminal input | not accepted | none | none | terminal: Paste clipboard text or an image reference into the terminal input queue |
-| `select-register` | character input, register | not accepted | one character | none |  |
-| `record-macro` | character input, macro | not accepted | one character | none |  |
-| `record-default-macro` | macro | not accepted | none | none |  |
-| `stop-macro-recording` | macro | not accepted | none | none |  |
-| `replay-macro` | character input, macro, text, background work | repeats | one character | none |  |
-| `replay-default-macro` | macro, text, background work | repeats | none | none |  |
-| `list-macros` | view | not accepted | none | none |  |
-| `shell-pipe` | prompt, background work, text | not accepted | none | none |  |
-| `match-bracket` | selection | not accepted | none | none |  |
-| `cd` | file, configuration, prompt, background work, view, application | not accepted | none | cd [path] |  |
-| `init` | file, configuration, background work, view, application | not accepted | none | init [directory] |  |
-| `close` | view | not accepted | none | none |  |
-| `diff-disk` | file, view | not accepted | none | none |  |
-| `diff-remote` | background work, view | not accepted | none | none |  |
-| `diff-off` | view | not accepted | none | none |  |
-| `diff-this` | view | not accepted | none | none |  |
-| `close!` | view | not accepted | none | none |  |
-| `format` | background work, text | not accepted | none | none |  |
-| `git-compare` | background work, view | not accepted | none | none |  |
-| `git-branches` | background work, view, mode | not accepted | none | none |  |
-| `git-blame` | background work, view, mode | not accepted | none | none |  |
-| `git-blame-file` | background work, view, mode | not accepted | none | none |  |
-| `git-cancel` | background work | not accepted | none | none |  |
-| `git-commit` | prompt, background work, file, view, mode | not accepted | none | none |  |
-| `git-diff` | background work, view | not accepted | none | none |  |
-| `git-diff-side-by-side` | background work, view | not accepted | none | none |  |
-| `git-discard` | prompt, background work, file | not accepted | none | none |  |
-| `git-index` | background work, view | not accepted | none | none |  |
-| `git-log` | background work, view, mode | not accepted | none | none |  |
-| `git-network` | background work, view, mode | not accepted | none | none |  |
-| `git-network-head` | background work, view, mode | not accepted | none | none |  |
-| `git-network-all` | background work, view, mode | not accepted | none | none |  |
-| `git-network-ref` | background work, view, mode | not accepted | none | git-network-ref <full-ref> |  |
-| `git-network-choose-ref` | view | not accepted | none | none |  |
-| `git-search-commits` | background work, view | not accepted | none | none |  |
-| `git-refresh` | background work, view | not accepted | none | none |  |
-| `git-stage` | background work, file | not accepted | none | none |  |
-| `git-status` | background work, view, mode | not accepted | none | none |  |
-| `git-stashes` | background work, view, mode | not accepted | none | none |  |
-| `git-stash-tracked` | prompt, background work, file | not accepted | none | git-stash-tracked <name> |  |
-| `git-stash-all` | prompt, background work, file | not accepted | none | git-stash-all <name> |  |
-| `git-stash-untracked` | prompt, background work, file | not accepted | none | git-stash-untracked <name> |  |
-| `git-stash-apply` | prompt, background work, file | not accepted | none | none |  |
-| `git-stash-drop` | prompt, background work, file | not accepted | none | none |  |
-| `git-stage-hunk` | background work, file | not accepted | none | none |  |
-| `git-unstage-hunk` | background work, file | not accepted | none | none |  |
-| `git-stage-lines` | background work, file | not accepted | none | none |  |
-| `git-unstage` | background work, file | not accepted | none | none |  |
-| `git-worktrees` | background work, view, mode | not accepted | none | none |  |
-| `config-reload` | configuration, background work | not accepted | none | none |  |
-| `write-config` | file | not accepted | none | write-config [path] |  |
-| `write-config!` | file | not accepted | none | write-config! [path] |  |
-| `grammar` | configuration, mode, selection | not accepted | none | grammar [runyte] |  |
-| `lsp-trust` | prompt, configuration, background work | not accepted | none | none |  |
-| `mcp` | prompt, configuration, background work | not accepted | none | mcp [identity] |  |
-| `agent-channel` | background work, view | not accepted | none | none |  |
-| `lsp-restart` | background work | not accepted | none | lsp-restart [language] |  |
-| `log-open` | view | not accepted | none | none |  |
-| `lsp-status` | background work, view | not accepted | none | none |  |
-| `notifications` | view, mode | not accepted | none | none |  |
-| `open` | file, view, prompt, background work | not accepted | none | open <path> |  |
-| `path` | view | not accepted | none | none |  |
-| `describe-key` | prompt, view, mode | not accepted | none | none |  |
-| `browse-actions` | view, mode | not accepted | none | none |  |
-| `copy-key-binding` | register | not accepted | none | none |  |
-| `detach` | application | not accepted | none | none |  |
-| `quit` | pane, view, application | not accepted | none | none |  |
-| `quit!` | pane, view, application | not accepted | none | none |  |
-| `quit-all` | application | not accepted | none | none |  |
-| `quit-all!` | application | not accepted | none | none |  |
-| `quit-all!!` | application | not accepted | none | none |  |
-| `quit-here` | application | not accepted | none | none |  |
-| `quit-here!` | application | not accepted | none | none |  |
-| `reload` | prompt, background work, file, text | not accepted | none | none |  |
-| `resize` | pane, prompt, mode | not accepted | none | none |  |
-| `service-health` | view | not accepted | none | none |  |
-| `pipe` | background work, text | not accepted | none | pipe <shell-command> |  |
-| `pipe-cancel` | background work | not accepted | none | none |  |
-| `plugins` | view | not accepted | none | none |  |
-| `plugin-stop` | background work | not accepted | none | plugin-stop <configured-id> |  |
-| `plugin-restart` | background work | not accepted | none | plugin-restart <configured-id> |  |
-| `write-quit` | file, text, view, application, prompt, background work | not accepted | none | none |  |
-| `write-buffer-close` | file, text, view, prompt, background work | not accepted | none | none |  |
-| `session-attach` | background work, view | not accepted | none | session-attach <workspace> |  |
-| `session-list` | background work, view | not accepted | none | none |  |
-| `session-stop` | background work | not accepted | none | session-stop [workspace] |  |
-| `session-rename` | background work, configuration | not accepted | none | session-rename <workspace> <name> |  |
-| `session-clean` | background work | not accepted | none | none |  |
+| Action | Effects | Count | Character operands | Palette argument | View differences | Classification |
+| --- | --- | --- | --- | --- | --- | --- |
+| `fit-selection-for-normal-mode` | selection, view | not accepted | none | none |  | atomic operation |
+| `mode-enter` | mode | not accepted | none | none |  | mode action |
+| `enter-normal-mode` | mode, selection | not accepted | none | none | terminal: Leave child input for live Normal mode; otherwise capture review and collapse its selection | pending stage 5 split; then mode action |
+| `open-command-palette` | prompt | not accepted | none | none |  | atomic operation |
+| `move-left` | selection, view | repeats | none | none | terminal: Move or extend the cursor in captured output; media: Pan horizontally, or extend the media selection in Select mode | atomic operation |
+| `move-right` | selection, view | repeats | none | none | terminal: Move or extend the cursor in captured output; media: Pan horizontally, or extend the media selection in Select mode | atomic operation |
+| `move-up` | selection, view | repeats | none | none | terminal: Move or extend the cursor in captured output; media: Pan vertically, change PDF page at fit, or extend the media selection | atomic operation |
+| `move-down` | selection, view | repeats | none | none | terminal: Move or extend the cursor in captured output; media: Pan vertically, change PDF page at fit, or extend the media selection | atomic operation |
+| `move-line-start` | selection | not accepted | none | none | terminal: Move or extend the review selection within captured output | atomic operation |
+| `move-line-end` | selection | not accepted | none | none | terminal: Move or extend the review selection within captured output | atomic operation |
+| `move-first-non-whitespace` | selection | not accepted | none | none | terminal: Move or extend the review selection within captured output | atomic operation |
+| `move-file-start` | selection, view | interpreted as an address or extent | none | none | terminal: Move to the captured output boundary; media: Select a PDF page by address or move to its first or last page | atomic operation |
+| `move-file-end` | selection, view | interpreted as an address or extent | none | none | terminal: Move to the captured output boundary; media: Select a PDF page by address or move to its first or last page | atomic operation |
+| `move-word-forward` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output | atomic operation |
+| `move-word-backward` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output | atomic operation |
+| `move-word-end` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output | atomic operation |
+| `move-long-word-forward` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output | atomic operation |
+| `move-long-word-backward` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output | atomic operation |
+| `move-long-word-end` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output | atomic operation |
+| `goto-next-paragraph` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output | atomic operation |
+| `goto-previous-paragraph` | selection | repeats | none | none | terminal: Move or extend the review selection within captured output | atomic operation |
+| `find-next-char` | character input, selection | not accepted | one character | none | terminal: Find the supplied character within captured output | atomic operation |
+| `find-previous-char` | character input, selection | not accepted | one character | none | terminal: Find the supplied character within captured output | atomic operation |
+| `find-till-next-char` | character input, selection | not accepted | one character | none | terminal: Find the supplied character within captured output | atomic operation |
+| `find-till-previous-char` | character input, selection | not accepted | one character | none | terminal: Find the supplied character within captured output | atomic operation |
+| `page-up` | selection, view | repeats | none | none | terminal: Move the review cursor by a page of captured output; media: Move to the previous or next PDF page | atomic operation |
+| `page-down` | selection, view | repeats | none | none | terminal: Move the review cursor by a page of captured output; media: Move to the previous or next PDF page | atomic operation |
+| `half-page-up` | selection, view | repeats | none | none | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page | atomic operation |
+| `half-page-down` | selection, view | repeats | none | none | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page | atomic operation |
+| `enter-insert-mode` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | pending stage 5 split; then mode action |
+| `enter-replace-mode` | mode, selection | not accepted | none | none |  | pending stage 5 split; then mode action |
+| `append-after` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
+| `insert-line-start` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
+| `insert-line-end` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
+| `open-line-below` | text, mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
+| `open-line-above` | text, mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
+| `replace-char` | character input, text | not accepted | one character | none |  | atomic operation |
+| `surround-add` | character input, text, mode | not accepted | one character | none |  | pending stage 3 split; then atomic operation |
+| `surround-replace` | character input, text, mode | not accepted | two characters | none |  | pending stage 3 split; then atomic operation |
+| `surround-delete` | character input, text, mode | not accepted | one character | none |  | pending stage 3 split; then atomic operation |
+| `toggle-case` | text | not accepted | none | none |  | atomic operation |
+| `selection-undo` | selection, mode | repeats | none | none | terminal: Restore the previous or next terminal review selection | decision: Restores the selection and mode together from the chosen history entry. |
+| `selection-redo` | selection, mode | repeats | none | none | terminal: Restore the previous or next terminal review selection | decision: Restores the selection and mode together from the chosen history entry. |
+| `undo` | text, terminal input | repeats | none | none | terminal: Ask the child to erase the last text Runyte sent, if it has not been submitted | atomic operation |
+| `redo` | text | repeats | none | none |  | atomic operation |
+| `yank` | register | not accepted | none | none | terminal: Copy the review selection to the selected register and retain its selection and mode; directory: Copy selected entries and record a directory copy payload | atomic operation |
+| `yank-line` | register | not accepted | none | none | directory: Copy selected entry lines and record a directory copy payload | atomic operation |
+| `yank-collapse-normal-mode` | register, selection, mode | not accepted | none | none | terminal: Copy the review selection, retain it on screen and enter Normal mode; directory: Copy selected entries, collapse the selection and enter Normal mode | pending stage 4 split; then atomic operation |
+| `yank-line-collapse-normal-mode` | register, selection, mode | not accepted | none | none | directory: Copy selected entry lines, collapse the selection and enter Normal mode | pending stage 4 split; then atomic operation |
+| `paste-after-or-replace` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing | pending stage 4 split; then decision: Chooses insertion or replacement independently for each selection range. |
+| `paste-after` | text, selection, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child without changing mode; directory: Stage copies or moves from a directory register into the listing | atomic operation |
+| `replace-with-register` | text, mode | not accepted | none | none | directory: Insert rows from a directory-register payload; directory pastes use row insertion rather than text replacement | pending stage 3 split; then atomic operation |
+| `paste-before` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing | pending stage 4 split; then atomic operation |
+| `indent` | text | not accepted | none | none |  | atomic operation |
+| `unindent` | text | not accepted | none | none |  | atomic operation |
+| `toggle-comments` | text | not accepted | none | none |  | atomic operation |
+| `cut-selection` | register, text, selection | not accepted | none | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection | decision: Chooses linewise register content or directory move payload and coordinates deletion; independent yank/delete steps cannot retain that ownership. |
+| `cut-selection-for-change` | register, text, selection | not accepted | none | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection | decision: Chooses operative-span register content or directory move payload and coordinates deletion; independent yank/delete steps cannot retain that ownership. |
+| `delete-selection` | text, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `change-selection` | text, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `enter-select-mode` | mode, selection | not accepted | none | none | terminal: Enter Select mode over captured terminal output; media: Begin selection of PDF text or an image region | pending stage 5 split; then mode action |
+| `select-line` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection | pending stage 4 split; then atomic operation |
+| `extend-line-above` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection | pending stage 4 split; then atomic operation |
+| `extend-line-below` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection | pending stage 4 split; then atomic operation |
+| `select-line-up` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection | pending stage 4 split; then atomic operation |
+| `select-all` | selection | not accepted | none | none | terminal: Select all captured terminal output | atomic operation |
+| `collapse-selection` | selection | not accepted | none | none | terminal: Collapse the review selection; media: Retain the native media selection; this surface has no document caret to collapse | atomic operation |
+| `flip-selection` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `expand-syntax-selection` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
+| `shrink-syntax-selection` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
+| `select-syntax-parent` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
+| `select-syntax-child` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
+| `select-previous-syntax-sibling` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
+| `select-next-syntax-sibling` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
+| `select-syntax-function` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-syntax-function` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-syntax-class` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-syntax-class` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-syntax-parameter` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-syntax-parameter` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-around-parentheses` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-parentheses` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-around-square-brackets` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-square-brackets` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-around-braces` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-braces` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-around-angle-brackets` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-angle-brackets` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-around-double-quotes` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-double-quotes` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-around-single-quotes` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-single-quotes` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-around-backticks` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-backticks` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-word` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-around-word` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-long-word` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-around-long-word` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-paragraph` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-around-paragraph` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-around-closest-delimiter` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `select-inside-closest-delimiter` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `goto-previous-syntax-function` | selection | repeats | none | none |  | atomic operation |
+| `goto-next-syntax-function` | selection | repeats | none | none |  | atomic operation |
+| `goto-previous-syntax-class` | selection | repeats | none | none |  | atomic operation |
+| `goto-next-syntax-class` | selection | repeats | none | none |  | atomic operation |
+| `goto-previous-syntax-parameter` | selection | repeats | none | none |  | atomic operation |
+| `goto-next-syntax-parameter` | selection | repeats | none | none |  | atomic operation |
+| `document-outline` | view | not accepted | none | none |  | atomic operation |
+| `toggle-syntax-fold` | view | not accepted | none | none |  | atomic operation |
+| `fold-all-syntax` | view | not accepted | none | none |  | atomic operation |
+| `unfold-all-syntax` | view | not accepted | none | none |  | atomic operation |
+| `split-selection-at-line-ends` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `split-selection-at-line-starts` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `keep-primary-selection` | selection | not accepted | none | none | terminal: Keep only the primary review selection | atomic operation |
+| `remove-primary-selection` | selection | not accepted | none | none |  | atomic operation |
+| `copy-selection-down` | selection | not accepted | none | none | terminal: Copy the review cursor to the adjacent captured output line | atomic operation |
+| `copy-selection-up` | selection | not accepted | none | none | terminal: Copy the review cursor to the adjacent captured output line | atomic operation |
+| `copy-selection-down-padded` | text, selection | not accepted | none | none |  | atomic operation |
+| `copy-selection-up-padded` | text, selection | not accepted | none | none |  | atomic operation |
+| `rotate-selection-forward` | selection | not accepted | none | none | terminal: Select the next or previous terminal review search match | atomic operation |
+| `rotate-selection-backward` | selection | not accepted | none | none | terminal: Select the next or previous terminal review search match | atomic operation |
+| `rotate-selection-contents-forward` | text, selection | not accepted | none | none |  | atomic operation |
+| `rotate-selection-contents-backward` | text, selection | not accepted | none | none |  | atomic operation |
+| `keep-matching-selections` | prompt, selection | not accepted | none | none |  | atomic operation |
+| `remove-matching-selections` | prompt, selection | not accepted | none | none |  | atomic operation |
+| `align-selections` | text, selection | not accepted | none | none |  | atomic operation |
+| `trim-selections` | selection | not accepted | none | none |  | atomic operation |
+| `trim-trailing-whitespace` | text, selection | not accepted | none | none |  | atomic operation |
+| `hard-wrap` | text | not accepted | none | none |  | atomic operation |
+| `reflow` | text | not accepted | none | none |  | atomic operation |
+| `join-selections` | prompt, text | not accepted | none | none |  | atomic operation |
+| `join-lines` | text | not accepted | none | none |  | atomic operation |
+| `format-table` | text | not accepted | none | none |  | atomic operation |
+| `search` | prompt, search state, selection, mode | not accepted | none | none | terminal: Prompt for a case-insensitive search of captured output | decision: Owns the search prompt and enters Select only when its accepted search succeeds (decision 30). |
+| `search-regex` | prompt, search state, selection, mode | not accepted | none | none | terminal: Prompt for a regular-expression search of captured output; directory-tree: Prompt to search visible tree entries | decision: Owns the regular-expression search prompt and its selection-mode completion (decision 30). |
+| `search-next` | selection, view, mode | not accepted | none | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry | pending stage 4 split; then atomic operation |
+| `search-previous` | selection, view, mode | not accepted | none | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry | pending stage 4 split; then atomic operation |
+| `search-extend-next` | selection, view | not accepted | none | none |  | atomic operation |
+| `search-extend-previous` | selection, view | not accepted | none | none |  | atomic operation |
+| `search-select-all-matches` | selection, view | not accepted | none | none |  | atomic operation |
+| `search-set-from-selection` | search state | not accepted | none | none |  | atomic operation |
+| `media-show-page` | view, mode, selection | not accepted | none | none | pdf-pages: Display the selected PDF page and enter Normal mode | decision: Chooses and presents a native media page with its corresponding selection and mode. |
+| `media-zoom-in` | view | not accepted | none | none |  | atomic operation |
+| `media-zoom-out` | view | not accepted | none | none |  | atomic operation |
+| `media-fit` | view | not accepted | none | none |  | atomic operation |
+| `media-actual-size` | view | not accepted | none | none |  | atomic operation |
+| `media-pan-left` | view | not accepted | none | none |  | atomic operation |
+| `media-pan-right` | view | not accepted | none | none |  | atomic operation |
+| `media-move-up` | view, selection | repeats | none | none |  | decision: Pans zoomed or non-PDF media, but changes PDF pages at fit zoom; the native viewport owns that decision (decision 31). |
+| `media-move-down` | view, selection | repeats | none | none |  | decision: Pans zoomed or non-PDF media, but changes PDF pages at fit zoom; the native viewport owns that decision (decision 31). |
+| `media-copy-selection` | register | not accepted | none | none |  | atomic operation |
+| `media-back` | view, mode, selection | not accepted | none | none | media: Enter Normal mode, then fit media, clear selection or leave preview; pdf-pages: Collapse a Select-mode page selection, otherwise open the parent explorer | decision: Fits zoomed media, otherwise clears native selection, otherwise leaves preview; authoritative native state chooses the branch (decision 31). |
+| `media-select-all` | selection | not accepted | none | none |  | atomic operation |
+| `align-view-center` | view | not accepted | none | none | media: Center the image or PDF in its pane | atomic operation |
+| `align-view-top` | view | not accepted | none | none |  | atomic operation |
+| `align-view-bottom` | view | not accepted | none | none |  | atomic operation |
+| `align-view-middle` | view | not accepted | none | none | media: Center the image or PDF in its pane | atomic operation |
+| `scroll-view-down` | view | repeats | none | none | terminal: Capture review and scroll its output; media: Pan the image or PDF vertically | atomic operation |
+| `scroll-view-up` | view | repeats | none | none | terminal: Capture review and scroll its output; media: Pan the image or PDF vertically | atomic operation |
+| `goto-window-top` | selection | not accepted | none | none | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view | atomic operation |
+| `goto-window-center` | selection | not accepted | none | none | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view | atomic operation |
+| `goto-window-bottom` | selection | not accepted | none | none | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view | atomic operation |
+| `goto-file` | file, view, prompt, background work | not accepted | none | none | terminal: Open a path or URL inferred from the review selection and terminal directory | atomic operation |
+| `goto-word` | prompt, selection | not accepted | none | none | terminal: Label visible captured output words and jump to one; directory-tree: Label visible tree entries and select one | atomic operation |
+| `toggle-soft-wrap` | view, configuration | not accepted | none | none |  | atomic operation |
+| `toggle-whitespace` | view, configuration | not accepted | none | none |  | atomic operation |
+| `preview-document` | background work, view | not accepted | none | none |  | atomic operation |
+| `toggle-markdown-render` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `toggle-focus` | view, configuration | not accepted | none | none |  | atomic operation |
+| `toggle-zen` | view, mode | not accepted | none | none |  | decision: Restores the previous editor mode when leaving directory-tree focus before changing the window presentation. |
+| `toggle-fullscreen` | view, mode | not accepted | none | none |  | decision: Restores the previous editor mode when leaving directory-tree focus before changing the window presentation. |
+| `open-explorer` | file, view, prompt | not accepted | none | none |  | atomic operation |
+| `toggle-directory-tree` | pane, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `focus-directory-tree` | pane, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-up` | selection | not accepted | none | none |  | atomic operation |
+| `directory-tree-down` | selection | not accepted | none | none |  | atomic operation |
+| `directory-tree-collapse` | view, selection | not accepted | none | none |  | atomic operation |
+| `directory-tree-select-parent` | view, selection | not accepted | none | none |  | atomic operation |
+| `directory-tree-expand` | view, selection | not accepted | none | none |  | atomic operation |
+| `directory-tree-select-first-child` | view, selection | not accepted | none | none |  | atomic operation |
+| `directory-tree-first` | selection | not accepted | none | none |  | atomic operation |
+| `directory-tree-last` | selection | not accepted | none | none |  | atomic operation |
+| `directory-tree-page-up` | selection | not accepted | none | none |  | atomic operation |
+| `directory-tree-page-down` | selection | not accepted | none | none |  | atomic operation |
+| `directory-tree-open` | file, view, mode, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-close` | pane, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-refresh` | file, view | not accepted | none | none |  | atomic operation |
+| `directory-tree-legend` | view | not accepted | none | none |  | atomic operation |
+| `directory-tree-open-vertical` | file, view, mode, prompt, background work, pane | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-open-horizontal` | file, view, mode, prompt, background work, pane | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-pane-1` | file, view, mode, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-pane-2` | file, view, mode, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-pane-3` | file, view, mode, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-pane-4` | file, view, mode, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-pane-5` | file, view, mode, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-pane-6` | file, view, mode, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-pane-7` | file, view, mode, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-pane-8` | file, view, mode, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-pane-9` | file, view, mode, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-new` | prompt, file | not accepted | none | none |  | atomic operation |
+| `directory-tree-rename` | prompt, file | not accepted | none | none |  | atomic operation |
+| `directory-tree-delete` | prompt, file | not accepted | none | none |  | atomic operation |
+| `directory-tree-move` | prompt, file | not accepted | none | none |  | atomic operation |
+| `open-working-directory-explorer` | file, view, prompt | not accepted | none | explorer [path] |  | atomic operation |
+| `open-file-picker` | view, background work | not accepted | none | none |  | atomic operation |
+| `open-all-files-picker` | view, background work | not accepted | none | none |  | atomic operation |
+| `open-path-file-picker` | prompt, view, background work | not accepted | none | file-picker-path [path] |  | atomic operation |
+| `open-directory-file-picker` | view, background work | not accepted | none | none |  | atomic operation |
+| `open-fuzzy-grep` | view, background work | not accepted | none | none |  | atomic operation |
+| `open-directory-fuzzy-grep` | view, background work | not accepted | none | none |  | atomic operation |
+| `open-directory-entry` | file, view, mode, selection, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `open-parent-directory` | file, view, mode, selection, prompt | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `refresh-directory` | file, view, prompt | not accepted | none | none |  | atomic operation |
+| `toggle-hidden-files` | view, configuration | not accepted | none | none | directory-tree: Show or hide hidden tree entries | atomic operation |
+| `toggle-directory-details` | view, configuration | not accepted | none | none |  | atomic operation |
+| `choose-explorer-order` | prompt, view, configuration | not accepted | none | none |  | atomic operation |
+| `open-explorer-system` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `open-explorer-finder` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `open-changed-file` | background work, file, view, prompt | not accepted | none | none |  | atomic operation |
+| `stage-all-changed-files` | background work, file, view | not accepted | none | none |  | atomic operation |
+| `checkout-branch` | background work, file, view, prompt | not accepted | none | none |  | atomic operation |
+| `create-branch` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `delete-branch` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `git-merge-branch` | background work, file, view, prompt, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-conflicts` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `open-git-conflict` | background work, file, view | not accepted | none | none |  | atomic operation |
+| `git-merge-continue` | background work, file, view, prompt, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-merge-abort` | prompt, background work, file, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-conflict-next` | selection, view | not accepted | none | none |  | atomic operation |
+| `git-conflict-previous` | selection, view | not accepted | none | none |  | atomic operation |
+| `git-conflict-keep-current` | text | not accepted | none | none |  | atomic operation |
+| `git-conflict-take-other` | text | not accepted | none | none |  | atomic operation |
+| `git-conflict-sides` | background work, file, view | not accepted | none | none |  | atomic operation |
+| `git-conflict-resolve-literal-markers` | prompt, background work, file, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-conflict-resolve` | prompt, background work, file, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-conflict-list` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-conflict-file-current` | prompt, background work, file, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-conflict-file-other` | prompt, background work, file, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-review-approve` | view, background work, file, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-review-cancel` | view | not accepted | none | none |  | atomic operation |
+| `git-review-back` | view | not accepted | none | none |  | atomic operation |
+| `git-review-next` | selection | not accepted | none | none |  | atomic operation |
+| `git-review-previous` | selection | not accepted | none | none |  | atomic operation |
+| `git-review-left` | selection | not accepted | none | none |  | atomic operation |
+| `git-review-right` | selection | not accepted | none | none |  | atomic operation |
+| `git-review-enter` | view, background work, file, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-fetch-branch` | background work, file, view | not accepted | none | none |  | atomic operation |
+| `pull-branch` | background work, file, view, prompt | not accepted | none | none |  | atomic operation |
+| `push-branch` | background work, file, view | not accepted | none | none |  | atomic operation |
+| `open-worktree` | background work, file, view | not accepted | none | none |  | atomic operation |
+| `create-worktree` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `create-new-worktree` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `remove-worktree` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `next-git-network-page` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `previous-git-network-page` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `next-git-log-page` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `previous-git-log-page` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `open-git-commit` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `open-workspace-search-result` | view, file, selection | not accepted | none | none |  | atomic operation |
+| `override-setting-language` | prompt, configuration | not accepted | none | none |  | atomic operation |
+| `override-setting-pattern` | prompt, configuration | not accepted | none | none |  | atomic operation |
+| `remove-setting-override` | configuration, view | not accepted | none | none |  | atomic operation |
+| `activate-setting` | prompt, configuration | not accepted | none | none |  | atomic operation |
+| `open-settings` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `open-theme-settings` | configuration, view | not accepted | none | theme [name] |  | atomic operation |
+| `split-vertical` | pane, mode, file, prompt, background work | not accepted | none | vsplit [path] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `split-horizontal` | pane, mode, file, prompt, background work | not accepted | none | hsplit [path] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `save` | file, text, prompt, background work | not accepted | none | write [path] | directory: Review and apply edits to the directory listing as filesystem operations; commit-message: Review staged changes and submit the commit message | atomic operation |
+| `force-save` | file, text, prompt, background work | not accepted | none | write! [path] | directory: Review and apply edits to the directory listing as filesystem operations; commit-message: Review staged changes and submit the commit message | atomic operation |
+| `show-help` | view, mode | not accepted | none | help [topic] | directory-tree: Open directory-tree help | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `show-about` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `show-tutorial` | view, pane, mode | not accepted | none | tutorial [reset&#124;sessions&#124;next] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `focus-window-left` | pane, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `focus-window-down` | pane, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `focus-window-up` | pane, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `focus-window-right` | pane, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `next-window` | pane, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `swap-window` | pane, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `move-window-left` | pane | not accepted | none | none |  | atomic operation |
+| `move-window-down` | pane | not accepted | none | none |  | atomic operation |
+| `move-window-up` | pane | not accepted | none | none |  | atomic operation |
+| `move-window-right` | pane | not accepted | none | none |  | atomic operation |
+| `close-window` | pane, mode | not accepted | none | none | directory-tree: Close the directory tree and restore pane focus | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `only-window` | pane | not accepted | none | none |  | atomic operation |
+| `equalize-windows` | pane | not accepted | none | none |  | atomic operation |
+| `open-terminal` | background work, view, mode | not accepted | none | terminal [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `open-terminal-file-directory` | background work, view, mode | not accepted | none | terminal-file-directory [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `open-terminal-directory-root` | background work, view, mode | not accepted | none | terminal-directory-root [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `open-terminal-selected-directory` | background work, view, mode | not accepted | none | terminal-selected-directory [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `open-terminal-session-directory` | background work, view, mode | not accepted | none | terminal-session-directory <number&#124;name> |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `open-terminal-list` | view | not accepted | none | none |  | atomic operation |
+| `show-terminal` | view, mode | not accepted | none | terminal-show <number&#124;name> |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `rename-terminal` | prompt, configuration | not accepted | none | terminal-rename <name> |  | atomic operation |
+| `leave-terminal` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `copy-terminal-output` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `send-to-terminal` | terminal input | not accepted | none | terminal-send [number&#124;name] |  | atomic operation |
+| `delete-word-backward` | text | not accepted | none | none |  | atomic operation |
+| `delete-word-forward` | text | not accepted | none | none |  | atomic operation |
+| `delete-to-line-start` | text | not accepted | none | none |  | atomic operation |
+| `delete-to-line-end` | text | not accepted | none | none |  | atomic operation |
+| `delete-char-backward` | text | not accepted | none | none |  | atomic operation |
+| `delete-char-forward` | text | not accepted | none | none |  | atomic operation |
+| `insert-newline` | text | not accepted | none | none |  | atomic operation |
+| `insert-indent` | text | not accepted | none | none |  | atomic operation |
+| `insert-other-indent` | text | not accepted | none | none |  | atomic operation |
+| `commit-undo-checkpoint` | history | not accepted | none | none |  | atomic operation |
+| `goto-definition` | background work, view | not accepted | none | none |  | atomic operation |
+| `goto-declaration` | background work, view | not accepted | none | none |  | atomic operation |
+| `goto-type-definition` | background work, view | not accepted | none | none |  | atomic operation |
+| `goto-references` | background work, view | not accepted | none | none |  | atomic operation |
+| `goto-implementation` | background work, view | not accepted | none | none |  | atomic operation |
+| `new-buffer` | view | not accepted | none | none |  | atomic operation |
+| `open-navigator` | view | not accepted | none | none |  | atomic operation |
+| `previous-destination` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `previous-session` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-1` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-2` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-3` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-4` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-5` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-6` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-7` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-8` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-9` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `next-running-session` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `previous-running-session` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `open-session-directory` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `open-explorer-session` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `open-explorer-workspace` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `open-buffer-picker` | view | not accepted | none | none |  | atomic operation |
+| `list-accept` | view, prompt | not accepted | none | none |  | atomic operation |
+| `list-open-actions` | view, prompt | not accepted | none | none |  | atomic operation |
+| `list-backspace` | view | not accepted | none | none |  | atomic operation |
+| `list-next` | selection | not accepted | none | none |  | atomic operation |
+| `list-previous` | selection | not accepted | none | none |  | atomic operation |
+| `list-page-down` | selection | not accepted | none | none |  | atomic operation |
+| `list-page-up` | selection | not accepted | none | none |  | atomic operation |
+| `list-first` | selection | not accepted | none | none |  | atomic operation |
+| `list-last` | selection | not accepted | none | none |  | atomic operation |
+| `list-toggle-preview` | view | not accepted | none | none |  | atomic operation |
+| `list-close-target` | view, prompt, background work, text, file, mode | not accepted | none | none |  | decision: Closes the captured target only after its guards or confirmation succeed and reconciles the surviving destination mode. |
+| `list-clear-filter` | view | not accepted | none | none |  | atomic operation |
+| `list-close` | view | not accepted | none | none |  | atomic operation |
+| `open-session-destinations` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `global-search` | prompt, background work, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `global-search-regex` | prompt, background work, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `show-documentation` | background work, view | not accepted | none | none |  | atomic operation |
+| `document-symbols` | background work, view | not accepted | none | none |  | atomic operation |
+| `workspace-symbols` | prompt, background work, view | not accepted | none | none |  | atomic operation |
+| `diagnostics` | view | not accepted | none | none |  | atomic operation |
+| `trigger-completion` | background work, prompt, text, mode | not accepted | none | none |  | decision: Enters Insert only when a language server is available, then owns the completion request and later text acceptance. |
+| `jump-backward` | view, selection, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `jump-forward` | view, selection, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `jump-backward-buffer` | view, selection, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `jump-forward-buffer` | view, selection, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `rename-symbol` | background work, prompt, text | not accepted | none | none |  | atomic operation |
+| `code-action` | background work, prompt, text | not accepted | none | none |  | atomic operation |
+| `clipboard-paste-after` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send system clipboard text to the child without changing mode | pending stage 4 split; then atomic operation |
+| `clipboard-paste-before` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send system clipboard text to the child without changing mode | pending stage 4 split; then atomic operation |
+| `clipboard-yank` | register | not accepted | none | none | terminal: Copy the captured review selection to the system clipboard; media: Copy selected PDF text or an image region | atomic operation |
+| `clipboard-paste` | text, terminal input, mode | not accepted | none | none | terminal: Paste clipboard text or an image reference into the terminal input queue | pending stage 4 split; then decision: Chooses image insertion or text paste from clipboard content. |
+| `select-register` | character input, register | not accepted | one character | none |  | atomic operation |
+| `record-macro` | character input, macro | not accepted | one character | none |  | atomic operation |
+| `record-default-macro` | macro | not accepted | none | none |  | atomic operation |
+| `stop-macro-recording` | macro | not accepted | none | none |  | atomic operation |
+| `replay-macro` | character input, macro, text, background work | repeats | one character | none |  | atomic operation |
+| `replay-default-macro` | macro, text, background work | repeats | none | none |  | atomic operation |
+| `list-macros` | view | not accepted | none | none |  | atomic operation |
+| `shell-pipe` | prompt, background work, text | not accepted | none | none |  | atomic operation |
+| `match-bracket` | selection | not accepted | none | none |  | atomic operation |
+| `cd` | file, configuration, prompt, background work, view, application | not accepted | none | cd [path] |  | atomic operation |
+| `init` | file, configuration, background work, view, application | not accepted | none | init [directory] |  | atomic operation |
+| `close` | view | not accepted | none | none |  | atomic operation |
+| `diff-disk` | file, view | not accepted | none | none |  | atomic operation |
+| `diff-remote` | background work, view | not accepted | none | none |  | atomic operation |
+| `diff-off` | view | not accepted | none | none |  | atomic operation |
+| `diff-this` | view | not accepted | none | none |  | atomic operation |
+| `close!` | view | not accepted | none | none |  | atomic operation |
+| `format` | background work, text | not accepted | none | none |  | atomic operation |
+| `git-compare` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-branches` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-blame` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-blame-file` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-cancel` | background work | not accepted | none | none |  | atomic operation |
+| `git-commit` | prompt, background work, file, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-diff` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-diff-side-by-side` | background work, view | not accepted | none | none |  | atomic operation |
+| `git-discard` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `git-index` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-log` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-network` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-network-head` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-network-all` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-network-ref` | background work, view, mode | not accepted | none | git-network-ref <full-ref> |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-network-choose-ref` | view | not accepted | none | none |  | atomic operation |
+| `git-search-commits` | background work, view | not accepted | none | none |  | atomic operation |
+| `git-refresh` | background work, view | not accepted | none | none |  | atomic operation |
+| `git-stage` | background work, file | not accepted | none | none |  | atomic operation |
+| `git-status` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-stashes` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `git-stash-tracked` | prompt, background work, file | not accepted | none | git-stash-tracked <name> |  | atomic operation |
+| `git-stash-all` | prompt, background work, file | not accepted | none | git-stash-all <name> |  | atomic operation |
+| `git-stash-untracked` | prompt, background work, file | not accepted | none | git-stash-untracked <name> |  | atomic operation |
+| `git-stash-apply` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `git-stash-drop` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `git-stage-hunk` | background work, file | not accepted | none | none |  | atomic operation |
+| `git-unstage-hunk` | background work, file | not accepted | none | none |  | atomic operation |
+| `git-stage-lines` | background work, file | not accepted | none | none |  | atomic operation |
+| `git-unstage` | background work, file | not accepted | none | none |  | atomic operation |
+| `git-worktrees` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `config-reload` | configuration, background work | not accepted | none | none |  | atomic operation |
+| `write-config` | file | not accepted | none | write-config [path] |  | atomic operation |
+| `write-config!` | file | not accepted | none | write-config! [path] |  | atomic operation |
+| `grammar` | configuration, mode, selection | not accepted | none | grammar [runyte] |  | decision: Changes the editing grammar and reconciles its current mode and selection. |
+| `lsp-trust` | prompt, configuration, background work | not accepted | none | none |  | atomic operation |
+| `mcp` | prompt, configuration, background work | not accepted | none | mcp [identity] |  | atomic operation |
+| `agent-channel` | background work, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `lsp-restart` | background work | not accepted | none | lsp-restart [language] |  | atomic operation |
+| `log-open` | view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `lsp-status` | background work, view | not accepted | none | none |  | atomic operation |
+| `notifications` | view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `open` | file, view, prompt, background work | not accepted | none | open <path> |  | atomic operation |
+| `path` | view | not accepted | none | none |  | atomic operation |
+| `describe-key` | prompt, view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `browse-actions` | view, mode | not accepted | none | none |  | decision: Opens or updates a workflow view with the mode belonging to that view. |
+| `copy-key-binding` | register | not accepted | none | none |  | atomic operation |
+| `detach` | application | not accepted | none | none |  | atomic operation |
+| `quit` | pane, view, application | not accepted | none | none |  | atomic operation |
+| `quit!` | pane, view, application | not accepted | none | none |  | atomic operation |
+| `quit-all` | application | not accepted | none | none |  | atomic operation |
+| `quit-all!` | application | not accepted | none | none |  | atomic operation |
+| `quit-all!!` | application | not accepted | none | none |  | atomic operation |
+| `quit-here` | application | not accepted | none | none |  | atomic operation |
+| `quit-here!` | application | not accepted | none | none |  | atomic operation |
+| `reload` | prompt, background work, file, text | not accepted | none | none |  | atomic operation |
+| `resize` | pane, prompt, mode | not accepted | none | none |  | decision: Owns the resize prompt and its mode transition. |
+| `service-health` | view | not accepted | none | none |  | atomic operation |
+| `pipe` | background work, text | not accepted | none | pipe <shell-command> |  | atomic operation |
+| `pipe-cancel` | background work | not accepted | none | none |  | atomic operation |
+| `plugins` | view | not accepted | none | none |  | atomic operation |
+| `plugin-stop` | background work | not accepted | none | plugin-stop <configured-id> |  | atomic operation |
+| `plugin-restart` | background work | not accepted | none | plugin-restart <configured-id> |  | atomic operation |
+| `write-quit` | file, text, view, application, prompt, background work | not accepted | none | none |  | decision: Owns the save continuation; closes only after successful save and preserves commit-message or changed-buffer guards. |
+| `write-buffer-close` | file, text, view, prompt, background work | not accepted | none | none |  | decision: Owns the save continuation; closes only after successful save and preserves commit-message or changed-buffer guards. |
+| `session-attach` | background work, view | not accepted | none | session-attach <workspace> |  | atomic operation |
+| `session-list` | background work, view | not accepted | none | none |  | atomic operation |
+| `session-stop` | background work | not accepted | none | session-stop [workspace] |  | atomic operation |
+| `session-rename` | background work, configuration | not accepted | none | session-rename <workspace> <name> |  | atomic operation |
+| `session-clean` | background work | not accepted | none | none |  | atomic operation |
 <!-- action-reference:end -->
 
 <!-- navigation -->

@@ -6,6 +6,7 @@
 //! until the atomic-action migration.
 //! Scoped admission is independent of global binding modes until stage 4.
 
+mod classification;
 mod editor;
 mod views;
 
@@ -14,6 +15,50 @@ use super::{
     CommandSpec, EditorCommand, Mode,
 };
 use crate::keymap::{BindingScope, BindingTarget, admission};
+
+/// The semantic operation after any explicitly pending migration is complete.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SemanticClass {
+    Atomic,
+    Decision(&'static str),
+    ModeAction,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SplitStage {
+    Stage3,
+    Stage4,
+    Stage5,
+}
+
+/// A pending split takes precedence: such an action is still bundled today,
+/// even when its underlying semantic operation is classified Atomic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ActionClassification {
+    pub semantic: SemanticClass,
+    pub pending_split: Option<SplitStage>,
+}
+
+impl ActionClassification {
+    pub fn description(self) -> String {
+        let semantic = match self.semantic {
+            SemanticClass::Atomic => "atomic operation".to_owned(),
+            SemanticClass::ModeAction => "mode action".to_owned(),
+            SemanticClass::Decision(reason) => format!("decision: {reason}"),
+        };
+        match self.pending_split {
+            None => semantic,
+            Some(stage) => format!(
+                "pending stage {} split; then {semantic}",
+                match stage {
+                    SplitStage::Stage3 => 3,
+                    SplitStage::Stage4 => 4,
+                    SplitStage::Stage5 => 5,
+                }
+            ),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ActionEffect {
@@ -115,6 +160,7 @@ pub struct ActionDescriptor {
     pub metadata: CommandMetadata,
     pub category: CommandCategory,
     pub policy: ActionPolicy,
+    pub classification: ActionClassification,
     /// The existing palette spelling, aliases, argument format and requirement.
     /// `usage` records formats more precise than Path/FreeText. Presence of
     /// interactive operands never grants a new palette argument form.
@@ -197,6 +243,7 @@ impl EditorCommand {
             metadata: self.metadata(),
             category: self.category(),
             policy: self.action_policy(),
+            classification: classification::editor_classification(self),
             palette: palette(id),
             palette_context: id.context(),
             view_overrides: views::editor_views(self),
@@ -217,6 +264,7 @@ impl ColonCommand {
             },
             category: self.category(),
             policy: self.action_policy(),
+            classification: classification::colon_classification(self),
             palette: Some(spec),
             palette_context: id.context(),
             view_overrides: &[],
@@ -237,12 +285,10 @@ impl ColonCommand {
             C::DiffRemote => &[Background, View],
             C::DiffOff | C::DiffThis => &[View],
             C::Format => &[Background, Text],
-            C::GitCompare
-            | C::GitDiff
-            | C::GitDiffSideBySide
-            | C::GitIndex
-            | C::GitRefresh
-            | C::GitSearchCommits => &[Background, View],
+            C::GitDiffSideBySide | C::GitRefresh | C::GitSearchCommits => &[Background, View],
+            C::GitIndex => &[Background, View, Mode],
+            C::GitDiff => &[Background, View, Mode],
+            C::GitCompare => &[Background, View, Mode],
             C::GitBranches
             | C::GitBlame
             | C::GitBlameFile
@@ -273,9 +319,11 @@ impl ColonCommand {
             C::ConfigReload => &[Configuration, Background],
             C::Grammar => &[Configuration, Mode, Selection],
             C::WriteConfig | C::ForceWriteConfig => &[File],
-            C::AgentChannel | C::LspStatus => &[Background, View],
+            C::LspStatus => &[Background, View],
+            C::AgentChannel => &[Background, View, Mode],
             C::Notifications => &[View, Mode],
-            C::LogOpen | C::ServiceHealth | C::Plugins | C::Path => &[View],
+            C::ServiceHealth | C::Plugins | C::Path => &[View],
+            C::LogOpen => &[View, Mode],
             C::LspTrust | C::ContextAccess => &[Prompt, Configuration, Background],
             C::Open => &[File, View, Prompt, Background],
             C::Quit | C::ForceQuit => &[Pane, View, Application],

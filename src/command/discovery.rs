@@ -128,6 +128,10 @@ pub fn details_indexed(
         joined(defaults.keys(id)),
         joined(effective.keys(id))
     );
+    text.push_str(&format!(
+        "Classification: {}\n",
+        d.classification.description()
+    ));
     if let Some(entry) = effective.0.get(&id) {
         for program in &entry.programs {
             text.push_str(program);
@@ -330,7 +334,7 @@ pub fn admitted_here(id: CommandId, mode: Mode, scope: BindingScope) -> bool {
 pub fn descriptor_reference() -> String {
     use std::fmt::Write;
     let mut out = String::from(
-        "\n## Action contracts\n\nGenerated from built-in descriptors. Effects include owned continuations and specialized views; remaining prompt and background effects require the last step. Character operands and palette arguments are separate.\n\n| Action | Effects | Count | Character operands | Palette argument | View differences |\n| --- | --- | --- | --- | --- | --- |\n",
+        "\n## Action contracts\n\nGenerated from built-in descriptors. Effects include owned continuations and specialized views; remaining prompt and background effects require the last step. Character operands and palette arguments are separate.\n\n| Action | Effects | Count | Character operands | Palette argument | View differences | Classification |\n| --- | --- | --- | --- | --- | --- | --- |\n",
     );
     for id in identities() {
         let d = id.descriptor().unwrap();
@@ -343,13 +347,14 @@ pub fn descriptor_reference() -> String {
         let argument = d.argument().map(|a| a.usage).unwrap_or("none");
         let _ = writeln!(
             out,
-            "| `{}` | {} | {} | {} | {} | {} |",
+            "| `{}` | {} | {} | {} | {} | {} | {} |",
             d.metadata.name,
             display::effects(d.policy.effects),
             display::count(d.policy.count),
             display::operands(d.policy.operands),
             argument.replace('|', "&#124;"),
-            views.replace('|', "&#124;")
+            views.replace('|', "&#124;"),
+            d.classification.description().replace('|', "&#124;")
         );
     }
     out

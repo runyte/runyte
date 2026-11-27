@@ -307,6 +307,23 @@ decision revises an earlier one, the earlier entry says so.
     consistently with `collapse-selection`; its resulting caret can be one
     character before the old raw half-open endpoint.
 
+36. **Exhaustive classification (2026-11-27, delegated).** Semantic classes
+    are Atomic, Decision with a reason, and ModeAction. Migration status is
+    orthogonal: no pending split, or PendingSplit(3), (4), or (5). A pending
+    action remains bundled today; its semantic class describes the operation
+    after that split. A completed Atomic action cannot change mode as a side
+    effect. Explicit exhaustive matches cover editor and colon identities.
+    ModeAction includes explicit mode entry and insert-entry caret placement.
+    Public enter-mode wrappers await stage 5 (decision 28). The exact stage 3
+    set below must be split in the next slice, before the embedded preset;
+    stage 3 is not complete until it is empty. Terminal/tree differences and
+    line-selection gestures await stage 4 alongside decision 34. Clipboard
+    paste chooses image/text and its text mode transition also awaits stage 4.
+    Write-quit and write-buffer-close own guarded save continuations, so they
+    remain decisions rather than unconditional save/close programs. Tests keep
+    the exact pending sets for each stage, and descriptor decision reasons
+    appear in discovery and the generated action reference.
+
 ## Model
 
 ```
@@ -575,36 +592,57 @@ features outside bindings (marks, ex ranges, `:normal`).
 Discovery names and default keys follow decisions 7 and 23 and are recorded
 in `context/reference/helix-keymap-v1.md`.
 
-## Initial classification of existing actions
+## Classification of existing actions
 
-Stage 3 completes this against all actions. A test then requires every action
-to be atomic or a documented decision action. New and renamed actions follow
-decision 21; the names below are working names until stage 3b settles them.
-Mode steps are written as `enter-<mode>-mode` for brevity; in the new step
-syntax they are `{ action: mode-enter, arg: <mode> }`.
+The exhaustive inventory is `src/command/descriptor/classification.rs`; each
+built-in identity is named explicitly, with no fallback. The generated
+[Action contracts](../../../docs/user-guide/custom-key-bindings.md) table
+lists all 450 current identities and their classification. The descriptor is
+also the action browser's source. These are semantic classifications, not
+permission, continuation, or count rules. A pending split takes precedence over
+its eventual semantic class: it does not certify the current action as atomic.
 
-| Today | Becomes | Default key binds |
+| Family | Current classification | Remaining work |
 | --- | --- | --- |
-| `yank-collapse-normal-mode`, `yank-line-collapse-normal-mode` | Removed | `y`: `[yank, collapse-selection, enter-normal-mode]`; `collapse-selection` takes over the half-open handling in `collapse_after_yank` |
-| `paste-after-or-replace` | Decision action, without its mode change | `p`: `[paste-after-or-replace, enter-normal-mode]` |
-| `paste-before` | Leaves the mode alone | `P`: `[paste-before, enter-normal-mode]` |
-| `toggle-case`, `replace-char` | Leave the mode alone | `~`, `r`: the action, then `enter-normal-mode`; `r` resumes after its operand |
-| `delete-selection`, `change-selection` | `delete-selection` leaves the mode alone; `change-selection` removed | `Alt-d`, `Alt-c` when bound: `[delete-selection, enter-normal-mode]` or `[delete-selection, enter-insert-mode]` |
-| `yank-delete-selection`, `yank-change-selection` | Distinct documented decision actions (decision 29) | Preserve `x d` linewise and `x c` operative-span behavior; revisit arguments in stage 5 |
-| `search-selection` | Removed | `*`: `[search-set-from-selection, search-select-all-matches, enter-select-mode]` |
-| `search`, `search-regex` | Last-only prompt decision actions; stage 5 arguments bypass the prompt | `s`, `/`: prompt-owned acceptance enters Select (decision 30) |
-| `search-next`, `search-previous` | Leave the mode alone; new `search-extend-next`, `search-extend-previous` | `n`, `N`: the action, then `enter-select-mode` |
-| `select-all`, `collapse-selection` | Leave the mode alone | `%`: `[select-all, enter-select-mode]`; `;`: `[collapse-selection, enter-normal-mode]` |
-| `enter-select-mode` (toggles) | `mode-enter` with an argument; toggle as a program | `v`: `{ if: { mode: select }, then: [collapse-selection, enter-normal-mode], else: [enter-select-mode] }` |
-| `clipboard-paste-after`, `clipboard-paste-before` | Mirror the register actions | `Space c p`, `Space c P`: as `p`, `P` |
-| `directory-tree-left`, `directory-tree-right`, `directory-tree-open` | Split into collapse, select-parent, expand, select-first-child, open | Conditional programs in `directory-tree` |
-| `media-back`, `media-move-up`, `media-move-down` | Documented decision actions through 0.5 | Native-state split deferred until after 0.5 (decision 31) |
-| `record-default-macro` (toggles) | Start only | `{ if: recording-macro, then: [macro-stop-recording], else: [macro-record-default] }` |
-| Terminal interceptions of `yank`, paste and search | Same meaning: described in the descriptor. Different meaning: terminal actions bound in the `terminal` mode (decision 16) | `terminal` `p`: `[paste-after, enter-insert-mode]` |
-| `join-lines`, insert-entry actions (`append-after`, `open-line-below`, ...) | Unchanged | Unchanged |
+| Mode-preserving text, selection, navigation, register and configuration operations | Atomic | None |
+| Explicit mode entry and insert-entry caret placement | ModeAction | Public enter-mode wrappers await stage 5 |
+| Per-range paste, both cut operations, prompted search | Decision, with descriptor reason | Paste mode split in stage 4; search arguments in stage 5 |
+| Native media navigation | Decision, with native-state reason | Decision 31 retains it through 0.5 |
+| Clipboard image/text dispatch | Decision | Text fallback mode split in stage 4 |
+| Save-and-close commands | Decision | Retain guarded save continuation and success-dependent close |
+| View/pane activation, Git workflow destinations and completion | Decision | Mode belongs to guarded destination/continuation; no unconditional mode tail |
+| Bundled operations listed below | Pending split; underlying semantic class retained separately | Must empty each exact set before its stage is complete |
 
-Bundled action names that are removed are reported when configuration names
-them, with the program that replaces them.
+### Pending stage 3 splits
+
+`surround-add`, `surround-delete`, `surround-replace`, `replace-with-register`,
+`delete-selection`, `change-selection`, `flip-selection`,
+`split-selection-at-line-ends`, `split-selection-at-line-starts`,
+`expand-syntax-selection`, `shrink-syntax-selection`, `select-syntax-parent`,
+`select-syntax-child`, `select-previous-syntax-sibling`, `select-next-syntax-sibling`,
+`select-syntax-function`, `select-inside-syntax-function`, `select-syntax-class`,
+`select-inside-syntax-class`, `select-syntax-parameter`,
+`select-inside-syntax-parameter`, `select-around-parentheses`,
+`select-inside-parentheses`, `select-around-square-brackets`,
+`select-inside-square-brackets`, `select-around-braces`, `select-inside-braces`,
+`select-around-angle-brackets`, `select-inside-angle-brackets`,
+`select-around-double-quotes`, `select-inside-double-quotes`,
+`select-around-single-quotes`, `select-inside-single-quotes`, `select-around-backticks`,
+`select-inside-backticks`, `select-inside-word`, `select-around-word`,
+`select-inside-long-word`, `select-around-long-word`, `select-inside-paragraph`,
+`select-around-paragraph`, `select-around-closest-delimiter`,
+`select-inside-closest-delimiter`.
+
+### Pending stage 4 splits
+
+`yank-collapse-normal-mode`, `yank-line-collapse-normal-mode`, `paste-after-or-replace`,
+`paste-before`, `clipboard-paste-after`, `clipboard-paste-before`, `search-next`,
+`search-previous`, `clipboard-paste`, `select-line`, `select-line-up`,
+`extend-line-above`, `extend-line-below`.
+
+### Pending stage 5 splits
+
+`enter-normal-mode`, `enter-insert-mode`, `enter-replace-mode`, `enter-select-mode`.
 
 ## Delivery stages
 
