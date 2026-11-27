@@ -254,6 +254,7 @@ fn argument_text(value: &super::InvocationParameters) -> String {
         P::None | P::OptionalPath(None) | P::OptionalText(None) => "none".into(),
         P::Path(path) | P::OptionalPath(Some(path)) => path.display().to_string(),
         P::OptionalText(Some(text)) => text.clone(),
+        P::TemporaryMode(name) => format!("{name}, temporary: true"),
         P::SessionRename { workspace, name } => format!("{} {name}", workspace.display()),
         P::Grammar(value) => value
             .map(|kind| kind.name())

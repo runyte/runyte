@@ -92,7 +92,11 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
                 | C::SelectInsideLongWord
                 | C::SelectAroundLongWord
                 | C::SelectAroundClosestDelimiter
-                | C::SelectInsideClosestDelimiter => vec![command, C::ModeEnter],
+                | C::SelectInsideClosestDelimiter
+                | C::SelectLine
+                | C::ExtendLineAbove
+                | C::SelectInsideParagraph
+                | C::SelectAroundParagraph => vec![command, C::ModeEnter],
                 _ => panic!("unclassified default program: {command:?}"),
             };
             assert_eq!(
@@ -146,14 +150,26 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
                 | C::SelectInsideLongWord
                 | C::SelectAroundLongWord
                 | C::SelectAroundClosestDelimiter
-                | C::SelectInsideClosestDelimiter => "select",
+                | C::SelectInsideClosestDelimiter
+                | C::SelectLine
+                | C::ExtendLineAbove
+                | C::SelectInsideParagraph
+                | C::SelectAroundParagraph => "select",
                 C::CutSelectionForChange => "insert",
                 _ => "normal",
             };
-            assert_eq!(
-                mode.parameters(),
-                &runyte::command::InvocationParameters::OptionalText(Some(name.into()))
-            );
+            let expected_parameters = if matches!(
+                command,
+                C::SelectLine
+                    | C::ExtendLineAbove
+                    | C::SelectInsideParagraph
+                    | C::SelectAroundParagraph
+            ) {
+                runyte::command::InvocationParameters::TemporaryMode(name.into())
+            } else {
+                runyte::command::InvocationParameters::OptionalText(Some(name.into()))
+            };
+            assert_eq!(mode.parameters(), &expected_parameters);
             assert!(!binding.is_plain_action());
         } else {
             assert_eq!(binding.program.len(), 1);

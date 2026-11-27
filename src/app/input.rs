@@ -2860,9 +2860,9 @@ impl App {
         if let EditorIntent::EvaluateCondition(condition) = intent {
             use crate::keymap::program::Condition;
             if self.grammar.condition_starts_program()
-                && let Some(mode) = self.line_select.take()
+                && let Some((mode, name)) = self.line_select.take()
             {
-                self.set_editing_role(mode);
+                self.restore_binding_mode(mode, name.as_deref());
             }
             if !condition.applicable_in(self.key_binding_scope()) {
                 self.action_failed("condition is not available for this buffer type");
@@ -3022,7 +3022,7 @@ impl App {
         inclusive: bool,
     ) -> Selection {
         let end = self.active_buffer().len_chars();
-        selection.transform(|range| {
+        selection.transform_coordinates(|range| {
             if range.is_empty() {
                 if inclusive {
                     let row = self.active_buffer().offset_to_row(range.head);
@@ -3050,7 +3050,7 @@ impl App {
 
     pub(super) fn half_open_to_inclusive(&self, selection: Selection) -> Selection {
         let buffer = self.active_buffer();
-        selection.transform(|range| {
+        selection.transform_coordinates(|range| {
             if range.is_empty() {
                 range
             } else if range.anchor < range.head {
@@ -4350,6 +4350,18 @@ impl App {
         self.with_selection_action(|app| app.execute_editor_command_action(command))
     }
 
+    fn is_line_selection_action(command: EditorCommand) -> bool {
+        matches!(
+            command,
+            EditorCommand::SelectLine
+                | EditorCommand::SelectLineUp
+                | EditorCommand::ExtendLineAbove
+                | EditorCommand::ExtendLineBelow
+                | EditorCommand::SelectInsideParagraph
+                | EditorCommand::SelectAroundParagraph
+        )
+    }
+
     fn is_atomic_selection_action(command: EditorCommand) -> bool {
         matches!(
             command,
@@ -4436,15 +4448,16 @@ impl App {
             return Ok(());
         }
         self.finish_atomic_line_selection(command);
-        // These edits need the transient row extent, but retiring the gesture
-        // must neither restore a mode nor survive an early refusal.
-        let atomic_line_selection = matches!(
+        // Retire the temporary gesture for atomic edits without changing mode.
+        // Row extent belongs to the selection and survives this bookkeeping.
+        if matches!(
             command,
             Command::ReplaceWithRegister
                 | Command::DeleteSelection
                 | Command::DeleteSelectionForChange
-        )
-        .then(|| self.line_select.take().is_some());
+        ) {
+            self.line_select = None;
+        }
         if self.handle_merge_command(command) {
             return Ok(());
         }
@@ -4463,21 +4476,26 @@ impl App {
         // it is not a document at all, and the buffer whose permissions that
         // check reads is the one hidden behind it.
         if let Some(id) = self.active_terminal() {
-            let transient_line_selection =
-                atomic_line_selection.unwrap_or_else(|| self.line_select.is_some());
+            let linewise_extent = self
+                .terminals
+                .get(id)
+                .and_then(|session| session.review_selection_state())
+                .is_some_and(|(_, selection)| selection.is_linewise());
             if !matches!(
                 command,
                 Command::SelectLine
                     | Command::SelectLineUp
                     | Command::ExtendLineAbove
                     | Command::ExtendLineBelow
+                    | Command::SelectInsideParagraph
+                    | Command::SelectAroundParagraph
                     | Command::SelectionUndo
                     | Command::SelectionRedo
-            ) && let Some(mode) = self.line_select.take()
+            ) && let Some((mode, name)) = self.line_select.take()
             {
-                self.set_editing_role(mode);
+                self.restore_binding_mode(mode, name.as_deref());
             }
-            if self.execute_terminal_command_count(id, command, transient_line_selection, count) {
+            if self.execute_terminal_command_count(id, command, linewise_extent, count) {
                 return Ok(());
             }
         }
@@ -4514,8 +4532,7 @@ impl App {
         if !matches!(command, Command::ShowDocumentation) {
             self.hover = None;
         }
-        let transient_line_selection =
-            atomic_line_selection.unwrap_or_else(|| self.line_select.is_some());
+        let linewise_extent = self.active().selection.is_linewise();
         // A line selection lives only for as long as `x`/`X` keep arriving.
         // Anything else ends it and hands the mode back, so `j` after `x` is a
         // plain motion rather than an extension.
@@ -4525,9 +4542,11 @@ impl App {
                 | Command::SelectLineUp
                 | Command::ExtendLineAbove
                 | Command::ExtendLineBelow
+                | Command::SelectInsideParagraph
+                | Command::SelectAroundParagraph
                 | Command::SelectionUndo
                 | Command::SelectionRedo
-        ) && let Some(mode) = self.line_select.take()
+        ) && let Some((mode, name)) = self.line_select.take()
             && !matches!(
                 command,
                 Command::CutSelection
@@ -4537,7 +4556,7 @@ impl App {
                     | Command::DeleteSelectionForChange
             )
         {
-            self.set_editing_role(mode);
+            self.restore_binding_mode(mode, name.as_deref());
         }
         if self.handle_media_command(command) {
             return Ok(());
@@ -4665,13 +4684,13 @@ impl App {
             Command::Undo => self.undo(),
             Command::Redo => self.redo(),
             Command::Yank => {
-                self.yank(transient_line_selection);
+                self.yank(linewise_extent);
             }
             Command::YankLine => {
                 self.yank_line();
             }
             Command::YankCollapseNormalMode => {
-                if self.yank(transient_line_selection) {
+                if self.yank(linewise_extent) {
                     self.collapse_after_yank();
                 }
             }
@@ -4682,30 +4701,24 @@ impl App {
             }
             Command::PasteAfterOrReplace => self.paste_count(
                 super::editing::Paste::AfterOrReplace,
-                transient_line_selection,
+                linewise_extent,
                 count,
             ),
-            Command::PasteAfter => self.paste_count(
-                super::editing::Paste::After,
-                transient_line_selection,
-                count,
-            ),
-            Command::ReplaceWithRegister => {
-                self.paste(super::editing::Paste::Replace, transient_line_selection)
+            Command::PasteAfter => {
+                self.paste_count(super::editing::Paste::After, linewise_extent, count)
             }
-            Command::PasteBefore => self.paste_count(
-                super::editing::Paste::Before,
-                transient_line_selection,
-                count,
-            ),
+            Command::ReplaceWithRegister => {
+                self.paste(super::editing::Paste::Replace, linewise_extent)
+            }
+            Command::PasteBefore => {
+                self.paste_count(super::editing::Paste::Before, linewise_extent, count)
+            }
             Command::Indent => self.indent(false),
             Command::Unindent => self.indent(true),
             Command::ToggleComments => self.toggle_comments(),
-            Command::CutSelection => self.cut_selection(false, transient_line_selection),
+            Command::CutSelection => self.cut_selection(false, linewise_extent),
             Command::CutSelectionForChange => self.cut_selection(true, false),
-            Command::DeleteSelection => {
-                self.delete_selection_or_char(false, transient_line_selection)
-            }
+            Command::DeleteSelection => self.delete_selection_or_char(false, linewise_extent),
             Command::DeleteSelectionForChange => self.delete_selection_or_char(true, false),
             Command::EnterSelectMode => self.enter_select_mode(),
             Command::SelectLine => self.extend_line(true),
@@ -5134,13 +5147,13 @@ impl App {
             Command::CopyTerminalOutput => self.copy_terminal_output(),
             Command::SendToTerminal => self.send_to_terminal(),
             Command::ClipboardPasteAfter => {
-                self.clipboard_paste_count(false, transient_line_selection, count)
+                self.clipboard_paste_count(false, linewise_extent, count)
             }
             Command::ClipboardPasteBefore => {
-                self.clipboard_paste_count(true, transient_line_selection, count)
+                self.clipboard_paste_count(true, linewise_extent, count)
             }
             Command::ClipboardYank => self.clipboard_yank(),
-            Command::ClipboardPaste => self.clipboard_paste_any(transient_line_selection),
+            Command::ClipboardPaste => self.clipboard_paste_any(linewise_extent),
             Command::ShellPipe => {
                 self.action_failed(format!(
                     "{} is not available",
@@ -6050,6 +6063,19 @@ impl App {
         execution: CommandExecutionContext,
     ) -> Result<()> {
         self.finish_atomic_line_selection(command);
+        if let (EditorCommand::ModeEnter, InvocationParameters::TemporaryMode(name)) =
+            (command, &parameters)
+        {
+            let previous = self
+                .line_select
+                .clone()
+                .unwrap_or_else(|| (self.mode, self.binding_mode_name()));
+            self.enter_named_binding_mode(name);
+            if !self.status_error && !self.sequence_halted {
+                self.line_select = Some(previous);
+            }
+            return Ok(());
+        }
         if let (EditorCommand::ModeEnter, InvocationParameters::OptionalText(Some(name))) =
             (command, &parameters)
         {
@@ -6363,8 +6389,10 @@ impl App {
         // A selection-producing action with no result keeps its informational
         // status but must not run a default mode tail. Aggregate across counts:
         // reaching a boundary after earlier successes still applies that tail.
-        let selection_before = (Self::is_atomic_selection_action(command)
-            || command == EditorCommand::ShrinkSyntaxSelection)
+        let selection_before = (self.active_terminal().is_none()
+            && (Self::is_atomic_selection_action(command)
+                || Self::is_line_selection_action(command)
+                || command == EditorCommand::ShrinkSyntaxSelection))
             .then(|| self.active().selection_revision);
         let repetitions = if self.macro_replay.is_some() && !self.atomic_program_replay {
             1

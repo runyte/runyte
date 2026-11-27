@@ -1745,10 +1745,10 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `delete-selection` | text | not accepted | none | none |  | decision: Delete and change place the caret and treat whole rows differently. |
 | `delete-selection-for-change` | text | not accepted | none | none |  | decision: Delete and change place the caret and treat whole rows differently. |
 | `enter-select-mode` | mode, selection | not accepted | none | none | terminal: Enter Select mode over captured terminal output; media: Begin selection of PDF text or an image region | pending stage 5 split; then mode action |
-| `select-line` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection | pending stage 4 split; then atomic operation |
-| `extend-line-above` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection | pending stage 4 split; then atomic operation |
-| `extend-line-below` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection | pending stage 4 split; then atomic operation |
-| `select-line-up` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection | pending stage 4 split; then atomic operation |
+| `select-line` | selection | repeats | none | none | terminal: Select or extend captured output with whole-line extent, preserving mode | atomic operation |
+| `extend-line-above` | selection | repeats | none | none | terminal: Select or extend captured output with whole-line extent, preserving mode | atomic operation |
+| `extend-line-below` | selection | repeats | none | none | terminal: Select or extend captured output with whole-line extent, preserving mode | atomic operation |
+| `select-line-up` | selection | repeats | none | none | terminal: Select or extend captured output with whole-line extent, preserving mode | atomic operation |
 | `select-all` | selection | not accepted | none | none | terminal: Select all captured terminal output | atomic operation |
 | `collapse-selection` | selection | not accepted | none | none | terminal: Collapse the review selection; media: Retain the native media selection; this surface has no document caret to collapse | atomic operation |
 | `flip-selection` | selection | not accepted | none | none |  | atomic operation |
@@ -1782,8 +1782,8 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `select-around-word` | selection | not accepted | none | none |  | atomic operation |
 | `select-inside-long-word` | selection | not accepted | none | none |  | atomic operation |
 | `select-around-long-word` | selection | not accepted | none | none |  | atomic operation |
-| `select-inside-paragraph` | selection, mode | not accepted | none | none |  | pending stage 4 split; then atomic operation |
-| `select-around-paragraph` | selection, mode | not accepted | none | none |  | pending stage 4 split; then atomic operation |
+| `select-inside-paragraph` | selection | not accepted | none | none |  | atomic operation |
+| `select-around-paragraph` | selection | not accepted | none | none |  | atomic operation |
 | `select-around-closest-delimiter` | selection | not accepted | none | none |  | atomic operation |
 | `select-inside-closest-delimiter` | selection | not accepted | none | none |  | atomic operation |
 | `goto-previous-syntax-function` | selection | repeats | none | none |  | atomic operation |

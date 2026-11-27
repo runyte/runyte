@@ -1299,8 +1299,8 @@ impl TerminalSession {
             return false;
         };
         let end = review_document_end(review);
-        review.selection =
-            selection.transform(|range| Range::new(range.anchor.min(end), range.head.min(end)));
+        review.selection = selection
+            .transform_coordinates(|range| Range::new(range.anchor.min(end), range.head.min(end)));
         let primary = review.selection.primary();
         review.active_match = (review.selection.len() == 1)
             .then(|| {
@@ -1342,6 +1342,7 @@ impl TerminalSession {
         let review = self.ensure_review();
         let characters = review.text.chars().collect::<Vec<_>>();
         let mut missed = false;
+        let mut matched = false;
         let selection = review.selection.clone();
         review.selection = selection.transform(|range| {
             let found = if forward {
@@ -1356,6 +1357,7 @@ impl TerminalSession {
                 missed = true;
                 return range;
             };
+            matched = true;
             if till {
                 target = if forward {
                     (0..target)
@@ -1374,6 +1376,10 @@ impl TerminalSession {
                 Range::point(target)
             }
         });
+        if !matched {
+            review.selection = selection;
+            return false;
+        }
         review.matches.clear();
         review.active_match = None;
         focus_review_range(review, review.selection.primary(), viewport_rows);
@@ -1528,28 +1534,30 @@ impl TerminalSession {
         let viewport_rows = self.emulator.grid().rows();
         let review = self.ensure_review();
         let selection = review.selection.clone();
-        review.selection = selection.transform(|range| {
-            let anchor_row = review_line_for_offset(review, range.anchor);
-            let mut head_row = review_line_for_offset(review, range.head);
-            if extend {
-                head_row = if down {
-                    (head_row + 1).min(review.lines.len().saturating_sub(1))
+        review.selection = selection
+            .transform(|range| {
+                let anchor_row = review_line_for_offset(review, range.anchor);
+                let mut head_row = review_line_for_offset(review, range.head);
+                if extend {
+                    head_row = if down {
+                        (head_row + 1).min(review.lines.len().saturating_sub(1))
+                    } else {
+                        head_row.saturating_sub(1)
+                    };
+                }
+                if head_row >= anchor_row {
+                    Range::new(
+                        review.lines[anchor_row].text_start,
+                        review_line_last_offset(&review.lines[head_row]),
+                    )
                 } else {
-                    head_row.saturating_sub(1)
-                };
-            }
-            if head_row >= anchor_row {
-                Range::new(
-                    review.lines[anchor_row].text_start,
-                    review_line_last_offset(&review.lines[head_row]),
-                )
-            } else {
-                Range::new(
-                    review_line_last_offset(&review.lines[anchor_row]),
-                    review.lines[head_row].text_start,
-                )
-            }
-        });
+                    Range::new(
+                        review_line_last_offset(&review.lines[anchor_row]),
+                        review.lines[head_row].text_start,
+                    )
+                }
+            })
+            .with_extent(crate::selection::SelectionExtent::Linewise);
         review.matches.clear();
         review.active_match = None;
         focus_review_range(review, review.selection.primary(), viewport_rows);
@@ -1560,27 +1568,30 @@ impl TerminalSession {
     pub fn extend_review_line(&mut self, down: bool, live: bool) {
         let viewport_rows = self.emulator.grid().rows();
         let review = self.ensure_review();
-        review.selection = review.selection.transform(|range| {
-            let mut first = review_line_for_offset(review, range.from());
-            let mut last = review_line_for_offset(review, range.to());
-            if (live || !range.is_empty())
-                && range.from() == review.lines[first].text_start
-                && range.to() == review_line_last_offset(&review.lines[last])
-            {
-                if down {
-                    last = (last + 1).min(review.lines.len().saturating_sub(1));
-                } else {
-                    first = first.saturating_sub(1);
+        review.selection = review
+            .selection
+            .transform(|range| {
+                let mut first = review_line_for_offset(review, range.from());
+                let mut last = review_line_for_offset(review, range.to());
+                if (live || !range.is_empty())
+                    && range.from() == review.lines[first].text_start
+                    && range.to() == review_line_last_offset(&review.lines[last])
+                {
+                    if down {
+                        last = (last + 1).min(review.lines.len().saturating_sub(1));
+                    } else {
+                        first = first.saturating_sub(1);
+                    }
                 }
-            }
-            let start = review.lines[first].text_start;
-            let end = review_line_last_offset(&review.lines[last]);
-            if down {
-                Range::new(start, end)
-            } else {
-                Range::new(end, start)
-            }
-        });
+                let start = review.lines[first].text_start;
+                let end = review_line_last_offset(&review.lines[last]);
+                if down {
+                    Range::new(start, end)
+                } else {
+                    Range::new(end, start)
+                }
+            })
+            .with_extent(crate::selection::SelectionExtent::Linewise);
         review.matches.clear();
         review.active_match = None;
         focus_review_range(review, review.selection.primary(), viewport_rows);
@@ -3781,6 +3792,22 @@ mod tests {
         assert!(session.move_review(ReviewMotion::Down, false));
 
         assert_eq!(session.review_selection_text(), "x");
+    }
+
+    #[test]
+    fn review_linewise_extent_survives_history_clamping_but_not_motion() {
+        let mut session = session(12, 3);
+        session.feed(b"one\r\ntwo");
+        session.extend_review_line(true, false);
+        let (generation, selection) = session.review_selection_state().unwrap();
+        let selection = selection.clone();
+        assert!(selection.is_linewise());
+        session.move_review(ReviewMotion::Left, false);
+        assert!(!session.review_selection_state().unwrap().1.is_linewise());
+        assert!(session.restore_review_selection(generation, selection.clone()));
+        assert!(session.review_selection_state().unwrap().1.is_linewise());
+        assert!(!session.restore_review_selection(generation.wrapping_add(1), selection));
+        assert!(session.review_selection_state().unwrap().1.is_linewise());
     }
 
     #[test]

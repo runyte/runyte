@@ -336,6 +336,7 @@ impl App {
                     id,
                     positions,
                     saved.selection.primary_index(),
+                    saved.selection.extent(),
                     row_map(saved.scroll_row),
                     saved.scroll_wrap,
                     saved.scroll_col,
@@ -349,7 +350,7 @@ impl App {
             *name = model.model.title.clone();
         }
         let after = &self.buffers[buffer];
-        for (id, positions, primary, scroll, scroll_wrap, scroll_col) in captures {
+        for (id, positions, primary, extent, scroll, scroll_wrap, scroll_col) in captures {
             let ranges = positions
                 .into_iter()
                 .map(|(anchor, head, reverse)| {
@@ -366,7 +367,7 @@ impl App {
                 .collect();
             let pane = self.panes.get_mut(&id).unwrap();
             let position = ViewPosition {
-                selection: Selection::new(ranges, primary),
+                selection: Selection::new(ranges, primary).with_extent(extent),
                 scroll_row: scroll.min(after.last_row()),
                 scroll_wrap,
                 scroll_col,
@@ -380,7 +381,7 @@ impl App {
         }
         for pane in self.panes.values_mut() {
             pane.jumps.map_selections(buffer, |selection| {
-                selection.transform(|range| {
+                selection.transform_coordinates(|range| {
                     let point = |offset| {
                         let line = before.offset_to_row(offset);
                         let column = offset.saturating_sub(before.line_to_offset(line));

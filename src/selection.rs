@@ -122,11 +122,21 @@ impl Range {
     }
 }
 
+/// Whether selected spans are interpreted as characters or complete rows.
+/// This is independent of the editing mode and of inclusive/half-open offsets.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SelectionExtent {
+    #[default]
+    Characterwise,
+    Linewise,
+}
+
 /// One or more ranges with a designated primary.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Selection {
     ranges: Vec<Range>,
     primary: usize,
+    extent: SelectionExtent,
 }
 
 impl Default for Selection {
@@ -174,6 +184,7 @@ impl Selection {
         Self {
             ranges: merged,
             primary: primary_index,
+            extent: SelectionExtent::Characterwise,
         }
     }
 
@@ -181,11 +192,25 @@ impl Selection {
         Self {
             ranges: vec![range],
             primary: 0,
+            extent: SelectionExtent::Characterwise,
         }
     }
 
     pub fn point(offset: Offset) -> Self {
         Self::single(Range::point(offset))
+    }
+
+    pub fn extent(&self) -> SelectionExtent {
+        self.extent
+    }
+
+    pub fn with_extent(mut self, extent: SelectionExtent) -> Self {
+        self.extent = extent;
+        self
+    }
+
+    pub fn is_linewise(&self) -> bool {
+        self.extent == SelectionExtent::Linewise
     }
 
     pub fn ranges(&self) -> &[Range] {
@@ -219,10 +244,15 @@ impl Selection {
         Self::new(ranges, self.primary)
     }
 
-    /// Applies a function to every range.
+    /// Applies a semantic transformation, producing characterwise ranges.
     pub fn transform(&self, mut f: impl FnMut(Range) -> Range) -> Self {
         let ranges = self.ranges.iter().map(|range| f(*range)).collect();
         Self::new(ranges, self.primary)
+    }
+
+    /// Changes coordinates without changing the selection's extent.
+    pub fn transform_coordinates(&self, f: impl FnMut(Range) -> Range) -> Self {
+        self.transform(f).with_extent(self.extent)
     }
 
     /// Applies a function that may expand one range into several.
@@ -259,7 +289,7 @@ impl Selection {
             return None;
         }
         let primary = primary.min(ranges.len() - 1);
-        Some(Self::new(ranges, primary))
+        Some(Self::new(ranges, primary).with_extent(self.extent))
     }
 
     /// Maps every range through a transaction.
@@ -269,12 +299,12 @@ impl Selection {
             .iter()
             .map(|range| range.map(transaction))
             .collect();
-        Self::new(ranges, self.primary)
+        Self::new(ranges, self.primary).with_extent(self.extent)
     }
 
     /// Drops every range except the primary.
     pub fn keep_primary(&self) -> Self {
-        Self::single(self.primary())
+        Self::single(self.primary()).with_extent(self.extent)
     }
 
     /// Drops the primary range, keeping the rest.
@@ -285,7 +315,11 @@ impl Selection {
         let mut ranges = self.ranges.clone();
         ranges.remove(self.primary);
         let primary = self.primary.min(ranges.len() - 1);
-        Self { ranges, primary }
+        Self {
+            ranges,
+            primary,
+            extent: self.extent,
+        }
     }
 
     /// Moves the primary designation forward or backward.
@@ -299,6 +333,7 @@ impl Selection {
         Self {
             ranges: self.ranges.clone(),
             primary,
+            extent: self.extent,
         }
     }
 
@@ -310,6 +345,7 @@ impl Selection {
     /// Flips anchor and head in every range.
     pub fn flip(&self) -> Self {
         self.transform(|range| range.flip())
+            .with_extent(self.extent)
     }
 
     /// Adds a range and makes it primary.
@@ -341,6 +377,50 @@ impl Selection {
 mod tests {
     use super::*;
     use crate::text::Change;
+
+    #[test]
+    fn linewise_extent_survives_identity_and_coordinate_operations() {
+        let selection = Selection::new(vec![Range::new(4, 1), Range::point(8)], 0)
+            .with_extent(SelectionExtent::Linewise);
+        for retained in [
+            selection.clone(),
+            selection.flip(),
+            selection.rotate(true),
+            selection.keep_primary(),
+            selection.remove_primary(),
+            selection.retain(|range| range.head == 1).unwrap(),
+            selection
+                .transform_coordinates(|range| Range::new(range.anchor.min(2), range.head.min(2))),
+            selection.map(&Transaction::new(vec![Change::new(0, 0, "ab")])),
+        ] {
+            assert_eq!(retained.extent(), SelectionExtent::Linewise);
+        }
+        assert!(
+            Selection::point(0)
+                .with_extent(SelectionExtent::Linewise)
+                .is_linewise()
+        );
+    }
+
+    #[test]
+    fn semantic_range_changes_reset_linewise_extent() {
+        let selection = Selection::single(Range::new(0, 4)).with_extent(SelectionExtent::Linewise);
+        for changed in [
+            selection.collapse(),
+            selection.transform(|range| range.extend_to(5)),
+            selection.with_primary(Range::point(3)),
+            selection.push(Range::point(8)),
+            selection.flat_transform(|range| vec![range]).unwrap(),
+        ] {
+            assert_eq!(changed.extent(), SelectionExtent::Characterwise);
+        }
+        assert_ne!(
+            selection,
+            selection
+                .clone()
+                .with_extent(SelectionExtent::Characterwise)
+        );
+    }
 
     #[test]
     fn a_selection_is_never_empty() {

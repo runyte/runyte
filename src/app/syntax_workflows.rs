@@ -358,7 +358,7 @@ impl App {
             .values_mut()
             .filter(|pane| pane.buffer == buffer_id)
         {
-            let selection = pane.selection.transform(|range| {
+            let selection = pane.selection.transform_coordinates(|range| {
                 let head = buffer.clamp_offset(range.head, insert);
                 if range.is_empty() {
                     // Clamping the two ends under different rules would turn a

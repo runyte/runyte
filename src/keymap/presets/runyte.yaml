@@ -365,8 +365,16 @@ keys:
               - enter-select-mode
         description: Toggle Select; collapse when leaving
         target: enter-select-mode
-      x: select-line
-      X: extend-line-above
+      x:
+        - select-line
+        - action: mode-enter
+          arg: select
+          temporary: true
+      X:
+        - extend-line-above
+        - action: mode-enter
+          arg: select
+          temporary: true
       '%':
         - select-all
         - action: mode-enter
@@ -776,7 +784,11 @@ keys:
         - select-inside-long-word
         - action: mode-enter
           arg: select
-      m i p: select-inside-paragraph
+      m i p:
+        - select-inside-paragraph
+        - action: mode-enter
+          arg: select
+          temporary: true
       m i (:
         - select-inside-parentheses
         - action: mode-enter
@@ -845,7 +857,11 @@ keys:
         - select-around-long-word
         - action: mode-enter
           arg: select
-      m a p: select-around-paragraph
+      m a p:
+        - select-around-paragraph
+        - action: mode-enter
+          arg: select
+          temporary: true
       m a (:
         - select-around-parentheses
         - action: mode-enter

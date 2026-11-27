@@ -32,7 +32,7 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
             views!(Terminal: "Collapse the review selection", Media: "Retain the native media selection; this surface has no document caret to collapse")
         }
         C::SelectLine | C::ExtendLineAbove | C::ExtendLineBelow | C::SelectLineUp => {
-            views!(Terminal: "Select or extend captured output lines, entering Select mode for the line selection")
+            views!(Terminal: "Select or extend captured output with whole-line extent, preserving mode")
         }
         C::KeepPrimarySelection => views!(Terminal: "Keep only the primary review selection"),
         C::CopySelectionDown | C::CopySelectionUp => {

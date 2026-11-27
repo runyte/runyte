@@ -2423,3 +2423,137 @@ fn failed_syntax_shrink_stops_configured_editing_tails() {
         }));
     }
 }
+
+#[test]
+fn linewise_primitives_preserve_mode_and_register_extent_without_a_gesture() {
+    use crate::keymap::program::Program;
+    use EditorCommand as C;
+    for command in [
+        C::SelectLine,
+        C::SelectLineUp,
+        C::ExtendLineAbove,
+        C::ExtendLineBelow,
+        C::SelectInsideParagraph,
+        C::SelectAroundParagraph,
+    ] {
+        for mode in [Mode::Normal, Mode::Select] {
+            for source in ["ab\ncd", "ab\r\ncd", "ab\n\n"] {
+                let mut app = conditional_app(Program::single(command.into()));
+                seed(&mut app, source);
+                app.mode = mode;
+                key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+                assert_eq!(app.mode, mode, "{command:?}");
+                assert!(app.active().selection.is_linewise(), "{command:?}");
+                assert!(app.line_select.is_none());
+                app.execute_editor_command(C::Yank).unwrap();
+                assert!(app.registers[&'"'].linewise, "{command:?}");
+                assert_eq!(app.mode, mode);
+                app.execute_editor_command(C::MoveRight).unwrap();
+                assert!(!app.active().selection.is_linewise());
+            }
+        }
+    }
+}
+
+#[test]
+fn linewise_extent_survives_explicit_mode_entry_and_selection_history() {
+    let mut app = configured("bind: {common: {F6: select-line}}");
+    seed(&mut app, "ab\ncd");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    let selected = app.active().selection.clone();
+    app.enter_mode_preserving_selection(Mode::Select);
+    assert_eq!(app.active().selection, selected);
+    app.execute_editor_command(EditorCommand::CollapseSelection)
+        .unwrap();
+    assert!(!app.active().selection.is_linewise());
+    app.execute_editor_command(EditorCommand::SelectionUndo)
+        .unwrap();
+    assert_eq!(app.active().selection, selected);
+    app.execute_editor_command(EditorCommand::SelectionRedo)
+        .unwrap();
+    assert!(!app.active().selection.is_linewise());
+}
+
+#[test]
+fn linewise_extent_survives_text_history_mapping_and_normalization() {
+    let mut app = configured("{}");
+    seed(&mut app, "abc\ndef");
+    app.execute_editor_command(EditorCommand::SelectLine)
+        .unwrap();
+    app.split(Axis::Horizontal, None).unwrap();
+    assert!(app.panes.values().all(|pane| pane.selection.is_linewise()));
+    let buffer = app.active().buffer;
+    app.apply_to_buffer(buffer, &Transaction::insert(0, "x"));
+    app.normalize_buffer(buffer);
+    assert!(app.panes.values().all(|pane| pane.selection.is_linewise()));
+    app.undo();
+    assert_eq!(text(&app), "abc\ndef");
+    assert!(app.panes.values().all(|pane| pane.selection.is_linewise()));
+    app.redo();
+    assert_eq!(text(&app), "xabc\ndef");
+    assert!(app.panes.values().all(|pane| pane.selection.is_linewise()));
+    app.execute_editor_command(EditorCommand::DeleteSelection)
+        .unwrap();
+    assert!(!app.active().selection.is_linewise());
+    app.undo();
+    assert!(
+        !app.active().selection.is_linewise(),
+        "text undo maps the live selection"
+    );
+}
+
+#[test]
+fn line_primitives_convert_half_open_ranges_before_emitting_inclusive_extent() {
+    let mut app = configured("{}");
+    seed(&mut app, "ab\ncd");
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(0, 3)));
+    app.active_mut()
+        .mark_selection_semantics(SelectionSemantics::HalfOpen);
+    app.execute_editor_command(EditorCommand::SelectLineUp)
+        .unwrap();
+    assert_eq!(app.active().selection.primary(), Range::new(0, 1));
+    assert_eq!(
+        app.active().selection_semantics(),
+        SelectionSemantics::Runyte
+    );
+    app.execute_editor_command(EditorCommand::DeleteSelectionForChange)
+        .unwrap();
+    assert_eq!(text(&app), "\ncd");
+}
+
+#[test]
+fn failed_character_finds_preserve_linewise_extent_and_clipboard_yank_copies_rows() {
+    let mut app = configured("{}");
+    seed(&mut app, "ab\ncd");
+    app.execute_editor_command(EditorCommand::SelectLine)
+        .unwrap();
+    let selection = app.active().selection.clone();
+    app.find_character('z', true, false);
+    assert_eq!(app.active().selection, selection);
+    app.select_to_character('z', true, true);
+    assert_eq!(app.active().selection, selection);
+    let clipboard = Arc::new(Mutex::new(String::new()));
+    app.set_system_clipboard(Box::new(MemoryClipboard(clipboard.clone())));
+    app.clipboard_yank();
+    assert_eq!(*clipboard.lock().unwrap(), "ab\n");
+}
+
+#[test]
+fn paragraph_default_stops_before_temporary_mode_when_empty_and_yanks_rows_when_present() {
+    let mut app = configured("{}");
+    for ch in ['m', 'i', 'p'] {
+        press(&mut app, ch);
+    }
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.line_select.is_none());
+    assert!(!app.active().selection.is_linewise());
+    seed(&mut app, "ab\ncd\n\nef");
+    for ch in ['m', 'i', 'p', 'y'] {
+        press(&mut app, ch);
+    }
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.registers[&'"'].linewise);
+    assert_eq!(app.registers[&'"'].text, "ab\ncd\n");
+    assert!(!app.active().selection.is_linewise());
+}

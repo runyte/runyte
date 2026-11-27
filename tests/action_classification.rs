@@ -37,8 +37,6 @@ fn migration_sets_are_exact_and_must_empty_before_their_stages_complete() {
     // requires its actual split, not merely relabelling its descriptor.
     let stage3 = [];
     let stage4 = [
-        CommandId::Editor(C::SelectInsideParagraph),
-        CommandId::Editor(C::SelectAroundParagraph),
         CommandId::Editor(C::YankCollapseNormalMode),
         CommandId::Editor(C::YankLineCollapseNormalMode),
         CommandId::Editor(C::PasteAfterOrReplace),
@@ -48,10 +46,6 @@ fn migration_sets_are_exact_and_must_empty_before_their_stages_complete() {
         CommandId::Editor(C::SearchNext),
         CommandId::Editor(C::SearchPrevious),
         CommandId::Editor(C::ClipboardPaste),
-        CommandId::Editor(C::SelectLine),
-        CommandId::Editor(C::SelectLineUp),
-        CommandId::Editor(C::ExtendLineAbove),
-        CommandId::Editor(C::ExtendLineBelow),
     ];
     let stage5 = [
         CommandId::Editor(C::EnterNormalMode),

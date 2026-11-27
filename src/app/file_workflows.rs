@@ -3581,11 +3581,11 @@ impl App {
                     )
                 };
                 if pane.buffer == id {
-                    pane.replace_selection(pane.selection.transform(remap));
+                    pane.replace_selection(pane.selection.transform_coordinates(remap));
                 }
                 if let Some(saved) = pane.saved_view_positions.get_mut(&id) {
                     *saved = super::view_position::ViewPosition {
-                        selection: saved.selection.transform(remap),
+                        selection: saved.selection.transform_coordinates(remap),
                         scroll_row: saved.scroll_row.min(pages - 1),
                         ..saved.clone()
                     };

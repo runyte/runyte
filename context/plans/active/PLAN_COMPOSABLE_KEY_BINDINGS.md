@@ -430,6 +430,16 @@ decision revises an earlier one, the earlier entry says so.
     terminal state. Validate every role target, parent and graph cycle within
     the same bounded-work limits.
 
+44. **Temporary line-selection mode entry is explicit** (2026-11-27, delegated).
+    Defaults use `[select-line, { action: mode-enter, arg: select, temporary: true }]`,
+    likewise for `X` and the paragraph objects. Line primitives only set selection
+    extent and preserve mode. A temporary entry retains the original return mode
+    when a gesture is already active; the next non-continuing program restores
+    that mode under decision 35. Retain the named binding identity with its
+    editing role. Describe-key displays `temporary: true`. This field remains
+    preset-only until stage 5; stage 7 may express it through submode `after-each`
+    behavior without changing the gestures.
+
 ## Model
 
 ```
@@ -739,9 +749,7 @@ preset described below.
 
 `yank-collapse-normal-mode`, `yank-line-collapse-normal-mode`, `paste-after-or-replace`,
 `paste-before`, `clipboard-paste-after`, `clipboard-paste-before`, `search-next`,
-`search-previous`, `clipboard-paste`, `select-line`, `select-line-up`,
-`extend-line-above`, `extend-line-below`, `select-inside-paragraph`,
-`select-around-paragraph`.
+`search-previous`, `clipboard-paste`.
 
 ### Pending stage 5 splits
 
@@ -834,6 +842,14 @@ Command/List ownership remains separate. The preset parity tests cover four
 platforms and both fast-pane variants. Linux readiness remains within the 5%
 budget after sharing identical immutable indexes; measurements are recorded in
 `context/reference/startup-performance.md`.
+
+Stage 4b makes whole-line extent selection state. Line and paragraph actions
+preserve mode; default programs add decision 44's temporary entry. Selection and
+syntax-expansion history restore extent. Text undo retains its existing contract:
+transactions map live selections, so a collapsed post-edit selection does not
+recover a historical extent. Terminal review and register/clipboard consumers
+read the same retained extent. Coordinate remapping preserves it; semantic range
+changes reset it.
 
 Export follows stage 5, not a sixth stage 4 slice (decision 42).
 

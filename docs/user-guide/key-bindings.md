@@ -104,7 +104,13 @@ count separately. In Select mode the selection anchor stays fixed.
 | — | `select-line-up` | The former upward edge-walking behavior, for custom bindings |
 
 For example, `x x X` adds the line above the two selected lines. All four
-support counts and multiple selections.
+support counts and multiple selections. These actions mark the selection as
+linewise and preserve the current mode. The default `x` and `X` programs also
+enter Select temporarily; the next non-line gesture restores the invoking mode.
+Whole-line extent stays with the selection through pure mode changes, selection
+history and text-coordinate mapping. A motion or collapse makes it characterwise
+again. The paragraph actions use the same extent; their default keys add the same
+temporary Select step.
 
 #### Selection history
 
