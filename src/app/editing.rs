@@ -2037,8 +2037,18 @@ impl App {
     }
 
     pub(super) fn collapse_selection(&mut self) {
-        let selection = self.active().selection.collapse();
-        self.active_mut().replace_selection(selection);
+        // Half-open endpoints sit beyond the last selected grapheme.
+        let selection = if matches!(
+            self.active().selection_semantics(),
+            SelectionSemantics::HalfOpen
+        ) {
+            self.half_open_to_inclusive(self.active().selection.clone())
+        } else {
+            self.active().selection.clone()
+        };
+        self.active_mut().replace_selection(selection.collapse());
+        self.active_mut()
+            .mark_selection_semantics(SelectionSemantics::Runyte);
     }
 
     pub(super) fn flip_selection(&mut self) {
@@ -3249,7 +3259,7 @@ impl App {
     }
 
     /// `yank` decides whether the removed text reaches a register first:
-    /// `yank-delete-selection` and `yank-change-selection` pass true, the
+    /// The cut actions pass true, the
     /// plain `delete-selection` and `change-selection` pass false.
     pub(super) fn delete_selection_or_char(
         &mut self,
@@ -3257,8 +3267,27 @@ impl App {
         transient_line_selection: bool,
         yank: bool,
     ) {
+        self.delete_selection_inner(enter_insert, transient_line_selection, yank, true);
+    }
+
+    pub(super) fn cut_selection(&mut self, for_change: bool, transient_line_selection: bool) {
+        self.delete_selection_inner(
+            for_change,
+            transient_line_selection && !for_change,
+            true,
+            false,
+        );
+    }
+
+    fn delete_selection_inner(
+        &mut self,
+        for_change: bool,
+        transient_line_selection: bool,
+        yank: bool,
+        change_mode: bool,
+    ) {
         let buffer_id = self.active().buffer;
-        if enter_insert {
+        if for_change && change_mode {
             self.buffers[buffer_id].begin_undo_group();
         }
         let linewise = transient_line_selection;
@@ -3271,8 +3300,7 @@ impl App {
             // copy whose source the same plan deletes is refused outright.
             // Recording a move instead makes the paste one move owned by the
             // destination, and `pending_move_sources` keeps the source
-            // listing from saving its deletion first. `yank` also collapses
-            // the selection, which would leave the delete only a character.
+            // listing from saving its deletion first.
             let text = if linewise {
                 self.line_register().text
             } else {
@@ -3303,7 +3331,7 @@ impl App {
                 .filter(|(from, to)| from < to)
                 .map(|(from, to)| Change::new(from, to, ""))
                 .collect();
-            self.finish_delete(buffer_id, changes, enter_insert);
+            self.finish_delete(buffer_id, changes, for_change, change_mode);
             return;
         }
         // Rows are read from each range the way `line_register` reads them.
@@ -3362,19 +3390,27 @@ impl App {
                 }
             })
             .collect();
-        self.finish_delete(buffer_id, changes, enter_insert);
+        self.finish_delete(buffer_id, changes, for_change, change_mode);
     }
 
-    fn finish_delete(&mut self, buffer_id: usize, changes: Vec<Change>, enter_insert: bool) {
+    fn finish_delete(
+        &mut self,
+        buffer_id: usize,
+        changes: Vec<Change>,
+        for_change: bool,
+        change_mode: bool,
+    ) {
         self.edit(Transaction::new(changes));
         let selection = self.active().selection.collapse();
         self.active_mut().replace_selection(selection);
-        self.mode = if enter_insert {
-            Mode::Insert
-        } else {
-            Mode::Normal
-        };
-        self.normalize_buffer(buffer_id);
+        if change_mode {
+            self.mode = if for_change {
+                Mode::Insert
+            } else {
+                Mode::Normal
+            };
+        }
+        self.normalize_buffer_for_insert(buffer_id, for_change);
     }
 
     pub(super) fn replace_with_char(&mut self, replacement: char) {
@@ -3604,7 +3640,7 @@ impl App {
     /// `yank-line` takes the whole lines rather than the characters, so that
     /// one command covers what `x y` covers without walking the selection
     /// through line mode first. Like `yank` it leaves the selection and mode
-    /// alone; `Y` pairs it with [`Self::collapse_after_yank`].
+    /// alone; `Y` follows it with collapse and Normal mode entry.
     pub(super) fn yank_line(&mut self) -> bool {
         let register = self.line_register();
         self.write_yank(register)
@@ -3623,28 +3659,9 @@ impl App {
         true
     }
 
-    /// The second half of `y` and `Y`.
+    // Bundled until stage 4 supplies separate terminal and document modes.
     pub(super) fn collapse_after_yank(&mut self) {
-        // Yanking ends the gesture that chose the text, so Select mode hands
-        // back to Normal and every range collapses to a caret at its head. A
-        // range that outlived the yank was invisible in Normal mode, where a
-        // lone Runyte range is not drawn as selected, and `p` reads a range
-        // that holds text as something to replace: `y` then `p` put the
-        // register back over the characters it had just been taken from and
-        // looked like a dead key. On the caret left behind, `p` pastes past
-        // the last character yanked, which is the duplicate the pair reads as.
-        // A half-open range ends one past the last character it copied, so it
-        // becomes inclusive before collapsing, keeping the caret on the last
-        // copied character rather than the following row.
-        let selection = if matches!(
-            self.active().selection_semantics(),
-            SelectionSemantics::HalfOpen
-        ) {
-            self.half_open_to_inclusive(self.active().selection.clone())
-        } else {
-            self.active().selection.clone()
-        };
-        self.active_mut().replace_selection(selection.collapse());
+        self.collapse_selection();
         self.mode = Mode::Normal;
     }
 
@@ -3711,11 +3728,77 @@ impl App {
     }
 
     pub(super) fn paste(&mut self, paste: Paste, transient_line_selection: bool) {
+        self.paste_count(paste, transient_line_selection, 1);
+    }
+
+    pub(super) fn paste_count(
+        &mut self,
+        paste: Paste,
+        transient_line_selection: bool,
+        count: usize,
+    ) {
         let register = self.read_selected_register();
         if register.text.is_empty() {
+            self.sequence_halted = true;
             return;
         }
+        let Some(register) = self.counted_register(register, count) else {
+            return;
+        };
         self.paste_register(&register, paste, transient_line_selection);
+    }
+
+    /// Counted paste expands once, before choosing each range's insertion or
+    /// replacement. Bound the aggregate payload before allocating any copies.
+    pub(super) fn counted_register(
+        &mut self,
+        mut register: Register,
+        count: usize,
+    ) -> Option<Register> {
+        const MAX_PASTE_BYTES: usize = 64 * 1024 * 1024;
+        let terminal = self.active_terminal().is_some();
+        let ranges = if terminal {
+            1
+        } else {
+            self.active().selection.ranges().len()
+        };
+        let directory_bytes = register.directory.as_ref().map_or(0, |d| {
+            d.entries.iter().fold(0usize, |n, e| {
+                n.saturating_add(e.source.as_os_str().len())
+                    .saturating_add(e.label.len())
+                    .saturating_add(std::mem::size_of_val(e))
+            })
+        });
+        let bytes = register
+            .text
+            .len()
+            .saturating_add(directory_bytes)
+            .checked_mul(count)
+            .and_then(|n| n.checked_mul(ranges));
+        let limit = if terminal {
+            1024 * 1024
+        } else {
+            MAX_PASTE_BYTES
+        };
+        if bytes.is_none_or(|bytes| bytes > limit) {
+            self.action_failed(if terminal {
+                "terminal paste exceeds 1 MiB"
+            } else {
+                "counted paste exceeds 64 MiB"
+            });
+            return None;
+        }
+        register.text = register.text.repeat(count);
+        if let Some(directory) = &mut register.directory {
+            directory.entries = directory
+                .entries
+                .iter()
+                .cycle()
+                .take(directory.entries.len() * count)
+                .cloned()
+                .collect();
+        }
+        Some(register)
     }
 
     /// Pastes the register beside every caret, over every selection, or both,

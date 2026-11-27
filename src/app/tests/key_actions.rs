@@ -307,7 +307,7 @@ fn replace_with_register_replaces_a_caret_or_range_and_keeps_the_mode() {
 #[test]
 fn set_search_from_selection_sets_the_pattern_and_search_next_continues_from_it() {
     let mut app = configured(
-        "bind:\n  normal:\n    F7: set-search-from-selection\n    F8: [set-search-from-selection, search-next]\n    F9: [set-search-from-selection, search-previous, yank]\n",
+        "bind:\n  normal:\n    F7: search-set-from-selection\n    F8: [search-set-from-selection, search-next]\n    F9: [search-set-from-selection, search-previous, yank]\n",
     );
     seed(&mut app, "foo bar foo baz bar");
     app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::point(4));
@@ -1384,4 +1384,250 @@ fn atomic_actions_finish_line_selection_without_restoring_its_previous_mode() {
         press(&mut app, 'l');
         assert_eq!(app.mode, Mode::Select, "{action} then motion");
     }
+}
+
+#[test]
+fn search_match_primitives_preserve_mode_and_stop_when_query_has_no_matches() {
+    let mut app = configured(
+        "bind:\n  normal:\n    F6: [search-set-from-selection, search-select-all-matches]\n    F7: [search-select-all-matches, move-right]\n",
+    );
+    seed(&mut app, "foo bar foo");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::new(0, 2), Range::new(8, 10)]
+    );
+    app.search.pattern = "missing".into();
+    let before = app.active().selection.clone();
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert_eq!(app.active().selection, before);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.status.contains("not found"));
+}
+
+#[test]
+fn collapse_half_open_ranges_keeps_the_caret_on_the_selected_grapheme() {
+    for (range, expected) in [
+        (Range::new(0, 3), 1),
+        (Range::new(3, 0), 0),
+        (Range::new(0, 4), 3),
+    ] {
+        let mut app = configured("");
+        seed(&mut app, "ae\u{301}\nb");
+        app.mode = Mode::Select;
+        app.active_mut().replace_selection(Selection::single(range));
+        app.active_mut()
+            .mark_selection_semantics(SelectionSemantics::HalfOpen);
+        app.execute_editor_command(EditorCommand::CollapseSelection)
+            .unwrap();
+        assert_eq!(app.mode, Mode::Select);
+        assert_eq!(app.active().selection.primary(), Range::point(expected));
+    }
+}
+
+#[test]
+fn counted_paste_inserts_all_copies_once_and_preserves_bundled_mode() {
+    for (value, expected, end) in [("x", "xxxbc", 2), ("XY", "XYXYXYbc", 5)] {
+        for replay in [false, true] {
+            let mut app = configured("");
+            seed(&mut app, "abc");
+            register(&mut app, value, false);
+            app.mode = Mode::Select;
+            if replay {
+                app.macros.insert(
+                    DEFAULT_MACRO_REGISTER,
+                    "3p".chars()
+                        .map(|c| InputEvent::Key(KeyStroke::plain(KeyCode::Char(c))))
+                        .collect(),
+                );
+                app.replay_macro(DEFAULT_MACRO_REGISTER, 1).unwrap();
+                finish_macro_replay(&mut app);
+            } else {
+                press(&mut app, '3');
+                press(&mut app, 'p');
+            }
+            assert_eq!(text(&app), expected);
+            assert_eq!(app.mode, Mode::Normal);
+            assert_eq!(app.active().selection.primary(), Range::new(0, end));
+            press(&mut app, 'u');
+            assert_eq!(text(&app), "abc");
+        }
+    }
+    let mut app = configured("bind: {select: {F6: paste-after-or-replace}}");
+    seed(&mut app, "abc");
+    register(&mut app, "x", false);
+    app.mode = Mode::Select;
+    press(&mut app, '3');
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(text(&app), "xxxbc");
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
+fn clipboard_paste_defaults_count_once_and_empty_sources_do_not_change_mode() {
+    for key_char in ['p', 'P'] {
+        let mut app = configured("");
+        seed(&mut app, "abc");
+        app.mode = Mode::Select;
+        app.set_system_clipboard(Box::new(MemoryClipboard(Arc::new(Mutex::new("x".into())))));
+        for c in ['3', ' ', 'c', key_char] {
+            press(&mut app, c);
+        }
+        assert_eq!(text(&app), if key_char == 'p' { "xxxbc" } else { "xxxabc" });
+        assert_eq!(app.mode, Mode::Normal);
+        press(&mut app, 'u');
+        assert_eq!(text(&app), "abc");
+    }
+    for clipboard in [false, true] {
+        let mut app = configured("");
+        seed(&mut app, "abc");
+        app.mode = Mode::Select;
+        if clipboard {
+            app.set_system_clipboard(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                String::new(),
+            )))));
+            press(&mut app, ' ');
+            press(&mut app, 'c');
+        }
+        press(&mut app, 'p');
+        assert_eq!(app.mode, Mode::Select);
+        assert_eq!(text(&app), "abc");
+    }
+}
+
+#[test]
+fn cut_for_change_keeps_end_of_line_caret_and_does_not_leak_undo_group() {
+    let mut app = configured("");
+    seed(&mut app, "abc");
+    select(&mut app, Range::point(2));
+    app.execute_editor_command(EditorCommand::CutSelectionForChange)
+        .unwrap();
+    assert_eq!(text(&app), "ab");
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.active().selection.primary(), Range::point(2));
+    app.edit(Transaction::insert(0, "X"));
+    app.undo();
+    assert_eq!(text(&app), "ab");
+    app.undo();
+    assert_eq!(text(&app), "abc");
+}
+
+#[test]
+fn search_extension_adds_primary_wraps_and_converts_half_open_ranges() {
+    let mut app = configured("");
+    seed(&mut app, "ab cd ab");
+    app.search = SearchQuery {
+        pattern: "ab".into(),
+        mode: SearchMode::Sensitive,
+        region: None,
+    };
+    app.mode = Mode::Select;
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(2, 0)));
+    app.active_mut()
+        .mark_selection_semantics(SelectionSemantics::HalfOpen);
+    app.execute_editor_command(EditorCommand::SearchExtendNext)
+        .unwrap();
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::new(1, 0), Range::new(6, 7)]
+    );
+    assert_eq!(app.active().selection.primary(), Range::new(6, 7));
+    app.execute_editor_command(EditorCommand::Yank).unwrap();
+    assert_eq!(app.registers[&'"'].text, "ab\nab");
+    app.execute_editor_command(EditorCommand::SearchExtendNext)
+        .unwrap();
+    assert_eq!(app.active().selection.ranges().len(), 2);
+    assert_eq!(app.active().selection.primary(), Range::new(0, 1));
+    app.execute_editor_command(EditorCommand::SearchExtendPrevious)
+        .unwrap();
+    assert_eq!(app.active().selection.primary(), Range::new(6, 7));
+}
+
+#[test]
+fn oversized_counted_paste_fails_before_editing_and_transient_yank_retains_linewise_data() {
+    let mut app = configured("bind: {select: {F6: yank}}");
+    seed(&mut app, "abc\ndef");
+    press(&mut app, 'x');
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.registers[&'"'].linewise);
+    assert_eq!(app.registers[&'"'].text, "abc\n");
+    assert!(app.line_select.is_none());
+    let invocation = CommandInvocation::editor(
+        EditorCommand::PasteBefore,
+        CommandExecutionContext::resolved(std::num::NonZeroUsize::new(usize::MAX).unwrap(), None),
+    )
+    .unwrap();
+    app.execute(invocation).unwrap();
+    assert_eq!(text(&app), "abc\ndef");
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.status.contains("64 MiB"));
+}
+
+#[test]
+fn standalone_clipboard_input_normalizes_after_leaving_insert_or_replace() {
+    for mode in [Mode::Insert, Mode::Replace] {
+        for event in [
+            InputEvent::ClipboardPaste,
+            InputEvent::Key(KeyStroke::ctrl('v')),
+        ] {
+            for original in ["ab", "ab\ncd"] {
+                let mut app = configured("");
+                seed(&mut app, original);
+                app.mode = mode;
+                app.active_mut().replace_selection(Selection::point(2));
+                app.set_system_clipboard(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+                    "x".into(),
+                )))));
+                // Prior failed programs must not suppress standalone success.
+                app.sequence_halted = true;
+                app.handle_input(event.clone()).unwrap();
+                assert_eq!(text(&app), if original == "ab" { "abx" } else { "abx\ncd" });
+                assert_eq!(app.mode, Mode::Normal);
+                assert_eq!(app.active().selection.primary(), Range::point(2));
+            }
+        }
+    }
+}
+
+#[test]
+fn counted_paste_handles_multiple_ranges_before_and_linewise_crlf() {
+    let mut app = configured("");
+    seed(&mut app, "abc def");
+    register(&mut app, "XY", false);
+    app.mode = Mode::Select;
+    app.active_mut()
+        .replace_selection(Selection::new(vec![Range::point(0), Range::new(4, 6)], 1));
+    for c in ['2', 'p'] {
+        press(&mut app, c);
+    }
+    assert_eq!(text(&app), "XYXYbc XYXY");
+    assert_eq!(
+        app.active().selection.ranges(),
+        &[Range::new(0, 3), Range::new(7, 10)]
+    );
+    assert_eq!(app.active().selection.primary_index(), 1);
+    for ending in ["\n", "\r\n"] {
+        let mut app = configured("");
+        seed(&mut app, &format!("abc{ending}def{ending}"));
+        register(&mut app, &format!("x{ending}"), true);
+        for c in ['x', '2', 'p'] {
+            press(&mut app, c);
+        }
+        assert_eq!(text(&app), format!("x{ending}x{ending}def{ending}"));
+        assert_eq!(app.mode, Mode::Normal);
+    }
+    let mut app = configured("");
+    seed(&mut app, "abc");
+    register(&mut app, "x", false);
+    select(&mut app, Range::new(0, 1));
+    for c in ['3', 'P'] {
+        press(&mut app, c);
+    }
+    assert_eq!(text(&app), "xxxabc");
+    assert_eq!(app.active().selection.primary(), Range::new(3, 4));
+    assert_eq!(app.mode, Mode::Normal);
 }

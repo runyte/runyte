@@ -55,8 +55,10 @@ fn addresses_text(command: C) -> bool {
             | C::SearchRegex
             | C::SearchNext
             | C::SearchPrevious
-            | C::SearchSelection
-            | C::SetSearchFromSelection
+            | C::SearchExtendNext
+            | C::SearchExtendPrevious
+            | C::SearchSelectAllMatches
+            | C::SearchSetFromSelection
     ) || matches!(
         command.category(),
         CommandCategory::Editing

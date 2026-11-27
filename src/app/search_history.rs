@@ -40,17 +40,31 @@ impl App {
         }
     }
 
-    pub(super) fn clipboard_paste(&mut self, before: bool, transient_line_selection: bool) {
+    pub(super) fn clipboard_paste_count(
+        &mut self,
+        before: bool,
+        transient_line_selection: bool,
+        count: usize,
+    ) {
         match self.ports.clipboard().read() {
-            Ok(text) if text.is_empty() => self.status("system clipboard is empty"),
+            Ok(text) if text.is_empty() => {
+                self.status("system clipboard is empty");
+                self.sequence_halted = true;
+            }
             Ok(text) => {
                 let linewise = text.ends_with('\n');
-                self.paste_register(
-                    &Register {
+                let Some(register) = self.counted_register(
+                    Register {
                         text,
                         linewise,
                         directory: None,
                     },
+                    count,
+                ) else {
+                    return;
+                };
+                self.paste_register(
+                    &register,
                     if before {
                         super::editing::Paste::Before
                     } else {
@@ -60,7 +74,7 @@ impl App {
                 );
             }
             Err(error) => {
-                self.error_from("Clipboard", "Clipboard operation failed", error.to_string())
+                self.error_from("Clipboard", "Clipboard operation failed", error.to_string());
             }
         }
     }
@@ -79,7 +93,7 @@ impl App {
     pub(super) fn clipboard_paste_any(&mut self, transient_line_selection: bool) {
         match self.ports.clipboard().read_image() {
             Ok(Some(bytes)) => self.paste_clipboard_image(&bytes),
-            Ok(None) => self.clipboard_paste(false, transient_line_selection),
+            Ok(None) => self.clipboard_paste_count(false, transient_line_selection, 1),
             Err(error) => {
                 self.error_from("Clipboard", "Clipboard operation failed", error.to_string())
             }
@@ -727,30 +741,13 @@ impl App {
         Some(pattern)
     }
 
-    /// `*` in the Runyte grammar: select every occurrence of the word or
-    /// selection under the caret.
-    ///
-    /// The pattern is taken literally and case-sensitively — the point of the
-    /// gesture is "this exact identifier", so folding case would answer a
-    /// question nobody asked. It searches the whole buffer because the
-    /// selection is being read as the pattern here, not as a region.
-    pub(super) fn search_selection(&mut self) {
-        let Some(pattern) = self.selection_search_pattern() else {
-            return;
-        };
-        self.commit_search(SearchQuery {
-            pattern,
-            mode: SearchMode::Sensitive,
-            region: None,
-        });
-    }
-
     /// The pattern `*` would search for, without the search: the selection and
     /// mode are left alone, so a bound sequence decides what to do with it,
-    /// such as `[set-search-from-selection, search-next]` to step to the next
+    /// such as `[search-set-from-selection, search-next]` to step to the next
     /// occurrence of the word under the caret.
     pub(super) fn set_search_from_selection(&mut self) {
         let Some(pattern) = self.selection_search_pattern() else {
+            self.sequence_halted = true;
             return;
         };
         self.search = SearchQuery {
@@ -770,7 +767,15 @@ impl App {
             self.action_failed("no previous search");
             return;
         }
-        self.step_search(!reverse, count);
+        self.step_search(!reverse, count, false);
+    }
+
+    pub(super) fn extend_search(&mut self, reverse: bool) {
+        if self.search.pattern.is_empty() {
+            self.action_failed("no previous search");
+            return;
+        }
+        self.step_search(!reverse, 1, true);
     }
 
     /// Every match of the committed query, in buffer order.
@@ -853,24 +858,51 @@ impl App {
             self.search_info(format!("pattern not found: {}", pattern.pattern));
             return false;
         }
+        self.install_all_search_matches(matches);
+        self.mode = Mode::Select;
+        true
+    }
+
+    /// Select the committed query's matches without choosing an editor mode.
+    pub(super) fn search_select_all_matches(&mut self) -> bool {
+        if self.search.pattern.is_empty() {
+            self.action_failed("no previous search");
+            return false;
+        }
+        let matches = match self.search_matches() {
+            Ok(matches) => matches,
+            Err(error) => {
+                self.action_failed(format!("invalid regular expression: {error}"));
+                return false;
+            }
+        };
+        if matches.is_empty() {
+            self.search_info(format!("pattern not found: {}", self.search.pattern));
+            self.sequence_halted = true;
+            return false;
+        }
+        self.install_all_search_matches(matches);
+        true
+    }
+
+    fn install_all_search_matches(&mut self, matches: Vec<Range>) {
         let primary = primary_match(&matches, self.active().selection.primary().from());
         let count = matches.len();
         self.push_jump();
         let pane = self.active_mut();
         pane.replace_selection(Selection::new(matches, primary));
+        pane.mark_selection_semantics(SelectionSemantics::Runyte);
         pane.preserve_scroll = false;
         let presentation = SearchSelectionPresentation {
             pane: self.active_pane,
             revision: self.active().selection_revision,
         };
         self.search_selection = Some(presentation);
-        self.mode = Mode::Select;
         self.status(format!(
             "match {}/{count} (all selected): {}",
             primary + 1,
             self.search.pattern
         ));
-        true
     }
 
     /// `n` and `N`: select only the next or previous search match.
@@ -880,7 +912,7 @@ impl App {
     /// multi-selection while retaining the query and its region for later
     /// repeats. A search over three selected lines can therefore never wrap
     /// out of them.
-    fn step_search(&mut self, forward: bool, count: usize) {
+    fn step_search(&mut self, forward: bool, count: usize, extend: bool) {
         let matches = match self.search_matches() {
             Ok(matches) => matches,
             Err(error) => {
@@ -912,15 +944,31 @@ impl App {
             (first + matches.len() - distance) % matches.len()
         };
         let total = matches.len();
+        let selection = if extend {
+            let existing = if self.active().selection_semantics() == SelectionSemantics::HalfOpen {
+                self.half_open_to_inclusive(self.active().selection.clone())
+            } else {
+                self.active().selection.clone()
+            };
+            let mut ranges = existing.ranges().to_vec();
+            let primary = ranges.len();
+            ranges.push(matches[index]);
+            Selection::new(ranges, primary)
+        } else {
+            Selection::single(matches[index])
+        };
         let pane = self.active_mut();
-        pane.replace_selection(Selection::single(matches[index]));
+        pane.replace_selection(selection);
+        pane.mark_selection_semantics(SelectionSemantics::Runyte);
         pane.preserve_scroll = false;
         let presentation = SearchSelectionPresentation {
             pane: self.active_pane,
             revision: self.active().selection_revision,
         };
         self.search_selection = Some(presentation);
-        self.mode = Mode::Select;
+        if !extend {
+            self.mode = Mode::Select;
+        }
         self.status(format!(
             "match {}/{total}: {}",
             index + 1,

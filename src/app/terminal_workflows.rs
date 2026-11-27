@@ -699,11 +699,12 @@ impl App {
     /// answer for is refused rather than allowed to reach the pane's buffer:
     /// the buffer is the document behind the terminal, and editing it from a
     /// view that does not show it would be an invisible change to a file.
-    pub(super) fn execute_terminal_command(
+    pub(super) fn execute_terminal_command_count(
         &mut self,
         id: TerminalId,
         command: EditorCommand,
         transient_line_selection: bool,
+        count: usize,
     ) -> bool {
         use EditorCommand as Command;
 
@@ -955,9 +956,6 @@ impl App {
                     linewise: transient_line_selection,
                     directory: None,
                 });
-                // The review selection is kept either way, so it stays on
-                // screen beside the text it copied; `y` only hands Select
-                // back to Normal.
                 if command == Command::YankCollapseNormalMode {
                     self.mode = Mode::Normal;
                 }
@@ -989,19 +987,17 @@ impl App {
                 let register = self.read_selected_register();
                 if register.text.is_empty() {
                     self.status("Runyte register is empty");
+                    self.sequence_halted = true;
                     return true;
                 }
+                let Some(register) = self.counted_register(register, count) else {
+                    return true;
+                };
                 let sent = self
                     .terminals
                     .get_mut(id)
                     .is_some_and(|session| session.send_text(&register.text));
                 if sent {
-                    // A register paste is normally followed by input for the
-                    // child (most often Enter), so hand the terminal back as
-                    // soon as the paste reaches its queue. Buffer paste keeps
-                    // its ordinary Normal-mode behavior in `paste_register`.
-                    // `paste-after` is the bare paste, so like `yank` here it
-                    // leaves the mode for the next action to decide.
                     if command != Command::PasteAfter {
                         self.mode = Mode::Insert;
                     }
@@ -1012,11 +1008,25 @@ impl App {
                 true
             }
             Command::ClipboardPasteAfter | Command::ClipboardPasteBefore => {
+                let _ = session;
                 match self.ports.clipboard().read() {
-                    Ok(text) if text.is_empty() => self.status("system clipboard is empty"),
+                    Ok(text) if text.is_empty() => {
+                        self.status("system clipboard is empty");
+                        self.sequence_halted = true;
+                    }
                     Ok(text) => {
+                        let Some(register) = self.counted_register(
+                            Register {
+                                text,
+                                linewise: false,
+                                directory: None,
+                            },
+                            count,
+                        ) else {
+                            return true;
+                        };
                         if let Some(session) = self.terminals.get_mut(id)
-                            && !session.send_text(&text)
+                            && !session.send_text(&register.text)
                         {
                             self.action_failed(
                                 "terminal input queue is full or the paste exceeds 1 MiB",

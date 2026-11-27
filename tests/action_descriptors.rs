@@ -157,7 +157,10 @@ fn descriptors_distinguish_effects_from_writable_admission() {
         C::MoveFileStart.action_policy().count,
         CountBehavior::Interpret
     );
-    assert_eq!(C::PasteAfter.action_policy().count, CountBehavior::Repeat);
+    assert_eq!(
+        C::PasteAfter.action_policy().count,
+        CountBehavior::Interpret
+    );
     assert_eq!(C::Yank.action_policy().count, CountBehavior::Reject);
 }
 
@@ -247,7 +250,7 @@ fn differing_view_implementations_are_described_without_changing_admission() {
             .view(S::Terminal)
             .unwrap()
             .description
-            .contains("Insert mode")
+            .contains("enter Insert mode")
     );
     assert!(
         C::MoveUp
@@ -258,7 +261,7 @@ fn differing_view_implementations_are_described_without_changing_admission() {
             .contains("PDF page")
     );
     assert!(
-        C::YankDeleteSelection
+        C::CutSelection
             .descriptor()
             .view(S::Directory)
             .unwrap()

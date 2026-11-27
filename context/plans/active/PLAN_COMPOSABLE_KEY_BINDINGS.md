@@ -252,7 +252,7 @@ decision revises an earlier one, the earlier entry says so.
     enters Normal without fitting. Pure mode steps remain internal in stage 3;
     stage 5 exposes `{ action: mode-enter, arg: <mode> }`. Existing public
     `enter-*-mode` actions remain until then and describe their selection fitting.
-29. **Linewise cuts remain distinct (2026-11-27, delegated by the maintainer).**
+29. **Delete and change keep separate cut actions (2026-11-27, delegated by the maintainer).**
     `x d` cuts whole rows into a linewise register; `x c` cuts operative spans
     into a non-linewise register. Preserve two documented decision actions in
     0.5. Revisit explicit linewise arguments in stage 5 rather than inferring
@@ -266,6 +266,35 @@ decision revises an earlier one, the earlier entry says so.
     `media-back`, `media-move-up` and `media-move-down` remain documented
     decision actions. Their fit, page and native-selection conditions belong
     to the frontend; splitting them requires an authoritative state design.
+
+32. **Separate atomic cuts (2026-11-27, delegated by the maintainer).**
+    `cut-selection` uses delete's whole-row, linewise-register behavior after
+    `x`/`X`; `cut-selection-for-change` uses operative spans and a characterwise
+    register, keeping the line for insertion. Both preserve mode. Defaults
+    `d` and `c` follow them with pure Normal and Insert entry respectively.
+    Directory cuts retain move payloads. The old `yank-delete-selection` and
+    `yank-change-selection` names are removed with replacement diagnostics.
+33. **Paste interprets counts (2026-11-27, delegated by the maintainer).**
+    Register and clipboard paste actions insert N copies in one transaction.
+    Each range's replacement/insertion decision is made once. Mode splitting
+    is postponed by decision 34; existing paste actions retain their mode changes.
+    Descriptors use `Interpret`, not repeated invocations. Text and selection
+    differences from legacy counted paste are intentional and documented;
+    no default-only count policy restores the old incidental mode changes.
+    Search extension adds the next/previous match as a new primary selection,
+    retaining the existing ranges.
+
+34. **Postpone terminal-sensitive mode splits (2026-11-27, delegated by the maintainer).**
+    Do not add buffer-type variants inside programs: they cannot be authored in
+    the public configuration format needed by the YAML preset (decision 25),
+    and stage 4 would remove them. Keep `y`, `Y`, `p`, `P`, `n`, `N`,
+    `Space c p` and `Space c P` as their existing bundled actions for now,
+    including inherited directory-tree `N`. Stage 4 gives terminal and
+    directory-tree bindings their own modes (decision 19), then completes
+    these splits as ordinary bindings. Cuts, `*`, additive search extension,
+    and interpreted paste counts proceed independently. Classification tests
+    name the bundled actions pending stage 4; that exception list must become
+    empty when the postponed splits land.
 
 ## Model
 
@@ -688,3 +717,8 @@ binding; commented examples omit them, independently of default removal.
 The remaining text, yank/paste, search and conditional default rewrites and
 exhaustive atomic/decision classification remain stage 3b work. Decisions
 29–31 specify the intentional decision actions rather than completed splits.
+
+The next increment splits cuts and `*`, adds additive search extension, and
+interprets paste counts in one transaction. Stage 4 completes the postponed
+splits listed in decision 34. Public configuration cannot yet express internal
+pure mode steps, so exports continue to refuse those programs.

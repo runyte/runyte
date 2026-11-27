@@ -794,6 +794,7 @@ fn terminal_paste_after_sends_the_register_and_keeps_the_mode_while_p_enters_ins
     assert_eq!(app.mode, Mode::Normal);
 
     app.status.clear();
+    press(&mut app, '3');
     press(&mut app, 'p');
     assert_eq!(app.status, "pasted Runyte register to terminal");
     assert_eq!(app.mode, Mode::Insert);

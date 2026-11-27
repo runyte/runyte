@@ -359,11 +359,6 @@ const fn runyte_repeats_for_count(command: EditorCommand) -> bool {
             | Command::ScrollViewUp
             | Command::SelectLine
             | Command::SelectLineUp
-            | Command::PasteAfterOrReplace
-            | Command::PasteAfter
-            | Command::PasteBefore
-            | Command::ClipboardPasteAfter
-            | Command::ClipboardPasteBefore
             | Command::Undo
             | Command::Redo
             | Command::ReplayMacro
@@ -568,7 +563,11 @@ impl RunyteGrammar {
             .lookup_in(context.mode(), context.scope(), &candidate)
         {
             Lookup::Exact(binding) => {
-                let target = binding.program.last().target();
+                let target = if binding.configured_actions {
+                    binding.program.last().target()
+                } else {
+                    binding.target
+                };
                 self.pending.clear();
                 let intents = self.program_intents(binding)?;
                 if self.awaiting_character.is_some() {
@@ -604,7 +603,11 @@ impl RunyteGrammar {
                         Lookup::NoMatch | Lookup::Prefix(_) => None,
                     };
                 if let Some(binding) = fallback {
-                    let target = binding.program.last().target();
+                    let target = if binding.configured_actions {
+                        binding.program.last().target()
+                    } else {
+                        binding.target
+                    };
                     let intents = self.program_intents(binding)?;
                     if self.awaiting_character.is_some() {
                         self.awaiting_binding = Some((prefix.clone(), target));
@@ -768,7 +771,11 @@ impl RunyteGrammar {
                 )))
             }
             Lookup::Exact(binding) => {
-                let target = binding.program.last().target();
+                let target = if binding.configured_actions {
+                    binding.program.last().target()
+                } else {
+                    binding.target
+                };
                 let count_keys = std::mem::take(&mut self.count_keys);
                 let resolved_sequence = Self::resolved_sequence(&count_keys, &candidate);
                 let sticky = !binding.configured_actions

@@ -27,30 +27,46 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
     );
     for binding in default_keymap().bindings() {
         assert!((1..=MAX_STEPS).contains(&binding.program.len()));
-        if binding.program.len() == 2 {
+        if binding.program.len() > 1 {
             let BindingTarget::Editor(command) = binding.target else {
                 panic!("unexpected composed default")
             };
-            let first = match command {
-                C::EnterNormalMode => C::FitSelectionForNormalMode,
-                C::SelectAll | C::CollapseSelection | C::ToggleCase | C::ReplaceChar => command,
+            let expected = match command {
+                C::EnterNormalMode => vec![C::FitSelectionForNormalMode, C::ModeEnter],
+                C::SearchSetFromSelection => vec![command, C::SearchSelectAllMatches, C::ModeEnter],
+                C::SelectAll
+                | C::CollapseSelection
+                | C::ToggleCase
+                | C::ReplaceChar
+                | C::CutSelection
+                | C::CutSelectionForChange => vec![command, C::ModeEnter],
                 _ => panic!("unclassified default program: {command:?}"),
             };
-            assert_eq!(binding.program.get(0), Some(&Action::Editor(first)));
+            assert_eq!(
+                binding
+                    .program
+                    .iter()
+                    .map(|step| step.target())
+                    .collect::<Vec<_>>(),
+                expected
+                    .into_iter()
+                    .map(BindingTarget::Editor)
+                    .collect::<Vec<_>>()
+            );
             let Action::Invocation(mode) = binding.program.last() else {
-                panic!("expected pure mode step")
+                panic!("expected mode step")
             };
             assert_eq!(mode.id(), CommandId::Editor(C::ModeEnter));
+            let name = match command {
+                C::SelectAll | C::SearchSetFromSelection | C::SearchNext | C::SearchPrevious => {
+                    "select"
+                }
+                C::CutSelectionForChange => "insert",
+                _ => "normal",
+            };
             assert_eq!(
                 mode.parameters(),
-                &runyte::command::InvocationParameters::OptionalText(Some(
-                    if command == C::SelectAll {
-                        "select"
-                    } else {
-                        "normal"
-                    }
-                    .into()
-                ))
+                &runyte::command::InvocationParameters::OptionalText(Some(name.into()))
             );
             assert!(!binding.is_plain_action());
         } else {
@@ -122,7 +138,7 @@ fn authored_programs_execute_all_steps_without_configuration_provenance() {
         output.resolved_binding,
         Some((
             KeySequence::parse("3 x").unwrap(),
-            BindingTarget::Editor(C::MoveLeft)
+            BindingTarget::Editor(C::Yank)
         ))
     );
 }
@@ -232,4 +248,89 @@ fn acknowledge(
         output.intents.push(intent);
     }
     output
+}
+
+#[test]
+fn removed_action_names_report_migrations_in_both_configuration_forms() {
+    use runyte::{command::parse_named_command, keymap::configured};
+    for (old, replacement) in [
+        ("yank-delete-selection", "cut-selection"),
+        ("yank-change-selection", "cut-selection-for-change"),
+        ("set-search-from-selection", "search-set-from-selection"),
+        ("search-selection", "search-select-all-matches"),
+    ] {
+        assert!(
+            parse_named_command(old, None)
+                .unwrap_err()
+                .to_string()
+                .contains(replacement)
+        );
+        for source in [
+            format!("bind: {{normal: {{F6: {old}}}}}"),
+            format!("scopes: {{terminal: {{normal: {{F6: {old}}}}}}}"),
+        ] {
+            let value = serde_yaml::from_str(&source).unwrap();
+            let result = configured::compile(&value, default_keymap());
+            assert!(
+                result
+                    .errors
+                    .iter()
+                    .any(|error| error.contains(replacement)),
+                "{:?}",
+                result.errors
+            );
+        }
+    }
+}
+
+#[test]
+fn paste_yank_cut_and_search_classification_names_postponed_stage_4_bundles() {
+    use runyte::command::descriptor::ActionEffect;
+    // Decision 34: stage 4 must empty this list when terminal and tree modes
+    // let these defaults use ordinary programs with explicit mode steps.
+    const BUNDLED_ACTIONS_PENDING_STAGE_4: &[C] = &[
+        C::YankCollapseNormalMode,
+        C::YankLineCollapseNormalMode,
+        C::PasteAfterOrReplace,
+        C::PasteBefore,
+        C::ClipboardPasteAfter,
+        C::ClipboardPasteBefore,
+        C::SearchNext,
+        C::SearchPrevious,
+    ];
+    for command in BUNDLED_ACTIONS_PENDING_STAGE_4.iter().copied().chain([
+        C::Yank,
+        C::YankLine,
+        C::PasteAfter,
+        C::CutSelection,
+        C::CutSelectionForChange,
+        C::SearchSetFromSelection,
+        C::SearchSelectAllMatches,
+        C::SearchExtendNext,
+        C::SearchExtendPrevious,
+    ]) {
+        assert_eq!(
+            command
+                .action_policy()
+                .effects
+                .contains(&ActionEffect::Mode),
+            BUNDLED_ACTIONS_PENDING_STAGE_4.contains(&command),
+            "unclassified bundled action: {command:?}"
+        );
+    }
+    for &command in BUNDLED_ACTIONS_PENDING_STAGE_4 {
+        assert!(
+            default_keymap()
+                .bindings()
+                .iter()
+                .any(|b| b.target == command.into())
+        );
+        for binding in default_keymap()
+            .bindings()
+            .iter()
+            .filter(|b| b.target == command.into())
+        {
+            assert!(binding.is_plain_action(), "{command:?}");
+        }
+    }
 }

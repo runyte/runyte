@@ -1825,3 +1825,26 @@ fn focused_tree_refuses_exactly_what_help_leaves_out() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn inherited_previous_search_program_preserves_tree_mode() {
+    let root = crate::test_support::OwnedTempDir::new().unwrap();
+    fs::write(root.path().join("one.txt"), "").unwrap();
+    fs::write(root.path().join("two.txt"), "").unwrap();
+    let mut app = App::new_in_isolated_project(
+        root.path(),
+        HostPorts::isolated(Box::new(MemoryClipboard(Arc::new(Mutex::new(
+            String::new(),
+        ))))),
+    )
+    .unwrap();
+    chord(&mut app, 'd');
+    app.prepare_view(geometry(120, 30));
+    wait_for_tree_rows(&mut app, 3);
+    assert!(app.directory_tree.search("txt").unwrap());
+    let selected = app.directory_tree.selected.clone();
+    press(&mut app, 'N');
+    assert_ne!(app.directory_tree.selected, selected);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.directory_tree.focused);
+}

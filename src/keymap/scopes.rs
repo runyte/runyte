@@ -206,6 +206,9 @@ fn compile(section: &Value, base: &Keymap, defer_policy: bool) -> Result<Keymap,
                         .as_str()
                         .filter(|name| name.len() <= 128)
                         .ok_or("expected an action name or null")?;
+                    if let Some(replacement) = crate::command::removed_action_replacement(name) {
+                        return Err(format!("{name} was removed; {replacement}"));
+                    }
                     Some(admit(scope, mode, name).ok_or_else(|| {
                         format!(
                             "action is unavailable in {} {}",
