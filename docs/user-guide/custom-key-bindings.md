@@ -892,6 +892,10 @@ all selections (1 MiB for terminal input).
 Removed action names report their replacements: `yank-delete-selection`
 and `yank-change-selection` become
 `cut-selection` and `cut-selection-for-change` followed by Normal or Insert.
+`change-selection` becomes `delete-selection-for-change` followed by Insert.
+Both no-yank delete actions preserve mode: `delete-selection` clamps the caret
+and honors transient whole rows; `delete-selection-for-change` preserves the
+insertion seam and deletes operative spans. Neither writes a register.
 `set-search-from-selection` is now `search-set-from-selection`.
 `search-selection` becomes query setup, `search-select-all-matches`, and pure
 Select entry. These exact default programs require internal mode steps until
@@ -1018,7 +1022,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `cut-selection` | normal, select | can be followed by another action | Yank, then delete the selection or character |
 | `cut-selection-for-change` | normal, select | can be followed by another action | Yank, then change the selection or character |
 | `delete-selection` | normal, select | can be followed by another action | Delete the selection or character without yanking |
-| `change-selection` | normal, select | can be followed by another action | Change the selection or character without yanking |
+| `delete-selection-for-change` | normal, select | can be followed by another action | Delete without yanking, preserving the insertion seam and mode |
 | `trim-trailing-whitespace` | normal, select | can be followed by another action | Delete trailing whitespace from every selected line |
 | `hard-wrap` | normal, select | can be followed by another action | Hard-wrap the selection |
 | `reflow` | normal, select | can be followed by another action | Reflow paragraphs in the selection |
@@ -1691,8 +1695,8 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `toggle-comments` | text | not accepted | none | none |  | atomic operation |
 | `cut-selection` | register, text, selection | not accepted | none | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection | decision: Chooses linewise register content or directory move payload and coordinates deletion; independent yank/delete steps cannot retain that ownership. |
 | `cut-selection-for-change` | register, text, selection | not accepted | none | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection | decision: Chooses operative-span register content or directory move payload and coordinates deletion; independent yank/delete steps cannot retain that ownership. |
-| `delete-selection` | text, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `change-selection` | text, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `delete-selection` | text | not accepted | none | none |  | decision: Delete and change place the caret and treat whole rows differently. |
+| `delete-selection-for-change` | text | not accepted | none | none |  | decision: Delete and change place the caret and treat whole rows differently. |
 | `enter-select-mode` | mode, selection | not accepted | none | none | terminal: Enter Select mode over captured terminal output; media: Begin selection of PDF text or an image region | pending stage 5 split; then mode action |
 | `select-line` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection | pending stage 4 split; then atomic operation |
 | `extend-line-above` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection | pending stage 4 split; then atomic operation |

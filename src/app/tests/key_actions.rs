@@ -388,7 +388,7 @@ fn yank_and_yank_line_keep_the_selection_and_mode_while_y_and_y_line_collapse() 
 #[test]
 fn delete_and_change_selection_leave_registers_alone_while_d_and_c_yank() {
     let mut app = configured(
-        "bind:\n  normal:\n    F5: delete-selection\n    F6: change-selection\n    F7: [select-all, delete-selection]\n",
+        "bind:\n  normal:\n    F5: delete-selection\n    F6: [delete-selection-for-change, enter-insert-mode]\n    F7: [select-all, delete-selection]\n",
     );
     seed(&mut app, "abc def");
     app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 2));
@@ -1920,4 +1920,136 @@ fn replace_with_register_preserves_mode_on_refusal_and_consumes_line_selection()
     assert!(app.status_error);
     assert_eq!(app.mode, mode);
     assert!(app.line_select.is_none());
+}
+
+#[test]
+fn no_yank_delete_actions_preserve_mode_and_distinct_caret_seams() {
+    use crate::keymap::program::Program;
+    for mode in [Mode::Normal, Mode::Select] {
+        for (command, head) in [
+            (EditorCommand::DeleteSelection, 0),
+            (EditorCommand::DeleteSelectionForChange, 1),
+        ] {
+            let mut app = conditional_app(Program::single(command.into()));
+            seed(&mut app, "ab");
+            app.mode = mode;
+            app.active_mut().selection = Selection::single(Range::new(1, 1));
+            register(&mut app, "saved", false);
+            app.selected_register = 'a';
+            key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+            assert_eq!(text(&app), "a");
+            assert_eq!(app.mode, mode);
+            assert_eq!(app.active().selection.primary().head, head);
+            assert_eq!(app.registers[&'"'].text, "saved");
+            assert!(!app.registers.contains_key(&'a'));
+            assert_eq!(app.selected_register, '"');
+        }
+    }
+}
+
+#[test]
+fn no_yank_delete_actions_distinguish_whole_rows_and_retire_the_gesture() {
+    use crate::keymap::program::Program;
+    for gesture in ['x', 'X'] {
+        for (command, expected) in [
+            (EditorCommand::DeleteSelection, "ab"),
+            (EditorCommand::DeleteSelectionForChange, "ab\n"),
+        ] {
+            let mut app = conditional_app(Program::single(command.into()));
+            seed(&mut app, "ab\ncd");
+            app.active_mut().selection = Selection::single(Range::new(3, 3));
+            press(&mut app, gesture);
+            let mode = app.mode;
+            assert!(app.line_select.is_some());
+            key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+            assert_eq!(text(&app), expected, "{command:?}, {gesture}");
+            assert_eq!(app.mode, mode);
+            assert!(app.line_select.is_none());
+            press(&mut app, 'h');
+            assert_eq!(app.mode, mode);
+        }
+    }
+}
+
+#[test]
+fn no_yank_change_program_preserves_the_seam_and_groups_typing_with_delete() {
+    use crate::keymap::{
+        actions::Action,
+        program::{Program, Step},
+    };
+    let program = Program::from_steps(vec![
+        Step::Action(Action::Editor(EditorCommand::DeleteSelectionForChange)),
+        Step::Action(Action::Invocation(CommandInvocation::mode_entry(
+            Mode::Insert,
+        ))),
+    ])
+    .unwrap();
+    let mut app = conditional_app(program);
+    seed(&mut app, "ab");
+    app.active_mut().selection = Selection::single(Range::new(1, 1));
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Insert);
+    press(&mut app, 'z');
+    assert_eq!(text(&app), "az");
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    press(&mut app, 'u');
+    assert_eq!(text(&app), "ab");
+}
+
+#[test]
+fn no_yank_delete_refusals_preserve_mode_and_consume_line_gestures() {
+    use crate::keymap::program::Program;
+    for command in [
+        EditorCommand::DeleteSelection,
+        EditorCommand::DeleteSelectionForChange,
+    ] {
+        for terminal in [false, true] {
+            let mut app = conditional_app(Program::single(command.into()));
+            if terminal {
+                let id = app.terminals.insert_test_session(80, 24);
+                app.active_mut().terminal = Some(id);
+            } else {
+                app.open_help();
+            }
+            press(&mut app, 'x');
+            let mode = app.mode;
+            let original = text(&app);
+            assert!(app.line_select.is_some());
+            key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+            assert!(app.status_error);
+            assert_eq!(app.mode, mode);
+            assert_eq!(text(&app), original);
+            assert!(app.line_select.is_none());
+        }
+    }
+}
+
+#[test]
+fn no_yank_delete_program_enters_normal_only_after_success() {
+    use crate::keymap::{
+        actions::Action,
+        program::{Program, Step},
+    };
+    let program = Program::from_steps(vec![
+        Step::Action(Action::Editor(EditorCommand::DeleteSelection)),
+        Step::Action(Action::Invocation(CommandInvocation::mode_entry(
+            Mode::Normal,
+        ))),
+    ])
+    .unwrap();
+    let mut app = conditional_app(program);
+    seed(&mut app, "ab");
+    app.mode = Mode::Select;
+    app.active_mut().selection = Selection::single(Range::new(1, 1));
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(text(&app), "a");
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.active().selection.primary().head, 0);
+
+    app.open_help();
+    press(&mut app, 'v');
+    assert_eq!(app.mode, Mode::Select);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(app.status_error);
+    assert_eq!(app.mode, Mode::Select, "refusal must stop the mode step");
 }

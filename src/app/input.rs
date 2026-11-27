@@ -4352,10 +4352,15 @@ impl App {
     fn execute_editor_command_count(&mut self, command: EditorCommand, count: usize) -> Result<()> {
         self.finish_atomic_line_selection(command);
         use EditorCommand as Command;
-        // Replacement needs the transient row extent, but retiring the gesture
+        // These edits need the transient row extent, but retiring the gesture
         // must neither restore a mode nor survive an early refusal.
-        let replacement_line_selection =
-            (command == Command::ReplaceWithRegister).then(|| self.line_select.take().is_some());
+        let atomic_line_selection = matches!(
+            command,
+            Command::ReplaceWithRegister
+                | Command::DeleteSelection
+                | Command::DeleteSelectionForChange
+        )
+        .then(|| self.line_select.take().is_some());
         if self.handle_merge_command(command) {
             return Ok(());
         }
@@ -4375,7 +4380,7 @@ impl App {
         // check reads is the one hidden behind it.
         if let Some(id) = self.active_terminal() {
             let transient_line_selection =
-                replacement_line_selection.unwrap_or_else(|| self.line_select.is_some());
+                atomic_line_selection.unwrap_or_else(|| self.line_select.is_some());
             if !matches!(
                 command,
                 Command::SelectLine
@@ -4400,6 +4405,8 @@ impl App {
                 Command::CutSelection
                     | Command::CutSelectionForChange
                     | Command::ReplaceWithRegister
+                    | Command::DeleteSelection
+                    | Command::DeleteSelectionForChange
             ) {
                 self.mode = Mode::Normal;
             }
@@ -4424,7 +4431,7 @@ impl App {
             self.hover = None;
         }
         let transient_line_selection =
-            replacement_line_selection.unwrap_or_else(|| self.line_select.is_some());
+            atomic_line_selection.unwrap_or_else(|| self.line_select.is_some());
         // A line selection lives only for as long as `x`/`X` keep arriving.
         // Anything else ends it and hands the mode back, so `j` after `x` is a
         // plain motion rather than an extension.
@@ -4442,6 +4449,8 @@ impl App {
                 Command::CutSelection
                     | Command::CutSelectionForChange
                     | Command::ReplaceWithRegister
+                    | Command::DeleteSelection
+                    | Command::DeleteSelectionForChange
             )
         {
             self.mode = mode;
@@ -4611,9 +4620,9 @@ impl App {
             Command::CutSelection => self.cut_selection(false, transient_line_selection),
             Command::CutSelectionForChange => self.cut_selection(true, false),
             Command::DeleteSelection => {
-                self.delete_selection_or_char(false, transient_line_selection, false)
+                self.delete_selection_or_char(false, transient_line_selection)
             }
-            Command::ChangeSelection => self.delete_selection_or_char(true, false, false),
+            Command::DeleteSelectionForChange => self.delete_selection_or_char(true, false),
             Command::EnterSelectMode => self.enter_select_mode(),
             Command::SelectLine => self.extend_line(true),
             Command::SelectLineUp => self.select_line_up(),

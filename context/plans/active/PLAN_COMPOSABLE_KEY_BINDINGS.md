@@ -631,12 +631,14 @@ Surround add/delete/replace now preserve mode; their default `m s`, `m d`,
 and `m r` programs append explicit Normal entry after successful operands.
 `replace-with-register` already preserved mode on successful replacement;
 its descriptor and refusal/gesture paths now consistently reflect that contract.
-These four entries are complete; delete/change remain pending until
-decision 37 is implemented in the next slice.
+These four entries are complete. Decision 37 is also implemented: the no-yank
+delete pair preserves mode, with distinct caret and transient-row semantics,
+and `change-selection` reports its replacement program. The 37 remaining
+stage 3 entries are selection actions.
 
 ### Pending stage 3 splits
 
-`delete-selection`, `change-selection`, `flip-selection`,
+`flip-selection`,
 `split-selection-at-line-ends`, `split-selection-at-line-starts`,
 `expand-syntax-selection`, `shrink-syntax-selection`, `select-syntax-parent`,
 `select-syntax-child`, `select-previous-syntax-sibling`, `select-next-syntax-sibling`,

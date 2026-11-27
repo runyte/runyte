@@ -36,8 +36,6 @@ fn migration_sets_are_exact_and_must_empty_before_their_stages_complete() {
     // Independent reviewed inventories (decisions 34 and 36). Removing an entry
     // requires its actual split, not merely relabelling its descriptor.
     let stage3 = [
-        CommandId::Editor(C::DeleteSelection),
-        CommandId::Editor(C::ChangeSelection),
         CommandId::Editor(C::FlipSelection),
         CommandId::Editor(C::SplitSelectionAtLineEnds),
         CommandId::Editor(C::SplitSelectionAtLineStarts),
@@ -118,6 +116,8 @@ fn retained_decisions_and_mode_actions_keep_their_contracts() {
         C::PasteAfterOrReplace,
         C::CutSelection,
         C::CutSelectionForChange,
+        C::DeleteSelection,
+        C::DeleteSelectionForChange,
         C::Search,
         C::SearchRegex,
         C::MediaBack,

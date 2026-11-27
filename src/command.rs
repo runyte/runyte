@@ -701,7 +701,7 @@ editor_commands! {
     CutSelection => ("cut-selection", "Yank, then delete the selection or character"),
     CutSelectionForChange => ("cut-selection-for-change", "Yank, then change the selection or character"),
     DeleteSelection => ("delete-selection", "Delete the selection or character without yanking"),
-    ChangeSelection => ("change-selection", "Change the selection or character without yanking"),
+    DeleteSelectionForChange => ("delete-selection-for-change", "Delete without yanking, preserving the insertion seam and mode"),
 
     EnterSelectMode => ("enter-select-mode", "Enter Select mode"),
     SelectLine => ("select-line", "Select the current line, then extend downward"),
@@ -1327,7 +1327,7 @@ impl EditorCommand {
             | Self::CutSelection
             | Self::CutSelectionForChange
             | Self::DeleteSelection
-            | Self::ChangeSelection
+            | Self::DeleteSelectionForChange
             | Self::DeleteWordBackward
             | Self::DeleteWordForward
             | Self::DeleteToLineStart
@@ -3555,6 +3555,9 @@ pub fn removed_action_replacement(name: &str) -> Option<&'static str> {
         ),
         "yank-change-selection" => Some(
             "use [cut-selection-for-change, mode-enter insert]; pure mode steps require the future binding format",
+        ),
+        "change-selection" => Some(
+            "use [delete-selection-for-change, mode-enter insert]; pure mode steps require the future binding format",
         ),
         "set-search-from-selection" => Some("use search-set-from-selection"),
         "search-selection" => Some(
