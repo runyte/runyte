@@ -939,8 +939,7 @@ impl Keymap {
         if let Some(tables) = &self.overrides.1 {
             let mut index = HashMap::new();
             let mut shared = HashMap::new();
-            for (mode, _) in tables.graph.modes() {
-                let effective = tables.indices(&self.bindings, mode);
+            for (mode, effective) in tables.all_indices(&self.bindings) {
                 if let Some(sequences) = shared.get(&effective) {
                     index.insert(LookupContext::Named(mode), Arc::clone(sequences));
                     continue;

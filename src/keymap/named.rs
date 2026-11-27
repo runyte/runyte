@@ -60,6 +60,39 @@ impl Tables {
         self.graph.role_mode(buffer_type(scope), role)
     }
 
+    /// Empty children share their ancestor's lookup table, but retain their own
+    /// identity and input policy. Keep this cache local to one binding revision.
+    pub fn all_indices(&self, bindings: &[Binding]) -> Vec<(ModeId, Vec<usize>)> {
+        let owners: HashSet<_> = bindings
+            .iter()
+            .filter_map(|binding| binding.binding_mode.as_deref())
+            .collect();
+        let mut resolved = HashMap::new();
+        self.graph
+            .modes()
+            .map(|(mode, _)| {
+                let owner = self
+                    .graph
+                    .chain(mode)
+                    .find(|&id| {
+                        let entry = self.graph.get(id).expect("same graph");
+                        owners.contains(entry.name())
+                            || self
+                                .removed
+                                .get(entry.name())
+                                .is_some_and(|keys| !keys.is_empty())
+                            || entry.parent().is_none()
+                    })
+                    .expect("chain includes a root");
+                let indices = resolved
+                    .entry(owner)
+                    .or_insert_with(|| self.indices(bindings, owner))
+                    .clone();
+                (mode, indices)
+            })
+            .collect()
+    }
+
     pub fn indices(&self, bindings: &[Binding], mode: ModeId) -> Vec<usize> {
         let mut seen = HashSet::new();
         let mut leaves = HashSet::new();
@@ -559,6 +592,56 @@ mod tests {
         let config = serde_yaml::from_str(source).unwrap();
         configured::compile_configuration(&config, default_keymap())
     }
+    #[test]
+    fn cached_empty_children_preserve_tombstones_and_ancestor_prefixes() {
+        let map = compile(
+            "modes:
+  ancestor: {inherits: normal}
+  parent: {inherits: ancestor}
+  child: {inherits: parent}
+  empty-child: {inherits: child, unbound-keys: pass-to-buffer}
+buffer-types:
+  text: {normal: empty-child}
+keys:
+  bind:
+    ancestor: {'F6 z': move-left}
+    parent: {F6: move-right}
+    child: {F6: null}
+",
+        );
+        assert!(map.errors.is_empty(), "{:?}", map.errors);
+        let tables = map.keymap.overrides.1.as_ref().unwrap();
+        for (mode, indices) in tables.all_indices(&map.keymap.bindings) {
+            assert_eq!(indices, tables.indices(&map.keymap.bindings, mode));
+        }
+        // The child's tombstone removes the parent leaf and exposes a longer
+        // grandparent sequence. Filtering the parent's effective table loses it.
+        assert!(matches!(
+            map.keymap
+                .lookup(Mode::Normal, &KeySequence::parse("F6 z").unwrap()),
+            Lookup::Exact(_)
+        ));
+        assert!(matches!(
+            map.keymap
+                .lookup(Mode::Normal, &KeySequence::parse("F6").unwrap()),
+            Lookup::Prefix(_)
+        ));
+        let id = tables.graph.id("empty-child").unwrap();
+        assert_eq!(
+            tables.graph.get(id).unwrap().unbound_keys(),
+            super::super::mode_graph::UnboundKeys::PassToBuffer
+        );
+    }
+
+    #[test]
+    fn cached_default_tables_match_full_inheritance_walks() {
+        let map = default_keymap();
+        let tables = map.overrides.1.as_ref().unwrap();
+        for (mode, indices) in tables.all_indices(&map.bindings) {
+            assert_eq!(indices, tables.indices(&map.bindings, mode));
+        }
+    }
+
     #[test]
     fn normal_is_text_only_and_common_reaches_terminal() {
         let map = compile("keys:\n  bind:\n    normal: {F6: move-left}\n    common: {F7: save}\n");
