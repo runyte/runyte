@@ -94,8 +94,6 @@ pub enum GrammarNotice {
         register: char,
         macros_only: bool,
     },
-    CountNotSupported(BindingTarget),
-    ProgramCountNotSupported,
     UnavailableBinding {
         target: BindingTarget,
         availability: BindingAvailability,
@@ -367,15 +365,12 @@ impl RunyteGrammar {
     ) -> Result<EditorIntent, CommandInvocationError> {
         match target {
             BindingTarget::Editor(command) => self.editor_binding_intent(command, availability),
-            BindingTarget::Colon(_) | BindingTarget::Plugin(_) if self.count.take().is_some() => {
-                Ok(EditorIntent::Notice(GrammarNotice::CountNotSupported(
-                    target,
-                )))
-            }
             BindingTarget::Colon(_) | BindingTarget::Plugin(_) if availability.is_implemented() => {
+                self.count = None;
                 Ok(EditorIntent::Command(target.invocation()?))
             }
             BindingTarget::Colon(_) | BindingTarget::Plugin(_) => {
+                self.count = None;
                 Ok(EditorIntent::Notice(GrammarNotice::UnavailableBinding {
                     target,
                     availability,
@@ -384,46 +379,12 @@ impl RunyteGrammar {
         }
     }
 
-    /// Singleton key behavior remains compatible until the final count policy
-    /// is settled: editor steps historically ignore unsupported counts, while
-    /// parameterized invocations and colon/plugin targets reject them.
-    fn legacy_singleton_intent(
-        &mut self,
-        action: &crate::keymap::actions::Action,
-        availability: BindingAvailability,
-    ) -> Result<EditorIntent, CommandInvocationError> {
-        use crate::keymap::actions::Action;
-        match action {
-            Action::Editor(command) => self.editor_binding_intent(*command, availability),
-            Action::Target(target) => self.binding_intent(*target, availability),
-            Action::Invocation(invocation) => {
-                if self.count.take().is_some() {
-                    Ok(EditorIntent::Notice(GrammarNotice::CountNotSupported(
-                        action.target(),
-                    )))
-                } else {
-                    Ok(EditorIntent::Command(invocation.clone()))
-                }
-            }
-        }
-    }
-
     fn program_intents(
         &mut self,
         binding: &crate::keymap::Binding,
     ) -> Result<Vec<EditorIntent>, CommandInvocationError> {
-        if let [step] = binding.program.as_slice() {
-            return Ok(vec![
-                self.legacy_singleton_intent(step, binding.availability)?,
-            ]);
-        }
         let count = self.count.take();
         let count_step = binding.program.count_step();
-        if count.is_some() && count_step.is_none() {
-            return Ok(vec![EditorIntent::Notice(
-                GrammarNotice::ProgramCountNotSupported,
-            )]);
-        }
         binding
             .program
             .iter()
@@ -442,7 +403,14 @@ impl RunyteGrammar {
                         ),
                     )?));
                 }
-                self.legacy_singleton_intent(action, binding.availability)
+                use crate::keymap::actions::Action;
+                match action {
+                    Action::Editor(command) => {
+                        self.editor_binding_intent(*command, binding.availability)
+                    }
+                    Action::Target(target) => self.binding_intent(*target, binding.availability),
+                    Action::Invocation(invocation) => Ok(EditorIntent::Command(invocation.clone())),
+                }
             })
             .collect()
     }
@@ -1345,7 +1313,7 @@ mod tests {
     }
 
     #[test]
-    fn colon_binding_emits_typed_invocation_and_rejects_runyte_count_prefix() {
+    fn colon_binding_emits_the_same_typed_invocation_with_a_count_prefix() {
         let run = |grammar: &mut RunyteGrammar, keys: &[char]| {
             let mut output = GrammarOutput::default();
             for key in keys {
@@ -1369,9 +1337,7 @@ mod tests {
         run(&mut counted, &['2']);
         assert_eq!(
             only_intent(run(&mut counted, &[' ', 'l', '?'])),
-            EditorIntent::Notice(GrammarNotice::CountNotSupported(BindingTarget::Colon(
-                crate::command::ColonCommand::LspStatus
-            )))
+            EditorIntent::Command(invocation)
         );
     }
 

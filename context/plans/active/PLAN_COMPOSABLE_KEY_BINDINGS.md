@@ -80,7 +80,7 @@ is actions whose behaviour depends on the view without saying so.
 
 ## Decisions
 
-Recorded 2026-11-26.
+Initial decisions recorded 2026-11-26; later decisions are dated below.
 
 1. **Conditional steps are included.** Programs may branch on a fixed set of
    conditions. This also prepares user-defined modes (#123).
@@ -100,6 +100,44 @@ Recorded 2026-11-26.
    `Space ?` remains `show-help`. `copy-key-binding` is the companion copy
    command. `keymap-export` has no default key and lands in stage 4 with the
    merged binding table, rather than exporting the superseded 0.4 shapes.
+
+8. **Rust-authored preset (decided 2026-11-26).** The built-in Runyte preset
+   is authored as Rust tables of the same program types. There is no `build.rs`
+   YAML compilation and no YAML parsing at startup. A test renders the tables
+   to checked-in YAML under `docs/`, fails if that file differs, and compiles
+   the YAML through the `keys.bind` compiler to require the identical keymap.
+   The reference may use the 0.4 bind/scopes shapes until stage 4 migrates it
+   with `keymap-export` to the merged table.
+9. **Uniform counts (decided 2026-11-27).** Every binding sends its count to
+   the first step whose descriptor accepts one. If none accepts it, the count
+   is dropped silently and the binding runs. This applies to built-in and
+   configured bindings, single-step and multi-step programs, and editor,
+   colon, plugin and parameterized actions. `2fx` remains equivalent to `fx`;
+   a count before `[select-all, yank]` still runs both steps.
+10. **UI and pointer boundaries stay separate (decided 2026-11-27, delegated
+    by the maintainer).** `keys.ui` and `keys.pointer` remain separate in 0.5.
+    UI input owners are input boundaries, not programs. Revisit after 0.5.
+11. **Copy recorded macros (decided 2026-11-27, delegated by the maintainer).**
+    `:macro-save` does not write configuration; the editor never writes
+    `keys`. Stage 6 adds `copy-macro`, which copies YAML for `keys.macros`,
+    following the `copy-key-binding` model.
+12. **Macros contain keys only (decided 2026-11-27, delegated by the
+    maintainer).** Macros have no literal text segments. Text goes through
+    programs with `insert-text`.
+13. **Plugin commands end programs (decided 2026-11-27, delegated by the
+    maintainer).** A plugin command is allowed only as the last step because
+    it runs out of process; nothing may follow it.
+14. **Bounded condition inventory (decided 2026-11-27, delegated by the
+    maintainer).** The initial general conditions are `selection-has-text`,
+    `multiple-selections`, `register-empty`, `read-only`, `{ mode: <mode> }`,
+    `{ view: <view> }` and `recording-macro`. Add exactly the view-specific
+    conditions required by the default directory-tree and media splits,
+    including `tree-entry-expanded`, `tree-entry-is-directory` and those
+    needed by the media splits. Each condition documents its applicable
+    views; a view-specific condition used outside them is rejected at load.
+    Add a condition only for a default binding or a documented use. Internal
+    conditional steps may serve stage 3 defaults; public syntax lands in
+    stage 5.
 
 ## Model
 
@@ -136,7 +174,8 @@ Rules:
   Selection, text, mode, view and pane effects continue. An operand wait
   continues once the operand arrives (see Input layer). A prompt or
   background effect must be the last step unless an argument supplies its
-  input.
+  input. Plugin commands are permitted only as the last step because they run
+  out of process (decision 13).
 - **Decision actions** are kept where the decision is made per range, or
   depends on intermediate results that the editor state does not expose
   between steps. `paste-after-or-replace` decides per range: a selection of two
@@ -158,7 +197,8 @@ one of:
 Conditions are a fixed, documented set evaluated at that step, for example
 `selection-has-text`, `multiple-selections`, `register-empty`, `read-only`,
 `{ mode: <mode> }`, `{ view: <view> }`, `recording-macro`, and view-specific ones such
-as `tree-entry-expanded`. There are no variables or loops. Nesting depth and
+as `tree-entry-expanded`. Decision 14 defines the initial inventory and requires
+load-time validation of view-specific conditions. There are no variables or loops. Nesting depth and
 total step count are bounded; stage 5 sets the numbers, starting from today's
 16 actions per binding.
 
@@ -169,7 +209,8 @@ Execution rules:
   action that can report "not found" as information rather than an error must
   mark the program halted, as `search-next` does since #129.
 - **Counts.** A count goes to the first step whose descriptor accepts one. A
-  program with no such step rejects the count before running. A count carried
+  program with no such step drops the count silently and runs. The same rule
+  applies to every binding and target kind. A count carried
   by `keep-count` is multiplied by a count typed in the new mode, as in Vim's
   `2d3w`.
 - **Undo.** A program's text edits are one undo step. Selection-only programs
@@ -217,7 +258,7 @@ keys:
   meaning. `keys.defaults: false` starts `bind` from an empty built-in preset
   layer, keeping the keys it keeps today.
 - `keys.ui` and `keys.pointer` are unchanged in 0.5. Moving `keys.ui` input
-  owners onto the binding table is an open question.
+  owners onto the binding table is deferred until after 0.5.
 - Layering: built-in preset, then `keys.rebind`, then `keys.bind`.
 
 ### Modes
@@ -275,8 +316,10 @@ work limit).
 - A macro cannot be a step in a program, because a program would have to feed
   input mid-run and then continue. A macro may press keys that run programs.
   A program may end with `replay-macro`.
-- Recorded macros stay in memory per editor session. Saving a recording to
-  configuration is an open question.
+- Recorded macros stay in memory per editor session. `copy-macro` copies YAML
+  for `keys.macros`; the editor does not write key configuration.
+- Macros contain keys only, with no literal text segments. Use programs with
+  `insert-text` for text.
 - The macro list in help shows each macro's keys.
 
 ### Input layer
@@ -297,10 +340,13 @@ else is preset data:
 ### Presets
 
 A preset is a complete set of modes and bindings in the binding format. The
-built-in keymap becomes the Runyte preset, authored in that format and
-compiled into static tables at build time so startup does not parse YAML
-(see `context/reference/startup-performance.md`). A preset that fails
-validation fails the build.
+built-in keymap becomes the Runyte preset, authored as Rust tables of the same
+program types. Startup does not parse YAML, and there is no `build.rs` YAML
+compilation (see `context/reference/startup-performance.md`). A test renders
+the tables to checked-in YAML under `docs/` and fails if the reference differs.
+It also compiles that YAML through the `keys.bind` compiler and requires the
+identical keymap. Until stage 4 the reference may use the 0.4 bind/scopes shapes;
+stage 4 migrates it with `keymap-export` to the merged table.
 
 The Vim-style preset lives in `tests/` and covers a defined core: the operators
 `d`, `c`, `y`, `>`, `<`; motions and text objects after an operator; doubled
@@ -381,7 +427,8 @@ where input or help can reach the native frontend.
 3. **Programs everywhere.** Built-in bindings become programs. Add the count
    and undo rules, operand resumption, and the atomic splits in the
    classification above. Author the built-in keymap as the Runyte preset,
-   compiled at build time. Remove `legacy_sequence_position` when execution and
+   using Rust tables and a checked-in YAML round-trip test (decision 8).
+   Remove `legacy_sequence_position` when execution and
    validation switch together to effect-derived continuation. Default keys keep
    their behaviour; the classification test lands.
 4. **One binding table.** Merge `keys.bind` and `keys.scopes` into
@@ -393,7 +440,7 @@ where input or help can reach the native frontend.
    prompts, `insert-text`, and conditional steps with the documented
    condition set.
 6. **Macros in configuration.** `keys.macros`, `{ macro: ... }` bindings, and
-   the macro list showing keys.
+   the macro list showing keys, and `copy-macro` for copying `keys.macros` YAML.
 7. **Mode hooks and the Vim-style acceptance preset.** `inherits`, per-mode
    `selecting-motions`, `after-each`, `keep-count` and `repeat-last-change`.
    Exit criterion: the Vim-style preset core passes in `tests/`. User-defined
@@ -401,11 +448,27 @@ where input or help can reach the native frontend.
 8. **Release 0.5.0.** Migration notes for the configuration change, updated
    user guide, and an updated `context/reference/helix-keymap-v1.md`.
 
+### Stage 3 implementation slices
+
+Stage 3a introduces a nonempty bounded program for every binding, retaining
+inline storage for singleton defaults and explicit `keys.bind` provenance for
+input ownership. Every program routes a count to its first accepting step, or
+drops it silently when none accepts it, following decision 9. There is no
+separate singleton count policy.
+
+Stage 3b still owns resumable execution, program undo ownership, effect-derived
+continuation and removal of the legacy policy, atomic splits and default
+program rewrites, and the Rust-authored preset with its checked-in YAML
+round-trip test (decision 8). Until those land, operands and mode changes
+retain their existing last-step restrictions and text edits retain their
+existing undo boundaries. Stage 3 is not complete with 3a alone.
+
 ## Verification
 
 - Descriptor completeness and classification tests over every action.
-- Every built-in binding validated at build time and listed by `:help
-  key-actions`.
+- Every built-in binding validated by tests and listed by `:help key-actions`.
+  Rust preset tables render to the exact checked-in YAML reference; compiling
+  that reference through the binding compiler produces the identical keymap.
 - Program semantics: counts, undo grouping including programs ending in
   Insert, failure stops, conditional branches, operand resumption and Escape
   cancellation.
@@ -417,20 +480,6 @@ where input or help can reach the native frontend.
 - Integration tests isolate configuration, cache, state and account paths as
   AGENTS.md requires.
 
-## Open questions
-
-1. Should `keys.ui` input owners move onto the binding table in 0.5, while the
-   configuration is breaking anyway?
-2. Should the built-in preset be YAML compiled by `build.rs`, or Rust tables
-   using the same types with a test that renders them as YAML?
-3. Should `:macro-save` write a recorded macro into `keybinds.d/`? Today the
-   settings page never writes `keys`.
-4. Should macros support literal text segments, or should text go through
-   programs with `insert-text`?
-5. Should plugin commands be allowed as the last step of a program?
-6. Which conditions belong in the first condition set, and which are
-   view-specific?
-
 ## Documents to update
 
 - `docs/user-guide/custom-key-bindings.md` and `docs/user-guide/key-bindings.md`
@@ -438,20 +487,3 @@ where input or help can reach the native frontend.
 - `context/reference/ui-vocabulary.md` where lists and pickers change
 - `context/reference/startup-performance.md`
 - `context/plans/README.md`
-
-### Stage 3 implementation slices
-
-Stage 3a introduces a nonempty bounded program for every binding, retaining
-inline storage for singleton defaults and explicit `keys.bind` provenance for
-input ownership. Multi-step programs route a count to their first accepting
-step, or reject it before any effects when none accepts it. Singleton key
-behavior remains in a named compatibility adapter: for example, `2fx` still
-ignores the count, while a parameterized singleton rejects it. The final
-uniform count policy needs to reconcile this with default-key compatibility.
-
-Stage 3b still owns resumable execution, program undo ownership, effect-derived
-continuation and removal of the legacy policy, atomic splits and default
-program rewrites. Until those land, operands and mode changes retain their
-existing last-step restrictions and text edits retain their existing undo
-boundaries. Preset authoring remains pending open question 2. Stage 3 is not
-complete with 3a alone.

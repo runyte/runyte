@@ -60,8 +60,8 @@ impl Program {
         self.as_slice().last().expect("nonempty program")
     }
 
-    /// Resolve before executing any step, so unsupported counts cannot leave
-    /// preceding selection, register, or text effects behind.
+    /// The first accepting step receives the count once. If there is none,
+    /// the binding still runs and silently drops the count.
     pub fn count_step(&self) -> Option<usize> {
         self.iter().position(|step| {
             step.target()

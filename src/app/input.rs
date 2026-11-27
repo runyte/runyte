@@ -2799,15 +2799,6 @@ impl App {
                     } else {
                         format!("register must be a-z, A-Z, quote, or underscore, not '{register}'")
                     }),
-                    GrammarNotice::ProgramCountNotSupported => {
-                        self.action_failed("this program has no action that accepts a count");
-                    }
-                    GrammarNotice::CountNotSupported(target) => {
-                        self.action_failed(format!(
-                            "{} does not support a count",
-                            target.description()
-                        ));
-                    }
                     GrammarNotice::UnavailableBinding {
                         target,
                         availability,

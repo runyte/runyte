@@ -433,7 +433,7 @@ fn delete_and_change_selection_leave_registers_alone_while_d_and_c_yank() {
 }
 
 #[test]
-fn program_counts_skip_nonaccepting_steps_and_reject_before_any_effect() {
+fn program_counts_skip_nonaccepting_steps_and_drop_unused_counts() {
     let mut app = configured(
         "bind: {normal: {F1: [yank, move-right, move-right], F2: [select-all, yank], F3: [yank, move-file-start]}}",
     );
@@ -447,11 +447,14 @@ fn program_counts_skip_nonaccepting_steps_and_reject_before_any_effect() {
     assert_eq!(cursor(&app).col, 0, "one selection-history action");
     press(&mut app, '3');
     key(&mut app, KeyCode::Function(2), Modifiers::NONE);
-    assert!(app.status_error);
-    assert!(app.status.contains("no action that accepts a count"));
-    assert_eq!(app.mode, Mode::Normal);
-    assert_eq!(app.active().selection.primary(), Range::point(0));
-    assert_eq!(app.registers[&'"'].text, "a", "yank never ran");
+    assert!(!app.status_error);
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(
+        app.registers[&'"'].text,
+        text(&app),
+        "the entire program ran"
+    );
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
     press(&mut app, '3');
     key(&mut app, KeyCode::Function(3), Modifiers::NONE);
     assert_eq!(
@@ -462,7 +465,7 @@ fn program_counts_skip_nonaccepting_steps_and_reject_before_any_effect() {
 }
 
 #[test]
-fn singleton_count_compatibility_includes_configured_operand_and_invocation() {
+fn singleton_bindings_drop_unused_counts_for_operands_and_invocations() {
     let mut app = configured(
         "bind: {normal: {F1: find-next-char, F2: {command: help, argument: key-actions}}}",
     );
@@ -473,11 +476,10 @@ fn singleton_count_compatibility_includes_configured_operand_and_invocation() {
     assert_eq!(cursor(&app).col, 1);
     press(&mut app, '2');
     key(&mut app, KeyCode::Function(2), Modifiers::NONE);
-    assert!(app.status_error);
-    assert_eq!(
-        text(&app),
-        "axxb",
-        "counted parameterized singleton did not open help"
+    assert!(!app.status_error);
+    assert!(
+        text(&app).contains("Bindable actions"),
+        "counted parameterized singleton opened help"
     );
 }
 

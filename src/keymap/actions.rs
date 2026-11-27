@@ -836,7 +836,7 @@ fn sequence_for(source: &str, keymap: &Keymap) -> Option<KeySequence> {
 pub fn reference() -> String {
     use std::fmt::Write;
     let mut out = String::from(
-        "# Bindable actions\n\nUse these names in `keys.bind`. Modes are independent. Sequence position says whether\nan action may be followed by another action. Counts on multi-action bindings go to the first accepting step; if none accepts\na count, the binding is rejected before execution. Plugin bindings use `plugins[].bindings`.\n",
+        "# Bindable actions\n\nUse these names in `keys.bind`. Modes are independent. Sequence position says whether\nan action may be followed by another action. Counts go to the first accepting step in every binding. If none accepts a count,\nthe count is dropped silently and the binding runs. Plugin bindings use `plugins[].bindings`.\n",
     );
     for &category in command::CommandCategory::ALL {
         let commands = EditorCommand::ALL
