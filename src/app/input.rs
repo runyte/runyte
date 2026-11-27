@@ -1256,9 +1256,7 @@ impl App {
                 .is_some_and(|preview| preview.source == self.panes[&pane_id].buffer)
         {
             self.invalidate_all_partial_guards();
-            if pane_id != self.active_pane && self.grammar.awaiting_character().is_some() {
-                self.active_mut().paused_grammar = Some(self.grammar.clone());
-            }
+            self.cancel_program_on_focus_change(pane_id);
             self.grammar.reset();
             self.jump = None;
             self.activate_pane_from_pointer(pane_id);
@@ -1270,6 +1268,11 @@ impl App {
                 unreachable!("link press")
             };
             self.pointer_link_pressed = Some(button);
+            let operand_pane = self.grammar.awaiting_character().map(|_| self.active_pane);
+            if operand_pane.is_some() {
+                self.active_mut().program_owner = None;
+                self.active_mut().program_selection_origin = None;
+            }
             self.invalidate_all_partial_guards();
             self.grammar.reset();
             self.jump = None;
@@ -1306,6 +1309,9 @@ impl App {
                 );
             }
             self.active_action_id = previous_action;
+            if operand_pane.is_some_and(|pane| pane != self.active_pane) {
+                self.report_program_focus_cancellation();
+            }
             self.retire_detached_ephemeral_buffers();
             self.note_destination_activation();
             self.refresh_navigator();
@@ -1402,9 +1408,7 @@ impl App {
                     self.pointer_drag = None;
                     return Ok(PointerOutcome::Changed);
                 };
-                if pane_id != self.active_pane && self.grammar.awaiting_character().is_some() {
-                    self.active_mut().paused_grammar = Some(self.grammar.clone());
-                }
+                self.cancel_program_on_focus_change(pane_id);
                 self.grammar.reset();
                 self.activate_pane_from_pointer(pane_id);
                 // Native preview clicks focus the pane without placing a caret
@@ -2119,12 +2123,27 @@ impl App {
         Some(self.buffers[pane.buffer_id].clamp_offset(offset, insert))
     }
 
-    fn handle_key_stroke(&mut self, mut key: KeyStroke) -> Result<()> {
-        if self.grammar.program_description().is_none()
-            && let Some(grammar) = self.active_mut().paused_grammar.take()
-        {
-            self.grammar = grammar;
+    pub(super) fn cancel_program_on_focus_change(&mut self, pane: usize) {
+        if pane != self.active_pane && self.grammar.awaiting_character().is_some() {
+            self.grammar.reset();
+            self.active_mut().program_owner = None;
+            self.active_mut().program_selection_origin = None;
+            self.report_program_focus_cancellation();
         }
+    }
+
+    pub(super) fn report_program_focus_cancellation(&mut self) {
+        let message = "binding cancelled: pane focus changed while waiting for a character";
+        if self.status_error {
+            self.status.push_str("; ");
+            self.status.push_str(message);
+            self.status_revision = self.status_revision.wrapping_add(1);
+        } else {
+            self.status(message);
+        }
+    }
+
+    fn handle_key_stroke(&mut self, mut key: KeyStroke) -> Result<()> {
         if self.grammar.awaiting_character().is_some()
             && self
                 .active()

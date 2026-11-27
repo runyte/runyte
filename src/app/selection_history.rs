@@ -183,7 +183,6 @@ impl App {
         if outer
             && self.active_pane != origin_pane
             && let Some(pane) = self.panes.get_mut(&origin_pane)
-            && pane.paused_grammar.is_none()
         {
             pane.program_selection_origin = None;
         }

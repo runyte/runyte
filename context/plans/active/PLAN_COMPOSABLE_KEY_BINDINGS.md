@@ -596,7 +596,8 @@ decision 9.
 The first stage 3b slice replaces eager program translation with an acknowledged
 cursor: the application executes a step before preparing the next one. Operand
 waits retain the cursor, count recipient, feedback and selection-history origin.
-Each pane can retain one paused program; its document or terminal review,
+A paused program is cancelled with a status message when pointer or command
+focus leaves its pane; its document or terminal review,
 selection, mode and binding scope must still match when its operand arrives.
 Escape cancels the remaining steps, and replay reservations belong to a specific
 replay run. Internal constructed programs test operands in the middle of a

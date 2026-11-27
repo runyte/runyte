@@ -679,24 +679,26 @@ fn program_counts_and_selection_history_span_operand_waits() {
 }
 
 #[test]
-fn each_pane_retains_its_own_paused_program() {
+fn a_paused_program_never_resumes_in_another_pane() {
     use EditorCommand as C;
     let mut app = program_app(&[C::FindNextChar, C::Yank]);
     seed(&mut app, "axbxc");
     let first = app.active_pane;
     app.execute_editor_command(C::SplitVertical).unwrap();
     let second = app.active_pane;
-    assert_ne!(first, second);
     app.activate_pane(first);
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
     app.activate_pane(second);
-    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
-    press(&mut app, 'c');
-    assert_eq!(cursor(&app).col, 4);
+    assert_eq!(app.awaiting_character_command(), None);
+    assert!(app.status.contains("binding cancelled"), "{}", app.status);
+    press(&mut app, 'l');
+    assert_eq!(cursor(&app).col, 1);
+    assert!(!app.registers.contains_key(&'"'));
     app.activate_pane(first);
-    press(&mut app, 'b');
-    assert_eq!(cursor(&app).col, 2);
-    assert_eq!(app.registers[&'"'].text, "axb");
+    assert_eq!(app.awaiting_character_command(), None);
+    press(&mut app, 'l');
+    assert_eq!(cursor(&app).col, 1);
+    assert!(!app.registers.contains_key(&'"'));
 }
 
 #[test]
@@ -759,7 +761,7 @@ fn text_input_cannot_edit_behind_an_operand_wait_in_insert_mode() {
 }
 
 #[test]
-fn semantic_focus_keeps_each_paused_programs_selection_origin() {
+fn semantic_focus_cancels_the_source_panes_paused_program() {
     use EditorCommand as C;
     let mut app = program_app(&[C::MoveRight, C::FindNextChar, C::MoveRight]);
     seed(&mut app, "axbxc");
@@ -781,21 +783,18 @@ fn semantic_focus_keeps_each_paused_programs_selection_origin() {
     app.execute_editor_command(C::FocusWindowLeft).unwrap();
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
     app.execute_editor_command(C::FocusWindowRight).unwrap();
-    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.awaiting_character_command(), None);
+    assert!(app.status.contains("binding cancelled"), "{}", app.status);
     app.execute_editor_command(C::FocusWindowLeft).unwrap();
-    press(&mut app, 'b');
-    assert_eq!(cursor(&app).col, 3, "{}", app.status);
+    assert_eq!(app.awaiting_character_command(), None);
+    press(&mut app, 'l');
+    assert_eq!(cursor(&app).col, 2);
     key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
-    assert_eq!(cursor(&app).col, 0);
-    app.execute_editor_command(C::FocusWindowRight).unwrap();
-    press(&mut app, 'b');
-    assert_eq!(cursor(&app).col, 3, "{}", app.status);
-    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
-    assert_eq!(cursor(&app).col, 0);
+    assert_eq!(cursor(&app).col, 1);
 }
 
 #[test]
-fn pointer_focus_preserves_the_source_panes_paused_program() {
+fn pointer_focus_cancels_the_source_panes_paused_program() {
     use EditorCommand as C;
     let mut app = program_app(&[C::MoveRight, C::FindNextChar, C::Yank]);
     seed(&mut app, "axbxc");
@@ -853,11 +852,15 @@ fn pointer_focus_preserves_the_source_panes_paused_program() {
         .unwrap();
     }
     assert_eq!(app.active_pane, second);
+    assert_eq!(app.awaiting_character_command(), None);
+    assert!(app.status.contains("binding cancelled"), "{}", app.status);
     app.execute_editor_command(C::FocusWindowLeft).unwrap();
-    press(&mut app, 'b');
+    assert_eq!(app.awaiting_character_command(), None);
+    press(&mut app, 'l');
     assert_eq!(cursor(&app).col, 2);
+    assert!(!app.registers.contains_key(&'"'));
     key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
-    assert_eq!(cursor(&app).col, 0);
+    assert_eq!(cursor(&app).col, 1);
 }
 
 #[test]
@@ -893,7 +896,8 @@ fn terminal_review_changes_invalidate_a_paused_program() {
     app.execute_editor_command(C::FocusWindowRight).unwrap();
     assert_eq!(app.active_pane, 1);
     app.execute_editor_command(C::FocusWindowLeft).unwrap();
-    assert_eq!(app.awaiting_character_command(), Some(C::FindNextChar));
+    assert_eq!(app.awaiting_character_command(), None);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
     app.execute_editor_command(C::MoveFileStart).unwrap();
     press(&mut app, 'x');
     assert_eq!(app.awaiting_character_command(), None);
@@ -960,6 +964,7 @@ fn splitting_a_paused_pane_does_not_copy_its_program_history() {
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
     app.execute_editor_command(C::SplitVertical).unwrap();
     assert_eq!(app.awaiting_character_command(), None);
+    assert!(app.status.contains("binding cancelled"), "{}", app.status);
     press(&mut app, 'l');
     key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
     assert_eq!(cursor(&app).col, 1);
@@ -977,4 +982,95 @@ fn a_prompt_that_splits_does_not_leak_its_selection_origin() {
     press(&mut app, 'l');
     key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
     assert_eq!(cursor(&app).col, 0);
+}
+
+#[test]
+fn swapping_a_paused_pane_cancels_before_moving_its_history() {
+    use EditorCommand as C;
+    let mut app = program_app(&[C::MoveRight, C::FindNextChar, C::Yank]);
+    seed(&mut app, "axbxc");
+    app.execute_editor_command(C::SplitVertical).unwrap();
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    app.execute_editor_command(C::SwapWindow).unwrap();
+    assert_eq!(app.awaiting_character_command(), None);
+    assert!(app.status.contains("binding cancelled"), "{}", app.status);
+    press(&mut app, 'l');
+    assert_eq!(cursor(&app).col, 2);
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    assert_eq!(cursor(&app).col, 1);
+    assert!(!app.registers.contains_key(&'"'));
+}
+#[test]
+fn native_link_focus_cancels_the_source_panes_paused_program() {
+    use EditorCommand as C;
+    let mut app = program_app(&[C::MoveRight, C::FindNextChar, C::Yank]);
+    seed(&mut app, "axbxc");
+    app.execute_editor_command(C::SplitVertical).unwrap();
+    app.prepare_view(FrameGeometry {
+        screen: Rect {
+            width: 80,
+            height: 32,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 80,
+            height: 30,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    });
+    app.native_media = true;
+    let second = app.active_pane;
+    app.execute_editor_command(C::FocusWindowLeft).unwrap();
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    let view = app.prepare_view(FrameGeometry {
+        screen: Rect {
+            width: 80,
+            height: 32,
+            ..Rect::default()
+        },
+        editor: Rect {
+            width: 80,
+            height: 30,
+            ..Rect::default()
+        },
+        status: Rect::default(),
+        message: Rect::default(),
+    });
+    let area = view
+        .panes
+        .iter()
+        .find(|p| p.pane_id == second)
+        .unwrap()
+        .body;
+    for kind in [
+        PointerEventKind::Down(PointerButton::Left),
+        PointerEventKind::Up(PointerButton::Left),
+    ] {
+        app.handle_pointer(
+            PointerEvent {
+                kind,
+                column: area.x + view.pane(second).unwrap().gutter_width as u16,
+                row: area.y,
+                modifiers: if cfg!(target_os = "macos") {
+                    Modifiers::SUPER
+                } else {
+                    Modifiers::CONTROL
+                },
+            },
+            &view,
+        )
+        .unwrap();
+    }
+    assert_eq!(app.active_pane, second);
+    assert_eq!(app.awaiting_character_command(), None);
+    assert!(app.status.contains("binding cancelled"), "{}", app.status);
+    app.execute_editor_command(C::FocusWindowLeft).unwrap();
+    assert_eq!(app.awaiting_character_command(), None);
+    press(&mut app, 'l');
+    assert_eq!(cursor(&app).col, 2);
+    assert!(!app.registers.contains_key(&'"'));
+    key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
+    assert_eq!(cursor(&app).col, 1);
 }

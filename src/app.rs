@@ -519,7 +519,6 @@ struct ProgramOwner {
 #[derive(Clone, Debug)]
 pub struct Pane {
     /// A paused binding belongs to this pane, never to the next focused view.
-    paused_grammar: Option<ActiveGrammar>,
     program_selection_origin: Option<selection_history::Origin>,
     program_owner: Option<ProgramOwner>,
     pub buffer: usize,
@@ -611,7 +610,6 @@ impl Pane {
         Self {
             buffer,
             pdf_page_list: None,
-            paused_grammar: None,
             program_selection_origin: None,
             program_owner: None,
             buffer_history: Vec::new(),
