@@ -11,6 +11,7 @@ use super::{Binding, BindingNamespace, BindingScope, ContextAction, KeySequence}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ViolationKind {
+    InvalidProgram,
     ReservedGrammarKey,
     DuplicateEffectiveSequence,
     ExactAndPrefix,
@@ -108,6 +109,15 @@ pub(super) fn with_input_policy(
 
             let mut by_sequence: HashMap<&KeySequence, &Binding> = HashMap::new();
             for binding in &effective {
+                if let Err(message) = binding.program.validate(scope) {
+                    violations.push(Violation {
+                        kind: ViolationKind::InvalidProgram,
+                        mode,
+                        scope,
+                        sequences: vec![binding.sequence.clone()],
+                        message: message.into(),
+                    });
+                }
                 let modal_reservation = matches!(mode, Mode::Normal | Mode::Select)
                     && !scope.is_merge_review()
                     && binding

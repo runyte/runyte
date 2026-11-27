@@ -3435,11 +3435,11 @@ impl App {
             C::MediaZoomOut => A::ZoomOut,
             C::MediaFit => A::Fit,
             C::MediaActualSize => A::ActualSize,
+            // Media selections remain available to copy after leaving Select mode.
+            // There is no text caret to collapse on this surface.
+            C::CollapseSelection => return true,
             C::EnterSelectMode => {
-                self.toggle_select_mode();
-                if self.mode != Mode::Select {
-                    return true;
-                }
+                self.enter_select_mode();
                 A::BeginSelection
             }
             C::MoveLeft if self.mode == Mode::Select => A::ExtendLeft,

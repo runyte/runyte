@@ -167,39 +167,58 @@ fn joined(keys: Vec<String>) -> String {
 }
 
 pub fn binding_steps(binding: &Binding, scope: BindingScope) -> String {
-    binding
-        .program
+    render_program(&binding.program, scope, 0)
+}
+
+fn render_program(
+    program: &crate::keymap::program::Program,
+    scope: BindingScope,
+    depth: usize,
+) -> String {
+    use crate::keymap::program::Step;
+    let indent = "  ".repeat(depth);
+    program
+        .steps()
         .iter()
-        .map(actions::Action::target)
         .enumerate()
-        .map(|(index, target)| {
-            let description = target
-                .id()
-                .descriptor()
-                .and_then(|d| {
-                    d.view(scope)
-                        .map(|v| v.description)
-                        .or(Some(d.metadata.description))
-                })
-                .unwrap_or_else(|| target.description());
-            let argument = binding
-                .program
-                .get(index)
-                .and_then(|action| match action {
-                    actions::Action::Invocation(invocation) => Some(format!(
+        .map(|(index, step)| match step {
+            Step::If {
+                condition,
+                then,
+                otherwise,
+            } => format!(
+                "{indent}{}. if {}\n{indent}then:\n{}{indent}else:\n{}",
+                index + 1,
+                condition.label(),
+                render_program(then, scope, depth + 1),
+                render_program(otherwise, scope, depth + 1)
+            ),
+            Step::Action(action) => {
+                let target = action.target();
+                let description = target
+                    .id()
+                    .descriptor()
+                    .and_then(|d| {
+                        d.view(scope)
+                            .map(|v| v.description)
+                            .or(Some(d.metadata.description))
+                    })
+                    .unwrap_or_else(|| target.description());
+                let argument = match action {
+                    actions::Action::Invocation(invocation) => format!(
                         " (argument: {})",
                         abbreviated(&argument_text(invocation.parameters()))
-                    )),
-                    _ => None,
-                })
-                .unwrap_or_default();
-            format!(
-                "{}. {}{} — {}\n",
-                index + 1,
-                target.name(),
-                argument,
-                description
-            )
+                    ),
+                    _ => String::new(),
+                };
+                format!(
+                    "{indent}{}. {}{} — {}\n",
+                    index + 1,
+                    target.name(),
+                    argument,
+                    description
+                )
+            }
         })
         .collect()
 }
@@ -239,6 +258,9 @@ pub fn binding_yaml(
 ) -> Result<String, String> {
     if matches!(binding.target, BindingTarget::Plugin(_)) {
         return Err("Plugin bindings use plugins[].bindings".into());
+    }
+    if binding.program.has_conditions() {
+        return Err("This built-in program uses conditional steps, which the configurable binding format does not yet support".into());
     }
     if binding
         .program

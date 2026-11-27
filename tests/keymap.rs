@@ -1071,7 +1071,10 @@ fn namespace_rows_are_non_executable_prefixes_backed_by_real_bindings() {
         ));
     }
     for binding in keymap.bindings() {
-        assert_eq!(binding.description, binding.target.description());
+        // A conditional binding describes the complete gesture, not one leaf.
+        if !binding.program.has_conditions() {
+            assert_eq!(binding.description, binding.target.description());
+        }
     }
 
     for (index, binding) in keymap.bindings().iter().enumerate() {

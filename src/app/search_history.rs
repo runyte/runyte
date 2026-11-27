@@ -182,17 +182,9 @@ impl App {
         crate::pasted_image::destination(&path)
     }
 
-    /// The key that both starts and finishes an unnamed recording.
-    ///
-    /// One key for the whole gesture is the point of the macro namespace: a
-    /// recording that has begun can always be ended by repeating what began
-    /// it, without remembering a second, differently-named binding.
+    /// Start-only operation; the default key owns the recording toggle.
     pub(super) fn record_default_macro(&mut self) {
-        if self.recording_macro.is_some() {
-            self.stop_macro_recording();
-        } else {
-            self.start_macro_recording(DEFAULT_MACRO_REGISTER);
-        }
+        self.start_macro_recording(DEFAULT_MACRO_REGISTER);
     }
 
     pub(super) fn start_macro_recording(&mut self, register: char) {

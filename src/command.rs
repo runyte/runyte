@@ -703,7 +703,7 @@ editor_commands! {
     DeleteSelection => ("delete-selection", "Delete the selection or character without yanking"),
     ChangeSelection => ("change-selection", "Change the selection or character without yanking"),
 
-    EnterSelectMode => ("enter-select-mode", "Toggle Select; collapse when leaving"),
+    EnterSelectMode => ("enter-select-mode", "Enter Select mode"),
     SelectLine => ("select-line", "Select the current line, then extend downward"),
     ExtendLineAbove => ("extend-line-above", "Extend whole lines above"),
     ExtendLineBelow => ("extend-line-below", "Extend whole lines below"),
@@ -900,13 +900,15 @@ editor_commands! {
     FocusDirectoryTree => ("focus-directory-tree", "Reveal the active file in the directory tree"),
     DirectoryTreeUp => ("directory-tree-up", "Select the previous tree entry"),
     DirectoryTreeDown => ("directory-tree-down", "Select the next tree entry"),
-    DirectoryTreeLeft => ("directory-tree-left", "Collapse or select the parent directory"),
-    DirectoryTreeRight => ("directory-tree-right", "Expand or select the first child"),
+    DirectoryTreeCollapse => ("directory-tree-collapse", "Collapse the selected directory"),
+    DirectoryTreeSelectParent => ("directory-tree-select-parent", "Select the parent directory"),
+    DirectoryTreeExpand => ("directory-tree-expand", "Expand the selected directory"),
+    DirectoryTreeSelectFirstChild => ("directory-tree-select-first-child", "Select the first visible child"),
     DirectoryTreeFirst => ("directory-tree-first", "Select the workspace root"),
     DirectoryTreeLast => ("directory-tree-last", "Select the last visible tree entry"),
     DirectoryTreePageUp => ("directory-tree-page-up", "Move up one tree page"),
     DirectoryTreePageDown => ("directory-tree-page-down", "Move down one tree page"),
-    DirectoryTreeOpen => ("directory-tree-open", "Open or expand the selected tree entry"),
+    DirectoryTreeOpen => ("directory-tree-open", "Open the selected tree file"),
     DirectoryTreeClose => ("directory-tree-close", "Return focus to the previous pane"),
     DirectoryTreeRefresh => ("directory-tree-refresh", "Refresh the selected tree directory"),
     DirectoryTreeLegend => ("directory-tree-legend", "Toggle the directory tree legend"),
@@ -1162,7 +1164,7 @@ editor_commands! {
     ClipboardPaste => ("clipboard-paste", "Paste an image or text from the clipboard"),
     SelectRegister => ("select-register", "Select a register"),
     RecordMacro => ("record-macro", "Record a macro named by the next key"),
-    RecordDefaultMacro => ("record-default-macro", "Record the default macro, or stop recording"),
+    RecordDefaultMacro => ("record-default-macro", "Start recording the default macro"),
     StopMacroRecording => ("stop-macro-recording", "Stop recording the current macro"),
     ReplayMacro => ("replay-macro", "Replay the macro named by the next key"),
     ReplayDefaultMacro => ("replay-default-macro", "Replay the default macro"),
@@ -1455,8 +1457,10 @@ impl EditorCommand {
             | Self::FocusDirectoryTree
             | Self::DirectoryTreeUp
             | Self::DirectoryTreeDown
-            | Self::DirectoryTreeLeft
-            | Self::DirectoryTreeRight
+            | Self::DirectoryTreeCollapse
+            | Self::DirectoryTreeSelectParent
+            | Self::DirectoryTreeExpand
+            | Self::DirectoryTreeSelectFirstChild
             | Self::DirectoryTreeFirst
             | Self::DirectoryTreeLast
             | Self::DirectoryTreePageUp
@@ -3540,6 +3544,12 @@ pub fn parse_colon_command(input: &str) -> Result<CommandInvocation, CommandPars
 /// Migration advice shared by the palette and both key configuration forms.
 pub fn removed_action_replacement(name: &str) -> Option<&'static str> {
     match name {
+        "directory-tree-left" => Some(
+            "use a conditional: collapse an expanded non-root directory, otherwise directory-tree-select-parent; conditional steps are not yet configurable",
+        ),
+        "directory-tree-right" => Some(
+            "use a conditional: directory-tree-expand or directory-tree-select-first-child for a directory; conditional steps are not yet configurable",
+        ),
         "yank-delete-selection" => Some(
             "use [cut-selection, mode-enter normal]; pure mode steps require the future binding format",
         ),

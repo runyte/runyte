@@ -1210,7 +1210,14 @@ impl App {
                         // Reported here rather than returned: a persistent
                         // host publishes no frame for a failed pointer event,
                         // and opening a file can fail where selecting cannot.
-                        if let Err(error) =
+                        if self.directory_tree.kind(&self.directory_tree.selected)
+                            == Some(crate::fs_plan::EntryKind::Directory)
+                        {
+                            self.directory_tree.toggle_selected(
+                                self.directory_tree
+                                    .show_hidden(self.config.editor.show_hidden_files),
+                            );
+                        } else if let Err(error) =
                             self.execute_editor_command(EditorCommand::DirectoryTreeOpen)
                         {
                             self.action_failed(error.to_string());
@@ -2836,6 +2843,32 @@ impl App {
         intent: EditorIntent,
         typed_character: Option<char>,
     ) -> Result<Option<CommandOutcome>> {
+        if let EditorIntent::EvaluateCondition(condition) = intent {
+            use crate::keymap::program::Condition;
+            if self.grammar.condition_starts_program()
+                && let Some(mode) = self.line_select.take()
+            {
+                self.mode = mode;
+            }
+            if !condition.applicable_in(self.key_binding_scope()) {
+                self.action_failed("condition is not available for this buffer type");
+                return Ok(None);
+            }
+            let value = match condition {
+                Condition::Mode(mode) => self.mode == mode,
+                Condition::RecordingMacro => self.recording_macro.is_some(),
+                Condition::TreeEntryExpanded => self.directory_tree.selected_expanded(),
+                Condition::TreeEntryIsDirectory => {
+                    self.directory_tree.kind(&self.directory_tree.selected)
+                        == Some(crate::fs_plan::EntryKind::Directory)
+                }
+                Condition::TreeEntryIsRoot => {
+                    self.directory_tree.selected == self.directory_tree.root
+                }
+            };
+            self.grammar.resolve_condition(value);
+            return Ok(None);
+        }
         if self.directory_tree.focused
             && !matches!(intent, EditorIntent::Command(_) | EditorIntent::Notice(_))
         {
@@ -2845,13 +2878,34 @@ impl App {
             let repetitions = match range {
                 RangeIntent::SelectLine { count, .. } => count.get(),
             };
-            if !self.atomic_program_replay && !self.reserve_macro_replay_range_work(repetitions) {
+            if (!self.atomic_program_replay || self.grammar.conditional_program())
+                && !self.reserve_macro_replay_range_work(repetitions)
+            {
                 self.sequence_halted = true;
                 return Ok(None);
             }
         }
         match intent {
+            EditorIntent::EvaluateCondition(_) => {
+                unreachable!("handled before input-owner filtering")
+            }
             EditorIntent::Command(invocation) => {
+                if self.grammar.conditional_program()
+                    && !matches!(
+                        invocation.id(),
+                        crate::command::CommandId::Editor(
+                            EditorCommand::ReplayMacro | EditorCommand::ReplayDefaultMacro
+                        )
+                    )
+                    && self.macro_replay.is_some()
+                    && invocation.id().descriptor().is_some_and(|d| {
+                        d.policy.count == crate::command::descriptor::CountBehavior::Repeat
+                    })
+                    && !self.reserve_macro_replay_range_work(invocation.execution().repetitions())
+                {
+                    self.sequence_halted = true;
+                    return Ok(None);
+                }
                 return Ok(Some(self.execute(invocation)?));
             }
             EditorIntent::InsertText(text) => {
@@ -4401,8 +4455,10 @@ impl App {
             | Command::FocusDirectoryTree
             | Command::DirectoryTreeUp
             | Command::DirectoryTreeDown
-            | Command::DirectoryTreeLeft
-            | Command::DirectoryTreeRight
+            | Command::DirectoryTreeCollapse
+            | Command::DirectoryTreeSelectParent
+            | Command::DirectoryTreeExpand
+            | Command::DirectoryTreeSelectFirstChild
             | Command::DirectoryTreeFirst
             | Command::DirectoryTreeLast
             | Command::DirectoryTreePageUp
@@ -4545,7 +4601,7 @@ impl App {
                 self.delete_selection_or_char(false, transient_line_selection, false)
             }
             Command::ChangeSelection => self.delete_selection_or_char(true, false, false),
-            Command::EnterSelectMode => self.toggle_select_mode(),
+            Command::EnterSelectMode => self.enter_select_mode(),
             Command::SelectLine => self.extend_line(true),
             Command::SelectLineUp => self.select_line_up(),
             Command::ExtendLineAbove => self.extend_line(false),

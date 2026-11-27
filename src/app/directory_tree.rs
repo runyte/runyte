@@ -76,8 +76,10 @@ impl App {
             Command::GotoWord if self.directory_tree.focused => self.label_tree_entries(),
             Command::DirectoryTreeUp => self.directory_tree.select_relative(-1),
             Command::DirectoryTreeDown => self.directory_tree.select_relative(1),
-            Command::DirectoryTreeLeft => self.directory_tree.collapse_or_parent(),
-            Command::DirectoryTreeRight => self.directory_tree.expand_or_child(show_hidden),
+            Command::DirectoryTreeCollapse => self.directory_tree.collapse_selected(),
+            Command::DirectoryTreeSelectParent => self.directory_tree.select_parent(),
+            Command::DirectoryTreeExpand => self.directory_tree.expand_selected(show_hidden),
+            Command::DirectoryTreeSelectFirstChild => self.directory_tree.select_first_child(),
             Command::DirectoryTreeFirst => self.directory_tree.select_first(),
             Command::DirectoryTreeLast => self.directory_tree.select_last(),
             Command::DirectoryTreePageUp => self
@@ -124,7 +126,7 @@ impl App {
                 if self.directory_tree.kind(&self.directory_tree.selected)
                     == Some(EntryKind::Directory)
                 {
-                    self.directory_tree.toggle_selected(show_hidden);
+                    self.action_failed("tree file opening requires a file entry");
                 } else {
                     let split = match command {
                         Command::DirectoryTreeVertical => Some(Axis::Horizontal),

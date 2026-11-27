@@ -813,9 +813,24 @@ and `replace-char` preserve the current mode. Their default keys (`%`, `;`,
 before. `fit-selection-for-normal-mode` fits the selection without changing
 mode: it collapses ranges and applies the existing Insert-exit caret rules.
 Escape runs that action followed by an internal Normal-mode step. Public
-`enter-*-mode` actions retain their existing selection-fitting behavior.
+mode-entry actions retain their selection-fitting behavior, except
+`enter-select-mode`, which now only enters Select. The default `v` key toggles
+through an internal conditional: from Select it collapses and enters Normal;
+otherwise it enters Select. Half-open mouse and syntax selections convert to
+inclusive endpoints before collapse, so the resulting caret may be one
+character before the old endpoint. On native media, leaving Select retains the
+media selection for copying and does not move the hidden document caret.
 
-Pure mode steps are not yet configurable. Copy-binding reports that a default
+The default macro-recording key also uses an internal conditional.
+`record-default-macro` starts recording and refuses an existing recording;
+`Space m m` stops any active recording, or starts the default one.
+Directory-tree `h`/Left, `l`/Right, Enter, `v` and `s` use tree conditions with
+`directory-tree-collapse`, `directory-tree-select-parent`,
+`directory-tree-expand`, `directory-tree-select-first-child` and file-opening
+actions. The old `directory-tree-left` and `directory-tree-right` names report
+migration advice. Directory file-opening actions no longer toggle directories.
+
+Conditional and pure mode steps are not yet configurable. Copy-binding reports that a default
 program containing one cannot be represented in the current binding format;
 commented configuration examples omit those programs. `defaults: false` still
 removes their keys.
@@ -1066,7 +1081,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | --- | --- | --- | --- |
 | `selection-undo` | normal, select | can be followed by another action | Undo the last selection change |
 | `selection-redo` | normal, select | can be followed by another action | Redo the last selection change |
-| `enter-select-mode` | normal, select | can be followed by another action | Toggle Select; collapse when leaving |
+| `enter-select-mode` | normal, select | can be followed by another action | Enter Select mode |
 | `select-line` | normal, select | can be followed by another action | Select the current line, then extend downward |
 | `extend-line-above` | normal, select | can be followed by another action | Extend whole lines above |
 | `extend-line-below` | normal, select | can be followed by another action | Extend whole lines below |
@@ -1258,7 +1273,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | --- | --- | --- | --- |
 | `select-register` | normal, select | can be followed by another action | Select a register |
 | `record-macro` | normal, select | can be followed by another action | Record a macro named by the next key |
-| `record-default-macro` | normal, select | can be followed by another action | Record the default macro, or stop recording |
+| `record-default-macro` | normal, select | can be followed by another action | Start recording the default macro |
 | `replay-macro` | normal, select | must be the last action | Replay the macro named by the next key |
 | `replay-default-macro` | normal, select | must be the last action | Replay the default macro |
 | `list-macros` | normal, select | can be followed by another action | List the recorded macros |
@@ -1432,11 +1447,12 @@ actions belong to the indicated owner; raw UI input still has its own scope.
 ##### directory-tree
 
 - `directory-tree-close`: normal, select
+- `directory-tree-collapse`: normal, select
 - `directory-tree-delete`: normal, select
 - `directory-tree-down`: normal, select
+- `directory-tree-expand`: normal, select
 - `directory-tree-first`: normal, select
 - `directory-tree-last`: normal, select
-- `directory-tree-left`: normal, select
 - `directory-tree-legend`: normal, select
 - `directory-tree-move`: normal, select
 - `directory-tree-new`: normal, select
@@ -1456,7 +1472,8 @@ actions belong to the indicated owner; raw UI input still has its own scope.
 - `directory-tree-pane-9`: normal, select
 - `directory-tree-refresh`: normal, select
 - `directory-tree-rename`: normal, select
-- `directory-tree-right`: normal, select
+- `directory-tree-select-first-child`: normal, select
+- `directory-tree-select-parent`: normal, select
 - `directory-tree-up`: normal, select
 - `toggle-hidden-files`: normal, select
 
@@ -1676,13 +1693,13 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `cut-selection-for-change` | register, text, selection | not accepted | none | none | directory: Record selected entries as a move payload without removing files; delete or change the listing selection |
 | `delete-selection` | text, mode | not accepted | none | none |  |
 | `change-selection` | text, mode | not accepted | none | none |  |
-| `enter-select-mode` | mode, selection | not accepted | none | none | terminal: Toggle Select mode over captured terminal output; media: Toggle selection of PDF text or an image region |
+| `enter-select-mode` | mode, selection | not accepted | none | none | terminal: Enter Select mode over captured terminal output; media: Begin selection of PDF text or an image region |
 | `select-line` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
 | `extend-line-above` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
 | `extend-line-below` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
 | `select-line-up` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
 | `select-all` | selection | not accepted | none | none | terminal: Select all captured terminal output |
-| `collapse-selection` | selection | not accepted | none | none | terminal: Collapse the review selection |
+| `collapse-selection` | selection | not accepted | none | none | terminal: Collapse the review selection; media: Retain the native media selection; this surface has no document caret to collapse |
 | `flip-selection` | selection, mode | not accepted | none | none |  |
 | `expand-syntax-selection` | selection, mode | repeats | none | none |  |
 | `shrink-syntax-selection` | selection, mode | repeats | none | none |  |
@@ -1793,8 +1810,10 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `focus-directory-tree` | pane, view, mode | not accepted | none | none |  |
 | `directory-tree-up` | selection | not accepted | none | none |  |
 | `directory-tree-down` | selection | not accepted | none | none |  |
-| `directory-tree-left` | view, selection | not accepted | none | none |  |
-| `directory-tree-right` | view, selection | not accepted | none | none |  |
+| `directory-tree-collapse` | view, selection | not accepted | none | none |  |
+| `directory-tree-select-parent` | view, selection | not accepted | none | none |  |
+| `directory-tree-expand` | view, selection | not accepted | none | none |  |
+| `directory-tree-select-first-child` | view, selection | not accepted | none | none |  |
 | `directory-tree-first` | selection | not accepted | none | none |  |
 | `directory-tree-last` | selection | not accepted | none | none |  |
 | `directory-tree-page-up` | selection | not accepted | none | none |  |

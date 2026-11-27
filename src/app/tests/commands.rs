@@ -1060,7 +1060,10 @@ fn command_inventory_classifies_every_command_and_current_binding() {
         } else if shared_colon.contains(command) {
             CommandExposure::SharedColon
         } else if bindings.iter().any(|binding| {
-            binding.target == BindingTarget::Editor(*command)
+            binding
+                .program
+                .iter()
+                .any(|action| action.target() == BindingTarget::Editor(*command))
                 && binding.availability == BindingAvailability::Implemented
         }) || crate::keymap::default_keymap()
             .all_context_actions()
@@ -1108,14 +1111,14 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .iter()
             .filter(|exposure| **exposure == CommandExposure::ConfigurableOnly)
             .count(),
-        15
+        14
     );
     assert_eq!(
         exposures
             .iter()
             .filter(|exposure| **exposure == CommandExposure::Bound)
             .count(),
-        EditorCommand::ALL.len() - INTERNAL_EDITOR_COMMANDS.len() - 73
+        EditorCommand::ALL.len() - INTERNAL_EDITOR_COMMANDS.len() - 72
     );
 
     for spec in COMMANDS {

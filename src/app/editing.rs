@@ -2019,14 +2019,8 @@ impl App {
         }
     }
 
-    pub(super) fn toggle_select_mode(&mut self) {
-        if self.mode == Mode::Select {
-            self.mode = Mode::Normal;
-            let selection = self.active().selection.collapse();
-            self.active_mut().replace_selection(selection);
-        } else {
-            self.mode = Mode::Select;
-        }
+    pub(super) fn enter_select_mode(&mut self) {
+        self.mode = Mode::Select;
     }
 
     pub(super) fn select_all(&mut self) {

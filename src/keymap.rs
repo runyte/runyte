@@ -400,10 +400,12 @@ impl Binding {
 
     /// Whether this binding invokes exactly its target, without arguments.
     pub fn is_plain_action(&self) -> bool {
-        match self.program.as_slice() {
-            [actions::Action::Target(target)] => self.target == *target,
-            [actions::Action::Editor(command)] => self.target == BindingTarget::Editor(*command),
-            [actions::Action::Invocation(invocation)] => self
+        match self.program.steps() {
+            [program::Step::Action(actions::Action::Target(target))] => self.target == *target,
+            [program::Step::Action(actions::Action::Editor(command))] => {
+                self.target == BindingTarget::Editor(*command)
+            }
+            [program::Step::Action(actions::Action::Invocation(invocation))] => self
                 .target
                 .invocation()
                 .as_ref()
@@ -1319,6 +1321,94 @@ fn modal_program(
     binding
 }
 
+fn conditional_binding(
+    mut binding: Binding,
+    program: program::Program,
+    description: &'static str,
+) -> Binding {
+    binding.program = program;
+    binding.description = description.into();
+    binding
+}
+
+fn select_toggle(sequence: Key) -> Binding {
+    conditional_binding(
+        modal(sequence, EditorCommand::EnterSelectMode),
+        program::Program::conditional(
+            program::Condition::Mode(Mode::Select),
+            program::Program::new(vec![
+                actions::Action::Editor(EditorCommand::CollapseSelection),
+                actions::Action::Invocation(CommandInvocation::mode_entry(Mode::Normal)),
+            ])
+            .unwrap(),
+            program::Program::single(EditorCommand::EnterSelectMode.into()),
+        ),
+        "Toggle Select; collapse when leaving",
+    )
+}
+
+fn tree_toggle_program(open: EditorCommand) -> program::Program {
+    use program::{Condition as C, Program as P};
+    P::conditional(
+        C::TreeEntryIsDirectory,
+        P::conditional(
+            C::TreeEntryExpanded,
+            P::single(EditorCommand::DirectoryTreeCollapse.into()),
+            P::single(EditorCommand::DirectoryTreeExpand.into()),
+        ),
+        P::single(open.into()),
+    )
+}
+
+fn tree_open_binding(sequence: impl Into<KeySequence>, command: EditorCommand) -> Binding {
+    conditional_binding(
+        directory_tree(sequence, command),
+        tree_toggle_program(command),
+        match command {
+            EditorCommand::DirectoryTreeVertical => "Open in a vertical split or toggle directory",
+            EditorCommand::DirectoryTreeHorizontal => {
+                "Open in a horizontal split or toggle directory"
+            }
+            _ => "Open or expand the selected tree entry",
+        },
+    )
+}
+
+fn tree_left_binding(sequence: Key) -> Binding {
+    use program::{Condition as C, Program as P};
+    let parent = P::single(EditorCommand::DirectoryTreeSelectParent.into());
+    conditional_binding(
+        directory_tree(sequence, EditorCommand::DirectoryTreeCollapse),
+        P::conditional(
+            C::TreeEntryIsRoot,
+            parent.clone(),
+            P::conditional(
+                C::TreeEntryExpanded,
+                P::single(EditorCommand::DirectoryTreeCollapse.into()),
+                parent,
+            ),
+        ),
+        "Collapse or select the parent directory",
+    )
+}
+
+fn tree_right_binding(sequence: Key) -> Binding {
+    use program::{Condition as C, Program as P};
+    conditional_binding(
+        directory_tree(sequence, EditorCommand::DirectoryTreeExpand),
+        P::conditional(
+            C::TreeEntryIsDirectory,
+            P::conditional(
+                C::TreeEntryExpanded,
+                P::single(EditorCommand::DirectoryTreeSelectFirstChild.into()),
+                P::single(EditorCommand::DirectoryTreeExpand.into()),
+            ),
+            P::from_steps(vec![]).unwrap(),
+        ),
+        "Expand or select the first child",
+    )
+}
+
 fn primary_modal(sequence: impl Into<KeySequence>, target: impl Into<BindingTarget>) -> Binding {
     Binding::implemented(MODAL, sequence, target)
 }
@@ -1490,7 +1580,7 @@ fn built_in_bindings() -> Vec<Binding> {
         modal(Key::ctrl('c'), Command::ToggleComments),
         modal_then_mode(Key::char('d'), Command::CutSelection, Mode::Normal),
         modal_then_mode(Key::char('c'), Command::CutSelectionForChange, Mode::Insert),
-        modal(Key::char('v'), Command::EnterSelectMode),
+        select_toggle(Key::char('v')),
         modal(Key::char('x'), Command::SelectLine),
         modal(Key::char('X'), Command::ExtendLineAbove),
         modal_then_mode(Key::char('%'), Command::SelectAll, Mode::Select),
@@ -2225,9 +2315,17 @@ fn built_in_bindings() -> Vec<Binding> {
         // nothing about what they do. `Space m m` both starts and stops the
         // default recording, so nothing else has to be remembered to finish
         // one.
-        modal(
-            [Key::char(' '), Key::char('m'), Key::char('m')],
-            Command::RecordDefaultMacro,
+        conditional_binding(
+            modal(
+                [Key::char(' '), Key::char('m'), Key::char('m')],
+                Command::RecordDefaultMacro,
+            ),
+            program::Program::conditional(
+                program::Condition::RecordingMacro,
+                program::Program::single(Command::StopMacroRecording.into()),
+                program::Program::single(Command::RecordDefaultMacro.into()),
+            ),
+            "Record the default macro, or stop recording",
         ),
         modal(
             [Key::char(' '), Key::char('m'), Key::char('M')],
@@ -2808,8 +2906,8 @@ fn built_in_bindings() -> Vec<Binding> {
         directory_tree(Key::char('m'), Command::DirectoryTreeMove),
         directory_tree(Key::char('r'), Command::DirectoryTreeRename),
         directory_tree(Key::plain(KeyCode::Tab), Command::DirectoryTreeLegend),
-        directory_tree(Key::char('v'), Command::DirectoryTreeVertical),
-        directory_tree(Key::char('s'), Command::DirectoryTreeHorizontal),
+        tree_open_binding(Key::char('v'), Command::DirectoryTreeVertical),
+        tree_open_binding(Key::char('s'), Command::DirectoryTreeHorizontal),
         directory_tree(Key::char('1'), Command::DirectoryTreePane1),
         directory_tree(Key::char('2'), Command::DirectoryTreePane2),
         directory_tree(Key::char('3'), Command::DirectoryTreePane3),
@@ -2823,10 +2921,10 @@ fn built_in_bindings() -> Vec<Binding> {
         directory_tree(Key::plain(KeyCode::Down), Command::DirectoryTreeDown),
         directory_tree(Key::char('k'), Command::DirectoryTreeUp),
         directory_tree(Key::plain(KeyCode::Up), Command::DirectoryTreeUp),
-        directory_tree(Key::char('h'), Command::DirectoryTreeLeft),
-        directory_tree(Key::plain(KeyCode::Left), Command::DirectoryTreeLeft),
-        directory_tree(Key::char('l'), Command::DirectoryTreeRight),
-        directory_tree(Key::plain(KeyCode::Right), Command::DirectoryTreeRight),
+        tree_left_binding(Key::char('h')),
+        tree_left_binding(Key::plain(KeyCode::Left)),
+        tree_right_binding(Key::char('l')),
+        tree_right_binding(Key::plain(KeyCode::Right)),
         directory_tree(Key::plain(KeyCode::Home), Command::DirectoryTreeFirst),
         directory_tree(Key::plain(KeyCode::End), Command::DirectoryTreeLast),
         directory_tree(Key::plain(KeyCode::PageUp), Command::DirectoryTreePageUp),
@@ -2834,7 +2932,7 @@ fn built_in_bindings() -> Vec<Binding> {
             Key::plain(KeyCode::PageDown),
             Command::DirectoryTreePageDown,
         ),
-        directory_tree(Key::plain(KeyCode::Enter), Command::DirectoryTreeOpen),
+        tree_open_binding(Key::plain(KeyCode::Enter), Command::DirectoryTreeOpen),
         directory_tree(Key::plain(KeyCode::Escape), Command::DirectoryTreeClose),
         directory_tree(
             [Key::char(' '), Key::char('r')],
