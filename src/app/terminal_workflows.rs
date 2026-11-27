@@ -4,10 +4,10 @@
 
 // Application-module dependencies:
 use super::{
-    App, ContentAlignment, EditorCommand, GeneratedViewIdentity, HashSet, InputGrammar, JumpLabels,
-    KeyStroke, Mode, OsString, Path, PathBuf, PromptKind, Range, Register, Result, SearchMode,
-    SentTextUndo, TerminalId, TerminalOutput, TerminalRequest, TerminalSession,
-    default_terminal_program, program_label,
+    App, ContentAlignment, EditorCommand, GeneratedViewIdentity, HashSet, JumpLabels, KeyStroke,
+    Mode, OsString, Path, PathBuf, PromptKind, Range, Register, Result, SearchMode, SentTextUndo,
+    TerminalId, TerminalOutput, TerminalRequest, TerminalSession, default_terminal_program,
+    program_label,
 };
 
 impl App {
@@ -723,7 +723,7 @@ impl App {
                 session.scroll_to_live();
                 let _ = session;
                 self.mode = Mode::Normal;
-                self.grammar.reset();
+                self.reset_program_input();
                 self.dismiss_popups();
                 self.status("terminal normal · Ctrl-\\ enters review · i returns to input");
                 true

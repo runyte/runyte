@@ -418,6 +418,7 @@ fn configured_spellings_reach_about_manual_help_and_the_tutorial() {
 }
 
 mod key_actions;
+mod program_undo;
 
 mod pointer_scrolled_tabs;
 

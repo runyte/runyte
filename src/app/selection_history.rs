@@ -187,7 +187,12 @@ impl App {
             pane.program_selection_origin = None;
         }
         if outer && self.active_pane == origin_pane {
-            if self.awaiting_character_command().is_some() {
+            if self.awaiting_character_command().is_some()
+                || self
+                    .macro_replay
+                    .as_ref()
+                    .is_some_and(|replay| !replay.commands.is_empty())
+            {
                 self.active_mut().program_selection_origin = before;
             } else if self.mode == Mode::Command {
                 self.active_mut().program_selection_origin = None;
@@ -216,6 +221,12 @@ impl App {
             }
         }
         result
+    }
+
+    pub(super) fn finish_program_selection_history(&mut self) {
+        if let Some(origin) = self.active_mut().program_selection_origin.take() {
+            self.record_selection_action(origin);
+        }
     }
 
     fn record_selection_action(&mut self, before: Origin) {

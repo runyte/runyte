@@ -837,8 +837,16 @@ Singleton counted commands retain their cooperative replay scheduling.
 **Undo.**
 
 - A list of selection-only actions is one selection-history step.
-- Text undo follows each action's own checkpoints and Insert-mode grouping. A
-  list is not one undoable change.
+- A binding's text edits form one undo step in each buffer it edits, including
+  edits separated by character operands. Cancellation or failure keeps edits
+  already made together; later unrelated edits start a separate step.
+- A program ending in Insert or Replace keeps its group open for typing until
+  that mode is left. For example, `[delete-selection, enter-insert-mode]` and
+  the text typed afterward undo together.
+- Explicit `undo`, `redo` and `commit-undo-checkpoint` actions retain their
+  history boundaries. A save's whitespace cleanup belongs to the program.
+  Separate bindings replayed by a macro
+  remain separate steps, while a counted binding remains one step.
 
 Paste stays literal, and macros record the physical keys you press, as before.
 

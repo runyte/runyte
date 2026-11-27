@@ -3,7 +3,6 @@
 use super::{
     App, ApplyReport, EditorCommand, EntryKind, FsOperation, Mode, PromptKind, TreePromptAction,
 };
-use crate::input_grammar::InputGrammar;
 use crate::{
     input::{KeyCode, KeyStroke, Modifiers},
     layout::{Axis, Rect},
@@ -140,7 +139,7 @@ impl App {
                             digits: String::new(),
                             split,
                         });
-                        self.grammar.reset();
+                        self.reset_program_input();
                     } else {
                         self.open_tree_destination(
                             self.directory_tree.selected.clone(),
@@ -311,7 +310,7 @@ impl App {
             self.directory_tree_previous_mode = self.mode;
             self.mode = Mode::Normal;
             self.directory_tree.focused = true;
-            self.grammar.reset();
+            self.reset_program_input();
         }
     }
 

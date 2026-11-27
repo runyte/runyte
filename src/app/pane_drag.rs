@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 
 use super::{
-    App, Axis, Edge, InputGrammar, Layout, PointerButton, PointerDrag, PointerEvent,
-    PointerEventKind, PreparedView, Rect, pointer_pane, pointer_resize_pair, rect_contains,
+    App, Axis, Edge, Layout, PointerButton, PointerDrag, PointerEvent, PointerEventKind,
+    PreparedView, Rect, pointer_pane, pointer_resize_pair, rect_contains,
 };
 
 /// Columns along the left and right of the layout that lay a pane along
@@ -172,7 +172,7 @@ impl App {
             unreachable!("pane action requires button down")
         };
         self.pane_pointer_button = Some(button);
-        self.grammar.reset();
+        self.reset_program_input();
         self.jump = None;
         if let Some(maximized) = self.maximized {
             self.action_failed(format!(

@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::{App, CommandOutcome, Mode};
-use crate::input_grammar::InputGrammar;
 use crate::{
     command::{CommandId, CommandInvocation, InvocationParameters},
     keymap::{Binding, BindingTarget, KeySequence, Keymap},
@@ -260,7 +259,7 @@ impl App {
                 ),
         );
         self.configured_keymaps = Some(maps);
-        self.grammar.reset();
+        self.reset_program_input();
     }
 
     pub fn parse_command(

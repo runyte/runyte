@@ -3,7 +3,7 @@
 //! Persistent-session discovery, selection, preview, and lifecycle requests.
 
 // Application-module dependencies:
-use super::{App, InputGrammar, PathBuf, WorkspaceSwitchRequest, WorkspaceSwitchTarget};
+use super::{App, PathBuf, WorkspaceSwitchRequest, WorkspaceSwitchTarget};
 #[cfg(any(unix, windows))]
 use super::{
     ListAction, ListPicker, PickerItem, WorkspaceEvent, WorkspaceServiceHandle,
@@ -1738,7 +1738,7 @@ impl App {
             previous_mode: self.mode,
         });
         self.session_action_menu = None;
-        self.grammar.reset();
+        self.reset_program_input();
         self.session_navigation.generation = self.session_navigation.generation.wrapping_add(1);
         self.session_navigation.worktrees.clear();
         #[cfg(unix)]

@@ -1326,7 +1326,7 @@ impl App {
             };
         if activate {
             if matches!(previous_mode, Mode::Insert | Mode::Replace) {
-                self.buffers[previous_buffer].commit_undo_group();
+                self.commit_edit_checkpoint(previous_buffer);
             }
             // The inherited mode belonged to the source. The activated wait
             // buffer starts from its own caret in Normal mode.
@@ -1599,7 +1599,7 @@ impl App {
             !self.buffers[buffer].is_directory(),
             "directory buffers require a confirmed filesystem plan"
         );
-        self.buffers[buffer].commit_undo_group();
+        self.commit_edit_checkpoint(buffer);
         match self.save_buffer_with_outcome(buffer, None, false)? {
             SaveDisposition::Written => Ok(()),
             SaveDisposition::NotWritten => bail!("{}", self.status),
@@ -1875,7 +1875,7 @@ impl App {
     pub(super) fn save(&mut self, path: Option<PathBuf>, replace: bool) -> Result<()> {
         let buffer_id = self.active().buffer;
         if self.buffers[buffer_id].provider().is_none() {
-            self.buffers[buffer_id].commit_undo_group();
+            self.commit_edit_checkpoint(buffer_id);
         }
         self.save_buffer(buffer_id, path, replace)
     }
@@ -2112,11 +2112,11 @@ impl App {
         &mut self,
         buffer_id: usize,
     ) -> crate::buffer::DocumentSave {
-        self.buffers[buffer_id].commit_undo_group();
+        self.commit_edit_checkpoint(buffer_id);
         if self.config.editor.trim_trailing_whitespace {
             self.trim_trailing_whitespace(buffer_id);
         }
-        self.buffers[buffer_id].commit_undo_group();
+        self.commit_edit_checkpoint(buffer_id);
         self.buffers[buffer_id]
             .prepare_document_save()
             .expect("validated document save")
@@ -2178,12 +2178,12 @@ impl App {
                 && current.version == preview.snapshot.version,
             "Resource save baseline changed after overwrite review"
         );
-        self.buffers[buffer_id].commit_undo_group();
+        self.commit_edit_checkpoint(buffer_id);
         if !preview.hooks.is_empty() {
             let applied = self.apply_to_buffer(buffer_id, &preview.hooks);
             debug_assert!(applied, "validated provider save hooks must apply");
         }
-        self.buffers[buffer_id].commit_undo_group();
+        self.commit_edit_checkpoint(buffer_id);
         debug_assert!(
             self.buffers[buffer_id]
                 .text()
@@ -2206,11 +2206,11 @@ impl App {
         );
         // Validate before applying hooks: rejected writes leave text untouched.
         self.buffers[buffer_id].prepare_provider_save()?;
-        self.buffers[buffer_id].commit_undo_group();
+        self.commit_edit_checkpoint(buffer_id);
         if self.config.editor.trim_trailing_whitespace {
             self.trim_trailing_whitespace(buffer_id);
         }
-        self.buffers[buffer_id].commit_undo_group();
+        self.commit_edit_checkpoint(buffer_id);
         self.buffers[buffer_id].prepare_provider_save()
     }
 
