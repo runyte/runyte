@@ -46,14 +46,15 @@ impl<'de, T: Deserialize<'de>> Deserialize<'de> for Ordered<T> {
     }
 }
 type ModeTable = Ordered<Ordered<BindingDef>>;
-type ScopeTable = Ordered<ModeTable>;
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct Preset {
     #[serde(default)]
-    bind: ModeTable,
+    keys: Tables,
     #[serde(default)]
-    scopes: ScopeTable,
+    modes: mode_graph::Definitions,
+    #[serde(default)]
+    buffer_types: mode_graph::BufferTypes,
     #[serde(default)]
     namespaces: Vec<Namespace>,
     #[serde(default)]
@@ -66,8 +67,6 @@ struct Preset {
 struct Tables {
     #[serde(default)]
     bind: ModeTable,
-    #[serde(default)]
-    scopes: ScopeTable,
 }
 #[derive(Debug, PartialEq)]
 enum BindingDef {
@@ -148,7 +147,7 @@ enum StepDef {
 #[serde(deny_unknown_fields)]
 struct Enter {
     action: String,
-    arg: Mode,
+    arg: String,
 }
 #[derive(Deserialize, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -230,7 +229,7 @@ struct BindingMap {
     alias_modes: Option<Vec<Mode>>,
     platforms: Option<Vec<Platform>>,
     action: Option<String>,
-    arg: Option<Mode>,
+    arg: Option<String>,
     command: Option<String>,
     argument: Option<String>,
     #[serde(rename = "if")]
@@ -393,19 +392,6 @@ pub(super) fn has_stage5_steps(value: &Value) -> bool {
 }
 pub(super) const STAGE5_DIAGNOSTIC: &str =
     "mode-enter and conditional steps are reserved for embedded presets until stage 5";
-fn mode(name: &str) -> Result<Mode, String> {
-    [
-        Mode::Normal,
-        Mode::Select,
-        Mode::Insert,
-        Mode::Replace,
-        Mode::Command,
-        Mode::List,
-    ]
-    .into_iter()
-    .find(|m| actions::mode_name(*m) == name)
-    .ok_or_else(|| format!("unknown mode {name}"))
-}
 fn modes(values: &[Mode]) -> Result<&'static [Mode], String> {
     match values {
         [Mode::Normal, Mode::Select] => Ok(MODAL),
@@ -458,17 +444,20 @@ fn program(steps: &[StepDef], depth: usize) -> Result<program::Program, String> 
                     })
                 }
                 StepDef::Enter(Enter { action, arg }) => {
-                    if action != "mode-enter"
-                        || !matches!(
-                            arg,
-                            Mode::Normal | Mode::Select | Mode::Insert | Mode::Replace
-                        )
-                    {
+                    if action != "mode-enter" {
                         return Err("invalid mode-enter action/arg".into());
                     }
-                    S::Action(actions::Action::Invocation(CommandInvocation::mode_entry(
-                        *arg,
-                    )))
+                    mode_graph::valid_name(arg)?;
+                    S::Action(actions::Action::Invocation(
+                        CommandInvocation::from_parts(
+                            crate::command::CommandId::Editor(
+                                crate::command::EditorCommand::ModeEnter,
+                            ),
+                            crate::command::InvocationParameters::OptionalText(Some(arg.clone())),
+                            crate::command::CommandExecutionContext::default(),
+                        )
+                        .map_err(|error| error.to_string())?,
+                    ))
                 }
                 StepDef::Command(command) => {
                     if command.command == "mode-enter" {
@@ -498,6 +487,23 @@ fn program(steps: &[StepDef], depth: usize) -> Result<program::Program, String> 
         })
         .collect::<Result<Vec<_>, String>>()?;
     Program::from_steps(steps).map_err(str::to_owned)
+}
+fn validate_entry_targets(
+    program: &program::Program,
+    graph: &mode_graph::ModeGraph,
+) -> Result<(), String> {
+    for action in program.iter() {
+        if let actions::Action::Invocation(invocation) = action
+            && invocation.id() == CommandId::Editor(EditorCommand::ModeEnter)
+            && let crate::command::InvocationParameters::OptionalText(Some(name)) =
+                invocation.parameters()
+            && (matches!(name.as_str(), "list" | "session-manager")
+                || (mode_graph::EditingRole::named(name).is_none() && graph.id(name).is_none()))
+        {
+            return Err(format!("unknown editor mode {name:?}"));
+        }
+    }
+    Ok(())
 }
 fn binding(
     value: &'static BindingDef,
@@ -556,44 +562,67 @@ fn binding(
 }
 fn bindings(
     bind: &'static ModeTable,
-    scopes: &'static ScopeTable,
+    tables: &named::Tables,
     platform: Platform,
 ) -> Result<Vec<Binding>, String> {
-    let mut result: Vec<Binding> = Vec::new();
-    let mut previous: HashMap<(BindingScope, Mode, &str), (&BindingDef, usize)> = HashMap::new();
-    let mut append = |scope, table: &'static ModeTable| -> Result<(), String> {
-        for (name, entries) in &table.0 {
-            let mode = mode(name)?;
-            for (key, value) in &entries.0 {
-                if let BindingDef::Detailed(detail) = value
-                    && detail
-                        .platforms
-                        .as_ref()
-                        .is_some_and(|allowed| !allowed.contains(&platform))
-                {
+    let mut result = Vec::new();
+    for (name, entries) in &bind.0 {
+        let id = tables
+            .graph
+            .id(name)
+            .ok_or_else(|| format!("missing mode {name}"))?;
+        let (scope, active) = if name == "list" {
+            (BindingScope::Global, vec![Mode::List])
+        } else if name == "session-manager" {
+            (BindingScope::SessionManager, vec![Mode::List])
+        } else {
+            let mut owners = Vec::new();
+            let mut active = Vec::new();
+            for &scope in BindingScope::ALL {
+                if scope == BindingScope::SessionManager {
                     continue;
                 }
-                let paired = match mode {
-                    Mode::Select => Some(Mode::Normal),
-                    Mode::Replace => Some(Mode::Insert),
-                    _ => None,
-                };
-                if let Some(prior) = paired.and_then(|m| previous.get(&(scope, m, key.as_str())))
-                    && prior.0 == value
-                {
-                    result[prior.1].modes = if mode == Mode::Select { MODAL } else { INSERT };
-                    continue;
+                for mode in [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace] {
+                    if tables.mode_for(mode, scope).is_some_and(|start| {
+                        tables.graph.chain(start).any(|ancestor| ancestor == id)
+                    }) {
+                        if tables.mode_for(mode, scope) == Some(id) && !owners.contains(&scope) {
+                            owners.push(scope);
+                        }
+                        if !active.contains(&mode) {
+                            active.push(mode);
+                        }
+                    }
                 }
-                let binding = binding(value, scope, mode, key)?;
-                previous.insert((scope, mode, key.as_str()), (value, result.len()));
-                result.push(binding);
             }
+            (
+                if owners.len() == 1 {
+                    owners[0]
+                } else {
+                    BindingScope::Global
+                },
+                active,
+            )
+        };
+        let active = modes(&active)?;
+        let first = *active
+            .first()
+            .ok_or_else(|| format!("preset mode {name} is unreachable"))?;
+        for (key, value) in &entries.0 {
+            if let BindingDef::Detailed(detail) = value
+                && detail
+                    .platforms
+                    .as_ref()
+                    .is_some_and(|allowed| !allowed.contains(&platform))
+            {
+                continue;
+            }
+            let mut binding = binding(value, scope, first, key)?;
+            validate_entry_targets(&binding.program, &tables.graph)?;
+            binding.modes = active;
+            binding.binding_mode = Some(name.as_str().into());
+            result.push(binding);
         }
-        Ok(())
-    };
-    append(BindingScope::Global, bind)?;
-    for (name, table) in &scopes.0 {
-        append(scope(name)?, table)?;
     }
     Ok(result)
 }
@@ -607,18 +636,34 @@ fn compile_for_platform(
 ) -> Result<Keymap, String> {
     #[cfg(feature = "startup-timing")]
     let timer = std::time::Instant::now();
-    let mut bindings = bindings(&document.bind, &document.scopes, platform)?;
+    let binding_modes = document
+        .keys
+        .bind
+        .0
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .collect::<Vec<_>>();
+    let graph = mode_graph::ModeGraph::compile(
+        &document.modes,
+        &binding_modes,
+        &[],
+        &document.buffer_types,
+        &named::required_buffer_types(),
+    )?;
+    let tables = named::Tables {
+        graph,
+        definitions: document.modes.clone(),
+        buffer_types: document.buffer_types.clone(),
+        removed: HashMap::new(),
+        plugin_modes: Default::default(),
+    };
+    let mut bindings = bindings(&document.keys.bind, &tables, platform)?;
     if fast {
-        let replacements = self::bindings(
-            &document.fast_pane.bind,
-            &document.fast_pane.scopes,
-            platform,
-        )?;
+        let replacements = self::bindings(&document.fast_pane.bind, &tables, platform)?;
         bindings.retain(|b| {
-            b.scope != BindingScope::Global
-                || !replacements
-                    .iter()
-                    .any(|r| r.sequence == b.sequence && r.modes.iter().any(|m| b.is_active_in(*m)))
+            !replacements
+                .iter()
+                .any(|r| r.sequence == b.sequence && r.binding_mode == b.binding_mode)
         });
         bindings.extend(replacements);
     }
@@ -665,10 +710,15 @@ fn compile_for_platform(
     );
     #[cfg(feature = "startup-timing")]
     let timer = std::time::Instant::now();
-    let map = Keymap::with_namespaces(bindings, namespaces)
-        .map_err(|e| e.to_string())?
-        .with_context_actions(contexts)
-        .with_fast_pane_keys_enabled(fast);
+    let mut map = Keymap::new_with_overrides(
+        bindings,
+        super::effective::Overrides(Default::default(), Some(Arc::new(tables))),
+    )
+    .map_err(|e| e.to_string())?
+    .with_context_actions(contexts)
+    .with_fast_pane_keys_enabled(fast);
+    map.namespaces = namespaces;
+    map.record_identity_spellings();
     #[cfg(feature = "startup-timing")]
     TIMINGS[2].store(
         timer.elapsed().as_nanos() as u64,
@@ -682,7 +732,9 @@ mod tests {
     use super::*;
     fn parsed_program(source: &str) -> Result<program::Program, String> {
         let steps: Vec<StepDef> = serde_yaml::from_str(source).map_err(|e| e.to_string())?;
-        program(&steps, 0)
+        let program = program(&steps, 0)?;
+        validate_entry_targets(&program, keymap_for(false).mode_graph().unwrap())?;
+        Ok(program)
     }
 
     #[test]
@@ -699,6 +751,47 @@ mod tests {
                 let map = compile_for_platform(&DOCUMENT, fast, platform).unwrap();
                 validate::assert_valid(&map);
                 parity::assert_registry(&map, fast, name);
+                for &scope in BindingScope::ALL {
+                    for mode in [
+                        Mode::Normal,
+                        Mode::Select,
+                        Mode::Insert,
+                        Mode::Replace,
+                        Mode::List,
+                    ] {
+                        let legacy = super::super::effective::indices(
+                            &map.bindings,
+                            &super::super::effective::Overrides::default(),
+                            mode,
+                            scope,
+                        );
+                        let named = super::super::effective::indices(
+                            &map.bindings,
+                            &map.overrides,
+                            mode,
+                            scope,
+                        );
+                        let rows = |indices: Vec<usize>| {
+                            let mut rows = indices
+                                .into_iter()
+                                .map(|i| {
+                                    let binding = &map.bindings[i];
+                                    format!(
+                                        "{} {:?} {:?}",
+                                        binding.sequence, binding.target, binding.program
+                                    )
+                                })
+                                .collect::<Vec<_>>();
+                            rows.sort();
+                            rows
+                        };
+                        assert_eq!(
+                            rows(named),
+                            rows(legacy),
+                            "{name} fast={fast} {scope:?} {mode:?}"
+                        );
+                    }
+                }
                 preferred.extend(parity::preferred_rows(&map, fast));
             }
             parity::assert_preferred(preferred);
@@ -854,7 +947,7 @@ mod tests {
             ] {
                 for source in [
                     format!("bind: {{normal: {{F6: {step}}}}}"),
-                    format!("scopes: {{directory: {{normal: {{F6: {step}}}}}}}"),
+                    format!("bind: {{directory: {{F6: {step}}}}}"),
                 ] {
                     let result =
                         configured::compile(&serde_yaml::from_str(&source).unwrap(), &base);

@@ -1376,7 +1376,7 @@ fn explorer_refuses_to_replace_a_selection_with_directory_entries() {
     let config = Config {
         keys: Some(
             serde_yaml::from_str(
-                "bind:\n  normal:\n    F5: replace-with-register\n  select:\n    F6: paste-after\n",
+                "bind:\n  directory:\n    F5: replace-with-register\n  directory-select:\n    F6: paste-after\n",
             )
             .unwrap(),
         ),
@@ -1414,10 +1414,7 @@ fn explorer_d_records_a_cut_and_delete_selection_records_nothing() {
     fs::write(source.join("other.txt"), "deleted content").unwrap();
     let config = Config {
         keys: Some(
-            serde_yaml::from_str(
-                "bind:\n  normal:\n    F5: delete-selection\n  select:\n    F5: delete-selection\n",
-            )
-            .unwrap(),
+            serde_yaml::from_str("bind:\n  directory:\n    F5: delete-selection\n").unwrap(),
         ),
         ..Config::default()
     };

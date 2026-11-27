@@ -1324,8 +1324,12 @@ impl WorkspaceHost {
             && let Some(mode) = self.app.key_hint_mode()
         {
             let capabilities = self.app.command_capabilities();
-            let mut hint_rows =
-                key_hints.rows_in(self.app.keymap(), mode, self.app.key_binding_scope());
+            let mut hint_rows = key_hints.rows_named(
+                self.app.keymap(),
+                mode,
+                self.app.key_binding_scope(),
+                self.app.current_binding_mode(),
+            );
             self.app.present_plugin_key_hints(&mut hint_rows);
             for row in &mut hint_rows {
                 row.apply_capabilities(&capabilities);

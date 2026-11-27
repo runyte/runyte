@@ -29,8 +29,20 @@ struct BindingSummary {
 }
 impl BindingIndex {
     pub fn new(map: &Keymap, mode: Mode, scope: BindingScope) -> Self {
+        Self::new_named(map, mode, scope, map.named_mode_for(mode, scope))
+    }
+    pub fn new_named(
+        map: &Keymap,
+        mode: Mode,
+        scope: BindingScope,
+        named: Option<crate::keymap::mode_graph::ModeId>,
+    ) -> Self {
         let mut index = Self::default();
-        for b in map.bindings_for_scope(mode, scope) {
+        let bindings: Vec<_> = match named {
+            Some(id) => map.bindings_for_named_mode(id).collect(),
+            None => map.bindings_for_scope(mode, scope).collect(),
+        };
+        for b in bindings {
             if b.is_plain_action() {
                 let entry = index.0.entry(b.target.id()).or_default();
                 entry.key_count += 1;
@@ -292,20 +304,17 @@ pub fn binding_yaml(
     entries.insert(Value::String(binding.sequence.to_string()), value);
     let mut modes = Mapping::new();
     modes.insert(
-        Value::String(actions::mode_name(mode).into()),
+        Value::String(
+            binding
+                .binding_mode
+                .as_deref()
+                .unwrap_or(actions::mode_name(mode))
+                .into(),
+        ),
         Value::Mapping(entries),
     );
     let mut section = Mapping::new();
-    if binding.scope == BindingScope::Global && mode != Mode::List {
-        section.insert(Value::String("bind".into()), Value::Mapping(modes));
-    } else {
-        let mut scopes = Mapping::new();
-        scopes.insert(
-            Value::String(binding.scope.name().into()),
-            Value::Mapping(modes),
-        );
-        section.insert(Value::String("scopes".into()), Value::Mapping(scopes));
-    }
+    section.insert(Value::String("bind".into()), Value::Mapping(modes));
     let compiled = crate::keymap::configured::compile(&Value::Mapping(section.clone()), map);
     if !compiled.errors.is_empty() {
         return Err(format!(

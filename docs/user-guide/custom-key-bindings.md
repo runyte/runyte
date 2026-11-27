@@ -12,7 +12,8 @@ The `keys` section configures keyboard actions and pane gestures:
 | `keys.defaults` | `false` starts `bind` from an empty keyboard instead of Runyte's. See [Without the built-in keys](custom-key-bindings.md#without-the-built-in-keys). |
 | `keys.pointer` | Replaces editor, pane, media, and preview pointer gestures. |
 | `keys.ui` | Replaces actions in prompts, menus, overlays, confirmations, and native controls. |
-| `keys.scopes` | Assigns or removes actions in individual editor views and result lists. |
+| `modes` | Declares mode inheritance and the policy for unbound keys. |
+| `buffer-types` | Maps each buffer type to its starting mode and editing roles. |
 
 - `keys` is read from the configuration file and from
   [`keybinds.d/`](configuration.md#themes-and-key-bindings-in-their-own-files) beside it. The
@@ -143,110 +144,121 @@ keys:
 - bind a command that has no default key,
 - move most direct single-key editing bindings.
 
-### View and list bindings
+### Named modes and buffer types
 
-`keys.scopes.<scope>.<mode>` assigns one supported action name to a key, or
-`null` to suppress that exact binding in that view. Other views and modes keep
-their bindings. Suppression also hides inherited bindings. It does not reveal
-the global action underneath, and does not remove longer sequences beginning
-with the same key.
+A binding lives in `keys.bind.<mode>`. Lookup starts in the active named mode,
+then follows its single `inherits` parent until a binding is found. There is no
+second global or view lookup. A binding table implicitly declares its mode,
+even when the table is empty. `common` is an ordinary shared parent; put a
+binding there to make it available across the built-in views.
 
 ```yaml
+modes:
+  writing:
+    inherits: normal
+    unbound-keys: report
+buffer-types:
+  markdown:
+    normal: writing
+    select: markdown-select
+    insert: insert
+    replace: replace
 keys:
-  scopes:
-    markdown:
-      normal:
-        j: move-up
-        k: null
-    global:
-      list:
-        F9: list-next
-        Ctrl-n: null
+  bind:
+    common:
+      Ctrl-s: save
+    writing:
+      j: move-up
+      k: null
+    list:
+      F9: list-next
+      Ctrl-n: null
     session-manager:
-      list:
-        F8: list-previous
+      F8: list-previous
 ```
 
-Editor scope names are `markdown`, `directory`, `directory-tree`, `settings`,
-`media`, `pdf-pages`, `help`, `commit-message`, `diff`, `workspace-search`,
-`terminal`, and the Git scopes: `git-status`, `git-branches`, `git-conflicts`,
-`git-conflict-file`, `git-conflict-markdown`, `git-merge-review`,
-`git-merge-detail`, `git-merge-input`, `git-worktrees`, `git-comparison`,
-`git-revision-diff`, `git-log`, `git-network`, `git-blame`, and `git-stash`.
-Ordinary editor scopes support `normal`, `select`, `insert`, and `replace`.
-The merge review scopes currently dispatch `normal` only. Terminal `replace`
-is unavailable. Terminal `insert` admits terminal-safe mode, pane, clipboard,
-and persistent-session actions. For example:
+An exact `null` suppresses that key throughout the inherited chain. It does
+not reveal the parent binding or remove longer sequences beginning with the
+same key. A child binding replaces the inherited key and its longer sequences.
+Only one parent is supported; cycles, unknown parents and unknown role targets
+are rejected. The effective graph has at most 256 modes, names have at most
+64 ASCII letters, digits, hyphens or underscores, and inheritance has at most
+64 levels.
+
+`buffer-types` entries map `normal`, `select`, `insert` and `replace` roles to
+named modes. The `normal` role supplies the starting mode. The scalar shorthand
+`markdown: writing` supplies that normal role and uses shared `select`, `insert`
+and `replace` modes when they exist. An explicit mapping supplies exactly the
+listed roles. Entering an omitted role is unavailable and stops the binding.
+Internal mode-entry steps resolve role names through this mapping; other declared
+names enter that mode directly. Until editing properties arrive, a named mode
+uses the semantics of its mapped role, or the nearest mapped ancestor; an
+unmapped root uses Normal semantics. Terminal activation preserves live input
+or review: its Insert role is live input and its Normal role is review.
+
+`unbound-keys` accepts `report`, `pass-to-buffer` and `overwrite`. It defaults
+to `report`; the built-in Insert and Replace modes declare the corresponding
+text-input policies. Properties belong to the mode; only key lookup inherits.
+Mode declarations merge property by property with the preset, while a supplied
+buffer-type role mapping replaces that type's entire mapping. Reload retains a
+submode by name only while its editing role stays the same; otherwise it returns
+to the current buffer type's mapped role. If focus, reload or restoration carries
+a role the destination omits, it falls back to Normal. The UI-owned `list` and
+`session-manager` tables cannot be editing-role targets or parents of editor
+modes. A shared table may contain an action
+available in only some inheriting roles; execution still checks availability
+in the active role before that action runs.
+
+The preset's `normal` inherits shared modal keys, and `select` inherits `normal`.
+Markdown inherits `normal`; other special views have their own named modes.
+For example, `keys.bind.markdown` changes Markdown normal and its inheriting
+Select mode, while `keys.bind.markdown-select` changes Select alone. Terminal
+input uses `keys.bind.terminal-insert`:
 
 ```yaml
 keys:
-  scopes:
-    terminal:
-      insert:
-        F6: enter-normal-mode
-        Ctrl-4: null
-        'Ctrl-\': null
-        'F7 h': focus-window-left
+  bind:
+    terminal-insert:
+      F6: enter-normal-mode
+      Ctrl-4: null
+      'Ctrl-\': null
+      'F7 h': focus-window-left
 ```
 
-Ordinary keys still reach the child. An assigned action claims its first key
-and any following sequence. An explicit persistent-session action also claims
-its key outside a persistent session and tells you when it is unavailable. A
-`null` removes only the exact binding and its legacy capture policy. Longer
-surviving bindings still claim their prefix. Removing `Ctrl-w` alone therefore
-does not remove the window namespace. Unmodified Escape still reaches the child
-unless explicitly assigned. Global custom text-editing bindings remain excluded
-from Terminal Insert.
+Ordinary terminal keys still reach the child. An assigned action claims its
+first key and following sequence. A null removes the exact binding; surviving
+longer bindings retain their prefix. Built-in terminal input routing remains
+until the terminal command split. Terminal review and special views still
+apply their runtime action availability checks.
 
-Use `global.list` for ordinary result-list bindings and `session-manager.list`
-for overrides in the session manager. List bindings contain one key. List
-navigation actions are `list-next`, `list-previous`, `list-page-down`,
-`list-page-up`, `list-first`, `list-last`, `list-toggle-preview`,
-`list-clear-filter`, `list-close-target`, and `list-close`. Use `list-accept` to activate a row and
-`list-backspace` to delete the last filter character. `list-open-actions` opens
-a row's actions. When no action menu applies, it cycles tags or moves to the
-next row. These three actions do nothing in reports. Their inherited Enter, Tab
-and Backspace bindings accept every modifier combination, preserving the
-original behavior. Scoped overrides replace or remove only the exact spelling.
-For example, `Enter: null` leaves `Shift-Enter` available. Empty-filter leader
-input follows the effective Escape action, including its removal. Nested action
-menus own their input separately. Numbered session choices remain structural
-input.
+Result lists use `keys.bind.list`; session-manager overrides use
+`keys.bind.session-manager`. List bindings have one key and support `list-next`,
+`list-previous`, `list-page-down`, `list-page-up`, `list-first`, `list-last`,
+`list-toggle-preview`, `list-clear-filter`, `list-close-target`, `list-close`,
+`list-accept`, `list-backspace` and `list-open-actions`. Exact modifier spellings
+are independent. Numbered session choices and nested action menus retain their
+own input ownership. `keys.ui.list-close` configures close confirmations.
 
-`Delete` (`Fn-Delete` on a compact Mac keyboard) invokes `list-close-target`
-in buffer, terminal and persistent-session lists. It closes the selected resource,
-whereas `list-close` dismisses the list. Backspace only edits the filter, including
-when it is empty. `list-clear-filter` has no default key; bind it if desired:
+The public step syntax is unchanged in this slice: action names, action lists,
+and supported command/argument forms remain available. Internal mode-entry and
+conditional forms are still reserved for embedded presets until stage 5.
+Prefixes have at most eight keys. Prompt, menu, overlay and native controls
+remain under `keys.ui`; they are not named editor modes.
 
-```yaml
-keys:
-  scopes:
-    global:
-      list:
-        Delete: null
-        F8: list-close-target
-        F9: list-clear-filter
-```
+### Upgrading to 0.5
 
-Close confirmations start on Cancel. Their selection, acceptance and cancellation
-keys are configurable under `keys.ui.list-close` (`next`, `previous`, `accept`,
-`cancel`). Repeated input cannot accept a close confirmation.
+`keys.scopes` has been removed and produces a diagnostic. Move each view table
+to its named mode under `keys.bind`: for example, `scopes.markdown.normal`
+becomes `bind.markdown`, `scopes.terminal.insert` becomes `bind.terminal-insert`,
+`scopes.global.list` becomes `bind.list`, and `scopes.session-manager.list`
+becomes `bind.session-manager`.
 
-`:help key-actions` includes the scoped action names and their modes.
-Actions must be supported by the selected view and mode. Scoped assignments
-currently take one action name, without arguments or action lists. Editor
-sequences may contain up to eight keys, including `Leader` and `Window`.
-Context-action Tab, overlay leader dismissal,
-and merge acknowledgment editing still belong to their existing input owners;
-assignments or removals that those handlers would bypass are rejected.
-
-Assignments apply simultaneously. Invalid scoped configuration rolls back the
-**whole `scopes` section**, while `bind`, `ui`, and `pointer` remain
-independent. A child override wins over inherited parents. If both Markdown and
-conflict-file scopes override the same key, `git-conflict-markdown` must decide
-explicitly, including by assigning `null`. Configuration fragments merge by
-scope, mode, and key. Existing scoped defaults remain with
-`keys.defaults: false`. That option still controls only global editor defaults.
+Existing `keys.bind.normal` syntax remains valid with new semantics: it changes
+text Normal and modes that explicitly inherit it, including Markdown. It no
+longer overlays every special view. Move bindings intended for every view to
+`keys.bind.common`. Check Select inheritance when translating old separate
+Normal and Select tables. `copy-key-binding` emits the named table that supplies
+the inspected key. Full preset export follows the public program syntax work.
 
 ### Binding actions
 
@@ -352,7 +364,7 @@ Configured cancellation matches its exact authored modifiers. Neither tree
 owner adds a Ctrl-c alias. Both preserve conditional leader cancellation and
 captured targets.
 
-Merge-review controls use `keys.scopes.git-merge-review`, `git-merge-detail`,
+Merge-review controls use `keys.bind.git-merge-review`, `git-merge-detail`,
 and `git-merge-input`. Acknowledgment editing uses `ui.merge-acknowledgment`
 with `backspace`, `delete`, `move-left`, and `move-right`. Literal text remains
 structural. Editing preserves the pending scoped key sequence and the existing
@@ -1431,9 +1443,9 @@ Select modes. Prompt and background effects must end a sequence; supplying promp
 
 #### Scoped actions
 
-Use one action name or null in `keys.scopes.<scope>.<mode>`. Ordinary editor
-scopes also support the applicable global actions above. These additional
-actions belong to the indicated owner; raw UI input still has its own scope.
+Use an action name or null in `keys.bind.<mode>`. Named modes also support
+the applicable shared actions above. These additional actions belong to the
+indicated buffer owner; raw UI input remains under `keys.ui`.
 
 ##### global
 
@@ -2200,7 +2212,7 @@ preceding editor input has been processed. Document previews still receive
 navigation before window shortcuts, and pasting keeps its existing preview
 dismissal behavior.
 
-Native document previews use part of your `scopes.media.normal` bindings:
+Native document previews use part of your `keys.bind.media` bindings:
 movement and scrolling, pages and half-pages, document start/end, zoom, reset
 zoom, copy, and return to source. Only a single implemented semantic action
 executes locally. Action chains, plugin commands, and other commands continue

@@ -284,7 +284,7 @@ impl App {
         self.dismiss_popups();
         self.reset_program_input();
         self.jump = None;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         self.pane_resize = Some(preview);
     }
 

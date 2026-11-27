@@ -272,6 +272,7 @@ impl FinderContentSource {
 // modules coordinate the lower-level owners imported above; they do not take
 // over Git processes, LSP transport, terminal emulation, buffer mutation, or
 // snapshot rendering from those existing boundaries.
+mod binding_modes;
 mod command_context;
 mod completion_support;
 mod config_reload;
@@ -510,6 +511,7 @@ struct MarkdownOrigin {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ProgramOwner {
     binding_generation: u64,
+    named_mode: Option<crate::keymap::mode_graph::ModeId>,
     buffer_revision: u64,
     selection_revision: u64,
     mode: Mode,
@@ -1874,6 +1876,7 @@ struct SettingPreview {
     original_theme_name: String,
     original_grammar: ActiveGrammar,
     original_mode: Mode,
+    original_binding_mode: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -2969,6 +2972,7 @@ pub struct App {
     /// Sidebar focus is independent of the ordinary pane layout.
     pub directory_tree: crate::directory_tree::DirectoryTree,
     directory_tree_previous_mode: Mode,
+    directory_tree_previous_binding_mode: Option<String>,
     directory_tree_geometry: Option<(Rect, Rect)>,
     /// The tree entry the last left press landed on, and when. A second
     /// press on the same entry soon enough opens it as Enter does.
@@ -2989,6 +2993,7 @@ pub struct App {
     /// again, or when the buffer goes away.
     pending_diff: Option<usize>,
     pub mode: Mode,
+    binding_mode: Option<binding_modes::ActiveMode>,
     /// The reversible overwrite trail owned by a live Replace-mode edit.
     replace_session: Option<ReplaceSession>,
     /// The live Insert session `a` opened. Escape then steps each caret back
@@ -3031,6 +3036,7 @@ pub struct App {
     /// from, so a command that needs to describe where the reader came from
     /// has to be told; nothing else can recover it.
     prompt_origin_mode: Mode,
+    prompt_origin_binding_mode: Option<String>,
     prompt_revision: u64,
     pub picker: Option<FilePicker>,
     /// The project finder's merged name/content coordinator. Directory-scoped
@@ -3817,7 +3823,7 @@ impl App {
             keymaps: configured_keymaps,
             errors: key_errors,
             rejected: key_rejection_count,
-        } = compile_configured_keymaps(config.keys.as_ref());
+        } = compile_configured_keymaps(&config);
         if !key_errors.is_empty() {
             status.push_str(&format!(
                 " · {} key binding entries rejected",
@@ -3887,10 +3893,12 @@ impl App {
             active_pane: 0,
             directory_tree: crate::directory_tree::DirectoryTree::new(project_root.clone()),
             directory_tree_previous_mode: initial_mode,
+            directory_tree_previous_binding_mode: None,
             directory_tree_geometry: None,
             directory_tree_click: None,
             maximized: None,
             mode: initial_mode,
+            binding_mode: None,
             replace_session: None,
             append_insert: None,
             list_alignments: Vec::new(),
@@ -3971,6 +3979,7 @@ impl App {
             media_requests: Default::default(),
             programs,
             prompt_origin_mode: Mode::Normal,
+            prompt_origin_binding_mode: None,
             prompt_revision: 0,
             project_root,
             state_root,
@@ -5350,14 +5359,17 @@ pub(crate) struct ConfiguredKeymaps {
 /// Startup and configuration reload share this so a binding accepted at one
 /// cannot be refused at the other, which is what keeps dispatch, help, and
 /// key hints reading the same registry after a reload.
-pub(crate) fn compile_configured_keymaps(section: Option<&serde_yaml::Value>) -> ConfiguredKeymaps {
+pub(crate) fn compile_configured_keymaps(config: &Config) -> ConfiguredKeymaps {
     let mut errors = Vec::new();
     let mut rejected = 0;
-    let keymaps = section.map(|section| {
+    let keymaps = (config.keys.is_some()
+        || config.modes.is_some()
+        || config.buffer_types.is_some())
+    .then(|| {
         let defaults = keymap_for(false);
         let fast = keymap_for(true);
-        let normal = crate::keymap::configured::compile(section, &defaults);
-        let fast = crate::keymap::configured::compile(section, &fast);
+        let normal = crate::keymap::configured::compile_configuration(config, &defaults);
+        let fast = crate::keymap::configured::compile_configuration(config, &fast);
         if normal.errors == fast.errors {
             errors.extend(normal.errors.iter().cloned());
         } else {

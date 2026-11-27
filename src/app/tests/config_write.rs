@@ -88,7 +88,7 @@ fn write_config_writes_the_whole_effective_configuration_to_a_given_path() {
     assert_eq!(written.editor.tab_width, 2);
     assert_eq!(written.theme.as_deref(), Some("mine"));
     assert_eq!(written.themes["mine"].accent, "#123456");
-    let keys = compile_configured_keymaps(written.keys.as_ref());
+    let keys = compile_configured_keymaps(&written);
     assert!(keys.errors.is_empty(), "{:?}", keys.errors);
     fs::remove_dir_all(directory).unwrap();
 }

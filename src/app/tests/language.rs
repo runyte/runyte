@@ -5066,3 +5066,25 @@ fn requested_completion_does_not_split_default_insert_undo() {
     app.execute_editor_command(EditorCommand::Undo).unwrap();
     assert_eq!(text(&app), "");
 }
+
+#[test]
+fn completion_does_not_request_or_open_overlay_when_insert_role_is_absent() {
+    let (mut app, _, mut queue) = rust_app("left\n");
+    ready(&mut app, Encoding::Utf8);
+    drain(&mut queue);
+    let config: Config = serde_yaml::from_str("buffer-types: {text: {normal: normal}}").unwrap();
+    let compiled =
+        crate::keymap::configured::compile_configuration(&config, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+    app.execute_editor_command(EditorCommand::TriggerCompletion)
+        .unwrap();
+    assert!(app.status_error, "{}", app.status);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.completion.is_none());
+    assert!(
+        drain(&mut queue)
+            .iter()
+            .all(|command| !matches!(command, LspCommand::Request { .. }))
+    );
+}

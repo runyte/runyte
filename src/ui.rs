@@ -5576,7 +5576,7 @@ fn draw_key_hints(
     let mode = app.key_hint_mode().unwrap_or(app.mode);
     let scope = app.key_binding_scope();
     let capabilities = app.command_capabilities();
-    let mut rows = key_hints.rows_in(app.keymap(), mode, scope);
+    let mut rows = key_hints.rows_named(app.keymap(), mode, scope, app.current_binding_mode());
     app.present_plugin_key_hints(&mut rows);
     for row in &mut rows {
         row.apply_capabilities(&capabilities);
@@ -7849,9 +7849,11 @@ mod tests {
         let mut host =
             crate::workspace::WorkspaceHost::new(App::new(Config::default(), None).unwrap());
         let mut hints = KeyHintState::default();
-        hints.observe(
+        hints.observe_named(
             crate::input::KeyStroke::char(' '),
             Mode::Normal,
+            host.app().key_binding_scope(),
+            host.app().current_binding_mode(),
             host.app().keymap(),
         );
         let frame = host.prepare_frame_with_hints(

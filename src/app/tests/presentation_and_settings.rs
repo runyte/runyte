@@ -773,7 +773,7 @@ fn right_click_uses_viewport_relative_tab_stops_after_horizontal_scroll() {
 #[test]
 fn terminal_paste_after_sends_the_register_and_keeps_the_mode_while_p_enters_insert() {
     let config = Config {
-        keys: Some(serde_yaml::from_str("bind:\n  normal:\n    F5: paste-after\n").unwrap()),
+        keys: Some(serde_yaml::from_str("bind:\n  terminal:\n    F5: paste-after\n").unwrap()),
         ..Config::default()
     };
     let mut app = App::new(config, None).unwrap();
@@ -3029,4 +3029,37 @@ fn inactive_theme_picker_previews_cancels_and_saves_null_without_changing_main_t
     fs::write(&path, "focus: {inactive_theme: missing-theme}\n").unwrap();
     assert!(Config::load(Some(&path)).is_err());
     fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_paste_refuses_missing_insert_role_before_sending() {
+    let config: Config = serde_yaml::from_str(
+        "buffer-types:\n  terminal: {normal: terminal, select: terminal-select}\n",
+    )
+    .unwrap();
+    let mut app = App::new(config, None).unwrap();
+    app.open_terminal(Some("/bin/cat".to_owned()));
+    let terminal = app.active_terminal().unwrap();
+    app.terminals.get_mut(terminal).unwrap().begin_review();
+    app.set_editing_role(Mode::Normal);
+    app.registers.insert(
+        '"',
+        Register {
+            text: "do not send".into(),
+            ..Register::default()
+        },
+    );
+    for command in [
+        EditorCommand::PasteAfterOrReplace,
+        EditorCommand::PasteBefore,
+    ] {
+        app.execute_editor_command(command).unwrap();
+        assert!(app.status_error, "{}", app.status);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(matches!(
+            app.terminals.get_mut(terminal).unwrap().undo_sent_text(),
+            crate::terminal::SentTextUndo::NothingSent
+        ));
+    }
 }

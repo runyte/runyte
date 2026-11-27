@@ -350,7 +350,7 @@ impl App {
             self.active_mut()
                 .replace_selection(Selection::point(offset));
             self.active_mut().preserve_scroll = false;
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         }
     }
 

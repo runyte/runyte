@@ -22,7 +22,7 @@ fn target(map: &Keymap, mode: Mode, scope: S, keys: &str) -> Option<BindingTarge
 
 #[test]
 fn exact_removals_and_overrides_are_local_and_survive_plugin_rebuilds() {
-    let map = configured("scopes: {markdown: {normal: {j: move-up, k: null}}}");
+    let map = configured("bind:\n  markdown:\n    j: move-up\n    k: null\n");
     assert_eq!(
         target(&map, Mode::Normal, S::Markdown, "j"),
         Some(EditorCommand::MoveUp.into())
@@ -32,7 +32,7 @@ fn exact_removals_and_overrides_are_local_and_survive_plugin_rebuilds() {
         target(&map, Mode::Normal, S::Global, "j"),
         Some(EditorCommand::MoveDown.into())
     );
-    assert!(target(&map, Mode::Select, S::Markdown, "k").is_some());
+    assert_eq!(target(&map, Mode::Select, S::Markdown, "k"), None);
     let rebuilt = map
         .with_plugin_bindings(vec![Binding::implemented(
             &[Mode::Normal],
@@ -53,7 +53,7 @@ fn exact_removals_and_overrides_are_local_and_survive_plugin_rebuilds() {
 
 #[test]
 fn tombstone_only_scope_does_not_fall_back_to_global_index() {
-    let map = configured("scopes: {diff: {insert: {Backspace: null}}}");
+    let map = configured("bind:\n  insert:\n    Backspace: null\n");
     assert!(
         target(
             keymap::default_keymap(),
@@ -67,10 +67,10 @@ fn tombstone_only_scope_does_not_fall_back_to_global_index() {
 }
 
 #[test]
-fn child_removal_and_assignment_resolve_conflicting_parents() {
+fn child_removal_and_assignment_override_the_single_parent() {
     for decision in ["null", "move-right"] {
         let map = configured(&format!(
-            "scopes:\n  markdown: {{normal: {{F9: move-up}}}}\n  git-conflict-file: {{normal: {{F9: null}}}}\n  git-conflict-markdown: {{normal: {{F9: {decision}}}}}"
+            "bind:\n  markdown: {{F9: move-up}}\n  git-conflict-file: {{F9: null}}\n  git-conflict-markdown: {{F9: {decision}}}"
         ));
         assert_eq!(
             target(&map, Mode::Normal, S::GitConflictMarkdown, "F9"),
@@ -84,7 +84,7 @@ fn child_removal_and_assignment_resolve_conflicting_parents() {
 }
 
 #[test]
-fn invalid_graph_rolls_back_scopes_but_keeps_other_sections() {
+fn removed_scopes_are_diagnosed_and_other_sections_survive() {
     for scopes in [
         "{markdown: {normal: {F9: move-up}}, git-conflict-file: {normal: {F9: null}}}",
         "{markdown: {normal: {g: move-up}}}",
@@ -100,7 +100,7 @@ fn invalid_graph_rolls_back_scopes_but_keeps_other_sections() {
     ] {
         let result = keymap::configured::compile(&serde_yaml::from_str(&format!("scopes: {scopes}\nbind: {{normal: {{F8: move-up}}}}\nui: {{completion: {{accept: [F7]}}}}")).unwrap(), keymap::default_keymap());
         assert_eq!(result.errors.len(), 1, "{scopes}: {:?}", result.errors);
-        assert!(result.errors[0].contains("all scoped overrides rolled back"));
+        assert!(result.errors[0].contains("scopes was removed in 0.5"));
         assert_eq!(
             target(&result.keymap, Mode::Normal, S::Markdown, "F9"),
             None
@@ -122,7 +122,7 @@ fn invalid_graph_rolls_back_scopes_but_keeps_other_sections() {
 #[test]
 fn list_bindings_can_swap_remove_and_override_inherited_keys() {
     let map = configured(
-        "scopes: {global: {list: {Ctrl-n: list-previous, Ctrl-p: list-next}}, session-manager: {list: {Ctrl-n: null, F9: list-next}}}",
+        "bind:\n  list:\n    Ctrl-n: list-previous\n    Ctrl-p: list-next\n  session-manager:\n    Ctrl-n: null\n    F9: list-next\n",
     );
     assert_eq!(
         target(&map, Mode::List, S::Global, "Ctrl-n"),
@@ -146,9 +146,7 @@ fn suppressing_an_alias_hides_it_only_in_affected_hints() {
         })
         .unwrap();
     let alias = binding.alias.as_ref().unwrap();
-    let map = configured(&format!(
-        "scopes:\n  markdown:\n    normal:\n      '{alias}': null\n"
-    ));
+    let map = configured(&format!("bind:\n  markdown:\n    '{alias}': null\n"));
     let prefix = KeySequence::new(
         binding.sequence.as_slice()[..binding.sequence.len() - 1]
             .iter()
@@ -183,10 +181,9 @@ fn structural_and_unmigrated_handlers_cannot_be_shadowed_or_silently_unbound() {
         ("git-merge-input", "normal", "Left"),
         ("git-merge-input", "normal", "a"),
     ] {
-        let section = serde_yaml::from_str(&format!(
-            "scopes: {{{scope}: {{{mode}: {{'{key}': null}}}}}}"
-        ))
-        .unwrap();
+        let owner = if scope == "global" { mode } else { scope };
+        let section =
+            serde_yaml::from_str(&format!("bind: {{{owner}: {{'{key}': null}}}}")).unwrap();
         let result = keymap::configured::compile(&section, keymap::default_keymap());
         assert_eq!(result.errors.len(), 1, "{scope} {mode} {key}");
     }
@@ -204,7 +201,7 @@ fn removing_last_namespace_descendants_hides_only_that_scopes_namespace() {
         .filter(|binding| binding.sequence.starts_with(&namespace.sequence))
         .map(|binding| format!("      '{}': null\n", binding.sequence))
         .collect::<String>();
-    let map = configured(&format!("scopes:\n  markdown:\n    normal:\n{removals}"));
+    let map = configured(&format!("bind:\n  markdown:\n{removals}"));
     assert!(
         !map.namespaces_for_scope(Mode::Normal, S::Markdown)
             .any(|n| n.sequence == namespace.sequence)
@@ -218,11 +215,13 @@ fn removing_last_namespace_descendants_hides_only_that_scopes_namespace() {
 #[test]
 fn scoped_fragments_export_and_reload_preserve_exact_removals() {
     let mut config = crate::config::Config::default();
-    config.merge_keys_source("scopes:\n  markdown:\n    normal: {j: move-up, k: move-down}\n  global:\n    list: {F9: list-next}\n").unwrap();
     config
         .merge_keys_source(
-            "scopes:\n  markdown:\n    normal: {k: null}\n    select: {F8: move-up}\n",
+            "bind:\n  markdown:\n    j: move-up\n    k: move-down\n  list:\n    F9: list-next\n",
         )
+        .unwrap();
+    config
+        .merge_keys_source("bind:\n  markdown:\n    k: null\n  markdown-select:\n    F8: move-up\n")
         .unwrap();
     let files = config
         .to_files(std::path::Path::new("config.yaml"))
@@ -253,9 +252,12 @@ fn scoped_fragments_export_and_reload_preserve_exact_removals() {
 
 #[test]
 fn cross_mode_aliases_and_scope_action_reference_follow_admission() {
-    let map = configured(
-        "scopes: {markdown: {insert: {Ctrl-x: null}, normal: {F9: extend-line-above}}, directory-tree: {normal: {Tab: null}}}",
-    );
+    let config: crate::config::Config = serde_yaml::from_str(
+        "modes:\n  markdown-insert:\n    inherits: insert\nbuffer-types:\n  markdown: {normal: markdown, select: markdown-select, insert: markdown-insert, replace: replace}\nkeys:\n  bind:\n    markdown-insert:\n      Ctrl-x: null\n    markdown:\n      F9: extend-line-above\n    directory-tree:\n      Tab: null\n",
+    ).unwrap();
+    let compiled = keymap::configured::compile_configuration(&config, keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    let map = compiled.keymap;
     let mut hints = crate::key_hints::KeyHintState::default();
     for key in KeySequence::parse("Space l").unwrap().as_slice() {
         hints.observe_in(*key, Mode::Normal, S::Markdown, &map);
@@ -290,7 +292,7 @@ fn cross_mode_aliases_and_scope_action_reference_follow_admission() {
 fn terminal_insert_actions_claim_only_effective_scoped_keys_and_prefixes() {
     use crate::keymap::{Key, terminal_input::Route::*};
     let map = configured(
-        "scopes: {terminal: {insert: {F6: enter-normal-mode, 'F7 h': focus-window-left, 'Ctrl-4': null, 'Ctrl-\\': null, 'Ctrl-w': null}}}",
+        "bind:\n  terminal-insert:\n    F6: enter-normal-mode\n    F7 h: focus-window-left\n    Ctrl-4: null\n    Ctrl-\\: null\n    Ctrl-w: null\n",
     );
     let route = |s| map.terminal_input_route(Key::parse(s).unwrap(), false, false);
     assert_eq!(route("F6"), EditorGrammar);
@@ -313,7 +315,7 @@ fn terminal_insert_actions_claim_only_effective_scoped_keys_and_prefixes() {
         rebuilt.terminal_input_route(Key::ctrl('4'), false, false),
         Child
     );
-    let map = configured("scopes: {terminal: {insert: {'F8': next-running-session}}}");
+    let map = configured("bind:\n  terminal-insert:\n    F8: next-running-session\n");
     assert_eq!(
         map.terminal_input_route(Key::parse("F8").unwrap(), false, false),
         EditorGrammar
@@ -321,11 +323,10 @@ fn terminal_insert_actions_claim_only_effective_scoped_keys_and_prefixes() {
 }
 
 #[test]
-fn terminal_insert_rejects_text_actions_and_replace_mode_atomically() {
+fn terminal_insert_rejects_text_editing_actions() {
     for source in [
-        "scopes: {terminal: {insert: {F6: insert-newline}}}",
-        "scopes: {terminal: {insert: {F6: move-down}}}",
-        "scopes: {terminal: {replace: {F6: null}}}",
+        "bind:\n  terminal-insert:\n    F6: insert-newline\n",
+        "bind:\n  terminal-insert:\n    F6: move-down\n",
     ] {
         let result = keymap::configured::compile(
             &serde_yaml::from_str(source).unwrap(),
@@ -401,7 +402,7 @@ fn terminal_window_tombstone_suppresses_capture_only_after_last_descendant_remov
         .filter(|b| b.sequence.as_slice().first() == Some(&Key::ctrl('w')))
         .map(|b| format!("      '{}': null\n", b.sequence))
         .collect::<String>();
-    let source = format!("scopes:\n  terminal:\n    insert:\n{removals}");
+    let source = format!("bind:\n  terminal-insert:\n{removals}");
     let map = configured(&source);
     assert_eq!(
         map.terminal_input_route(Key::ctrl('w'), false, false),
@@ -428,7 +429,7 @@ fn terminal_help_and_routing_follow_scoped_remaps_and_removals() {
         help::{self, HelpTopic},
     };
     let map = configured(
-        "window: F10\nscopes: {terminal: {insert: {F6: enter-normal-mode, 'Ctrl-4': null, 'Ctrl-\\': null, 'F7 z': toggle-zen}}}",
+        "window: F10\nbind:\n  terminal-insert:\n    F6: enter-normal-mode\n    Ctrl-4: null\n    Ctrl-\\: null\n    F7 z: toggle-zen\n",
     );
     let document = help::render(
         HelpTopic::Terminal,
@@ -471,7 +472,7 @@ fn list_raw_action_defaults_cover_all_modifiers_and_exact_overrides() {
     use crate::input::{KeyCode, KeyStroke, Modifiers};
     let defaults = keymap::default_keymap();
     let edited = configured(
-        "scopes: {global: {list: {Enter: null, Ctrl-Tab: list-backspace, F8: list-accept, F9: list-open-actions}}}",
+        "bind:\n  list:\n    Enter: null\n    Ctrl-Tab: list-backspace\n    F8: list-accept\n    F9: list-open-actions\n",
     );
     for bits in 0..64 {
         let modifiers = Modifiers::from_bits(bits).unwrap();

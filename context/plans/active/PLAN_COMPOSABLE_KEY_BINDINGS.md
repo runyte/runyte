@@ -126,8 +126,8 @@ decision revises an earlier one, the earlier entry says so.
 7. **Discovery names and keys (2026-11-26).** `describe-key` uses `Space h k`;
    `browse-actions` uses `Space h a`. `Space h` is the Help prefix and
    `Space ?` remains `show-help`. `copy-key-binding` is the companion copy
-   command. `keymap-export` has no default key and lands in stage 4 with the
-   merged binding table, rather than exporting the superseded 0.4 shapes.
+   command. `keymap-export` has no default key and lands at the end of stage 5,
+   after the public step grammar opens (decision 42).
 8. **Rust-authored preset (decided 2026-11-26; superseded by decision 25).**
    The preset was to be Rust tables rendered to checked-in YAML by a test.
 9. **Uniform counts (decided 2026-11-27).** Every binding sends its count to
@@ -396,6 +396,39 @@ decision revises an earlier one, the earlier entry says so.
     test bounds cold parse + program construction at a generous 15 ms median.
     Exhaustive cross-scope validation of the immutable preset belongs in every-preset tests, as it did
     for the Rust tables; schema and program validation remain in the loader.
+
+40. **Identical old and new subsets retain the new meaning.** A configuration
+    such as `keys.bind.normal.F6: move-left` is valid in both table shapes.
+    Accept it with mode-only semantics rather than adding a discriminator.
+    Reject identifiable removed constructs, including `keys.scopes`, with
+    migration diagnostics. The guide and 0.5 migration notes explain that
+    `bind.normal` applies to normal and modes inheriting it; bindings intended
+    across views belong in `bind.common`.
+41. **Stage 4 mode boundary.** Stage 4 introduces named binding-mode identity,
+    the mode graph, buffer-type starting modes, `inherits` and `unbound-keys`.
+    Property-driven editing, the remaining mode schema, `describe-mode` and
+    complete custom mode styling remain stage 7 work.
+42. **Export follows the public step grammar.** Move `:keymap-export` to the
+    end of stage 5, after internal steps become publicly writable. Require
+    export/reload parity for effective lookup, programs and discovery.
+    Descriptions are exported; preset-only teaching metadata (`role`, `target`,
+    `availability`, `alias`, `alias-modes`) is omitted, as stated in the export
+    header. `copy-key-binding` adopts the new table shape in stage 4a.
+
+43. **Buffer types map editing roles to named modes.** This is public schema,
+    not temporary preset metadata. For example, `markdown: { normal: markdown,
+    select: markdown-select, insert: insert, replace: replace }`. A scalar
+    `markdown: markdown` supplies the normal role and uses shared select,
+    insert and replace modes when present. Normal is the starting role.
+    A `mode-enter` argument naming a role resolves through the current buffer
+    type; another declared mode name enters that mode directly. An unavailable
+    role fails the step and stops the binding. Until stage 7, a mode uses the
+    editing semantics of its role in the current buffer type; a submode inherits
+    its parent's semantics, defaulting to Normal without a parent. Stage 7
+    replaces those semantics with properties, but role indirection remains.
+    Terminal activation selects live Insert or review Normal from retained
+    terminal state. Validate every role target, parent and graph cycle within
+    the same bounded-work limits.
 
 ## Model
 
@@ -742,8 +775,7 @@ where input or help can reach the native frontend.
    `unbound-keys`, with the preset's `common` mode replacing global bindings.
    Apply decision 16 to the terminal and directory interceptions. Rename
    existing family actions (decision 21), reporting old names. Report the old
-   configuration shapes. Add `:keymap-export` (no default key) and migrate the
-   Runyte preset to the new shape.
+   configuration shapes and migrate the Runyte preset to the new shape.
 5. **Step syntax, arguments and conditionals.** Update removed-action migration
    hints to use the writable mode-argument form and test that every suggested
    replacement compiles through the public configuration compiler.
@@ -754,7 +786,8 @@ where input or help can reach the native frontend.
    validate each step against the mode it will run in, derived from preceding
    mode steps and independently for each conditional branch, rather than the
    binding's starting mode. For example, `[enter-insert-mode, insert-newline]`
-   becomes valid.
+   becomes valid. Add `:keymap-export` (no default key) with export/reload
+   parity after lifting the public step gate (decision 42).
 6. **Macros in configuration.** `keys.macros`, `macros.d/`, the compact
    notation, `{ macro: ... }` bindings, `:macro-save`, `copy-macro`, and the
    macro list showing keys (decisions 26 and 27).
@@ -770,6 +803,39 @@ where input or help can reach the native frontend.
    `extend: true` steps.
 8. **Release 0.5.0.** Migration notes for the configuration change, updated
    user guide, and an updated `context/reference/helix-keymap-v1.md`.
+
+### Stage 4 implementation slices
+
+Each slice keeps behavior coverage, platform parity, desktop checks and review
+with its implementation. This is the order for the remaining stage 4 work:
+
+- **4a — Named binding modes and table migration.** One inheritance chain,
+  buffer-type starting modes, implicit declarations, `inherits`, `unbound-keys`
+  and `common`. Migrate the embedded preset to block YAML, preserving platform
+  applicability, fast-pane alternatives and discovery metadata. Update
+  `copy-key-binding`, configuration diagnostics and migration notes. Keep
+  Command and List UI ownership distinct. Measure startup again.
+- **4b — Whole-line selection extent.** Move linewise extent into selection
+  state and separate it from temporary mode restoration for line and paragraph
+  primitives, including selection history, undo, registers and terminal review.
+- **4c — Terminal meanings and programs.** Split operations with distinct
+  terminal meanings and author their explicit programs and mode tails. Retain
+  shared operations where their meaning is unchanged.
+- **4d — Remaining directory, tree and clipboard splits.** Include inherited
+  tree `N` and preserve clipboard image/text decisions. Leave the stage 4
+  pending-split classification empty.
+- **4e — Family names.** Migrate action descriptors, preset, guide and tests
+  together. Diagnose old names with their replacements; do not keep aliases.
+
+Stage 4a implements decision 43's exact per-buffer-type role maps, including
+refusal before side effects when a role is absent. Named identity follows
+input, discovery, native preview projection, temporary restoration and reload;
+Command/List ownership remains separate. The preset parity tests cover four
+platforms and both fast-pane variants. Linux readiness remains within the 5%
+budget after sharing identical immutable indexes; measurements are recorded in
+`context/reference/startup-performance.md`.
+
+Export follows stage 5, not a sixth stage 4 slice (decision 42).
 
 ### Stage 3 implementation slices
 

@@ -31,7 +31,19 @@ pub fn assert_registry(map: &Keymap, fast: bool, platform: &str) {
         let mut bindings = Vec::new();
         for line in lines {
             if line.starts_with("Binding {") {
-                bindings.push(line);
+                let line = if line.starts_with("Binding { binding_mode:") {
+                    let end = line.find(", modes:").expect("binding mode field");
+                    format!("Binding {{{}", &line[end + 1..])
+                } else {
+                    line
+                };
+                // Named tables can share a binding through inheritance instead
+                // of duplicating its row for each legacy editing role.
+                let start = line.find("modes: [").unwrap() + "modes: [".len();
+                let end = start + line[start..].find(']').unwrap();
+                for mode in line[start..end].split(", ") {
+                    bindings.push(format!("{}{}{}", &line[..start], mode, &line[end..]));
+                }
             } else {
                 result.push(line);
             }

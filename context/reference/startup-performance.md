@@ -18,6 +18,46 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-27 — named binding modes (stage 4a)
+
+Stage 4a of [#132](https://github.com/runyte/runyte/issues/132), based on
+`5766b8f3` (merged #152). Same Linux host and stock release build command as
+below. The readiness comparison uses `benchmarks/startup.py`'s `measure`
+function, alternating the pre-stage-4a binary and current binary each round,
+with ten measured fresh processes after one discarded warm-up per fixture and
+binary. Home/XDG paths and the 120×40 PTY follow the standard harness.
+
+| Implementation | Plain text readiness ms | Lua readiness ms |
+| --- | ---: | ---: |
+| Pre-stage-4a local release | 32.3 (30.3–36.2) | 32.1 (30.6–39.5) |
+| Named binding modes | 31.8 (30.8–37.6) | 32.6 (31.7–38.7) |
+
+Cells are median (min–max). Median changes are −1.8% and +1.5%, within the
+5% readiness budget. Baseline SHA-256:
+`12a8fe89289b6e8a977fc82312d96785f658c71e272d4834552afce1855799bb`;
+current binary SHA-256:
+`f99e6629eb933c69d7016487ddcfbd12b471e2bd7462abde8772129fea06a44c`.
+These measurements cover the terminal edition on Linux, not desktop, macOS or
+Windows.
+
+The initial named-mode implementation measured 16.765 ms median cold keymap
+initialization, including 13.151 ms in construction/indexing. It built the
+legacy index before replacing it with the named index, and built identical
+inherited lookup tables separately. Construction now starts with the named
+graph and shares immutable indexes when their ordered effective binding
+indices are identical. Named identities and unbound-key policies remain
+separate. Inheritance leaf suppression uses bounded prefix-set lookups.
+No disk cache is introduced.
+
+Final ten-process `preset_startup` phase sample, median (min–max), ms:
+
+| Phase | Time |
+| --- | ---: |
+| Typed YAML parsing | 2.752 (1.812–3.199) |
+| Programs and metadata | 0.800 (0.559–1.018) |
+| Construction and lookup index | 7.835 (6.326–9.718) |
+| Total keymap initialization | 11.419 (8.701–13.303) |
+
 ## 2026-11-27 — embedded Runyte semantic preset
 
 Stage 3 of [#132](https://github.com/runyte/runyte/issues/132), based on

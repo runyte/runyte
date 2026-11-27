@@ -22,6 +22,7 @@ use crate::{
 #[derive(Clone, Copy)]
 pub struct GrammarContext<'a> {
     mode: Mode,
+    binding_mode: Option<crate::keymap::mode_graph::ModeId>,
     scope: BindingScope,
     keymap: &'a Keymap,
     recording_macro: bool,
@@ -31,10 +32,39 @@ impl<'a> GrammarContext<'a> {
     pub const fn new(mode: Mode, scope: BindingScope, keymap: &'a Keymap) -> Self {
         Self {
             mode,
+            binding_mode: None,
             scope,
             keymap,
             recording_macro: false,
         }
+    }
+
+    pub fn with_binding_mode(mut self, mode: Option<crate::keymap::mode_graph::ModeId>) -> Self {
+        self.binding_mode = mode;
+        self
+    }
+    fn lookup(self, sequence: &KeySequence) -> Lookup<'a> {
+        if let Some(mode) = self.binding_mode {
+            self.keymap.lookup_named(mode, sequence)
+        } else {
+            self.keymap.lookup_in(self.mode, self.scope, sequence)
+        }
+    }
+    fn unbound(self) -> crate::keymap::mode_graph::UnboundKeys {
+        use crate::keymap::mode_graph::UnboundKeys;
+        self.binding_mode
+            .or_else(|| self.keymap.named_mode_for(self.mode, self.scope))
+            .and_then(|id| self.keymap.mode_graph()?.get(id))
+            .map(|mode| mode.unbound_keys())
+            .unwrap_or(if self.keymap.mode_graph().is_some() {
+                UnboundKeys::Report
+            } else {
+                match self.mode {
+                    Mode::Insert => UnboundKeys::PassToBuffer,
+                    Mode::Replace => UnboundKeys::Overwrite,
+                    _ => UnboundKeys::Report,
+                }
+            })
     }
 
     pub const fn mode(self) -> Mode {
@@ -632,15 +662,15 @@ impl RunyteGrammar {
             let InputEvent::Text(text) = input else {
                 unreachable!()
             };
+            if context.unbound() == crate::keymap::mode_graph::UnboundKeys::Report {
+                return Ok(GrammarOutput::default());
+            }
             return Ok(GrammarOutput::one(EditorIntent::InsertText(text)));
         };
         let inside_prefix = !self.pending.is_empty();
         let mut candidate = self.pending.clone();
         candidate.push(key);
-        match context
-            .keymap()
-            .lookup_in(context.mode(), context.scope(), &candidate)
-        {
+        match context.lookup(&candidate) {
             Lookup::Exact(binding) => {
                 let target = if binding.configured_actions {
                     binding.program.last().target()
@@ -671,16 +701,12 @@ impl RunyteGrammar {
             }
             Lookup::NoMatch if inside_prefix => {
                 let prefix = std::mem::take(&mut self.pending);
-                let fallback =
-                    match context
-                        .keymap()
-                        .lookup_in(context.mode(), context.scope(), &prefix)
-                    {
-                        Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
-                            Some(binding)
-                        }
-                        Lookup::NoMatch | Lookup::Prefix(_) => None,
-                    };
+                let fallback = match context.lookup(&prefix) {
+                    Lookup::Exact(binding) | Lookup::ExactAndPrefix { exact: binding, .. } => {
+                        Some(binding)
+                    }
+                    Lookup::NoMatch | Lookup::Prefix(_) => None,
+                };
                 if let Some(binding) = fallback {
                     let target = if binding.configured_actions {
                         binding.program.last().target()
@@ -707,6 +733,11 @@ impl RunyteGrammar {
                 }
             }
             Lookup::NoMatch => {
+                if context.unbound() == crate::keymap::mode_graph::UnboundKeys::Report {
+                    return Ok(GrammarOutput::one(EditorIntent::Notice(
+                        GrammarNotice::NoBinding(candidate),
+                    )));
+                }
                 if let KeyCode::Char(character) = key.code
                     && !key
                         .modifiers
@@ -831,14 +862,16 @@ impl RunyteGrammar {
 
         let mut candidate = self.pending.clone();
         candidate.push(key);
-        match context
-            .keymap()
-            .lookup_in(context.mode(), context.scope(), &candidate)
-        {
+        match context.lookup(&candidate) {
             Lookup::NoMatch => {
                 self.pending.clear();
                 self.count = None;
                 self.count_keys.clear();
+                if candidate.len() == 1
+                    && context.unbound() != crate::keymap::mode_graph::UnboundKeys::Report
+                {
+                    return self.translate_insert(InputEvent::Key(key), context);
+                }
                 Ok(GrammarOutput::one(EditorIntent::Notice(
                     GrammarNotice::NoBinding(candidate),
                 )))
@@ -900,6 +933,11 @@ impl InputGrammar for RunyteGrammar {
             Mode::Insert | Mode::Replace => self.translate_insert(input, context),
             Mode::Normal | Mode::Select => match input {
                 InputEvent::Key(key) => self.translate_modal(key, context),
+                InputEvent::Text(text)
+                    if context.unbound() != crate::keymap::mode_graph::UnboundKeys::Report =>
+                {
+                    Ok(GrammarOutput::one(EditorIntent::InsertText(text)))
+                }
                 InputEvent::Text(_) | InputEvent::ClipboardPaste | InputEvent::Pointer(_) => {
                     Ok(GrammarOutput::default())
                 }

@@ -4431,7 +4431,7 @@ fn configure_session_navigation(app: &mut App, owner: &str, cancel: &str) {
         ""
     };
     let source = format!(
-        "scopes: {{global: {{list: {{Enter: null, Down: list-close}}}}}}\nui: {{{owner}: {{accept: [F8], cancel: [{cancel}], next: [F6], previous: [F5], page-up: [F3], page-down: [F4], first: [F1], last: [F2], backspace: [F7]{browse}}}}}"
+        "bind: {{list: {{Enter: null, Down: list-close}}}}\nui: {{{owner}: {{accept: [F8], cancel: [{cancel}], next: [F6], previous: [F5], page-up: [F3], page-down: [F4], first: [F1], last: [F2], backspace: [F7]{browse}}}}}"
     );
     let compiled =
         crate::keymap::configured::compile(&serde_yaml::from_str(&source).unwrap(), &app.keymap);

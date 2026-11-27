@@ -330,7 +330,7 @@ impl App {
             pane.remember_destination(super::OpenDestination::Buffer(pane.buffer));
             pane.terminal = None;
         }
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         let name = self
             .terminals
             .get(id)
@@ -454,7 +454,7 @@ impl App {
         self.terminals.close(id);
         self.reveal_terminal_buffers(id, None);
         self.focused_terminals.retain(|other| *other != id);
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         self.status(format!("{name} ended"));
     }
 
@@ -649,7 +649,7 @@ impl App {
             if self.mode == Mode::Command {
                 self.close_prompt();
             }
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         }
         if self.config.editor.auto_close_terminal {
             self.terminals.close(id);
@@ -679,11 +679,11 @@ impl App {
     /// Routes one keystroke to the child of a terminal in Insert mode.
     pub(super) fn handle_terminal_key(&mut self, id: TerminalId, key: KeyStroke) -> Result<()> {
         let Some(session) = self.terminals.get_mut(id) else {
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
             return Ok(());
         };
         if !session.live() {
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
             self.action_failed("this terminal's program has exited");
             return Ok(());
         }
@@ -734,7 +734,7 @@ impl App {
                 // enter without accidentally creating a snapshot.
                 session.scroll_to_live();
                 let _ = session;
-                self.mode = Mode::Normal;
+                self.set_editing_role(Mode::Normal);
                 if self.executing_program {
                     self.grammar.reset_prefix();
                 } else {
@@ -757,9 +757,9 @@ impl App {
             }
             Command::EnterSelectMode => {
                 session.begin_review();
-                self.mode = Mode::Select;
                 session.focus_review_selection(page, scroll_offset);
                 let _ = session;
+                self.set_editing_role(Mode::Select);
                 true
             }
             Command::SelectAll => {
@@ -794,11 +794,11 @@ impl App {
                     session.select_review_line(false, self.line_select.is_some());
                 }
                 session.focus_review_selection(page, scroll_offset);
+                let _ = session;
                 if self.line_select.is_none() {
                     self.line_select = Some(self.mode);
-                    self.mode = Mode::Select;
+                    self.set_editing_role(Mode::Select);
                 }
-                let _ = session;
                 true
             }
             Command::CopySelectionDown | Command::CopySelectionUp => {
@@ -895,7 +895,7 @@ impl App {
             | Command::OpenLineBelow
             | Command::OpenLineAbove => {
                 session.scroll_to_live();
-                self.mode = Mode::Insert;
+                self.set_editing_role(Mode::Insert);
                 self.status("terminal input · Ctrl-\\ returns to normal mode");
                 true
             }
@@ -952,7 +952,7 @@ impl App {
                     directory: None,
                 });
                 if command == Command::YankCollapseNormalMode {
-                    self.mode = Mode::Normal;
+                    self.set_editing_role(Mode::Normal);
                 }
                 self.status("terminal review selection yanked");
                 true
@@ -979,6 +979,9 @@ impl App {
             }
             Command::PasteAfterOrReplace | Command::PasteAfter | Command::PasteBefore => {
                 let _ = session;
+                if command != Command::PasteAfter && !self.require_editing_role(Mode::Insert) {
+                    return true;
+                }
                 let register = self.read_selected_register();
                 if register.text.is_empty() {
                     self.status("Runyte register is empty");
@@ -994,7 +997,7 @@ impl App {
                     .is_some_and(|session| session.send_text(&register.text));
                 if sent {
                     if command != Command::PasteAfter {
-                        self.mode = Mode::Insert;
+                        self.set_editing_role(Mode::Insert);
                     }
                     self.status("pasted Runyte register to terminal");
                 } else {

@@ -444,7 +444,7 @@ impl App {
             self.action_failed("resolve all index conflicts before continuing the merge");
             return;
         }
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         let mut review = super::git_merge_review::MergeReview::new(
             plan,
             self.terminals.iter().any(|t| t.live()),
@@ -526,7 +526,7 @@ impl App {
         if activate {
             self.push_jump();
             self.active_mut().retarget(buffer);
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         }
         if self.active().buffer == buffer {
             let row = selected
@@ -739,7 +739,7 @@ impl App {
             .filter(|b| !self.closed_buffers.contains(b))
         {
             self.active_mut().retarget(buffer);
-            self.mode = Mode::Normal;
+            self.set_editing_role(Mode::Normal);
         }
         self.open_git_conflicts();
     }
@@ -782,7 +782,7 @@ impl App {
                 let buffer = self.buffers.len() - 1;
                 self.merge_ui.commit_buffer = Some(buffer);
                 self.active_mut().retarget(buffer);
-                self.mode = Mode::Insert;
+                self.set_editing_role(Mode::Insert);
             }
             plan => {
                 let mutation = match plan {

@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn scope_validation_uses_effective_ui_ownership_and_owner_rollback() {
         let base = crate::keymap::default_keymap();
-        let invalid = crate::keymap::configured::compile(&serde_yaml::from_str("ui: {merge-acknowledgment: {move-left: [a]}}\nscopes: {git-merge-input: {normal: {Left: git-review-next}}}").unwrap(), base);
+        let invalid = crate::keymap::configured::compile(&serde_yaml::from_str("ui:\n  merge-acknowledgment:\n    move-left:\n    - a\nbind:\n  git-merge-input:\n    Left: git-review-next\n").unwrap(), base);
         assert_eq!(invalid.errors.len(), 2, "{:?}", invalid.errors);
         assert_eq!(
             invalid
@@ -150,7 +150,7 @@ mod tests {
                 .lookup(Owner::MergeAcknowledgment, KeyStroke::plain(KeyCode::Left)),
             Some(Action::MoveLeft)
         );
-        let valid = crate::keymap::configured::compile(&serde_yaml::from_str("ui: {merge-acknowledgment: {move-left: []}, merge-prefix: {reset-and-continue: []}}\nscopes: {git-merge-input: {normal: {Left: git-review-next, 'F6 Esc': git-review-cancel}}}").unwrap(), base);
+        let valid = crate::keymap::configured::compile(&serde_yaml::from_str("ui:\n  merge-acknowledgment:\n    move-left: []\n  merge-prefix:\n    reset-and-continue: []\nbind:\n  git-merge-input:\n    Left: git-review-next\n    F6 Esc: git-review-cancel\n").unwrap(), base);
         assert!(valid.errors.is_empty(), "{:?}", valid.errors);
         assert_eq!(
             valid
@@ -159,7 +159,7 @@ mod tests {
                 .lookup(Owner::MergeAcknowledgment, KeyStroke::plain(KeyCode::Left)),
             None
         );
-        let invalid_suffix = crate::keymap::configured::compile(&serde_yaml::from_str("ui: {merge-prefix: {reset-and-continue: [F8]}}\nscopes: {git-merge-review: {normal: {'F6 F8': git-review-cancel}}}").unwrap(), base);
+        let invalid_suffix = crate::keymap::configured::compile(&serde_yaml::from_str("ui:\n  merge-prefix:\n    reset-and-continue:\n    - F8\nbind:\n  git-merge-review:\n    F6 F8: git-review-cancel\n").unwrap(), base);
         assert_eq!(invalid_suffix.errors.len(), 1);
     }
     #[test]
@@ -205,7 +205,7 @@ mod tests {
                 reset: true
             }
         );
-        let result = crate::keymap::configured::compile(&serde_yaml::from_str("leader: Left\nui: {merge-acknowledgment: {move-left: []}}\nscopes: {git-merge-input: {normal: {Left: git-review-next}}}").unwrap(), &crate::keymap::Keymap::new(vec![]).unwrap());
+        let result = crate::keymap::configured::compile(&serde_yaml::from_str("leader: Left\nui:\n  merge-acknowledgment:\n    move-left: []\nbind:\n  git-merge-input:\n    Left: git-review-next\n").unwrap(), &crate::keymap::Keymap::named_fixture(vec![]));
         assert!(result.errors.is_empty(), "{:?}", result.errors);
         assert!(matches!(
             result.keymap.ui().merge_input(

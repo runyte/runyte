@@ -146,11 +146,11 @@ impl App {
             candidate.replace_selection(selection);
             candidate.mark_selection_semantics(semantics);
             candidate.preserve_scroll = true;
-            self.mode = if anchor == offset {
+            self.set_editing_role(if anchor == offset {
                 Mode::Normal
             } else {
                 Mode::Select
-            };
+            });
         }
         self.pointer_autoscroll = Some(Autoscroll {
             due: now + INTERVAL,

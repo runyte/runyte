@@ -1011,7 +1011,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
     let macos_bindings = if cfg!(target_os = "macos") { 3 } else { 0 };
     assert_eq!(
         bindings.len(),
-        711 + macos_bindings,
+        717 + macos_bindings,
         "current binding inventory changed"
     );
 

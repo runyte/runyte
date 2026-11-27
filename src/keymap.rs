@@ -18,6 +18,8 @@ pub mod actions;
 pub mod admission;
 pub mod configured;
 mod effective;
+pub mod mode_graph;
+mod named;
 pub mod native_preview;
 pub mod native_window;
 pub mod pointer;
@@ -349,6 +351,9 @@ impl BindingScope {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Binding {
+    /// Owning named table. Scope and editing modes below are compatibility
+    /// metadata for action admission and view presentation, not lookup layers.
+    pub binding_mode: Option<std::sync::Arc<str>>,
     pub modes: &'static [Mode],
     pub scope: BindingScope,
     pub sequence: KeySequence,
@@ -420,6 +425,7 @@ impl Binding {
     ) -> Self {
         let target = target.into();
         Self {
+            binding_mode: None,
             modes,
             scope: BindingScope::Global,
             sequence: sequence.into(),
@@ -443,6 +449,7 @@ impl Binding {
     ) -> Self {
         let target = target.into();
         Self {
+            binding_mode: None,
             modes,
             scope,
             sequence: sequence.into(),
@@ -501,6 +508,7 @@ impl Binding {
     ) -> Self {
         let target = BindingTarget::Editor(command);
         Self {
+            binding_mode: None,
             modes,
             scope: BindingScope::Global,
             sequence: sequence.into(),
@@ -524,6 +532,7 @@ impl Binding {
     ) -> Self {
         let target = BindingTarget::Editor(command);
         Self {
+            binding_mode: None,
             modes,
             scope: BindingScope::Global,
             sequence: sequence.into(),
@@ -706,13 +715,19 @@ pub struct Keymap {
     overrides: effective::Overrides,
     terminal_input: terminal_input::Index,
     bindings: Vec<Binding>,
-    lookup_index: Arc<HashMap<(Mode, BindingScope), HashMap<KeySequence, IndexedLookup>>>,
+    lookup_index: Arc<HashMap<LookupContext, Arc<HashMap<KeySequence, IndexedLookup>>>>,
     fast_pane_keys: bool,
     namespaces: Vec<BindingNamespace>,
     context_actions: Vec<ContextAction>,
     leader: KeyStroke,
     window: KeyStroke,
     default_spellings: HashMap<KeySequence, KeySequence>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum LookupContext {
+    Named(mode_graph::ModeId),
+    Legacy(Mode, BindingScope),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -749,9 +764,30 @@ impl Keymap {
     }
 
     #[cfg(test)]
+    pub(crate) fn named_fixture(bindings: Vec<Binding>) -> Self {
+        let mut map = default_keymap().clone();
+        map.bindings = bindings
+            .into_iter()
+            .map(|mut binding| {
+                let id = map
+                    .named_mode_for(binding.modes[0], binding.scope)
+                    .expect("fixture role");
+                binding.binding_mode =
+                    Some(map.mode_graph().unwrap().get(id).unwrap().name().into());
+                binding
+            })
+            .collect();
+        map.namespaces.clear();
+        map.context_actions.clear();
+        map.rebuild_lookup_index();
+        map
+    }
+
+    #[cfg(test)]
     pub(crate) fn with_test_bindings(&self, bindings: Vec<Binding>) -> Self {
         let mut keymap = self.clone();
         keymap.bindings = bindings;
+        keymap.overrides.1 = None;
         keymap.rebuild_lookup_index();
         keymap
     }
@@ -834,6 +870,7 @@ impl Keymap {
         candidate
             .bindings
             .retain(|b| !matches!(b.target, BindingTarget::Plugin(_)));
+        let bindings = named::plugin_bindings(&mut candidate, bindings)?;
         candidate.bindings.extend(bindings);
         let violations = validate::with_input_policy(
             &candidate.bindings,
@@ -855,6 +892,13 @@ impl Keymap {
     }
 
     pub fn new(bindings: Vec<Binding>) -> Result<Self, DuplicateBinding> {
+        Self::new_with_overrides(bindings, effective::Overrides::default())
+    }
+
+    fn new_with_overrides(
+        bindings: Vec<Binding>,
+        overrides: effective::Overrides,
+    ) -> Result<Self, DuplicateBinding> {
         for (index, binding) in bindings.iter().enumerate() {
             for mode in binding.modes {
                 if bindings[..index].iter().any(|other| {
@@ -874,7 +918,7 @@ impl Keymap {
             pointer: pointer_actions::Bindings::default(),
             preview: native_preview::Cache::default(),
             ui: ui::Bindings::default(),
-            overrides: effective::Overrides::default(),
+            overrides,
             terminal_input: terminal_input::Index::default(),
             bindings,
             lookup_index: Arc::new(HashMap::new()),
@@ -892,6 +936,38 @@ impl Keymap {
 
     fn rebuild_lookup_index(&mut self) {
         self.preview = native_preview::Cache::default();
+        if let Some(tables) = &self.overrides.1 {
+            let mut index = HashMap::new();
+            let mut shared = HashMap::new();
+            for (mode, _) in tables.graph.modes() {
+                let effective = tables.indices(&self.bindings, mode);
+                if let Some(sequences) = shared.get(&effective) {
+                    index.insert(LookupContext::Named(mode), Arc::clone(sequences));
+                    continue;
+                }
+                let mut sequences: HashMap<KeySequence, IndexedLookup> = HashMap::new();
+                for &binding_index in &effective {
+                    let binding = &self.bindings[binding_index];
+                    for prefix_len in 0..binding.sequence.len() {
+                        sequences
+                            .entry(KeySequence(
+                                binding.sequence.as_slice()[..prefix_len].to_vec(),
+                            ))
+                            .or_default()
+                            .continuations
+                            .push(binding_index);
+                    }
+                    sequences.entry(binding.sequence.clone()).or_default().exact =
+                        Some(binding_index);
+                }
+                let sequences = Arc::new(sequences);
+                shared.insert(effective, Arc::clone(&sequences));
+                index.insert(LookupContext::Named(mode), sequences);
+            }
+            self.lookup_index = Arc::new(index);
+            self.terminal_input = terminal_input::Index::build(self);
+            return;
+        }
         // Keep positions into the binding registry so cloned maps can update
         // descriptions without leaving lookup, help, and hints out of sync.
         let mut scopes = BindingScope::ALL.to_vec();
@@ -911,7 +987,8 @@ impl Keymap {
             Mode::List,
         ] {
             for &scope in &scopes {
-                if scope != BindingScope::Global
+                if self.overrides.1.is_none()
+                    && scope != BindingScope::Global
                     && !self.bindings.iter().any(|binding| {
                         scope_includes(scope, binding.scope) && binding.is_active_in(mode)
                     })
@@ -936,7 +1013,7 @@ impl Keymap {
                     sequences.entry(binding.sequence.clone()).or_default().exact =
                         Some(binding_index);
                 }
-                index.insert((mode, scope), sequences);
+                index.insert(LookupContext::Legacy(mode, scope), Arc::new(sequences));
             }
         }
         self.lookup_index = Arc::new(index);
@@ -1040,15 +1117,7 @@ impl Keymap {
     }
 
     pub fn bindings_for_mode(&self, mode: Mode) -> impl Iterator<Item = &Binding> {
-        let mut bindings = self
-            .bindings
-            .iter()
-            .filter(move |binding| {
-                binding.is_active_in(mode) && binding.scope == BindingScope::Global
-            })
-            .collect::<Vec<_>>();
-        bindings.sort_by_key(|binding| binding.role);
-        bindings.into_iter()
+        self.bindings_for_scope(mode, BindingScope::Global)
     }
 
     /// The everywhere-available sequence reaching `target`, for messages that
@@ -1222,30 +1291,64 @@ impl Keymap {
         }
     }
 
+    pub fn mode_graph(&self) -> Option<&mode_graph::ModeGraph> {
+        self.overrides.1.as_ref().map(|tables| &tables.graph)
+    }
+
+    pub fn named_mode_for(&self, mode: Mode, scope: BindingScope) -> Option<mode_graph::ModeId> {
+        self.overrides.1.as_ref()?.mode_for(mode, scope)
+    }
+
+    pub fn bindings_for_named_mode(
+        &self,
+        mode: mode_graph::ModeId,
+    ) -> impl Iterator<Item = &Binding> {
+        self.overrides
+            .1
+            .as_ref()
+            .map(|tables| tables.indices(&self.bindings, mode))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|index| &self.bindings[index])
+    }
+
+    pub fn lookup_named(&self, mode: mode_graph::ModeId, sequence: &KeySequence) -> Lookup<'_> {
+        self.lookup_entry(
+            self.lookup_index
+                .get(&LookupContext::Named(mode))
+                .and_then(|entries| entries.get(sequence)),
+        )
+    }
+
     fn has_prefix_in(&self, mode: Mode, scope: BindingScope, sequence: &KeySequence) -> bool {
-        self.lookup_index
-            .get(&(mode, scope))
-            .or_else(|| {
-                (!scope.is_merge_review())
-                    .then(|| self.lookup_index.get(&(mode, BindingScope::Global)))
-                    .flatten()
-            })
-            .and_then(|sequences| sequences.get(sequence))
-            .is_some_and(|entry| entry.exact.is_none() && !entry.continuations.is_empty())
+        matches!(self.lookup_in(mode, scope, sequence), Lookup::Prefix(_))
     }
 
     pub fn lookup_in(&self, mode: Mode, scope: BindingScope, sequence: &KeySequence) -> Lookup<'_> {
+        if self.overrides.1.is_some() {
+            return self
+                .named_mode_for(mode, scope)
+                .map(|id| self.lookup_named(id, sequence))
+                .unwrap_or(Lookup::NoMatch);
+        }
         // Scopes without bindings in this mode inherit the global index.
-        let Some(entry) = self
+        let entry = self
             .lookup_index
-            .get(&(mode, scope))
+            .get(&LookupContext::Legacy(mode, scope))
             .or_else(|| {
                 (!scope.is_merge_review())
-                    .then(|| self.lookup_index.get(&(mode, BindingScope::Global)))
+                    .then(|| {
+                        self.lookup_index
+                            .get(&LookupContext::Legacy(mode, BindingScope::Global))
+                    })
                     .flatten()
             })
-            .and_then(|sequences| sequences.get(sequence))
-        else {
+            .and_then(|sequences| sequences.get(sequence));
+        self.lookup_entry(entry)
+    }
+
+    fn lookup_entry(&self, entry: Option<&IndexedLookup>) -> Lookup<'_> {
+        let Some(entry) = entry else {
             return Lookup::NoMatch;
         };
         let exact = entry.exact.map(|index| &self.bindings[index]);
@@ -1420,6 +1523,24 @@ mod tests {
             ])
             .unwrap();
         assert_index_matches_effective_bindings(&first, &[scoped, BindingScope::Plugin(8)]);
+        let refreshed = first
+            .with_plugin_bindings(vec![plugin("F11", 4, scoped)])
+            .unwrap();
+        assert!(
+            matches!(refreshed.lookup_in(Mode::Normal, scoped, &KeySequence::parse("F11").unwrap()), Lookup::Exact(binding) if binding.target == BindingTarget::Plugin(4))
+        );
+        assert!(matches!(
+            refreshed.lookup_in(
+                Mode::Normal,
+                BindingScope::Plugin(8),
+                &KeySequence::parse("F11").unwrap()
+            ),
+            Lookup::NoMatch
+        ));
+        assert!(matches!(
+            refreshed.lookup_in(Mode::Normal, scoped, &KeySequence::parse("F12").unwrap()),
+            Lookup::NoMatch
+        ));
         let replaced = first
             .with_plugin_bindings(vec![plugin("Space = b", 3, BindingScope::Global)])
             .unwrap();

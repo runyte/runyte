@@ -2,10 +2,11 @@
 use super::*;
 
 fn configured(source: &str) -> App {
-    let config = Config {
+    let mut config = Config {
         keys: Some(serde_yaml::from_str(source).unwrap()),
         ..Config::default()
     };
+    config.editor.scratch_markdown = false;
     App::new(config, None).unwrap()
 }
 
@@ -55,7 +56,7 @@ fn action_binding_counts_character_arguments_and_runtime_errors() {
 #[test]
 fn action_bindings_preserve_insert_replace_modes_and_render_full_help() {
     let mut app = configured(
-        "bind:\n  normal:\n    F1: [select-all, yank]\n    F2: {command: help, argument: key-actions}\n  insert:\n    F3: insert-newline\n  replace:\n    F3: enter-normal-mode\n",
+        "bind:\n  common:\n    F1: [select-all, yank]\n  normal:\n    F2: {command: help, argument: key-actions}\n  insert:\n    F3: insert-newline\n  replace:\n    F3: enter-normal-mode\n",
     );
     seed(&mut app, "abc");
     press(&mut app, 'i');
@@ -1122,7 +1123,7 @@ fn configured_grammar_and_tree_mode_changes_preserve_the_tail() {
 #[test]
 fn terminal_mode_changes_and_supplied_name_continue_the_program() {
     let mut app = configured(
-        "bind: {normal: {F6: [enter-insert-mode, enter-normal-mode, leave-terminal], F7: [{command: rename-terminal, argument: build}, leave-terminal]}}",
+        "bind: {terminal: {F6: [enter-insert-mode, enter-normal-mode, leave-terminal], F7: [{command: rename-terminal, argument: build}, leave-terminal]}}",
     );
     let terminal = app.terminals.insert_test_session(80, 24);
     app.active_mut().terminal = Some(terminal);
@@ -1883,9 +1884,7 @@ fn conditional_macro_calls_keep_frame_scheduling_beyond_atomic_repeat_limit() {
 
 #[test]
 fn replace_with_register_preserves_mode_on_refusal_and_consumes_line_selection() {
-    let mut app = configured(
-        "bind: {normal: {F6: replace-with-register}, select: {F6: replace-with-register}}",
-    );
+    let mut app = configured("bind: {common: {F6: replace-with-register}}");
     seed(&mut app, "abc\ndef");
     register(&mut app, "XY\n", true);
     press(&mut app, 'x');

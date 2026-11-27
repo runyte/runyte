@@ -146,7 +146,7 @@ impl App {
             .err()
             .map(|error| format!("{requested}: {error:#}"));
         let theme = resolved.ok().map(|theme| (requested, theme));
-        let keys = super::compile_configured_keymaps(effective.keys.as_ref());
+        let keys = super::compile_configured_keymaps(&effective);
 
         let plugins_changed = effective.plugins != self.config.plugins;
         let grammar_changed = effective.editor.grammar != self.grammar.kind();

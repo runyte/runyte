@@ -662,7 +662,7 @@ fn effective_preview_navigation_keeps_pane_precedence_and_remapped_semantics() {
         command::Mode,
         keymap::{BindingScope, KeySequence},
     };
-    let section = serde_json::from_value(serde_json::json!({"ui": {"native-preview": {"back": ["F8"]}}, "scopes": {"media": {"normal": {"F7": "media-zoom-in"}}}})).unwrap();
+    let section = serde_json::from_value(serde_json::json!({"ui": {"native-preview": {"back": ["F8"]}}, "bind": {"media": {"F7": "media-zoom-in"}}})).unwrap();
     let compiled = runyte::keymap::configured::compile(&section, runyte::keymap::default_keymap());
     assert!(compiled.errors.is_empty());
     let bindings = compiled

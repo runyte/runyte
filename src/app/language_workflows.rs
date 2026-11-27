@@ -1453,7 +1453,7 @@ impl App {
         pane.retarget(buffer);
         pane.replace_selection(Selection::point(offset));
         pane.preserve_scroll = false;
-        self.mode = Mode::Normal;
+        self.set_editing_role(Mode::Normal);
         self.status(format!(
             "{}: {} result{}{}",
             directory.map_or_else(

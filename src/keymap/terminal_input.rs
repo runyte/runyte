@@ -71,6 +71,50 @@ impl Index {
 }
 
 impl Keymap {
+    pub fn terminal_input_route_named(
+        &self,
+        mode: Option<super::mode_graph::ModeId>,
+        key: Key,
+        persistent: bool,
+        fast_pane: bool,
+    ) -> Route {
+        let Some(mode) = mode else {
+            return self.terminal_input_route(key, persistent, fast_pane);
+        };
+        let lookup =
+            self.lookup_named(mode, &super::KeySequence::from(key.canonical_for_binding()));
+        let explicit = match &lookup {
+            super::Lookup::Exact(binding) => binding.configured_actions,
+            super::Lookup::Prefix(bindings) => {
+                bindings.iter().any(|binding| binding.configured_actions)
+            }
+            super::Lookup::ExactAndPrefix {
+                exact,
+                continuations,
+            } => {
+                exact.configured_actions
+                    || continuations
+                        .iter()
+                        .any(|binding| binding.configured_actions)
+            }
+            super::Lookup::NoMatch => false,
+        };
+        if explicit
+            || self
+                .mode_graph()
+                .and_then(|graph| graph.get(mode))
+                .is_some_and(|mode| {
+                    mode.unbound_keys() != super::mode_graph::UnboundKeys::PassToBuffer
+                })
+        {
+            return Route::EditorGrammar;
+        }
+        if matches!(lookup, super::Lookup::NoMatch) {
+            return Route::Child;
+        }
+        self.terminal_input_route(key, persistent, fast_pane)
+    }
+
     /// Resolve first-key ownership without allocating. Pending sequences are
     /// already owned by the editor grammar and do not pass through this gate.
     pub fn terminal_input_route(&self, key: Key, persistent: bool, fast_pane: bool) -> Route {

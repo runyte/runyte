@@ -4103,7 +4103,13 @@ fn observe_editor_key_hint(
         key_hints.clear();
         return HintEventResult::Forward;
     };
-    key_hints.observe_in(key, mode, app.key_binding_scope(), app.keymap())
+    key_hints.observe_named(
+        key,
+        mode,
+        app.key_binding_scope(),
+        app.current_binding_mode(),
+        app.keymap(),
+    )
 }
 
 /// Opens the opt-in development trace used to diagnose native key dispatch.

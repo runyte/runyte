@@ -81,7 +81,7 @@ fn list_close_saves_file_and_untitled_buffer_only_after_success() {
 fn list_close_remaps_and_filter_clearing_is_opt_in() {
     let mut app = App::new(Config::default(), None).unwrap();
     let source = serde_yaml::from_str(
-        "scopes: {global: {list: {Delete: null, F8: list-close-target, F9: list-clear-filter}}}",
+        "bind:\n  list:\n    Delete: null\n    F8: list-close-target\n    F9: list-clear-filter\n",
     )
     .unwrap();
     let result = crate::keymap::configured::compile(&source, &app.keymap);

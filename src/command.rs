@@ -3109,7 +3109,7 @@ impl CommandInvocation {
                 ) && execution == CommandExecutionContext::default()
             }
             CommandId::Editor(EditorCommand::ModeEnter) => {
-                matches!(&parameters, InvocationParameters::OptionalText(Some(name)) if matches!(name.as_str(), "normal" | "select" | "insert" | "replace"))
+                matches!(&parameters, InvocationParameters::OptionalText(Some(name)) if crate::keymap::mode_graph::valid_name(name).is_ok())
                     && execution == CommandExecutionContext::default()
             }
             CommandId::Editor(EditorCommand::ShowHelp) => {
@@ -3204,6 +3204,7 @@ impl CommandInvocation {
     }
 
     /// Internal pure mode step; public authoring arrives with mode arguments.
+    #[cfg(test)]
     pub(crate) fn mode_entry(mode: Mode) -> Self {
         assert!(matches!(
             mode,

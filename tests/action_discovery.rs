@@ -11,7 +11,7 @@ use std::fs;
 fn provenance_tracks_flow_quoted_keys_fragments_aliases_and_rollback() {
     let root = TestRuntimeRoot::new("discovery-sources").unwrap();
     let main = root.path().join("config.yaml");
-    fs::write(&main, "# main\nkeys:\n  leader: Ctrl-x\n  bind: {normal: {F6: yank, F7: select-all}}\n  scopes: {directory: {normal: {F6: open-parent-directory}}}\n").unwrap();
+    fs::write(&main, "keys:\n  leader: Ctrl-x\n  bind:\n    normal: {F6: yank, F7: select-all}\n    directory: {F6: open-parent-directory}\n").unwrap();
     fs::create_dir(root.path().join("keybinds.d")).unwrap();
     let fragment = root.path().join("keybinds.d/last.yaml");
     fs::write(&fragment, "# later\nbind:\n  normal:\n    'F6': [select-all, yank]\n    F8: &action yank\n    F9: *action\n    F10: not-an-action\n").unwrap();
@@ -20,7 +20,7 @@ fn provenance_tracks_flow_quoted_keys_fragments_aliases_and_rollback() {
         (vec!["bind", "normal", "F6"], &fragment, 4),
         (vec!["bind", "normal", "F7"], &main, 4),
         (vec!["bind", "normal", "F9"], &fragment, 6),
-        (vec!["scopes", "directory", "normal", "F6"], &main, 5),
+        (vec!["bind", "directory", "F6"], &main, 5),
     ] {
         let path = path.into_iter().map(str::to_owned).collect::<Vec<_>>();
         let location = config.key_sources.location(&path).unwrap();
@@ -65,7 +65,7 @@ fn copied_yaml_preserves_order_arguments_descriptions_and_scope() {
             "F6",
         ),
         (
-            "scopes: {directory: {normal: {F6: open-parent-directory}}}",
+            "bind:\n  directory:\n    F6: open-parent-directory\n",
             BindingScope::Directory,
             "F6",
         ),
@@ -95,7 +95,7 @@ fn copied_yaml_preserves_order_arguments_descriptions_and_scope() {
 #[test]
 fn rejected_scoped_overrides_and_rebinds_never_claim_builtin_provenance() {
     let section =
-        serde_yaml::from_str("rebind: {w: d}\nscopes: {directory: {normal: {F6: not-an-action}}}")
+        serde_yaml::from_str("rebind:\n  w: d\nbind:\n  directory:\n    F6: not-an-action\n")
             .unwrap();
     let compiled = configured::compile(&section, default_keymap());
     assert!(!compiled.errors.is_empty());
