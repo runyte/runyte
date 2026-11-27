@@ -40,7 +40,7 @@ impl BindingIndex {
             } else {
                 let mut members = Vec::new();
                 let mut rendered = None;
-                for action in &b.actions {
+                for action in b.program.iter() {
                     let id = action.target().id();
                     if members.contains(&id) {
                         continue;
@@ -167,17 +167,10 @@ fn joined(keys: Vec<String>) -> String {
 }
 
 pub fn binding_steps(binding: &Binding, scope: BindingScope) -> String {
-    let targets = if binding.actions.is_empty() {
-        vec![binding.target]
-    } else {
-        binding
-            .actions
-            .iter()
-            .map(actions::Action::target)
-            .collect()
-    };
-    targets
-        .into_iter()
+    binding
+        .program
+        .iter()
+        .map(actions::Action::target)
         .enumerate()
         .map(|(index, target)| {
             let description = target
@@ -190,7 +183,7 @@ pub fn binding_steps(binding: &Binding, scope: BindingScope) -> String {
                 })
                 .unwrap_or_else(|| target.description());
             let argument = binding
-                .actions
+                .program
                 .get(index)
                 .and_then(|action| match action {
                     actions::Action::Invocation(invocation) => Some(format!(
@@ -247,7 +240,7 @@ pub fn binding_yaml(
     if matches!(binding.target, BindingTarget::Plugin(_)) {
         return Err("Plugin bindings use plugins[].bindings".into());
     }
-    let value = if !binding.actions.is_empty() {
+    let value = if binding.configured_actions {
         let path = binding
             .source_paths
             .iter()

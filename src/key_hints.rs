@@ -53,7 +53,8 @@ impl KeyHintRow {
             grouped_keys: None,
             alias: binding.alias.clone(),
             alias_modes: binding.alias_modes,
-            target: binding.actions.is_empty().then_some(binding.target),
+            target: (!binding.configured_actions && binding.is_plain_action())
+                .then_some(binding.target),
             description: binding.discovery_description(),
             availability: binding.availability,
             capability: binding.action_capability(),
@@ -1395,7 +1396,10 @@ mod tests {
     fn unavailable_rows_preserve_registry_status() {
         const NORMAL: &[Mode] = &[Mode::Normal];
         let unavailable = Binding {
-            actions: Vec::new(),
+            program: crate::keymap::program::Program::single(BindingTarget::Editor(
+                EditorCommand::SelectLine,
+            )),
+            configured_actions: false,
             source_paths: Vec::new(),
             modes: NORMAL,
             scope: BindingScope::Global,

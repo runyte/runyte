@@ -808,7 +808,10 @@ fn unavailable_action_is_dimmed_and_labeled() {
     const NORMAL: &[Mode] = &[Mode::Normal];
     let keymap = std::sync::Arc::new(
         Keymap::new(vec![Binding {
-            actions: Vec::new(),
+            program: runyte::keymap::program::Program::single(BindingTarget::Editor(
+                EditorCommand::SelectLine,
+            )),
+            configured_actions: false,
             source_paths: Vec::new(),
             modes: NORMAL,
             scope: BindingScope::Global,

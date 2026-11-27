@@ -829,3 +829,22 @@ fn removed_review_motion_cannot_fall_through_to_structural_revoke() {
             .any(|row| row.label.contains("unbound Revoke"))
     );
 }
+
+#[test]
+fn review_navigation_never_grants_a_programs_other_steps() {
+    let mut binding = crate::keymap::Binding::implemented(
+        &[crate::command::Mode::Normal],
+        crate::keymap::Key::char('G'),
+        crate::command::EditorCommand::MoveFileEnd,
+    );
+    assert_eq!(
+        super::review_motion(&binding),
+        Some(crate::command::EditorCommand::MoveFileEnd)
+    );
+    binding.program = crate::keymap::program::Program::new(vec![
+        crate::keymap::actions::Action::Editor(crate::command::EditorCommand::MoveFileEnd),
+        crate::keymap::actions::Action::Editor(crate::command::EditorCommand::Yank),
+    ])
+    .unwrap();
+    assert_eq!(super::review_motion(&binding), None);
+}

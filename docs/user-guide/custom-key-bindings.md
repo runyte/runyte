@@ -823,8 +823,16 @@ never run against a selection the search did not choose.
 - Actions that already ran stay applied.
 - A list is not rolled back. A saved file stays saved.
 
-**Counts.** A single action keeps its usual count behavior. A count before a
-multi-action binding is rejected before anything runs.
+**Counts.** Every binding follows the same rule: a count goes to the first
+action whose descriptor accepts one; later actions run once. If no action
+accepts a count, the count is dropped silently and the binding runs. This
+applies to built-in and configured bindings, including single actions,
+parameterized actions, colon commands and plugin commands. For example, `3`
+before `[yank, move-right, move-right]` yanks once and moves right four times.
+During macro replay, an accepted repetition count in a multi-action binding
+is subject to the existing 128-repetition atomic limit; exceeding that limit
+stops replay before any step runs. Dropped counts consume no repetition work.
+Singleton counted commands retain their cooperative replay scheduling.
 
 **Undo.**
 
@@ -894,8 +902,8 @@ Regenerate this block with `cargo run --example action_reference`.
 <!-- action-reference:start -->
 
 Use these names in `keys.bind`. Modes are independent. Sequence position says whether
-an action may be followed by another action. Counts on multi-action bindings
-are rejected. Plugin bindings use `plugins[].bindings`.
+an action may be followed by another action. Counts go to the first accepting step in every binding. If none accepts a count,
+the count is dropped silently and the binding runs. Plugin bindings use `plugins[].bindings`.
 
 #### Application actions
 

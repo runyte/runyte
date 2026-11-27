@@ -94,8 +94,6 @@ pub enum GrammarNotice {
         register: char,
         macros_only: bool,
     },
-    CountNotSupported(BindingTarget),
-    ActionSequenceCount,
     UnavailableBinding {
         target: BindingTarget,
         availability: BindingAvailability,
@@ -367,15 +365,12 @@ impl RunyteGrammar {
     ) -> Result<EditorIntent, CommandInvocationError> {
         match target {
             BindingTarget::Editor(command) => self.editor_binding_intent(command, availability),
-            BindingTarget::Colon(_) | BindingTarget::Plugin(_) if self.count.take().is_some() => {
-                Ok(EditorIntent::Notice(GrammarNotice::CountNotSupported(
-                    target,
-                )))
-            }
             BindingTarget::Colon(_) | BindingTarget::Plugin(_) if availability.is_implemented() => {
+                self.count = None;
                 Ok(EditorIntent::Command(target.invocation()?))
             }
             BindingTarget::Colon(_) | BindingTarget::Plugin(_) => {
+                self.count = None;
                 Ok(EditorIntent::Notice(GrammarNotice::UnavailableBinding {
                     target,
                     availability,
@@ -384,36 +379,37 @@ impl RunyteGrammar {
         }
     }
 
-    fn configured_intents(
+    fn program_intents(
         &mut self,
         binding: &crate::keymap::Binding,
     ) -> Result<Vec<EditorIntent>, CommandInvocationError> {
-        use crate::keymap::actions::Action;
-        if binding.actions.is_empty() {
-            return Ok(vec![
-                self.binding_intent(binding.target, binding.availability)?,
-            ]);
-        }
-        if binding.actions.len() > 1 && self.count.take().is_some() {
-            return Ok(vec![EditorIntent::Notice(
-                GrammarNotice::ActionSequenceCount,
-            )]);
-        }
+        let count = self.count.take();
+        let count_step = binding.program.count_step();
         binding
-            .actions
+            .program
             .iter()
-            .map(|action| match action {
-                Action::Editor(command) => {
-                    self.editor_binding_intent(*command, BindingAvailability::Implemented)
+            .enumerate()
+            .map(|(index, action)| {
+                self.count = count.filter(|_| count_step == Some(index));
+                if let crate::keymap::actions::Action::Invocation(invocation) = action
+                    && let Some(count) = self.count.take()
+                {
+                    return Ok(EditorIntent::Command(CommandInvocation::from_parts(
+                        invocation.id(),
+                        invocation.parameters().clone(),
+                        CommandExecutionContext::resolved(
+                            NonZeroUsize::new(count).expect("positive count"),
+                            None,
+                        ),
+                    )?));
                 }
-                Action::Invocation(invocation) => {
-                    if self.count.take().is_some() {
-                        Ok(EditorIntent::Notice(GrammarNotice::CountNotSupported(
-                            action.target(),
-                        )))
-                    } else {
-                        Ok(EditorIntent::Command(invocation.clone()))
+                use crate::keymap::actions::Action;
+                match action {
+                    Action::Editor(command) => {
+                        self.editor_binding_intent(*command, binding.availability)
                     }
+                    Action::Target(target) => self.binding_intent(*target, binding.availability),
+                    Action::Invocation(invocation) => Ok(EditorIntent::Command(invocation.clone())),
                 }
             })
             .collect()
@@ -442,12 +438,9 @@ impl RunyteGrammar {
             .lookup_in(context.mode(), context.scope(), &candidate)
         {
             Lookup::Exact(binding) => {
-                let target = binding
-                    .actions
-                    .last()
-                    .map_or(binding.target, |action| action.target());
+                let target = binding.program.last().target();
                 self.pending.clear();
-                let intents = self.configured_intents(binding)?;
+                let intents = self.program_intents(binding)?;
                 if self.awaiting_character.is_some() {
                     self.awaiting_binding = Some((candidate, target));
                     Ok(GrammarOutput {
@@ -481,11 +474,8 @@ impl RunyteGrammar {
                         Lookup::NoMatch | Lookup::Prefix(_) => None,
                     };
                 if let Some(binding) = fallback {
-                    let target = binding
-                        .actions
-                        .last()
-                        .map_or(binding.target, |action| action.target());
-                    let intents = self.configured_intents(binding)?;
+                    let target = binding.program.last().target();
+                    let intents = self.program_intents(binding)?;
                     if self.awaiting_character.is_some() {
                         self.awaiting_binding = Some((prefix.clone(), target));
                     }
@@ -647,19 +637,16 @@ impl RunyteGrammar {
                 )))
             }
             Lookup::Exact(binding) => {
-                let target = binding
-                    .actions
-                    .last()
-                    .map_or(binding.target, |action| action.target());
+                let target = binding.program.last().target();
                 let count_keys = std::mem::take(&mut self.count_keys);
                 let resolved_sequence = Self::resolved_sequence(&count_keys, &candidate);
-                let sticky = binding.actions.is_empty()
+                let sticky = !binding.configured_actions
                     && candidate
                         .as_slice()
                         .first()
                         .is_some_and(|key| *key == Key::char('Z'));
                 self.pending.clear();
-                let intents = self.configured_intents(binding)?;
+                let intents = self.program_intents(binding)?;
                 if self.awaiting_character.is_some() {
                     self.awaiting_binding = Some((resolved_sequence.clone(), target));
                 }
@@ -1326,7 +1313,7 @@ mod tests {
     }
 
     #[test]
-    fn colon_binding_emits_typed_invocation_and_rejects_runyte_count_prefix() {
+    fn colon_binding_emits_the_same_typed_invocation_with_a_count_prefix() {
         let run = |grammar: &mut RunyteGrammar, keys: &[char]| {
             let mut output = GrammarOutput::default();
             for key in keys {
@@ -1350,9 +1337,7 @@ mod tests {
         run(&mut counted, &['2']);
         assert_eq!(
             only_intent(run(&mut counted, &[' ', 'l', '?'])),
-            EditorIntent::Notice(GrammarNotice::CountNotSupported(BindingTarget::Colon(
-                crate::command::ColonCommand::LspStatus
-            )))
+            EditorIntent::Command(invocation)
         );
     }
 
