@@ -5,6 +5,9 @@
 
 use std::{ffi::OsStr, path::PathBuf};
 
+mod owned_temp_dir;
+pub use owned_temp_dir::OwnedTempDir;
+
 /// Captures only paths derived from a caller-owned fixture; no account or
 /// environment-derived user roots enter this admission. Direct App tests use
 /// this separately from their existing clipboard/program-cache injection.

@@ -223,9 +223,8 @@ fn separate_replayed_bindings_remain_separate_undo_steps() {
 
 #[test]
 fn save_hooks_share_the_program_checkpoint() {
-    let root = super::language::temporary("program-undo");
-    fs::create_dir(&root).unwrap();
-    let path = root.join("save.txt");
+    let root = crate::test_support::OwnedTempDir::new().unwrap();
+    let path = root.path().join("save.txt");
     fs::write(&path, "abc   ").unwrap();
     let mut app = program_app(&[C::DeleteSelection, C::Save]);
     app.open_file(path.clone()).unwrap();
@@ -235,13 +234,12 @@ fn save_hooks_share_the_program_checkpoint() {
     assert_eq!(fs::read_to_string(&path).unwrap(), "bc");
     undo(&mut app);
     assert_eq!(text(&app), "abc   ");
-    fs::remove_dir_all(root).unwrap();
+    root.cleanup().unwrap();
 }
 
 #[test]
 fn completed_edits_in_each_buffer_have_one_checkpoint() {
-    let root = super::language::temporary("program-undo");
-    fs::create_dir(&root).unwrap();
+    let root = crate::test_support::OwnedTempDir::new().unwrap();
     let mut app = program_app(&[
         C::DeleteSelection,
         C::DeleteSelection,
@@ -251,7 +249,7 @@ fn completed_edits_in_each_buffer_have_one_checkpoint() {
     ]);
     seed(&mut app, "abcde");
     let first = app.active_pane;
-    let path = root.join("other.txt");
+    let path = root.path().join("other.txt");
     fs::write(&path, "vwxyz").unwrap();
     app.split(Axis::Horizontal, Some(path)).unwrap();
     let second = app.active_pane;
@@ -279,7 +277,7 @@ fn completed_edits_in_each_buffer_have_one_checkpoint() {
     assert_eq!(text(&app), "cde");
     undo(&mut app);
     assert_eq!(text(&app), "abcde");
-    fs::remove_dir_all(root).unwrap();
+    root.cleanup().unwrap();
 }
 
 #[test]
