@@ -283,15 +283,14 @@ fn descriptive_effects_include_bundled_steps_and_actual_input_delivery() {
         assert_eq!(c.action_policy().count, CountBehavior::Repeat);
     }
     for c in [
-        C::FlipSelection,
         C::ExpandSyntaxSelection,
-        C::ShrinkSyntaxSelection,
+        C::FlipSelection,
         C::SelectSyntaxParent,
         C::SelectInsideWord,
         C::SelectAroundBraces,
     ] {
         assert!(
-            c.action_policy().effects.contains(&ActionEffect::Mode),
+            !c.action_policy().effects.contains(&ActionEffect::Mode),
             "{c:?}"
         );
     }

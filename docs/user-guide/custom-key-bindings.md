@@ -863,7 +863,10 @@ a pending operand behind.
 
 **Failure.** An error or unavailable action stops the list. So does
 `search-next` or `search-previous` finding no match, so the actions after it
-never run against a selection the search did not choose.
+never run against a selection the search did not choose. Mode-preserving word,
+delimiter, syntax-object and syntax-relation actions likewise stop any configured
+list when they produce no selection. For example, `[select-inside-parentheses,
+move-right]` leaves the cursor in place when no enclosing pair exists.
 
 - Actions that already ran stay applied.
 - A list is not rolled back. A saved file stays saved.
@@ -903,6 +906,21 @@ the public binding format supports pure mode entry. The additive
 `search-extend-next`/`search-extend-previous` actions preserve mode;
 `search-next` and `search-previous` still enter Select in documents. Extension retains existing ranges and makes the added
 match primary, wrapping through the query's matches.
+
+Word and delimiter objects, syntax objects, expansion and relation selections, flipping a
+selection, and splitting at line edges preserve the current mode. Their default
+keys explicitly enter Select (Normal for line-edge splits). If a selection
+command finds no result, its program stops with an informational status; a
+counted command that selected successfully before reaching a boundary still
+continues to its mode step. These actions retire transient `x`/`X` mode restoration.
+Syntax shrink restores the selection, coordinate semantics and mode saved by
+expansion. Each expansion records the mode in which it runs; explicit mode
+steps do not invalidate that history. In Normal, `2 Space x e` records Normal
+for both repetitions before the explicit Select step; the first shrink therefore
+returns to Normal. The old bundled repeat recorded Select in its later frames.
+Two separate `Space x e` presses still shrink through Select back to Normal.
+Paragraph objects retain whole-row
+selection and mode behavior until the shared line-selection split.
 
 **Undo.**
 
@@ -1704,41 +1722,41 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `select-line-up` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection | pending stage 4 split; then atomic operation |
 | `select-all` | selection | not accepted | none | none | terminal: Select all captured terminal output | atomic operation |
 | `collapse-selection` | selection | not accepted | none | none | terminal: Collapse the review selection; media: Retain the native media selection; this surface has no document caret to collapse | atomic operation |
-| `flip-selection` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `expand-syntax-selection` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
-| `shrink-syntax-selection` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
-| `select-syntax-parent` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
-| `select-syntax-child` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
-| `select-previous-syntax-sibling` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
-| `select-next-syntax-sibling` | selection, mode | repeats | none | none |  | pending stage 3 split; then atomic operation |
-| `select-syntax-function` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-syntax-function` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-syntax-class` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-syntax-class` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-syntax-parameter` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-syntax-parameter` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-around-parentheses` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-parentheses` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-around-square-brackets` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-square-brackets` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-around-braces` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-braces` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-around-angle-brackets` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-angle-brackets` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-around-double-quotes` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-double-quotes` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-around-single-quotes` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-single-quotes` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-around-backticks` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-backticks` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-word` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-around-word` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-long-word` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-around-long-word` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-paragraph` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-around-paragraph` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-around-closest-delimiter` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `select-inside-closest-delimiter` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `flip-selection` | selection | not accepted | none | none |  | atomic operation |
+| `expand-syntax-selection` | selection | repeats | none | none |  | atomic operation |
+| `shrink-syntax-selection` | selection, mode | repeats | none | none |  | decision: Restores selection and mode from expansion history that is not visible between program steps. |
+| `select-syntax-parent` | selection | repeats | none | none |  | atomic operation |
+| `select-syntax-child` | selection | repeats | none | none |  | atomic operation |
+| `select-previous-syntax-sibling` | selection | repeats | none | none |  | atomic operation |
+| `select-next-syntax-sibling` | selection | repeats | none | none |  | atomic operation |
+| `select-syntax-function` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-syntax-function` | selection | not accepted | none | none |  | atomic operation |
+| `select-syntax-class` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-syntax-class` | selection | not accepted | none | none |  | atomic operation |
+| `select-syntax-parameter` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-syntax-parameter` | selection | not accepted | none | none |  | atomic operation |
+| `select-around-parentheses` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-parentheses` | selection | not accepted | none | none |  | atomic operation |
+| `select-around-square-brackets` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-square-brackets` | selection | not accepted | none | none |  | atomic operation |
+| `select-around-braces` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-braces` | selection | not accepted | none | none |  | atomic operation |
+| `select-around-angle-brackets` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-angle-brackets` | selection | not accepted | none | none |  | atomic operation |
+| `select-around-double-quotes` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-double-quotes` | selection | not accepted | none | none |  | atomic operation |
+| `select-around-single-quotes` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-single-quotes` | selection | not accepted | none | none |  | atomic operation |
+| `select-around-backticks` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-backticks` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-word` | selection | not accepted | none | none |  | atomic operation |
+| `select-around-word` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-long-word` | selection | not accepted | none | none |  | atomic operation |
+| `select-around-long-word` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-paragraph` | selection, mode | not accepted | none | none |  | pending stage 4 split; then atomic operation |
+| `select-around-paragraph` | selection, mode | not accepted | none | none |  | pending stage 4 split; then atomic operation |
+| `select-around-closest-delimiter` | selection | not accepted | none | none |  | atomic operation |
+| `select-inside-closest-delimiter` | selection | not accepted | none | none |  | atomic operation |
 | `goto-previous-syntax-function` | selection | repeats | none | none |  | atomic operation |
 | `goto-next-syntax-function` | selection | repeats | none | none |  | atomic operation |
 | `goto-previous-syntax-class` | selection | repeats | none | none |  | atomic operation |
@@ -1749,8 +1767,8 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `toggle-syntax-fold` | view | not accepted | none | none |  | atomic operation |
 | `fold-all-syntax` | view | not accepted | none | none |  | atomic operation |
 | `unfold-all-syntax` | view | not accepted | none | none |  | atomic operation |
-| `split-selection-at-line-ends` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
-| `split-selection-at-line-starts` | selection, mode | not accepted | none | none |  | pending stage 3 split; then atomic operation |
+| `split-selection-at-line-ends` | selection | not accepted | none | none |  | atomic operation |
+| `split-selection-at-line-starts` | selection | not accepted | none | none |  | atomic operation |
 | `keep-primary-selection` | selection | not accepted | none | none | terminal: Keep only the primary review selection | atomic operation |
 | `remove-primary-selection` | selection | not accepted | none | none |  | atomic operation |
 | `copy-selection-down` | selection | not accepted | none | none | terminal: Copy the review cursor to the adjacent captured output line | atomic operation |

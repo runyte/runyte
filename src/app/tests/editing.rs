@@ -1038,6 +1038,8 @@ fn select_mode_word_motions_extend_a_half_open_syntax_selection() {
         let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
         app.active_mut().replace_selection(Selection::point(caret));
         app.expand_syntax_selection().unwrap();
+        app.execute(CommandInvocation::mode_entry(Mode::Select))
+            .unwrap();
         assert_eq!(
             app.active().selection_semantics(),
             SelectionSemantics::HalfOpen

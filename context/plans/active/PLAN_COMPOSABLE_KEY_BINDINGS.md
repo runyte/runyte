@@ -338,6 +338,19 @@ decision revises an earlier one, the earlier entry says so.
     and transient `x`/`X` selections with parity tests. This pair follows the
     surround/register-replacement slice.
 
+38. **Selection history and whole-row ownership (2026-11-27, delegated).**
+    Expansion preserves mode and records the actual mode at invocation. Its
+    default appends Select. Shrink remains a Decision: it restores selection,
+    coordinate semantics and captured mode from history that a program cannot
+    inspect between steps. History matching uses ranges, semantics and syntax
+    identity/revision, independent of an explicit intervening mode step.
+    Paragraph objects move to PendingSplit(4) with x/X and the line-selection
+    actions. Stage 4 separates linewise selection extent from transient mode
+    restoration together; there is no paragraph-only workaround. Selection
+    actions that produce no result stop the program with informational status.
+    Counted selection steps aggregate success across repetitions, so reaching
+    a boundary after earlier success still allows the mode tail.
+
 ## Model
 
 ```
@@ -633,34 +646,22 @@ and `m r` programs append explicit Normal entry after successful operands.
 its descriptor and refusal/gesture paths now consistently reflect that contract.
 These four entries are complete. Decision 37 is also implemented: the no-yank
 delete pair preserves mode, with distinct caret and transient-row semantics,
-and `change-selection` reports its replacement program. The 37 remaining
-stage 3 entries are selection actions.
+and `change-selection` reports its replacement program. The selection-family
+slice completes the remaining stage 3 classifications under decision 38.
 
 ### Pending stage 3 splits
 
-`flip-selection`,
-`split-selection-at-line-ends`, `split-selection-at-line-starts`,
-`expand-syntax-selection`, `shrink-syntax-selection`, `select-syntax-parent`,
-`select-syntax-child`, `select-previous-syntax-sibling`, `select-next-syntax-sibling`,
-`select-syntax-function`, `select-inside-syntax-function`, `select-syntax-class`,
-`select-inside-syntax-class`, `select-syntax-parameter`,
-`select-inside-syntax-parameter`, `select-around-parentheses`,
-`select-inside-parentheses`, `select-around-square-brackets`,
-`select-inside-square-brackets`, `select-around-braces`, `select-inside-braces`,
-`select-around-angle-brackets`, `select-inside-angle-brackets`,
-`select-around-double-quotes`, `select-inside-double-quotes`,
-`select-around-single-quotes`, `select-inside-single-quotes`, `select-around-backticks`,
-`select-inside-backticks`, `select-inside-word`, `select-around-word`,
-`select-inside-long-word`, `select-around-long-word`, `select-inside-paragraph`,
-`select-around-paragraph`, `select-around-closest-delimiter`,
-`select-inside-closest-delimiter`.
+None. Selection primitives preserve mode and default programs name mode entry.
+Shrink is a retained history-restoring decision; paragraphs join the whole-row
+ownership split in stage 4. The embedded YAML preset still remains for stage 3.
 
 ### Pending stage 4 splits
 
 `yank-collapse-normal-mode`, `yank-line-collapse-normal-mode`, `paste-after-or-replace`,
 `paste-before`, `clipboard-paste-after`, `clipboard-paste-before`, `search-next`,
 `search-previous`, `clipboard-paste`, `select-line`, `select-line-up`,
-`extend-line-above`, `extend-line-below`.
+`extend-line-above`, `extend-line-below`, `select-inside-paragraph`,
+`select-around-paragraph`.
 
 ### Pending stage 5 splits
 

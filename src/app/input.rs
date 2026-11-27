@@ -4323,22 +4323,64 @@ impl App {
         self.with_selection_action(|app| app.execute_editor_command_action(command))
     }
 
-    fn finish_atomic_line_selection(&mut self, command: EditorCommand) {
-        if matches!(
+    fn is_atomic_selection_action(command: EditorCommand) -> bool {
+        matches!(
             command,
-            EditorCommand::SurroundAdd
-                | EditorCommand::SurroundReplace
-                | EditorCommand::SurroundDelete
-                | EditorCommand::SelectAll
-                | EditorCommand::CollapseSelection
-                | EditorCommand::ToggleCase
-                | EditorCommand::ReplaceChar
-                | EditorCommand::FitSelectionForNormalMode
-                | EditorCommand::SearchSetFromSelection
-                | EditorCommand::SearchExtendNext
-                | EditorCommand::SearchExtendPrevious
-                | EditorCommand::SearchSelectAllMatches
-        ) {
+            EditorCommand::ExpandSyntaxSelection
+                | EditorCommand::FlipSelection
+                | EditorCommand::SplitSelectionAtLineEnds
+                | EditorCommand::SplitSelectionAtLineStarts
+                | EditorCommand::SelectSyntaxParent
+                | EditorCommand::SelectSyntaxChild
+                | EditorCommand::SelectPreviousSyntaxSibling
+                | EditorCommand::SelectNextSyntaxSibling
+                | EditorCommand::SelectSyntaxFunction
+                | EditorCommand::SelectInsideSyntaxFunction
+                | EditorCommand::SelectSyntaxClass
+                | EditorCommand::SelectInsideSyntaxClass
+                | EditorCommand::SelectSyntaxParameter
+                | EditorCommand::SelectInsideSyntaxParameter
+                | EditorCommand::SelectAroundParentheses
+                | EditorCommand::SelectInsideParentheses
+                | EditorCommand::SelectAroundSquareBrackets
+                | EditorCommand::SelectInsideSquareBrackets
+                | EditorCommand::SelectAroundBraces
+                | EditorCommand::SelectInsideBraces
+                | EditorCommand::SelectAroundAngleBrackets
+                | EditorCommand::SelectInsideAngleBrackets
+                | EditorCommand::SelectAroundDoubleQuotes
+                | EditorCommand::SelectInsideDoubleQuotes
+                | EditorCommand::SelectAroundSingleQuotes
+                | EditorCommand::SelectInsideSingleQuotes
+                | EditorCommand::SelectAroundBackticks
+                | EditorCommand::SelectInsideBackticks
+                | EditorCommand::SelectInsideWord
+                | EditorCommand::SelectAroundWord
+                | EditorCommand::SelectInsideLongWord
+                | EditorCommand::SelectAroundLongWord
+                | EditorCommand::SelectAroundClosestDelimiter
+                | EditorCommand::SelectInsideClosestDelimiter
+        )
+    }
+
+    fn finish_atomic_line_selection(&mut self, command: EditorCommand) {
+        if Self::is_atomic_selection_action(command)
+            || matches!(
+                command,
+                EditorCommand::SurroundAdd
+                    | EditorCommand::SurroundReplace
+                    | EditorCommand::SurroundDelete
+                    | EditorCommand::SelectAll
+                    | EditorCommand::CollapseSelection
+                    | EditorCommand::ToggleCase
+                    | EditorCommand::ReplaceChar
+                    | EditorCommand::FitSelectionForNormalMode
+                    | EditorCommand::SearchSetFromSelection
+                    | EditorCommand::SearchExtendNext
+                    | EditorCommand::SearchExtendPrevious
+                    | EditorCommand::SearchSelectAllMatches
+            )
+        {
             // These actions no longer own a mode transition. End the transient
             // line gesture without letting it restore its previous mode later.
             self.line_select = None;
@@ -6270,6 +6312,12 @@ impl App {
                 app.execute_editor_command_count(command, execution.repetitions())
             });
         }
+        // A selection-producing action with no result keeps its informational
+        // status but must not run a default mode tail. Aggregate across counts:
+        // reaching a boundary after earlier successes still applies that tail.
+        let selection_before = (Self::is_atomic_selection_action(command)
+            || command == EditorCommand::ShrinkSyntaxSelection)
+            .then(|| self.active().selection_revision);
         let repetitions = if self.macro_replay.is_some() && !self.atomic_program_replay {
             1
         } else {
@@ -6285,6 +6333,9 @@ impl App {
             {
                 break;
             }
+        }
+        if selection_before == Some(self.active().selection_revision) {
+            self.sequence_halted = true;
         }
         let deferred = execution.repetitions().saturating_sub(repetitions);
         if deferred > 0 && !self.should_quit && self.workspace_switch.is_none() {

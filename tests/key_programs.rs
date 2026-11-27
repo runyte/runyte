@@ -58,7 +58,41 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
                 | C::ToggleCase
                 | C::ReplaceChar
                 | C::CutSelection
-                | C::CutSelectionForChange => vec![command, C::ModeEnter],
+                | C::CutSelectionForChange
+                | C::ExpandSyntaxSelection
+                | C::FlipSelection
+                | C::SplitSelectionAtLineEnds
+                | C::SplitSelectionAtLineStarts
+                | C::SelectSyntaxParent
+                | C::SelectSyntaxChild
+                | C::SelectPreviousSyntaxSibling
+                | C::SelectNextSyntaxSibling
+                | C::SelectSyntaxFunction
+                | C::SelectInsideSyntaxFunction
+                | C::SelectSyntaxClass
+                | C::SelectInsideSyntaxClass
+                | C::SelectSyntaxParameter
+                | C::SelectInsideSyntaxParameter
+                | C::SelectAroundParentheses
+                | C::SelectInsideParentheses
+                | C::SelectAroundSquareBrackets
+                | C::SelectInsideSquareBrackets
+                | C::SelectAroundBraces
+                | C::SelectInsideBraces
+                | C::SelectAroundAngleBrackets
+                | C::SelectInsideAngleBrackets
+                | C::SelectAroundDoubleQuotes
+                | C::SelectInsideDoubleQuotes
+                | C::SelectAroundSingleQuotes
+                | C::SelectInsideSingleQuotes
+                | C::SelectAroundBackticks
+                | C::SelectInsideBackticks
+                | C::SelectInsideWord
+                | C::SelectAroundWord
+                | C::SelectInsideLongWord
+                | C::SelectAroundLongWord
+                | C::SelectAroundClosestDelimiter
+                | C::SelectInsideClosestDelimiter => vec![command, C::ModeEnter],
                 _ => panic!("unclassified default program: {command:?}"),
             };
             assert_eq!(
@@ -77,9 +111,42 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
             };
             assert_eq!(mode.id(), CommandId::Editor(C::ModeEnter));
             let name = match command {
-                C::SelectAll | C::SearchSetFromSelection | C::SearchNext | C::SearchPrevious => {
-                    "select"
-                }
+                C::SelectAll
+                | C::SearchSetFromSelection
+                | C::SearchNext
+                | C::SearchPrevious
+                | C::ExpandSyntaxSelection
+                | C::FlipSelection
+                | C::SelectSyntaxParent
+                | C::SelectSyntaxChild
+                | C::SelectPreviousSyntaxSibling
+                | C::SelectNextSyntaxSibling
+                | C::SelectSyntaxFunction
+                | C::SelectInsideSyntaxFunction
+                | C::SelectSyntaxClass
+                | C::SelectInsideSyntaxClass
+                | C::SelectSyntaxParameter
+                | C::SelectInsideSyntaxParameter
+                | C::SelectAroundParentheses
+                | C::SelectInsideParentheses
+                | C::SelectAroundSquareBrackets
+                | C::SelectInsideSquareBrackets
+                | C::SelectAroundBraces
+                | C::SelectInsideBraces
+                | C::SelectAroundAngleBrackets
+                | C::SelectInsideAngleBrackets
+                | C::SelectAroundDoubleQuotes
+                | C::SelectInsideDoubleQuotes
+                | C::SelectAroundSingleQuotes
+                | C::SelectInsideSingleQuotes
+                | C::SelectAroundBackticks
+                | C::SelectInsideBackticks
+                | C::SelectInsideWord
+                | C::SelectAroundWord
+                | C::SelectInsideLongWord
+                | C::SelectAroundLongWord
+                | C::SelectAroundClosestDelimiter
+                | C::SelectInsideClosestDelimiter => "select",
                 C::CutSelectionForChange => "insert",
                 _ => "normal",
             };

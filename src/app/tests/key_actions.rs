@@ -2053,3 +2053,374 @@ fn no_yank_delete_program_enters_normal_only_after_success() {
     assert!(app.status_error);
     assert_eq!(app.mode, Mode::Select, "refusal must stop the mode step");
 }
+
+#[test]
+fn atomic_text_objects_and_flip_preserve_modes_and_default_selection_parity() {
+    use crate::keymap::program::Program;
+    use EditorCommand as C;
+    let cases = [
+        (C::FlipSelection, "ab", Range::new(0, 1)),
+        (C::SplitSelectionAtLineEnds, "ab\ncd", Range::new(0, 4)),
+        (C::SplitSelectionAtLineStarts, "ab\ncd", Range::new(0, 4)),
+        (C::SelectInsideWord, "alpha beta", Range::point(1)),
+        (C::SelectAroundWord, "alpha beta", Range::point(1)),
+        (C::SelectInsideLongWord, "alpha.beta gamma", Range::point(1)),
+        (C::SelectAroundLongWord, "alpha.beta gamma", Range::point(1)),
+        (C::SelectInsideParentheses, "(ab)", Range::point(1)),
+        (C::SelectAroundParentheses, "(ab)", Range::point(1)),
+        (C::SelectInsideSquareBrackets, "[ab]", Range::point(1)),
+        (C::SelectAroundSquareBrackets, "[ab]", Range::point(1)),
+        (C::SelectInsideBraces, "{ab}", Range::point(1)),
+        (C::SelectAroundBraces, "{ab}", Range::point(1)),
+        (C::SelectInsideAngleBrackets, "<ab>", Range::point(1)),
+        (C::SelectAroundAngleBrackets, "<ab>", Range::point(1)),
+        (C::SelectInsideDoubleQuotes, "\"ab\"", Range::point(1)),
+        (C::SelectAroundDoubleQuotes, "\"ab\"", Range::point(1)),
+        (C::SelectInsideSingleQuotes, "'ab'", Range::point(1)),
+        (C::SelectAroundSingleQuotes, "'ab'", Range::point(1)),
+        (C::SelectInsideBackticks, "`ab`", Range::point(1)),
+        (C::SelectAroundBackticks, "`ab`", Range::point(1)),
+        (C::SelectInsideClosestDelimiter, "(ab)", Range::point(1)),
+        (C::SelectAroundClosestDelimiter, "(ab)", Range::point(1)),
+    ];
+    for (command, source, selection) in cases {
+        for mode in [Mode::Normal, Mode::Select] {
+            let mut pure = conditional_app(Program::single(command.into()));
+            seed(&mut pure, source);
+            pure.mode = mode;
+            pure.active_mut()
+                .replace_selection(Selection::single(selection));
+            key(&mut pure, KeyCode::Function(6), Modifiers::NONE);
+            assert_eq!(pure.mode, mode, "{command:?}");
+            let expected = pure.active().selection.clone();
+            let semantics = pure.active().selection_semantics();
+            let mut default = configured("{}");
+            seed(&mut default, source);
+            default.mode = mode;
+            default
+                .active_mut()
+                .replace_selection(Selection::single(selection));
+            let binding = default
+                .keymap
+                .bindings()
+                .iter()
+                .find(|b| b.target == BindingTarget::Editor(command))
+                .unwrap()
+                .clone();
+            for key_stroke in binding.sequence.as_slice() {
+                key(&mut default, key_stroke.code, key_stroke.modifiers);
+            }
+            assert_eq!(default.active().selection, expected, "{command:?}");
+            assert_eq!(default.active().selection_semantics(), semantics);
+            assert_eq!(
+                default.mode,
+                if matches!(
+                    command,
+                    C::SplitSelectionAtLineEnds | C::SplitSelectionAtLineStarts
+                ) {
+                    Mode::Normal
+                } else {
+                    Mode::Select
+                }
+            );
+            key(&mut default, KeyCode::Char('u'), Modifiers::ALT);
+            assert_eq!(
+                default.active().selection,
+                Selection::single(selection),
+                "{command:?} undo"
+            );
+            assert_eq!(default.mode, mode);
+        }
+    }
+}
+
+#[test]
+fn atomic_object_no_result_empty_object_and_transient_lines_keep_their_contracts() {
+    use crate::keymap::program::Program;
+    for gesture in ['x', 'X'] {
+        let mut app = conditional_app(Program::single(EditorCommand::SelectInsideWord.into()));
+        seed(&mut app, "alpha beta");
+        press(&mut app, gesture);
+        let mode = app.mode;
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert_eq!(app.mode, mode);
+        assert!(app.line_select.is_none());
+        press(&mut app, 'h');
+        assert_eq!(app.mode, mode);
+    }
+    let mut app = configured("{}");
+    seed(&mut app, "plain");
+    let before = app.active().selection.clone();
+    for c in ['m', 'i', '('] {
+        press(&mut app, c);
+    }
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.active().selection, before);
+    assert_eq!(app.status, "no enclosing delimiter pair");
+    assert!(!app.status_error);
+
+    let mut app = configured("{}");
+    seed(&mut app, "()");
+    for c in ['m', 'i', '('] {
+        press(&mut app, c);
+    }
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(
+        app.active().selection_semantics(),
+        SelectionSemantics::HalfOpen
+    );
+    assert_eq!(app.operative_spans(), vec![(1, 1)]);
+}
+
+#[test]
+fn atomic_syntax_selections_match_default_programs_and_counts() {
+    use EditorCommand as C;
+    let root = temporary_directory().join(format!(
+        "runyte-selection-split-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("objects.rs");
+    let source = "struct Item { value: usize }\nfn greet(first: usize, second: usize) { let local = first; let next = second; }\n";
+    fs::write(&path, source).unwrap();
+    let point = |needle: &str| Range::point(source.find(needle).unwrap());
+    let span = |needle: &str| {
+        let from = source.find(needle).unwrap();
+        Range::new(from, from + needle.len() - 1)
+    };
+    for (command, selection) in [
+        (C::SelectSyntaxClass, point("value")),
+        (C::SelectInsideSyntaxClass, point("value")),
+        (C::SelectSyntaxFunction, point("local")),
+        (C::SelectInsideSyntaxFunction, point("local")),
+        (C::SelectSyntaxParameter, point("first")),
+        (C::SelectInsideSyntaxParameter, point("first")),
+        (C::SelectSyntaxParent, point("local")),
+        (C::SelectSyntaxChild, span("let local = first;")),
+        (C::SelectNextSyntaxSibling, span("let local = first;")),
+        (C::SelectPreviousSyntaxSibling, span("let next = second;")),
+    ] {
+        for mode in [Mode::Normal, Mode::Select] {
+            let mut pure = App::new(Config::default(), Some(path.clone())).unwrap();
+            pure.mode = mode;
+            pure.active_mut()
+                .replace_selection(Selection::single(selection));
+            let before = pure.active().selection_revision;
+            pure.execute(
+                CommandInvocation::editor(command, CommandExecutionContext::default()).unwrap(),
+            )
+            .unwrap();
+            assert_ne!(
+                pure.active().selection_revision,
+                before,
+                "{command:?} must select"
+            );
+            assert_eq!(pure.mode, mode, "{command:?}");
+            let mut default = App::new(Config::default(), Some(path.clone())).unwrap();
+            default.mode = mode;
+            default
+                .active_mut()
+                .replace_selection(Selection::single(selection));
+            let binding = default
+                .keymap
+                .bindings()
+                .iter()
+                .find(|b| b.target == BindingTarget::Editor(command))
+                .unwrap()
+                .clone();
+            for stroke in binding.sequence.as_slice() {
+                key(&mut default, stroke.code, stroke.modifiers);
+            }
+            assert_eq!(
+                default.active().selection,
+                pure.active().selection,
+                "{command:?}"
+            );
+            assert_eq!(
+                default.active().selection_semantics(),
+                pure.active().selection_semantics()
+            );
+            assert_eq!(default.mode, Mode::Select);
+        }
+    }
+    // Earlier successful repetitions still require Select when later ones
+    // reach the root. No result at the root must not run the mode tail.
+    let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+    app.active_mut()
+        .replace_selection(Selection::single(point("local")));
+    for c in "99 xp".chars() {
+        press(&mut app, c);
+    }
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.status, "no syntax parent");
+    let root_selection = app.active().selection.clone();
+    app.execute(CommandInvocation::mode_entry(Mode::Normal))
+        .unwrap();
+    for c in " xp".chars() {
+        press(&mut app, c);
+    }
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.active().selection, root_selection);
+    for count in [99, 128] {
+        let mut replay = App::new(Config::default(), Some(path.clone())).unwrap();
+        replay
+            .active_mut()
+            .replace_selection(Selection::single(point("local")));
+        replay.macros.insert(
+            DEFAULT_MACRO_REGISTER,
+            format!("{count} xp")
+                .chars()
+                .map(|c| InputEvent::Key(KeyStroke::new(KeyCode::Char(c), Modifiers::NONE)))
+                .collect(),
+        );
+        replay.replay_macro(DEFAULT_MACRO_REGISTER, 1).unwrap();
+        finish_macro_replay(&mut replay);
+        assert!(!replay.status_error, "{}", replay.status);
+        assert_eq!(replay.active().selection, root_selection);
+        assert_eq!(replay.mode, Mode::Select);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn no_result_selection_stops_configured_tail_but_mixed_range_success_continues() {
+    let source = "bind: {normal: {F6: [select-inside-parentheses, move-right]}}";
+    let mut app = configured(source);
+    seed(&mut app, "plain");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.active().selection.primary(), Range::point(0));
+    assert_eq!(app.status, "no enclosing delimiter pair");
+
+    let mut app = configured(source);
+    seed(&mut app, "x (ab)");
+    app.active_mut()
+        .replace_selection(Selection::new(vec![Range::point(0), Range::point(3)], 1));
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(!app.status_error);
+    assert_eq!(app.active().selection.ranges()[0], Range::point(1));
+    assert_eq!(app.active().selection.primary().head, 5);
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
+fn atomic_expansion_and_history_shrink_preserve_explicit_mode_composition() {
+    use crate::test_support::TestRuntimeRoot;
+    use EditorCommand as C;
+    let root = TestRuntimeRoot::new("atomic-expansion").unwrap();
+    let path = root.path().join("expand.rs");
+    let source = "fn demo() { let value = call(1); }\n";
+    fs::write(&path, source).unwrap();
+    let original = Selection::point(source.find("value").unwrap());
+    for mode in [Mode::Normal, Mode::Select] {
+        for defaults in [false, true] {
+            let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+            app.mode = mode;
+            app.active_mut().replace_selection(original.clone());
+            let mut expanded = Vec::new();
+            for _ in 0..2 {
+                if defaults {
+                    for c in " xe".chars() {
+                        press(&mut app, c);
+                    }
+                } else {
+                    app.execute(
+                        CommandInvocation::editor(
+                            C::ExpandSyntaxSelection,
+                            CommandExecutionContext::default(),
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap();
+                }
+                assert_eq!(app.mode, if defaults { Mode::Select } else { mode });
+                expanded.push(app.active().selection.clone());
+            }
+            assert_ne!(expanded[0], expanded[1]);
+            for c in " xs".chars() {
+                press(&mut app, c);
+            }
+            assert_eq!(app.active().selection, expanded[0]);
+            assert_eq!(app.mode, if defaults { Mode::Select } else { mode });
+            for c in " xs".chars() {
+                press(&mut app, c);
+            }
+            assert_eq!(app.active().selection, original);
+            assert_eq!(app.mode, mode);
+            assert_eq!(
+                app.active().selection_semantics(),
+                SelectionSemantics::Runyte
+            );
+        }
+    }
+    for gesture in ['x', 'X'] {
+        let mut app = App::new(Config::default(), Some(path.clone())).unwrap();
+        app.active_mut().replace_selection(original.clone());
+        press(&mut app, gesture);
+        app.execute(
+            CommandInvocation::editor(C::ExpandSyntaxSelection, CommandExecutionContext::default())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(app.mode, Mode::Select);
+        assert!(app.line_select.is_none());
+    }
+    // All repetitions run before the explicit mode tail; each history frame
+    // captures that actual invocation mode, including for a counted default.
+    let mut app = App::new(Config::default(), Some(path)).unwrap();
+    app.active_mut().replace_selection(original.clone());
+    for c in "2 xe".chars() {
+        press(&mut app, c);
+    }
+    assert_eq!(app.mode, Mode::Select);
+    for c in " xs".chars() {
+        press(&mut app, c);
+    }
+    assert_eq!(app.mode, Mode::Normal);
+    for c in " xs".chars() {
+        press(&mut app, c);
+    }
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.active().selection, original);
+}
+
+#[test]
+fn failed_syntax_shrink_stops_configured_editing_tails() {
+    use crate::test_support::TestRuntimeRoot;
+    let root = TestRuntimeRoot::new("shrink-tail").unwrap();
+    let path = root.path().join("sample.rs");
+    let source = "fn demo() { let value = 1; }\n";
+    fs::write(&path, source).unwrap();
+    for mismatch in [false, true] {
+        let config = Config {
+            keys: Some(
+                serde_yaml::from_str(
+                    "bind: {normal: {F6: [shrink-syntax-selection, delete-selection]}}",
+                )
+                .unwrap(),
+            ),
+            ..Config::default()
+        };
+        let mut app = App::new(config, Some(path.clone())).unwrap();
+        if mismatch {
+            app.active_mut()
+                .replace_selection(Selection::point(source.find("value").unwrap()));
+            app.expand_syntax_selection().unwrap();
+            app.active_mut().replace_selection(Selection::point(0));
+        }
+        let before = app.active().selection.clone();
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert_eq!(text(&app), source);
+        assert_eq!(app.active().selection, before);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(!app.status_error);
+        assert!(app.status.contains(if mismatch {
+            "reset after selection changed"
+        } else {
+            "no syntax expansion"
+        }));
+    }
+}

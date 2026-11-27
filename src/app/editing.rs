@@ -2048,7 +2048,6 @@ impl App {
     pub(super) fn flip_selection(&mut self) {
         let selection = self.active().selection.flip();
         self.active_mut().replace_selection(selection);
-        self.mode = Mode::Select;
     }
 
     pub(super) fn expand_syntax_selection(&mut self) -> Result<()> {
@@ -2081,7 +2080,6 @@ impl App {
         self.active_mut().replace_selection(expanded);
         self.active_mut()
             .mark_selection_semantics(SelectionSemantics::HalfOpen);
-        self.mode = Mode::Select;
         Ok(())
     }
 
@@ -2089,7 +2087,6 @@ impl App {
         let buffer_id = self.active().buffer;
         let pane_id = self.active_pane;
         let selection = self.active().selection.clone();
-        let mode = self.mode;
         let semantics = self.active().selection_semantics();
         let Some(syntax) = self.syntax[buffer_id].as_ref() else {
             self.mark_unavailable("syntax is unavailable for this buffer");
@@ -2104,7 +2101,6 @@ impl App {
                 syntax,
                 self.buffers[buffer_id].text(),
                 &selection,
-                mode,
                 semantics,
             )?;
         match result {
@@ -2327,7 +2323,6 @@ impl App {
         };
         self.active_mut().replace_selection(selection);
         self.active_mut().mark_selection_semantics(semantics);
-        self.mode = Mode::Select;
     }
 
     pub(super) fn navigate_syntax_object(
@@ -2733,9 +2728,6 @@ impl App {
             return;
         };
         self.active_mut().replace_selection(selection);
-        // Collapsed cursors have nothing to extend, and the point of the
-        // command is to type at them, so it lands in NORMAL rather than SELECT.
-        self.mode = Mode::Normal;
     }
 
     /// Adds a caret on the nearest row above or below every current caret that
