@@ -119,7 +119,7 @@ pub fn details_indexed(
         display::effects(d.policy.effects),
         display::count(d.policy.count),
         display::operands(d.policy.operands),
-        display::position(d.policy.legacy_sequence_position),
+        display::continuation(d),
         if modes.is_empty() {
             "scope-only or internal"
         } else {
@@ -301,7 +301,7 @@ pub fn admitted_here(id: CommandId, mode: Mode, scope: BindingScope) -> bool {
 pub fn descriptor_reference() -> String {
     use std::fmt::Write;
     let mut out = String::from(
-        "\n## Action contracts\n\nGenerated from built-in descriptors. Effects include owned continuations and specialized views; they do not change the current sequence rules. Character operands and palette arguments are separate.\n\n| Action | Effects | Count | Character operands | Palette argument | View differences |\n| --- | --- | --- | --- | --- | --- |\n",
+        "\n## Action contracts\n\nGenerated from built-in descriptors. Effects include owned continuations and specialized views; remaining prompt and background effects require the last step. Character operands and palette arguments are separate.\n\n| Action | Effects | Count | Character operands | Palette argument | View differences |\n| --- | --- | --- | --- | --- | --- |\n",
     );
     for id in identities() {
         let d = id.descriptor().unwrap();

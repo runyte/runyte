@@ -2,9 +2,7 @@
 //! Shared user-facing vocabulary for action contracts and availability.
 use crate::command::{
     ArgumentKind, CommandArguments,
-    descriptor::{
-        ActionEffect, ArgumentDelivery, CountBehavior, LegacySequencePosition, OperandArity,
-    },
+    descriptor::{ActionEffect, ArgumentDelivery, CountBehavior, OperandArity},
 };
 use crate::{keymap::BindingAvailability, service_health::CommandAvailability};
 
@@ -46,10 +44,25 @@ pub fn operands(value: OperandArity) -> &'static str {
         OperandArity::Two => "two characters",
     }
 }
-pub fn position(value: LegacySequencePosition) -> &'static str {
+pub fn continuation(descriptor: crate::command::descriptor::ActionDescriptor) -> &'static str {
+    if descriptor.policy.effects.contains(&ActionEffect::Prompt)
+        && !descriptor
+            .policy
+            .effects
+            .contains(&ActionEffect::Background)
+        && descriptor
+            .argument()
+            .is_some_and(|arg| arg.delivery == ArgumentDelivery::ReplacesPrompt)
+    {
+        "last unless an argument supplies the prompt input"
+    } else {
+        position(descriptor.can_continue(&crate::command::InvocationParameters::None))
+    }
+}
+pub fn position(value: bool) -> &'static str {
     match value {
-        LegacySequencePosition::Continue => "can be followed by another action",
-        LegacySequencePosition::Last => "must be the last action",
+        true => "can be followed by another action",
+        false => "must be the last action",
     }
 }
 pub fn arguments(value: CommandArguments) -> &'static str {

@@ -555,8 +555,7 @@ fn counted_program_replay_reserves_remaining_budget_before_prefix_effects() {
     assert_eq!(cursor(&app).col, 0);
 }
 
-/// Internal programs exercise the executor before the public continuation
-/// policy is widened in the following stage 3b slice.
+/// Construct internal programs to exercise execution independently of compilation.
 pub(super) fn program_app(commands: &[EditorCommand]) -> App {
     use crate::keymap::{Binding, Key, actions::Action, program::Program};
     let mut app = configured("{}");
@@ -577,13 +576,9 @@ pub(super) fn program_app(commands: &[EditorCommand]) -> App {
 fn program_resumes_after_each_operand_and_cancels_before_the_tail() {
     use EditorCommand as C;
     for cancel in [false, true] {
-        let mut app = program_app(&[
-            C::MoveRight,
-            C::FindNextChar,
-            C::MoveRight,
-            C::FindNextChar,
-            C::Yank,
-        ]);
+        let mut app = configured(
+            "bind: {normal: {F6: [move-right, find-next-char, move-right, find-next-char, yank]}}",
+        );
         seed(&mut app, "abxcdxef");
         key(&mut app, KeyCode::Function(6), Modifiers::NONE);
         assert_eq!(cursor(&app).col, 1);
@@ -642,9 +637,8 @@ fn paused_program_refuses_a_changed_document_or_selection() {
 
 #[test]
 fn program_waits_for_both_surround_operands_and_preserves_its_tail() {
-    use EditorCommand as C;
     for cancel_at in [0, 1, 2] {
-        let mut app = program_app(&[C::SurroundReplace, C::Yank]);
+        let mut app = configured("bind: {normal: {F6: [surround-replace, yank]}}");
         seed(&mut app, "(abc)");
         set_cursor(&mut app, 0, 2);
         key(&mut app, KeyCode::Function(6), Modifiers::NONE);
@@ -1073,4 +1067,125 @@ fn native_link_focus_cancels_the_source_panes_paused_program() {
     assert!(!app.registers.contains_key(&'"'));
     key(&mut app, KeyCode::Char('u'), Modifiers::ALT);
     assert_eq!(cursor(&app).col, 1);
+}
+
+#[test]
+fn configured_programs_continue_after_mode_operand_and_view_effects() {
+    let mut app = configured(
+        "bind: {normal: {F6: [enter-insert-mode, move-right, enter-normal-mode], F7: [find-next-char, move-right], F8: [show-help, move-file-end]}}",
+    );
+    seed(&mut app, "abxcd");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(cursor(&app).col, 1);
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert_eq!(
+        app.awaiting_character_command(),
+        Some(EditorCommand::FindNextChar)
+    );
+    press(&mut app, 'x');
+    assert_eq!(cursor(&app).col, 3);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert!(cursor(&app).row > 0);
+}
+
+#[test]
+fn internal_programs_cannot_continue_after_deferred_macro_replay() {
+    let mut app = program_app(&[
+        EditorCommand::ReplayDefaultMacro,
+        EditorCommand::DeleteSelection,
+    ]);
+    seed(&mut app, "abc");
+    app.macros.insert(
+        DEFAULT_MACRO_REGISTER,
+        vec![InputEvent::Key(KeyStroke::plain(KeyCode::Char('l')))],
+    );
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    finish_macro_replay(&mut app);
+    assert_eq!(text(&app), "abc");
+    assert_eq!(cursor(&app).col, 1);
+}
+
+#[test]
+fn configured_grammar_and_tree_mode_changes_preserve_the_tail() {
+    let mut app = configured(
+        "bind: {normal: {F6: [{command: grammar, argument: runyte}, move-right], F7: [focus-directory-tree, close-window]}}",
+    );
+    seed(&mut app, "abc");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(cursor(&app).col, 1);
+    // Tree focus changes the live scope; the supported close action still runs.
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(!app.directory_tree.visible);
+}
+
+#[test]
+fn terminal_mode_changes_and_supplied_name_continue_the_program() {
+    let mut app = configured(
+        "bind: {normal: {F6: [enter-insert-mode, enter-normal-mode, leave-terminal], F7: [{command: rename-terminal, argument: build}, leave-terminal]}}",
+    );
+    let terminal = app.terminals.insert_test_session(80, 24);
+    app.active_mut().terminal = Some(terminal);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(app.active_terminal().is_none());
+    app.active_mut().terminal = Some(terminal);
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert!(app.active_terminal().is_none());
+}
+
+#[test]
+fn newly_admitted_colon_program_still_stops_on_runtime_refusal() {
+    let mut app = configured("bind: {normal: {F6: [close, move-right]}}");
+    seed(&mut app, "abc");
+    app.insert_text("x");
+    let before = app.active().selection.clone();
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(app.status_error);
+    assert_eq!(app.active().selection, before);
+}
+
+#[test]
+fn view_overlays_cannot_leave_an_orphaned_program_operand() {
+    let root = crate::test_support::OwnedTempDir::new().unwrap();
+    let path = root.path().join("sample.txt");
+    fs::write(&path, "alpha beta").unwrap();
+    for opener in ["open-buffer-picker", "path"] {
+        for escape in [false, true] {
+            let mut app = configured(&format!(
+                "bind: {{normal: {{F6: [{opener}, find-next-char, delete-selection]}}}}"
+            ));
+            app.open_file(path.clone()).unwrap();
+            key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+            assert!(app.has_input_overlay(), "{opener}");
+            assert!(app.status_error, "{opener}");
+            assert!(app.awaiting_character_command().is_none());
+            if escape {
+                key(&mut app, KeyCode::Escape, Modifiers::NONE);
+            } else {
+                press(&mut app, 'b');
+            }
+            assert!(app.awaiting_character_command().is_none());
+            assert_eq!(text(&app), "alpha beta");
+        }
+    }
+}
+
+#[test]
+fn jump_label_input_never_runs_an_internal_program_tail() {
+    for cancel in [false, true] {
+        let mut app = program_app(&[EditorCommand::GotoWord, EditorCommand::DeleteSelection]);
+        seed(&mut app, "alpha beta");
+        app.active_mut().wrap_width = 80;
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert!(app.jump.is_some());
+        assert_eq!(text(&app), "alpha beta");
+        if cancel {
+            key(&mut app, KeyCode::Escape, Modifiers::NONE);
+        } else {
+            press(&mut app, 's');
+            assert_eq!(cursor(&app).col, 6);
+        }
+        assert!(app.jump.is_none());
+        assert_eq!(text(&app), "alpha beta");
+    }
 }

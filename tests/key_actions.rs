@@ -205,3 +205,33 @@ fn action_bindings_preserve_terminal_input_and_its_window_commands() {
         );
     }
 }
+
+#[test]
+fn configured_continuation_uses_effects_and_actual_prompt_arguments() {
+    for steps in [
+        "enter-insert-mode, move-left",
+        "find-next-char, yank",
+        "surround-replace, yank",
+        "focus-window-right, move-left",
+        "show-help, move-file-end",
+        "match-bracket, yank",
+        "{command: rename-terminal, argument: build}, move-left",
+        "{command: path}, move-file-end",
+    ] {
+        let compiled = compile(&format!("bind: {{normal: {{F8: [{steps}]}}}}"));
+        assert!(compiled.errors.is_empty(), "{steps}: {:?}", compiled.errors);
+    }
+    for steps in [
+        "search, yank",
+        "goto-word, delete-selection",
+        "rename-terminal, move-left",
+        "{command: rename-terminal, argument: ''}, move-left",
+        "{command: file-picker-path, argument: .}, move-left",
+        "{command: pipe, argument: sort}, move-left",
+        "replay-default-macro, move-left",
+        "replay-macro, move-left",
+    ] {
+        let compiled = compile(&format!("bind: {{normal: {{F8: [{steps}]}}}}"));
+        assert!(!compiled.errors.is_empty(), "unexpected admission: {steps}");
+    }
+}

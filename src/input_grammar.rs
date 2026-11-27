@@ -501,6 +501,18 @@ impl RunyteGrammar {
         let Some(program) = self.program.as_mut() else {
             return Ok(None);
         };
+        // The compiler uses the same rule, but internal/default programs must
+        // not run a tail while a prompt, plugin or deferred operation owns input.
+        if program.next > 0
+            && !program
+                .program
+                .get(program.next - 1)
+                .unwrap()
+                .can_continue()
+        {
+            self.program = None;
+            return Ok(None);
+        }
         let Some(action) = program.program.get(program.next).cloned() else {
             self.program = None;
             return Ok(None);

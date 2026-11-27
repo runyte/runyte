@@ -60,6 +60,17 @@ pub enum Action {
 }
 
 impl Action {
+    pub fn can_continue(&self) -> bool {
+        let parameters = match self {
+            Self::Invocation(invocation) => invocation.parameters(),
+            _ => &command::InvocationParameters::None,
+        };
+        self.target()
+            .id()
+            .descriptor()
+            .is_some_and(|d| d.can_continue(parameters))
+    }
+
     pub fn target(&self) -> BindingTarget {
         match self {
             Self::Target(target) => *target,
@@ -67,7 +78,7 @@ impl Action {
             Self::Invocation(invocation) => match invocation.id() {
                 CommandId::Editor(command) => BindingTarget::Editor(command),
                 CommandId::Colon(command) => BindingTarget::Colon(command),
-                CommandId::Plugin(_) => unreachable!("configured built-in actions exclude plugins"),
+                CommandId::Plugin(id) => BindingTarget::Plugin(id),
             },
         }
     }
@@ -77,16 +88,9 @@ pub fn editor_modes(command: EditorCommand) -> Vec<Mode> {
     command.action_policy().global_binding_modes.to_vec()
 }
 
-/// Stage 1 preserves the historical sequence contract. Stage 3 replaces this
-/// policy together with execution, when operand waits can resume programs.
+/// Unparameterized continuation, shared with discovery.
 pub fn can_continue(target: BindingTarget) -> bool {
-    use command::descriptor::LegacySequencePosition;
-    let policy = match target {
-        BindingTarget::Editor(c) => c.action_policy(),
-        BindingTarget::Colon(c) => c.action_policy(),
-        BindingTarget::Plugin(_) => return false,
-    };
-    policy.legacy_sequence_position == LegacySequencePosition::Continue
+    Action::Target(target).can_continue()
 }
 
 pub fn mode_name(mode: Mode) -> &'static str {
@@ -563,7 +567,7 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
         .map(|value| parse_action(value, mode))
         .collect::<Result<Vec<_>, _>>()?;
     for (action, _) in parsed.iter().take(parsed.len().saturating_sub(1)) {
-        if !can_continue(action.target()) {
+        if !action.can_continue() {
             return Err(format!(
                 "{} must be the last action",
                 action.target().name()
@@ -868,14 +872,12 @@ pub fn reference() -> String {
                     .map(mode_name)
                     .collect::<Vec<_>>()
                     .join(", "),
-                crate::command::discovery::display::position(
-                    descriptor.policy.legacy_sequence_position
-                ),
+                crate::command::discovery::display::continuation(descriptor),
                 metadata.description
             );
         }
     }
-    out.push_str("\n## Colon commands\n\nThese accept the same arguments as the command palette, supplied separately\nas `{ command: name, argument: text }`. They are available in Normal and\nSelect modes and must end a sequence. Required arguments must be supplied.\n\n| Command | Usage | Description |\n| --- | --- | --- |\n");
+    out.push_str("\n## Colon commands\n\nThese accept the same arguments as the command palette, supplied separately\nas `{ command: name, argument: text }`. They are available in Normal and\nSelect modes. Prompt and background effects must end a sequence; supplying prompt input removes only that prompt. Required arguments must be supplied.\n\n| Command | Usage | Description |\n| --- | --- | --- |\n");
     for spec in command::COMMANDS {
         if matches!(spec.id, CommandId::Colon(_)) {
             let _ = writeln!(

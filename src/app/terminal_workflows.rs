@@ -723,7 +723,11 @@ impl App {
                 session.scroll_to_live();
                 let _ = session;
                 self.mode = Mode::Normal;
-                self.reset_program_input();
+                if self.executing_program {
+                    self.grammar.reset_prefix();
+                } else {
+                    self.reset_program_input();
+                }
                 self.dismiss_popups();
                 self.status("terminal normal · Ctrl-\\ enters review · i returns to input");
                 true
