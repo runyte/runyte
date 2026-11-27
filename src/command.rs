@@ -2929,10 +2929,33 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
 ];
 
+/// Stable catalog indexes retain the first authored match, including aliases.
+/// They never depend on a keymap, so preset construction can use them safely.
+pub(crate) fn command_spec(id: CommandId) -> Option<&'static CommandSpec> {
+    static BY_ID: std::sync::LazyLock<std::collections::HashMap<CommandId, &'static CommandSpec>> =
+        std::sync::LazyLock::new(|| {
+            let mut index = std::collections::HashMap::new();
+            for spec in COMMANDS {
+                index.entry(spec.id).or_insert(spec);
+            }
+            index
+        });
+    BY_ID.get(&id).copied()
+}
+
 pub fn resolve_command(name: &str) -> Option<&'static CommandSpec> {
-    COMMANDS
-        .iter()
-        .find(|spec| spec.name == name || spec.aliases.contains(&name))
+    static BY_NAME: std::sync::LazyLock<
+        std::collections::HashMap<&'static str, &'static CommandSpec>,
+    > = std::sync::LazyLock::new(|| {
+        let mut index = std::collections::HashMap::new();
+        for spec in COMMANDS {
+            for name in spec.names() {
+                index.entry(name).or_insert(spec);
+            }
+        }
+        index
+    });
+    BY_NAME.get(name).copied()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

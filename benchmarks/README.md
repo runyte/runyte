@@ -862,3 +862,26 @@ compilation. Export includes serialization, prospective validation, and file
 replacement; load does not include keymap compilation. These component timings
 are not end-to-end editor readiness measurements. Stop other builds before
 collecting comparison-quality results.
+
+## Embedded preset initialization
+
+Build the cold-process phase probe with:
+
+```sh
+cargo build --release --locked --features startup-timing --example preset_startup
+./target/release/examples/preset_startup
+```
+
+Each invocation initializes the default semantic keymap once and prints JSON
+nanoseconds for typed YAML parsing, program/metadata construction, the existing
+lookup-index build, and total initialization. Run a fresh process per sample;
+discard one warm-up and report the median and range of ten further invocations.
+The isolated preset cost is `yaml_ns + program_ns`; index construction predates
+the YAML migration. Phase clocks exist only with `startup-timing` enabled.
+Use an ordinary release binary with `startup.py` to measure editing readiness;
+do not compare this phase probe's total directly with PTY readiness.
+
+The serial CI performance job enables `startup-timing` and runs
+`embedded_preset_construction_stays_bounded`. Five fresh child processes report
+parse + program time; their median must stay within a generous 15 ms ceiling.
+This is a regression guard, separate from decision 39's readiness comparison.

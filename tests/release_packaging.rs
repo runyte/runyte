@@ -137,7 +137,7 @@ fn ci_enforces_the_committed_dependency_graph() {
         ),
         (
             "performance",
-            "cargo test --release --locked --test performance -- --ignored --test-threads=1",
+            "cargo test --release --locked --features startup-timing --test performance -- --ignored --test-threads=1",
         ),
         (
             "performance",

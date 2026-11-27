@@ -18,6 +18,57 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-27 — embedded Runyte semantic preset
+
+Stage 3 of [#132](https://github.com/runyte/runyte/issues/132), based on
+`90dba021` (merged #151). Release builds with `cargo build --release --locked
+--bin runyte`, AMD Ryzen AI 9 365, Linux 7.3.4-arch1-1 x86_64.
+`benchmarks/startup.py --only runyte --runs 10 --fixtures short.txt,short.lua`
+uses isolated home/XDG paths, a 120×40 PTY and one discarded warm-up per cell.
+These are stock terminal-edition readiness measurements; no desktop or
+instrumented file-loaded/syntax-ready result is claimed.
+
+| Implementation | Plain text readiness ms | Lua readiness ms |
+| --- | ---: | ---: |
+| Rust tables (#151) | 30.5 (28.0–33.5) | 31.4 (28.2–33.4) |
+| Initial YAML Value loader | 42.8 (33.3–151.4) | 37.4 (30.1–165.5) |
+| Optimized typed YAML loader | 31.2 (29.9–36.6) | 30.7 (29.3–38.8) |
+
+Cells are median (min–max), ten fresh processes. Baseline SHA-256:
+`9cc144fcf10c204954a3f9d5388201292f4661152dbd3c3e927bfe635bb36e6a`;
+optimized binary SHA-256:
+`11b91e5116da047c03c9f6323ec4a1410cfb9bf198aa6846eaddfcbf4bb313bc`.
+The initial loader had large outliers. Optimized median readiness changes are
++2.3% and −2.2%, within decision 39's deciding 5% readiness budget.
+
+The initial uninstrumented keymap initialization measured 17.31 ms. Phase
+profiling exposed repeated command/descriptor scans, YAML Value conversion,
+and redundant exhaustive cross-scope validation. The optimized loader uses
+indexed immutable command metadata, direct typed shape visitors, shared
+paired-mode programs and omitted redundant YAML metadata. Full cross-scope
+validation remains in every-preset tests; runtime schema and program checks
+remain. The pre-existing index implementation is unchanged.
+
+The retained `preset_startup` probe (see `benchmarks/README.md`) reports this
+final ten-process sample, median (min–max), ms:
+
+| Phase | Time |
+| --- | ---: |
+| Typed YAML parsing | 2.718 (1.814–3.102) |
+| Programs and metadata | 0.769 (0.551–1.238) |
+| YAML + programs per sample | 3.490 (2.365–3.987) |
+| Existing lookup index | 7.143 (5.424–8.683) |
+| Total keymap initialization | 10.635 (8.981–12.349) |
+
+An earlier optimized ten-process sample measured 2.97 ms for YAML + programs;
+CPU variation is visible in the unchanged index as well. The isolated preset
+cost still exceeds the 2 ms target. Following the profiling amendment, no disk
+cache is introduced, by decision: isolated YAML + programs is approximately
+3 ms, above the 2 ms proxy, but readiness stays within 5%. The serial release
+performance job checks a five-cold-process median against a generous 15 ms
+parse + program ceiling (excluding the existing index). These
+measurements do not establish equivalent timing on macOS or Windows.
+
 ## 2026-11-11 — login shell environment in the macOS launcher
 
 [#104](https://github.com/runyte/runyte/issues/104): `Runyte.app` now asks the

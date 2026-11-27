@@ -199,6 +199,9 @@ fn compile(section: &Value, base: &Keymap, defer_policy: bool) -> Result<Keymap,
                 if !seen.insert(sequence.clone()) {
                     return Err("duplicate normalized scoped key".into());
                 }
+                if super::presets::has_stage5_steps(value) {
+                    return Err(super::presets::STAGE5_DIAGNOSTIC.into());
+                }
                 let target = if value.is_null() {
                     None
                 } else {

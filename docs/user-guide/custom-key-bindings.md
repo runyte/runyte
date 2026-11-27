@@ -4,6 +4,7 @@ The `keys` section configures keyboard actions and pane gestures:
 
 | Key | What it does |
 | --- | --- |
+| `keys.preset` | Selects an embedded semantic preset; currently `runyte` (the default). |
 | `keys.leader` | Replaces `Space` as the leader prefix. |
 | `keys.window` | Replaces `Ctrl-w` as the window prefix. |
 | `keys.rebind` | Moves bindings Runyte already ships to other keys. |
@@ -61,6 +62,22 @@ keys:
     normal:
       F9: git-status
 ```
+
+Bindings may also provide an authored discovery description:
+
+```yaml
+keys:
+  preset: runyte
+  bind:
+    normal:
+      F6:
+        steps: [select-all, yank]
+        description: Copy the whole document
+```
+
+Unknown preset names report a configuration error and keep the Runyte base.
+Preset names never identify files. Mode-enter and conditional step forms are
+reserved for embedded presets until stage 5 of the composable bindings work.
 
 ### Changing the leader and window keys
 

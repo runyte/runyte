@@ -170,3 +170,8 @@ block = { path = "vendor/block" }
 proc-macro-error2 = { path = "vendor/proc-macro-error2" }
 gpui = { path = "vendor/gpui" }
 stylo_derive = { path = "vendor/stylo_derive" }
+
+[[example]]
+name = "preset_startup"
+path = "benchmarks/preset_startup.rs"
+required-features = ["startup-timing"]

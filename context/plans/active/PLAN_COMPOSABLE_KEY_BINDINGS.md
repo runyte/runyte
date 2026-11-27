@@ -351,6 +351,51 @@ decision revises an earlier one, the earlier entry says so.
     Counted selection steps aggregate success across repetitions, so reaching
     a boundary after earlier success still allows the mode tail.
 
+39. **Embedded preset transition (2026-11-27, delegated).** The semantic
+    binding, program, namespace and context-action tables, including fast-pane
+    alternatives, move to an embedded YAML Runyte preset. UI and pointer default
+    tables remain separate (decision 10). `keys.preset` defaults to `runyte`.
+    Stage 3 retains the public `bind`/`scopes` table shape. Steps already use the
+    final forms `{ action: mode-enter, arg: select }` and
+    `{ if: { mode: select }, then: [...], else: [...] }`; existing other
+    conditions use their names. These forms are accepted only in embedded
+    presets until stage 5; user configuration receives a stage-5 diagnostic.
+    Stage 4 changes table shape, and stage 5 removes the step gate.
+
+    Binding metadata is inline in `{ steps: [...], description: ... }`.
+    `description` is public. The temporary preset-only metadata is:
+
+    | Field/section | Purpose | Later public availability |
+    | --- | --- | --- |
+    | `role` | Primary, fast or compatibility teaching role | No public opening decided |
+    | `availability` | Planned/unsupported explanation for discovery | No public opening decided |
+    | `target` | Representative identity for a multi-step binding's discovery | No public opening decided |
+    | `alias`, `alias-modes` | Advertised alternate spelling and its applicable modes | No public opening decided |
+    | `namespaces` | Hint labels, modes, scope and capability of nonexecuting prefixes | No public opening decided |
+    | `context-actions` | Context menu labels, mnemonic and row/buffer ownership | No public opening decided |
+    | `fast-pane` | Existing optional fast-pane binding overlay | No public opening decided |
+
+    Metadata does not hide additional program steps. The dedicated loader must
+    preserve built-in provenance and avoid user scoped admission's dependence
+    on the default keymap. Frozen pre-migration fixtures verify the full
+    registry, including programs and discovery metadata, for both variants.
+    Decision 25's cache trigger is a greater-than-5% regression in the ten-run
+    release median readiness measured by `benchmarks/startup.py`, or isolated
+    preset compilation exceeding 2 ms. Record before/after measurements in the
+    startup register; the register itself defines no budget.
+
+    The profiling amendment makes a disk cache a last resort: first measure
+    parsing, validation, descriptor lookup and indexing; index repeated metadata
+    lookups and use direct typed deserialization before considering persistence.
+    The isolated 2 ms target covers YAML to typed data and programs, excluding
+    the pre-existing keymap index. The deciding acceptance metric is stock
+    ten-run readiness within 5% of the Rust baseline.
+    Isolated YAML + programs is approximately 3 ms, above the 2 ms proxy;
+    readiness is within 5%; no cache, by decision. A serial release performance
+    test bounds cold parse + program construction at a generous 15 ms median.
+    Exhaustive cross-scope validation of the immutable preset belongs in every-preset tests, as it did
+    for the Rust tables; schema and program validation remain in the loader.
+
 ## Model
 
 ```
@@ -653,7 +698,8 @@ slice completes the remaining stage 3 classifications under decision 38.
 
 None. Selection primitives preserve mode and default programs name mode entry.
 Shrink is a retained history-restoring decision; paragraphs join the whole-row
-ownership split in stage 4. The embedded YAML preset still remains for stage 3.
+ownership split in stage 4. The final stage 3 slice supplies the embedded YAML
+preset described below.
 
 ### Pending stage 4 splits
 
@@ -815,3 +861,16 @@ no longer toggle directories. Discovery renders both branches and scoped
 admission includes their leaf actions. Public conditional authoring remains
 stage 5; exhaustive classification and the embedded YAML preset remain the
 next stage 3b slices.
+
+### Embedded preset completion
+
+The final stage 3 slice moves all semantic bindings, programs, namespaces and
+context actions, including fast-pane alternatives, to
+`src/keymap/presets/runyte.yaml`. Default initialization compiles typed YAML once
+per process; `keys.preset` selects the embedded `runyte` preset and unknown
+names report a non-fatal fallback. The public description wrapper is accepted,
+while pure mode entry and conditional authoring retain the stage 5 gate.
+Frozen #151 registry and preferred-spelling fixtures cover both variants.
+Decision 39's profiling amendment is recorded in the startup register: optimized
+stock readiness passes the deciding 5% budget without a disk cache. Stage 4
+configuration consolidation and stage 5 public programs remain outstanding.

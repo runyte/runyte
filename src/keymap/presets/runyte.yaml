@@ -1,0 +1,884 @@
+# SPDX-License-Identifier: MPL-2.0
+# Runyte semantic preset. Decision 39: final step forms, preset-only until stage 5.
+bind:
+  normal: &base_bind_normal_select
+    "Esc": {"steps": ["fit-selection-for-normal-mode", {"action": "mode-enter", "arg": "normal"}], "target": "enter-normal-mode"}
+    "Ctrl-\\": {"steps": ["fit-selection-for-normal-mode", {"action": "mode-enter", "arg": "normal"}], "target": "enter-normal-mode"}
+    "Ctrl-4": {"steps": ["fit-selection-for-normal-mode", {"action": "mode-enter", "arg": "normal"}], "target": "enter-normal-mode", "role": "compatibility"}
+    ":": "open-command-palette"
+    "h": "move-left"
+    "Left": "move-left"
+    "j": "move-down"
+    "Down": "move-down"
+    "k": "move-up"
+    "Up": "move-up"
+    "l": "move-right"
+    "Right": "move-right"
+    "w": "move-word-forward"
+    "b": "move-word-backward"
+    "e": "move-word-end"
+    "W": "move-long-word-forward"
+    "B": "move-long-word-backward"
+    "E": "move-long-word-end"
+    "f": "find-next-char"
+    "F": "find-previous-char"
+    "t": "find-till-next-char"
+    "T": "find-till-previous-char"
+    "Home": "move-line-start"
+    "End": "move-line-end"
+    "0": "move-line-start"
+    "^": "move-first-non-whitespace"
+    "$": "move-line-end"
+    "Ctrl-b": "page-up"
+    "PageUp": "page-up"
+    "Ctrl-f": "page-down"
+    "PageDown": "page-down"
+    "Ctrl-u": "half-page-up"
+    "Ctrl-d": "half-page-down"
+    "i": "enter-insert-mode"
+    "a": "append-after"
+    "I": "insert-line-start"
+    "A": "insert-line-end"
+    "o": "open-line-below"
+    "O": "open-line-above"
+    "r": ["replace-char", {"action": "mode-enter", "arg": "normal"}]
+    "R": "enter-replace-mode"
+    "~": ["toggle-case", {"action": "mode-enter", "arg": "normal"}]
+    "Alt-u": "selection-undo"
+    "Alt-U": "selection-redo"
+    "Space s u": {"steps": ["selection-undo"], "alias": "Alt-u"}
+    "Space s U": {"steps": ["selection-redo"], "alias": "Alt-U"}
+    "u": "undo"
+    "U": "redo"
+    "y": "yank-collapse-normal-mode"
+    "Y": "yank-line-collapse-normal-mode"
+    "p": "paste-after-or-replace"
+    "P": "paste-before"
+    ">": "indent"
+    "<": "unindent"
+    "Ctrl-c": "toggle-comments"
+    "d": ["cut-selection", {"action": "mode-enter", "arg": "normal"}]
+    "c": ["cut-selection-for-change", {"action": "mode-enter", "arg": "insert"}]
+    "v": {"steps": [{"if": {"mode": "select"}, "then": ["collapse-selection", {"action": "mode-enter", "arg": "normal"}], "else": ["enter-select-mode"]}], "description": "Toggle Select; collapse when leaving", "target": "enter-select-mode"}
+    "x": "select-line"
+    "X": "extend-line-above"
+    "%": ["select-all", {"action": "mode-enter", "arg": "select"}]
+    ";": ["collapse-selection", {"action": "mode-enter", "arg": "normal"}]
+    "Alt-;": ["flip-selection", {"action": "mode-enter", "arg": "select"}]
+    ",": "keep-primary-selection"
+    "Alt-,": "remove-primary-selection"
+    "C": "copy-selection-down"
+    "Alt-C": "copy-selection-up"
+    "V": "copy-selection-down-padded"
+    "Alt-V": "copy-selection-up-padded"
+    ")": "rotate-selection-forward"
+    "(": "rotate-selection-backward"
+    "Alt-)": "rotate-selection-contents-forward"
+    "Alt-(": "rotate-selection-contents-backward"
+    "&": "align-selections"
+    "_": "trim-trailing-whitespace"
+    "Alt-_": "trim-selections"
+    "Space p w": "hard-wrap"
+    "Space p r": "reflow"
+    "Space p s": "toggle-soft-wrap"
+    "Space p .": "toggle-whitespace"
+    "Space p j": "join-selections"
+    "J": "join-lines"
+    "Space p t": "format-table"
+    "s": "search"
+    "/": "search-regex"
+    "n": "search-next"
+    "N": "search-previous"
+    "*": ["search-set-from-selection", "search-select-all-matches", {"action": "mode-enter", "arg": "select"}]
+    "Ctrl-s": "save"
+    "Ctrl-C": "clipboard-yank"
+    "Ctrl-v": "clipboard-paste"
+    "Alt-v": "clipboard-paste"
+    "Ctrl-o": "jump-backward"
+    "Alt-o": "jump-backward-buffer"
+    "Alt-i": "jump-forward-buffer"
+    "Ctrl-i": "jump-forward"
+    "Tab": "code-action"
+    "g g": "move-file-start"
+    "G": "move-file-end"
+    "g e": "move-file-end"
+    "g h": "move-line-start"
+    "g l": "move-line-end"
+    "g s": "move-first-non-whitespace"
+    "g t": "goto-window-top"
+    "g c": "goto-window-center"
+    "g b": "goto-window-bottom"
+    "H": "goto-window-top"
+    "M": "goto-window-center"
+    "L": "goto-window-bottom"
+    "g f": "goto-file"
+    "g w": "goto-word"
+    "g d": "goto-definition"
+    "g D": "goto-declaration"
+    "g y": "goto-type-definition"
+    "g r": "goto-references"
+    "g i": "goto-implementation"
+    "z z": "align-view-center"
+    "z c": "align-view-center"
+    "z t": "align-view-top"
+    "z b": "align-view-bottom"
+    "z m": "align-view-middle"
+    "z j": "scroll-view-down"
+    "z Down": "scroll-view-down"
+    "z k": "scroll-view-up"
+    "z Up": "scroll-view-up"
+    "z Ctrl-f": "page-down"
+    "z PageDown": "page-down"
+    "z Ctrl-b": "page-up"
+    "z PageUp": "page-up"
+    "z Ctrl-u": "half-page-up"
+    "z Ctrl-d": "half-page-down"
+    "Z z": "align-view-center"
+    "Z c": "align-view-center"
+    "Z t": "align-view-top"
+    "Z b": "align-view-bottom"
+    "Z m": "align-view-middle"
+    "Z j": "scroll-view-down"
+    "Z Down": "scroll-view-down"
+    "Z k": "scroll-view-up"
+    "Z Up": "scroll-view-up"
+    "Z Ctrl-f": "page-down"
+    "Z PageDown": "page-down"
+    "Z Ctrl-b": "page-up"
+    "Z PageUp": "page-up"
+    "Z Ctrl-u": "half-page-up"
+    "Z Ctrl-d": "half-page-down"
+    "Space e": {"steps": ["open-explorer"], "role": "fast"}
+    "Space d t": "toggle-directory-tree"
+    "Space d d": "focus-directory-tree"
+    "Space E": {"steps": ["open-working-directory-explorer"], "role": "fast"}
+    "Space Space": "session-list"
+    "Space 1": "session-1"
+    "Space 2": "session-2"
+    "Space 3": "session-3"
+    "Space 4": "session-4"
+    "Space 5": "session-5"
+    "Space 6": "session-6"
+    "Space 7": "session-7"
+    "Space 8": "session-8"
+    "Space 9": "session-9"
+    "Space n": "open-navigator"
+    "Ctrl-w n": {"steps": ["open-navigator"], "role": "compatibility"}
+    "Ctrl-w p": {"steps": ["previous-destination"], "role": "compatibility"}
+    "Ctrl-w a": {"steps": ["previous-session"], "role": "compatibility"}
+    "Shift-Left": "previous-running-session"
+    "Shift-Right": "next-running-session"
+    "Space ?": "show-help"
+    "Space h k": "describe-key"
+    "Space h a": "browse-actions"
+    "Space b b": "open-buffer-picker"
+    "Space b c": "close"
+    "Space b d": "diff-disk"
+    "Space b n": "new-buffer"
+    "Space t t": "open-terminal-list"
+    "Space t n": "open-terminal"
+    "Space t q": "leave-terminal"
+    "Space t r": "rename-terminal"
+    "Space t y": "copy-terminal-output"
+    "Space t s": "send-to-terminal"
+    "Space / s": "global-search"
+    "Space / /": "global-search-regex"
+    "Space / f": {"steps": ["open-file-picker"], "alias": "Space f"}
+    "Space f": {"steps": ["open-file-picker"], "role": "fast"}
+    "Space / a": "open-all-files-picker"
+    "Space / p": "open-path-file-picker"
+    "Space s e": ["split-selection-at-line-ends", {"action": "mode-enter", "arg": "normal"}]
+    "Space s b": ["split-selection-at-line-starts", {"action": "mode-enter", "arg": "normal"}]
+    "Space s c": {"steps": ["keep-primary-selection"], "alias": ","}
+    "Space s a": {"steps": ["align-selections"], "alias": "&"}
+    "Space s k": "keep-matching-selections"
+    "Space s r": "remove-matching-selections"
+    "Space r": "reload"
+    "Space g b": "git-branches"
+    "Space g g": "git-status"
+    "Space g w": "git-worktrees"
+    "Space g l": "git-log"
+    "Space g n": "git-network"
+    "Space g f": "git-search-commits"
+    "Space g B": "git-blame-file"
+    "Space g d": "git-diff"
+    "Space g D": "git-diff-side-by-side"
+    "Space g r": "git-refresh"
+    "Space g t": "git-stashes"
+    "Space c y": "clipboard-yank"
+    "Space c p": "clipboard-paste-after"
+    "Space c P": "clipboard-paste-before"
+    "Space l h": "show-documentation"
+    "Space l c": {"steps": ["trigger-completion"], "alias": "Ctrl-x", "alias-modes": ["insert", "replace"]}
+    "Space l s": "document-symbols"
+    "Space l S": "workspace-symbols"
+    "Space l d": "diagnostics"
+    "Space l r": "rename-symbol"
+    "Space l a": "code-action"
+    "Space l f": "format"
+    "Space l R": "lsp-restart"
+    "Space l ?": "lsp-status"
+    "Space o o": "open-settings"
+    "Space o t": "open-theme-settings"
+    "Space o s": "service-health"
+    "Space l g d": "goto-definition"
+    "Space l g D": "goto-declaration"
+    "Space l g y": "goto-type-definition"
+    "Space l g r": "goto-references"
+    "Space l g i": "goto-implementation"
+    "Space x e": ["expand-syntax-selection", {"action": "mode-enter", "arg": "select"}]
+    "Space x s": "shrink-syntax-selection"
+    "Space x p": ["select-syntax-parent", {"action": "mode-enter", "arg": "select"}]
+    "Space x c": ["select-syntax-child", {"action": "mode-enter", "arg": "select"}]
+    "Space x h": ["select-previous-syntax-sibling", {"action": "mode-enter", "arg": "select"}]
+    "Space x l": ["select-next-syntax-sibling", {"action": "mode-enter", "arg": "select"}]
+    "Space x o": "document-outline"
+    "Space x f": "fold-all-syntax"
+    "Space x x": "toggle-syntax-fold"
+    "Space x u": "unfold-all-syntax"
+    "Space x [ f": "goto-previous-syntax-function"
+    "Space x [ c": "goto-previous-syntax-class"
+    "Space x [ p": "goto-previous-syntax-parameter"
+    "Space x ] f": "goto-next-syntax-function"
+    "Space x ] c": "goto-next-syntax-class"
+    "Space x ] p": "goto-next-syntax-parameter"
+    "Ctrl-w w": {"steps": ["next-window"], "role": "compatibility"}
+    "Ctrl-w Ctrl-w": {"steps": ["next-window"], "role": "compatibility"}
+    "Ctrl-w x": {"steps": ["swap-window"], "role": "compatibility"}
+    "Ctrl-w H": {"steps": ["move-window-left"], "role": "compatibility"}
+    "Ctrl-w J": {"steps": ["move-window-down"], "role": "compatibility"}
+    "Ctrl-w K": {"steps": ["move-window-up"], "role": "compatibility"}
+    "Ctrl-w L": {"steps": ["move-window-right"], "role": "compatibility"}
+    "Ctrl-w v": {"steps": ["split-vertical"], "role": "compatibility"}
+    "Ctrl-w Ctrl-v": {"steps": ["split-vertical"], "role": "compatibility"}
+    "Ctrl-w s": {"steps": ["split-horizontal"], "role": "compatibility"}
+    "Ctrl-w Ctrl-s": {"steps": ["split-horizontal"], "role": "compatibility"}
+    "Ctrl-w c": {"steps": ["close-window"], "role": "compatibility"}
+    "Ctrl-w o": {"steps": ["only-window"], "role": "compatibility"}
+    "Ctrl-w Ctrl-o": {"steps": ["only-window"], "role": "compatibility"}
+    "Ctrl-w f": {"steps": ["toggle-fullscreen"], "role": "compatibility"}
+    "Ctrl-w z": {"steps": ["toggle-zen"], "role": "compatibility"}
+    "Ctrl-w t": {"steps": ["open-terminal"], "role": "compatibility"}
+    "Ctrl-w h": {"steps": ["focus-window-left"], "role": "compatibility"}
+    "Ctrl-w Ctrl-h": {"steps": ["focus-window-left"], "role": "compatibility"}
+    "Ctrl-w j": {"steps": ["focus-window-down"], "role": "compatibility"}
+    "Ctrl-w Ctrl-j": {"steps": ["focus-window-down"], "role": "compatibility"}
+    "Ctrl-w k": {"steps": ["focus-window-up"], "role": "compatibility"}
+    "Ctrl-w Ctrl-k": {"steps": ["focus-window-up"], "role": "compatibility"}
+    "Ctrl-w l": {"steps": ["focus-window-right"], "role": "compatibility"}
+    "Ctrl-w Ctrl-l": {"steps": ["focus-window-right"], "role": "compatibility"}
+    "Space w w": "next-window"
+    "Space w x": "swap-window"
+    "Space w v": "split-vertical"
+    "Space w s": "split-horizontal"
+    "Space w c": "close-window"
+    "Space w o": "only-window"
+    "Space w =": "equalize-windows"
+    "Space w f": "toggle-fullscreen"
+    "Space w z": "toggle-zen"
+    "Space w h": "focus-window-left"
+    "Space w j": "focus-window-down"
+    "Space w k": "focus-window-up"
+    "Space w l": "focus-window-right"
+    "Space w H": "move-window-left"
+    "Space w J": "move-window-down"
+    "Space w K": "move-window-up"
+    "Space w L": "move-window-right"
+    "\"": "select-register"
+    "Space m m": {"steps": [{"if": "recording-macro", "then": ["stop-macro-recording"], "else": ["record-default-macro"]}], "description": "Record the default macro, or stop recording", "target": "record-default-macro"}
+    "Space m M": "record-macro"
+    "Space m r": "replay-default-macro"
+    "Space m R": "replay-macro"
+    "Space m l": "list-macros"
+    "Space g c": "git-conflicts"
+    "|": {"steps": ["shell-pipe"], "availability": {"unsupported": "use :pipe <shell-command>"}}
+    "m m": "match-bracket"
+    "m s": ["surround-add", {"action": "mode-enter", "arg": "normal"}]
+    "m r": ["surround-replace", {"action": "mode-enter", "arg": "normal"}]
+    "m d": ["surround-delete", {"action": "mode-enter", "arg": "normal"}]
+    "m i w": ["select-inside-word", {"action": "mode-enter", "arg": "select"}]
+    "m i W": ["select-inside-long-word", {"action": "mode-enter", "arg": "select"}]
+    "m i p": "select-inside-paragraph"
+    "m i (": ["select-inside-parentheses", {"action": "mode-enter", "arg": "select"}]
+    "m i )": ["select-inside-parentheses", {"action": "mode-enter", "arg": "select"}]
+    "m i [": ["select-inside-square-brackets", {"action": "mode-enter", "arg": "select"}]
+    "m i ]": ["select-inside-square-brackets", {"action": "mode-enter", "arg": "select"}]
+    "m i {": ["select-inside-braces", {"action": "mode-enter", "arg": "select"}]
+    "m i }": ["select-inside-braces", {"action": "mode-enter", "arg": "select"}]
+    "m i <": ["select-inside-angle-brackets", {"action": "mode-enter", "arg": "select"}]
+    "m i >": ["select-inside-angle-brackets", {"action": "mode-enter", "arg": "select"}]
+    "m i \"": ["select-inside-double-quotes", {"action": "mode-enter", "arg": "select"}]
+    "m i '": ["select-inside-single-quotes", {"action": "mode-enter", "arg": "select"}]
+    "m i `": ["select-inside-backticks", {"action": "mode-enter", "arg": "select"}]
+    "m i m": ["select-inside-closest-delimiter", {"action": "mode-enter", "arg": "select"}]
+    "m i f": ["select-inside-syntax-function", {"action": "mode-enter", "arg": "select"}]
+    "m i t": ["select-inside-syntax-class", {"action": "mode-enter", "arg": "select"}]
+    "m i a": ["select-inside-syntax-parameter", {"action": "mode-enter", "arg": "select"}]
+    "m a w": ["select-around-word", {"action": "mode-enter", "arg": "select"}]
+    "m a W": ["select-around-long-word", {"action": "mode-enter", "arg": "select"}]
+    "m a p": "select-around-paragraph"
+    "m a (": ["select-around-parentheses", {"action": "mode-enter", "arg": "select"}]
+    "m a )": ["select-around-parentheses", {"action": "mode-enter", "arg": "select"}]
+    "m a [": ["select-around-square-brackets", {"action": "mode-enter", "arg": "select"}]
+    "m a ]": ["select-around-square-brackets", {"action": "mode-enter", "arg": "select"}]
+    "m a {": ["select-around-braces", {"action": "mode-enter", "arg": "select"}]
+    "m a }": ["select-around-braces", {"action": "mode-enter", "arg": "select"}]
+    "m a <": ["select-around-angle-brackets", {"action": "mode-enter", "arg": "select"}]
+    "m a >": ["select-around-angle-brackets", {"action": "mode-enter", "arg": "select"}]
+    "m a \"": ["select-around-double-quotes", {"action": "mode-enter", "arg": "select"}]
+    "m a '": ["select-around-single-quotes", {"action": "mode-enter", "arg": "select"}]
+    "m a `": ["select-around-backticks", {"action": "mode-enter", "arg": "select"}]
+    "m a m": ["select-around-closest-delimiter", {"action": "mode-enter", "arg": "select"}]
+    "m a f": ["select-syntax-function", {"action": "mode-enter", "arg": "select"}]
+    "m a t": ["select-syntax-class", {"action": "mode-enter", "arg": "select"}]
+    "m a a": ["select-syntax-parameter", {"action": "mode-enter", "arg": "select"}]
+  select: *base_bind_normal_select
+  insert: &base_bind_insert_replace
+    "Ctrl-C": "clipboard-yank"
+    "Ctrl-v": "clipboard-paste"
+    "Alt-v": "clipboard-paste"
+    "Ctrl-w n": {"steps": ["open-navigator"], "role": "compatibility"}
+    "Ctrl-w p": {"steps": ["previous-destination"], "role": "compatibility"}
+    "Ctrl-w a": {"steps": ["previous-session"], "role": "compatibility"}
+    "Shift-Left": "previous-running-session"
+    "Shift-Right": "next-running-session"
+    "Ctrl-w w": {"steps": ["next-window"], "role": "compatibility"}
+    "Ctrl-w Ctrl-w": {"steps": ["next-window"], "role": "compatibility"}
+    "Ctrl-w x": {"steps": ["swap-window"], "role": "compatibility"}
+    "Ctrl-w H": {"steps": ["move-window-left"], "role": "compatibility"}
+    "Ctrl-w J": {"steps": ["move-window-down"], "role": "compatibility"}
+    "Ctrl-w K": {"steps": ["move-window-up"], "role": "compatibility"}
+    "Ctrl-w L": {"steps": ["move-window-right"], "role": "compatibility"}
+    "Ctrl-w h": {"steps": ["focus-window-left"], "role": "compatibility"}
+    "Ctrl-w Ctrl-h": {"steps": ["focus-window-left"], "role": "compatibility"}
+    "Ctrl-w j": {"steps": ["focus-window-down"], "role": "compatibility"}
+    "Ctrl-w Ctrl-j": {"steps": ["focus-window-down"], "role": "compatibility"}
+    "Ctrl-w k": {"steps": ["focus-window-up"], "role": "compatibility"}
+    "Ctrl-w Ctrl-k": {"steps": ["focus-window-up"], "role": "compatibility"}
+    "Ctrl-w l": {"steps": ["focus-window-right"], "role": "compatibility"}
+    "Ctrl-w Ctrl-l": {"steps": ["focus-window-right"], "role": "compatibility"}
+    "Esc": {"steps": ["fit-selection-for-normal-mode", {"action": "mode-enter", "arg": "normal"}], "target": "enter-normal-mode"}
+    "Ctrl-\\": {"steps": ["fit-selection-for-normal-mode", {"action": "mode-enter", "arg": "normal"}], "target": "enter-normal-mode"}
+    "Ctrl-4": {"steps": ["fit-selection-for-normal-mode", {"action": "mode-enter", "arg": "normal"}], "target": "enter-normal-mode", "role": "compatibility"}
+    "Alt-Backspace": "delete-word-backward"
+    "Alt-Delete": "delete-word-forward"
+    "Ctrl-u": "delete-to-line-start"
+    "Ctrl-k": "delete-to-line-end"
+    "Ctrl-c": "toggle-comments"
+    "Backspace": {"steps": ["delete-char-backward"], "alias": "Shift-Backspace"}
+    "Shift-Backspace": {"steps": ["delete-char-backward"], "role": "compatibility"}
+    "Delete": "delete-char-forward"
+    "Ctrl-j": "insert-newline"
+    "Enter": "insert-newline"
+    "Tab": "insert-indent"
+    "Ctrl-x": "trigger-completion"
+    "Shift-BackTab": "insert-other-indent"
+    "Left": "move-left"
+    "Right": "move-right"
+    "Up": "move-up"
+    "Down": "move-down"
+    "Home": "move-line-start"
+    "End": "move-line-end"
+    "PageUp": "page-up"
+    "PageDown": "page-down"
+    "Ctrl-s": "save"
+  replace: *base_bind_insert_replace
+scopes:
+  terminal:
+    insert: &base_scopes_terminal_insert_replace
+      "Ctrl-w v": {"steps": ["split-vertical"], "role": "compatibility"}
+      "Ctrl-w Ctrl-v": {"steps": ["split-vertical"], "role": "compatibility"}
+      "Ctrl-w s": {"steps": ["split-horizontal"], "role": "compatibility"}
+      "Ctrl-w Ctrl-s": {"steps": ["split-horizontal"], "role": "compatibility"}
+      "Ctrl-w f": {"steps": ["toggle-fullscreen"], "role": "compatibility"}
+      "Ctrl-w z": {"steps": ["toggle-zen"], "role": "compatibility"}
+    replace: *base_scopes_terminal_insert_replace
+  pdf-pages:
+    normal: &base_scopes_pdf_pages_normal_select
+      "Esc": "media-back"
+      "q": "media-back"
+      "Enter": "media-show-page"
+    select: *base_scopes_pdf_pages_normal_select
+  media:
+    normal: &base_scopes_media_normal_select
+      "+": "media-zoom-in"
+      "j": "media-move-down"
+      "Down": "media-move-down"
+      "k": "media-move-up"
+      "Up": "media-move-up"
+      "Ctrl-n": "page-down"
+      "Ctrl-p": "page-up"
+      "=": "media-zoom-in"
+      "-": "media-zoom-out"
+      "z f": "media-fit"
+      "z 1": "media-actual-size"
+      "z h": "media-pan-left"
+      "z l": "media-pan-right"
+      "y": "media-copy-selection"
+      "Ctrl-C": "media-copy-selection"
+      "Ctrl-c": "media-copy-selection"
+      "Esc": "media-back"
+      "q": "media-back"
+      "%": "media-select-all"
+    select: *base_scopes_media_normal_select
+  directory:
+    normal: &base_scopes_directory_normal_select
+      "Enter": "open-directory-entry"
+      "Backspace": "open-parent-directory"
+      "-": "open-parent-directory"
+      ".": "toggle-hidden-files"
+      "?": "toggle-directory-details"
+    select: *base_scopes_directory_normal_select
+  markdown:
+    normal: &base_scopes_markdown_normal_select
+      "?": "toggle-markdown-render"
+    select: *base_scopes_markdown_normal_select
+  help:
+    normal: &base_scopes_help_normal_select
+      "q": "close"
+    select: *base_scopes_help_normal_select
+  git-status:
+    normal: &base_scopes_git_status_normal_select
+      "Enter": "git-diff"
+    select: *base_scopes_git_status_normal_select
+  git-comparison:
+    normal: &base_scopes_git_comparison_normal_select
+      "Enter": "git-diff"
+    select: *base_scopes_git_comparison_normal_select
+  git-merge-review:
+    normal: &base_scopes_git_merge_review_normal_select
+      "Esc": "git-review-cancel"
+      "Down": "git-review-next"
+      "Up": "git-review-previous"
+      "Left": "git-review-left"
+      "Right": "git-review-right"
+      "Enter": "git-review-enter"
+      "Ctrl-c": "git-review-cancel"
+      "a": "git-review-approve"
+      "A": "git-review-approve"
+      "c": "git-review-cancel"
+      "C": "git-review-cancel"
+    select: *base_scopes_git_merge_review_normal_select
+  git-merge-detail:
+    normal: &base_scopes_git_merge_detail_normal_select
+      "Esc": "git-review-back"
+      "Down": "git-review-next"
+      "Up": "git-review-previous"
+      "Left": "git-review-left"
+      "Right": "git-review-right"
+      "Enter": "git-review-enter"
+      "Ctrl-c": "git-review-cancel"
+    select: *base_scopes_git_merge_detail_normal_select
+  git-merge-input:
+    normal: &base_scopes_git_merge_input_normal_select
+      "Esc": "git-review-cancel"
+      "Down": "git-review-next"
+      "Up": "git-review-previous"
+      "Left": "git-review-left"
+      "Right": "git-review-right"
+      "Enter": "git-review-enter"
+      "Ctrl-c": "git-review-cancel"
+    select: *base_scopes_git_merge_input_normal_select
+  git-conflicts:
+    normal: &base_scopes_git_conflicts_normal_select
+      "Enter": "open-git-conflict"
+    select: *base_scopes_git_conflicts_normal_select
+  git-branches:
+    normal: &base_scopes_git_branches_normal_select
+      "Enter": "checkout-branch"
+    select: *base_scopes_git_branches_normal_select
+  git-worktrees:
+    normal: &base_scopes_git_worktrees_normal_select
+      "Enter": "open-worktree"
+    select: *base_scopes_git_worktrees_normal_select
+  git-network:
+    normal: &base_scopes_git_network_normal_select
+      "Enter": "open-git-commit"
+      "Ctrl-n": "next-git-network-page"
+      "Ctrl-p": "previous-git-network-page"
+    select: *base_scopes_git_network_normal_select
+  git-log:
+    normal: &base_scopes_git_log_normal_select
+      "Enter": "open-git-commit"
+      "Ctrl-n": "next-git-log-page"
+      "Ctrl-p": "previous-git-log-page"
+    select: *base_scopes_git_log_normal_select
+  git-blame:
+    normal: &base_scopes_git_blame_normal_select
+      "Enter": "open-git-commit"
+    select: *base_scopes_git_blame_normal_select
+  workspace-search:
+    normal: &base_scopes_workspace_search_normal_select
+      "Enter": "open-workspace-search-result"
+    select: *base_scopes_workspace_search_normal_select
+  settings:
+    normal: &base_scopes_settings_normal_select
+      "Enter": "activate-setting"
+    select: *base_scopes_settings_normal_select
+  directory-tree:
+    normal: &base_scopes_directory_tree_normal_select
+      "g g": "directory-tree-first"
+      "g e": "directory-tree-last"
+      "g w": "goto-word"
+      "G": "directory-tree-last"
+      "Ctrl-b": "directory-tree-page-up"
+      "Ctrl-f": "directory-tree-page-down"
+      "Ctrl-u": "half-page-up"
+      "Ctrl-d": "half-page-down"
+      "g t": "goto-window-top"
+      "g c": "goto-window-center"
+      "g b": "goto-window-bottom"
+      "H": "goto-window-top"
+      "M": "goto-window-center"
+      "L": "goto-window-bottom"
+      ".": "toggle-hidden-files"
+      "/": "search-regex"
+      "Ctrl-n": "search-next"
+      "Ctrl-p": "search-previous"
+      "n": "directory-tree-new"
+      "d": "directory-tree-delete"
+      "m": "directory-tree-move"
+      "r": "directory-tree-rename"
+      "Tab": "directory-tree-legend"
+      "v": {"steps": [{"if": "tree-entry-is-directory", "then": [{"if": "tree-entry-expanded", "then": ["directory-tree-collapse"], "else": ["directory-tree-expand"]}], "else": ["directory-tree-open-vertical"]}], "description": "Open in a vertical split or toggle directory", "target": "directory-tree-open-vertical"}
+      "s": {"steps": [{"if": "tree-entry-is-directory", "then": [{"if": "tree-entry-expanded", "then": ["directory-tree-collapse"], "else": ["directory-tree-expand"]}], "else": ["directory-tree-open-horizontal"]}], "description": "Open in a horizontal split or toggle directory", "target": "directory-tree-open-horizontal"}
+      "1": "directory-tree-pane-1"
+      "2": "directory-tree-pane-2"
+      "3": "directory-tree-pane-3"
+      "4": "directory-tree-pane-4"
+      "5": "directory-tree-pane-5"
+      "6": "directory-tree-pane-6"
+      "7": "directory-tree-pane-7"
+      "8": "directory-tree-pane-8"
+      "9": "directory-tree-pane-9"
+      "j": "directory-tree-down"
+      "Down": "directory-tree-down"
+      "k": "directory-tree-up"
+      "Up": "directory-tree-up"
+      "h": {"steps": [{"if": "tree-entry-is-root", "then": ["directory-tree-select-parent"], "else": [{"if": "tree-entry-expanded", "then": ["directory-tree-collapse"], "else": ["directory-tree-select-parent"]}]}], "description": "Collapse or select the parent directory", "target": "directory-tree-collapse"}
+      "Left": {"steps": [{"if": "tree-entry-is-root", "then": ["directory-tree-select-parent"], "else": [{"if": "tree-entry-expanded", "then": ["directory-tree-collapse"], "else": ["directory-tree-select-parent"]}]}], "description": "Collapse or select the parent directory", "target": "directory-tree-collapse"}
+      "l": {"steps": [{"if": "tree-entry-is-directory", "then": [{"if": "tree-entry-expanded", "then": ["directory-tree-select-first-child"], "else": ["directory-tree-expand"]}], "else": []}], "description": "Expand or select the first child", "target": "directory-tree-expand"}
+      "Right": {"steps": [{"if": "tree-entry-is-directory", "then": [{"if": "tree-entry-expanded", "then": ["directory-tree-select-first-child"], "else": ["directory-tree-expand"]}], "else": []}], "description": "Expand or select the first child", "target": "directory-tree-expand"}
+      "Home": "directory-tree-first"
+      "End": "directory-tree-last"
+      "PageUp": "directory-tree-page-up"
+      "PageDown": "directory-tree-page-down"
+      "Enter": {"steps": [{"if": "tree-entry-is-directory", "then": [{"if": "tree-entry-expanded", "then": ["directory-tree-collapse"], "else": ["directory-tree-expand"]}], "else": ["directory-tree-open"]}], "description": "Open or expand the selected tree entry", "target": "directory-tree-open"}
+      "Esc": "directory-tree-close"
+      "Space r": "directory-tree-refresh"
+    select: *base_scopes_directory_tree_normal_select
+  global:
+    list: &base_scopes_global_list
+      "Ctrl-n": "list-next"
+      "Down": {"steps": ["list-next"], "role": "compatibility"}
+      "Ctrl-p": "list-previous"
+      "Up": {"steps": ["list-previous"], "role": "compatibility"}
+      "BackTab": {"steps": ["list-previous"], "role": "compatibility"}
+      "Ctrl-d": "list-page-down"
+      "PageDown": {"steps": ["list-page-down"], "role": "compatibility"}
+      "Ctrl-u": "list-page-up"
+      "PageUp": {"steps": ["list-page-up"], "role": "compatibility"}
+      "Home": "list-first"
+      "End": "list-last"
+      "Ctrl-t": "list-toggle-preview"
+      "Delete": "list-close-target"
+      "Esc": "list-close"
+      "Ctrl-c": {"steps": ["list-close"], "role": "compatibility"}
+      "Enter": "list-accept"
+      "Shift-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Shift-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Shift-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Super-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Super-Shift-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Super-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Super-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Super-Shift-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Shift-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Shift-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Shift-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Super-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Super-Shift-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Super-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Super-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Super-Shift-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Hyper-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Shift-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Shift-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Shift-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Super-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Super-Shift-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Super-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Super-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Super-Shift-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Shift-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Shift-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Shift-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Super-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Super-Shift-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Super-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Super-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Alt-Super-Shift-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Hyper-Meta-Enter": {"steps": ["list-accept"], "role": "compatibility"}
+      "Tab": "list-open-actions"
+      "Shift-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Shift-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Shift-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Super-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Super-Shift-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Super-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Super-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Super-Shift-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Shift-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Shift-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Shift-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Super-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Super-Shift-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Super-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Super-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Super-Shift-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Hyper-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Shift-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Shift-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Shift-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Super-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Super-Shift-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Super-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Super-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Super-Shift-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Shift-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Shift-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Shift-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Super-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Super-Shift-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Super-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Super-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Alt-Super-Shift-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Hyper-Meta-Tab": {"steps": ["list-open-actions"], "role": "compatibility"}
+      "Backspace": "list-backspace"
+      "Shift-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Shift-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Shift-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Super-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Super-Shift-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Super-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Super-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Super-Shift-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Shift-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Shift-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Shift-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Super-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Super-Shift-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Super-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Super-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Super-Shift-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Hyper-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Shift-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Shift-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Shift-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Super-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Super-Shift-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Super-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Super-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Super-Shift-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Shift-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Shift-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Shift-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Shift-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Super-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Super-Shift-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Super-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Super-Shift-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Super-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Alt-Super-Shift-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+      "Ctrl-Alt-Super-Shift-Hyper-Meta-Backspace": {"steps": ["list-backspace"], "role": "compatibility"}
+  session-manager:
+    list: &base_scopes_session_manager_list
+      "Ctrl-o": "open-session-directory"
+      "Ctrl-e": "open-session-destinations"
+      "Ctrl-g": "git-worktrees"
+namespaces:
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space", "description": "Application commands"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "g", "description": "Goto"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "m", "description": "Match"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "m i", "description": "Select inside"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "m a", "description": "Select around"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "z", "description": "View alignment"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Z", "description": "View alignment, staying open"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Ctrl-w", "description": "Pane commands"}
+  - {"scope": "global", "modes": ["insert", "replace"], "key": "Ctrl-w", "description": "Move between panes"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space b", "description": "Buffers"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space c", "description": "Clipboard"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space d", "description": "Directory tree"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space g", "description": "Git", "capability": "GitProject"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space l", "description": "Language (LSP)", "capability": "LspDocument"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space h", "description": "Help"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space m", "description": "Macros"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space o", "description": "Configuration"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space p", "description": "Text layout and whitespace"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space l g", "description": "Language navigation", "capability": "LspDocument"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space s", "description": "Selections"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space t", "description": "Terminals"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space /", "description": "Look past this buffer"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space w", "description": "Windows"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space x", "description": "Syntax (Tree-sitter)", "capability": "Syntax"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space x [", "description": "Previous syntax object", "capability": "Syntax"}
+  - {"scope": "global", "modes": ["normal", "select"], "key": "Space x ]", "description": "Next syntax object", "capability": "Syntax"}
+context-actions:
+  - {"scope": "git-branches", "key": "m", "name": "merge", "target": "git-merge-branch", "description": "Review merging this branch into the current branch", "context": "row"}
+  - {"scope": "git-conflicts", "key": "c", "name": "continue", "target": "git-merge-continue", "description": "Review the resolved index and write a merge commit message", "context": "buffer"}
+  - {"scope": "git-conflicts", "key": "A", "name": "abort", "target": "git-merge-abort", "description": "Review and confirm aborting the active merge", "context": "buffer"}
+  - {"scope": "git-status", "key": "C", "name": "continue", "target": "git-merge-continue", "description": "Review the resolved index and write a merge commit message", "context": "buffer"}
+  - {"scope": "git-status", "key": "A", "name": "abort", "target": "git-merge-abort", "description": "Review and confirm aborting the active merge", "context": "buffer"}
+  - {"scope": "git-branches", "key": "f", "name": "fetch", "target": "git-fetch-branch", "description": "Fetch this remote branch or local branch upstream", "context": "row"}
+  - {"scope": "git-branches", "key": "d", "name": "compare", "target": "git-compare", "description": "Compare committed tips with this branch", "context": "row"}
+  - {"scope": "git-conflicts", "key": "d", "name": "sides", "target": "git-conflict-sides", "description": "Inspect Base, Current and Other index stages", "context": "row"}
+  - {"scope": "git-conflicts", "key": "r", "name": "resolve", "target": "git-conflict-resolve", "description": "Review staging this saved file or deletion as resolved", "context": "row"}
+  - {"scope": "git-conflicts", "key": "R", "name": "literal", "target": "git-conflict-resolve-literal-markers", "description": "Review staging literal marker text as resolved", "context": "row"}
+  - {"scope": "git-conflicts", "key": "O", "name": "keepfile", "target": "git-conflict-file-current", "description": "Review replacing the whole file with Current", "context": "row"}
+  - {"scope": "git-conflicts", "key": "T", "name": "takefile", "target": "git-conflict-file-other", "description": "Review replacing the whole file with Other", "context": "row"}
+  - {"scope": "git-conflict-file", "key": "R", "name": "literal", "target": "git-conflict-resolve-literal-markers", "description": "Review staging literal marker text as resolved", "context": "buffer"}
+  - {"scope": "git-conflict-file", "key": "n", "name": "next", "target": "git-conflict-next", "description": "Go to the next unresolved region or file", "context": "buffer"}
+  - {"scope": "git-conflict-file", "key": "p", "name": "previous", "target": "git-conflict-previous", "description": "Go to the previous unresolved region or file", "context": "buffer"}
+  - {"scope": "git-conflict-file", "key": "o", "name": "current", "target": "git-conflict-keep-current", "description": "Keep Current in this region as an undoable edit", "context": "buffer"}
+  - {"scope": "git-conflict-file", "key": "t", "name": "other", "target": "git-conflict-take-other", "description": "Take Other in this region as an undoable edit", "context": "buffer"}
+  - {"scope": "git-conflict-file", "key": "d", "name": "sides", "target": "git-conflict-sides", "description": "Inspect Base, Current and Other index stages", "context": "buffer"}
+  - {"scope": "git-conflict-file", "key": "r", "name": "resolve", "target": "git-conflict-resolve", "description": "Review staging this saved file or deletion as resolved", "context": "buffer"}
+  - {"scope": "git-conflict-file", "key": "l", "name": "list", "target": "git-conflict-list", "description": "Return to the unresolved conflict list", "context": "buffer"}
+  - {"scope": "git-conflict-file", "key": "O", "name": "keepfile", "target": "git-conflict-file-current", "description": "Review replacing the whole file with Current", "context": "buffer"}
+  - {"scope": "git-conflict-file", "key": "T", "name": "takefile", "target": "git-conflict-file-other", "description": "Review replacing the whole file with Other", "context": "buffer"}
+  - {"scope": "git-worktrees", "key": "d", "name": "compare", "target": "git-compare", "description": "Compare committed tips with this worktree", "context": "row"}
+  - {"scope": "git-network", "key": "a", "name": "all", "target": "git-network-all", "description": "Show all cached refs and HEAD in the commit network", "context": "buffer"}
+  - {"scope": "git-network", "key": "h", "name": "head", "target": "git-network-head", "description": "Restrict the commit network to current HEAD", "context": "buffer"}
+  - {"scope": "git-network", "key": "r", "name": "ref", "target": "git-network-choose-ref", "description": "Choose a captured full ref for the commit network", "context": "buffer"}
+  - {"scope": "git-comparison", "key": "d", "name": "diff", "target": "git-diff-side-by-side", "description": "Compare the two complete versions of the active file", "context": "row"}
+  - {"scope": "git-status", "key": "d", "name": "diff", "target": "git-diff-side-by-side", "description": "Compare the two complete versions of the active file", "context": "row"}
+  - {"scope": "git-status", "key": "s", "name": "stage", "target": "git-stage", "description": "Stage every file the selection covers", "context": "row"}
+  - {"scope": "git-status", "key": "u", "name": "unstage", "target": "git-unstage", "description": "Unstage every file the selection covers", "context": "row"}
+  - {"scope": "git-status", "key": "D", "name": "discard", "target": "git-discard", "description": "Discard every selected file's changes, after a confirmation", "context": "row"}
+  - {"scope": "git-status", "key": "o", "name": "open", "target": "open-changed-file", "description": "Open the file on this line", "context": "row"}
+  - {"scope": "git-status", "key": "S", "name": "stage", "target": "stage-all-changed-files", "description": "Stage every changed file", "context": "buffer"}
+  - {"scope": "git-status", "key": "c", "name": "commit", "target": "git-commit", "description": "Write a message and commit what is staged", "context": "buffer"}
+  - {"scope": "git-status", "key": "i", "name": "index", "target": "git-index", "description": "Review everything staged for the next commit", "context": "buffer"}
+  - {"scope": "git-status", "key": "p", "name": "pull", "target": "pull-branch", "description": "Fast-forward the current branch onto what it tracks", "context": "buffer"}
+  - {"scope": "git-status", "key": "P", "name": "push", "target": "push-branch", "description": "Publish this branch to what it tracks", "context": "buffer"}
+  - {"scope": "git-branches", "key": "n", "name": "create", "target": "create-branch", "description": "Create a branch at the one on this line and switch to it", "context": "row"}
+  - {"scope": "git-branches", "key": "w", "name": "worktree", "target": "create-worktree", "description": "Create a worktree for this branch; attach in persistent mode", "context": "row"}
+  - {"scope": "git-branches", "key": "D", "name": "delete", "target": "delete-branch", "description": "Delete the branch on this line, after a confirmation", "context": "row"}
+  - {"scope": "git-branches", "key": "p", "name": "pull", "target": "pull-branch", "description": "Fast-forward the current branch onto what it tracks", "context": "buffer"}
+  - {"scope": "git-branches", "key": "P", "name": "push", "target": "push-branch", "description": "Publish this branch to what it tracks", "context": "row"}
+  - {"scope": "git-worktrees", "key": "n", "name": "branch", "target": "create-new-worktree", "description": "Create a new branch and worktree from this checkout; attach in persistent mode", "context": "row"}
+  - {"scope": "git-worktrees", "key": "D", "name": "remove", "target": "remove-worktree", "description": "Remove the worktree on this row, leaving its branch", "context": "row"}
+  - {"scope": "git-stash", "key": "a", "name": "apply", "target": "git-stash-apply", "description": "Confirm applying the selected stash without dropping it", "context": "row"}
+  - {"scope": "git-stash", "key": "D", "name": "drop", "target": "git-stash-drop", "description": "Confirm dropping the selected stash", "context": "row"}
+  - {"scope": "diff", "key": "s", "name": "stage", "target": "git-stage-hunk", "description": "Stage the exact hunk under the cursor", "context": "row"}
+  - {"scope": "diff", "key": "u", "name": "unstage", "target": "git-unstage-hunk", "description": "Unstage the exact hunk under the cursor", "context": "row"}
+  - {"scope": "directory", "key": "s", "name": "session", "target": "open-explorer-session", "description": "Open persistent session here", "context": "buffer"}
+  - {"scope": "directory", "key": "c", "name": "cd", "target": "open-explorer-workspace", "description": "Change to this directory's workspace, making one if needed", "context": "buffer"}
+  - {"scope": "directory", "key": "t", "name": "terminal", "target": "open-terminal-directory-root", "description": "Open a terminal in the directory the explorer shows", "context": "buffer"}
+  - {"scope": "directory", "key": "f", "name": "finder", "target": "open-explorer-finder", "description": "Open finder in the current directory", "context": "buffer"}
+  - {"scope": "directory", "key": "e", "name": "external", "target": "open-explorer-system", "description": "Open in system file manager", "context": "buffer"}
+  - {"scope": "directory", "key": "h", "name": "hidden", "target": "toggle-hidden-files", "description": "Show or hide dotfiles", "context": "buffer"}
+  - {"scope": "directory", "key": "d", "name": "details", "target": "toggle-directory-details", "description": "Show or hide file details in the explorer", "context": "buffer"}
+  - {"scope": "settings", "key": "l", "name": "language", "target": "override-setting-language", "description": "Override for language…", "context": "row"}
+  - {"scope": "settings", "key": "f", "name": "files", "target": "override-setting-pattern", "description": "Override for file pattern…", "context": "row"}
+  - {"scope": "settings", "key": "r", "name": "remove", "target": "remove-setting-override", "description": "Remove override", "context": "row"}
+  - {"scope": "directory", "key": "o", "name": "order", "target": "choose-explorer-order", "description": "Choose the order the explorer lists entries in", "context": "buffer"}
+fast-pane:
+  bind:
+    normal: &xx_bind_normal_select
+      "Ctrl-h": {"steps": ["focus-window-left"], "role": "fast", "alias": "Ctrl-w h"}
+      "Ctrl-j": {"steps": ["focus-window-down"], "role": "fast", "alias": "Ctrl-w j"}
+      "Ctrl-k": {"steps": ["focus-window-up"], "role": "fast", "alias": "Ctrl-w k"}
+      "Ctrl-l": {"steps": ["focus-window-right"], "role": "fast", "alias": "Ctrl-w l"}
+    select: *xx_bind_normal_select
+    insert: &xx_bind_insert_replace
+      "Ctrl-h": {"steps": ["focus-window-left"], "role": "fast", "alias": "Ctrl-w h"}
+      "Ctrl-j": {"steps": ["focus-window-down"], "role": "fast", "alias": "Ctrl-w j"}
+      "Ctrl-k": {"steps": ["focus-window-up"], "role": "fast", "alias": "Ctrl-w k"}
+      "Ctrl-l": {"steps": ["focus-window-right"], "role": "fast", "alias": "Ctrl-w l"}
+    replace: *xx_bind_insert_replace
