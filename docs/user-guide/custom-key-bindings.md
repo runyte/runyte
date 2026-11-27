@@ -807,6 +807,19 @@ the commented built-in examples, since none are underneath.
 A list runs its actions directly, one after another. It never types keys or
 triggers other bindings.
 
+**Selection and mode steps.** `select-all`, `collapse-selection`, `toggle-case`
+and `replace-char` preserve the current mode. Their default keys (`%`, `;`,
+`~` and `r`) include a separate internal mode step, so the keys behave as
+before. `fit-selection-for-normal-mode` fits the selection without changing
+mode: it collapses ranges and applies the existing Insert-exit caret rules.
+Escape runs that action followed by an internal Normal-mode step. Public
+`enter-*-mode` actions retain their existing selection-fitting behavior.
+
+Pure mode steps are not yet configurable. Copy-binding reports that a default
+program containing one cannot be represented in the current binding format;
+commented configuration examples omit those programs. `defaults: false` still
+removes their keys.
+
 **Order.** Continuation follows each action's effects, including effects in
 specialized buffer types. Selection, text, mode, view, pane and other synchronous
 effects can continue. A character operand pauses the list; after it arrives,
@@ -934,7 +947,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `enter-normal-mode` | normal, select, insert, replace | can be followed by another action | Return to normal mode |
+| `enter-normal-mode` | normal, select, insert, replace | can be followed by another action | Fit selection and enter Normal mode |
 | `open-command-palette` | normal, select | must be the last action | Open the command palette |
 
 #### Editing actions
@@ -990,6 +1003,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
+| `fit-selection-for-normal-mode` | normal, select, insert, replace | can be followed by another action | Fit selection for Normal mode |
 | `move-left` | normal, select, insert, replace | can be followed by another action | Move left |
 | `move-right` | normal, select, insert, replace | can be followed by another action | Move right |
 | `move-up` | normal, select, insert, replace | can be followed by another action | Move up |
@@ -1031,7 +1045,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | --- | --- | --- | --- |
 | `selection-undo` | normal, select | can be followed by another action | Undo the last selection change |
 | `selection-redo` | normal, select | can be followed by another action | Redo the last selection change |
-| `enter-select-mode` | normal, select | can be followed by another action | Toggle select mode |
+| `enter-select-mode` | normal, select | can be followed by another action | Toggle Select; collapse when leaving |
 | `select-line` | normal, select | can be followed by another action | Select the current line, then extend downward |
 | `extend-line-above` | normal, select | can be followed by another action | Extend whole lines above |
 | `extend-line-below` | normal, select | can be followed by another action | Extend whole lines below |
@@ -1579,6 +1593,8 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 
 | Action | Effects | Count | Character operands | Palette argument | View differences |
 | --- | --- | --- | --- | --- | --- |
+| `fit-selection-for-normal-mode` | selection, view | not accepted | none | none |  |
+| `mode-enter` | mode | not accepted | none | none |  |
 | `enter-normal-mode` | mode, selection | not accepted | none | none | terminal: Leave child input for live Normal mode; otherwise capture review and collapse its selection |
 | `open-command-palette` | prompt | not accepted | none | none |  |
 | `move-left` | selection, view | repeats | none | none | terminal: Move or extend the cursor in captured output; media: Pan horizontally, or extend the media selection in Select mode |
@@ -1613,11 +1629,11 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `insert-line-end` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child |
 | `open-line-below` | text, mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child |
 | `open-line-above` | text, mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child |
-| `replace-char` | character input, text, mode | not accepted | one character | none |  |
+| `replace-char` | character input, text | not accepted | one character | none |  |
 | `surround-add` | character input, text, mode | not accepted | one character | none |  |
 | `surround-replace` | character input, text, mode | not accepted | two characters | none |  |
 | `surround-delete` | character input, text, mode | not accepted | one character | none |  |
-| `toggle-case` | text, mode | not accepted | none | none |  |
+| `toggle-case` | text | not accepted | none | none |  |
 | `selection-undo` | selection | repeats | none | none | terminal: Restore the previous or next terminal review selection |
 | `selection-redo` | selection | repeats | none | none | terminal: Restore the previous or next terminal review selection |
 | `undo` | text, terminal input | repeats | none | none | terminal: Ask the child to erase the last text Runyte sent, if it has not been submitted |
@@ -1642,8 +1658,8 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `extend-line-above` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
 | `extend-line-below` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
 | `select-line-up` | selection, mode | repeats | none | none | terminal: Select or extend captured output lines, entering Select mode for the line selection |
-| `select-all` | selection, mode | not accepted | none | none | terminal: Select all captured terminal output and enter Select mode |
-| `collapse-selection` | selection, mode | not accepted | none | none | terminal: Collapse the review selection and enter Normal mode |
+| `select-all` | selection | not accepted | none | none | terminal: Select all captured terminal output |
+| `collapse-selection` | selection | not accepted | none | none | terminal: Collapse the review selection |
 | `flip-selection` | selection, mode | not accepted | none | none |  |
 | `expand-syntax-selection` | selection, mode | repeats | none | none |  |
 | `shrink-syntax-selection` | selection, mode | repeats | none | none |  |

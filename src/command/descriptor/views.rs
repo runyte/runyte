@@ -26,10 +26,10 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
             views!(Terminal: "Return to live output and send subsequent input to the child")
         }
         C::SelectAll => {
-            views!(Terminal: "Select all captured terminal output and enter Select mode")
+            views!(Terminal: "Select all captured terminal output")
         }
         C::CollapseSelection => {
-            views!(Terminal: "Collapse the review selection and enter Normal mode")
+            views!(Terminal: "Collapse the review selection")
         }
         C::SelectLine | C::ExtendLineAbove | C::ExtendLineBelow | C::SelectLineUp => {
             views!(Terminal: "Select or extend captured output lines, entering Select mode for the line selection")

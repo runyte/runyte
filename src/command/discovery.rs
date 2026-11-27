@@ -240,6 +240,13 @@ pub fn binding_yaml(
     if matches!(binding.target, BindingTarget::Plugin(_)) {
         return Err("Plugin bindings use plugins[].bindings".into());
     }
+    if binding
+        .program
+        .iter()
+        .any(|step| step.target() == BindingTarget::Editor(super::EditorCommand::ModeEnter))
+    {
+        return Err("This built-in program uses internal mode steps; copying it requires the future mode-argument binding format".into());
+    }
     let value = if binding.configured_actions {
         let path = binding
             .source_paths

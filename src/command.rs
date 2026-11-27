@@ -637,7 +637,9 @@ macro_rules! editor_commands {
 }
 
 editor_commands! {
-    EnterNormalMode => ("enter-normal-mode", "Return to normal mode"),
+    FitSelectionForNormalMode => ("fit-selection-for-normal-mode", "Fit selection for Normal mode"),
+    ModeEnter => ("mode-enter", "Enter a mode, preserving the selection"),
+    EnterNormalMode => ("enter-normal-mode", "Fit selection and enter Normal mode"),
     OpenCommandPalette => ("open-command-palette", "Open the command palette"),
 
     MoveLeft => ("move-left", "Move left"),
@@ -701,7 +703,7 @@ editor_commands! {
     DeleteSelection => ("delete-selection", "Delete the selection or character without yanking"),
     ChangeSelection => ("change-selection", "Change the selection or character without yanking"),
 
-    EnterSelectMode => ("enter-select-mode", "Toggle select mode"),
+    EnterSelectMode => ("enter-select-mode", "Toggle Select; collapse when leaving"),
     SelectLine => ("select-line", "Select the current line, then extend downward"),
     ExtendLineAbove => ("extend-line-above", "Extend whole lines above"),
     ExtendLineBelow => ("extend-line-below", "Extend whole lines below"),
@@ -1255,8 +1257,11 @@ impl EditorCommand {
 
     pub const fn category(self) -> CommandCategory {
         match self {
-            Self::EnterNormalMode | Self::OpenCommandPalette => CommandCategory::Application,
-            Self::MoveLeft
+            Self::ModeEnter | Self::EnterNormalMode | Self::OpenCommandPalette => {
+                CommandCategory::Application
+            }
+            Self::FitSelectionForNormalMode
+            | Self::MoveLeft
             | Self::MoveRight
             | Self::MoveUp
             | Self::MoveDown
@@ -1624,6 +1629,7 @@ impl EditorCommand {
 /// Commands that exist to name an internal editor transition rather than a
 /// current user-facing binding or colon spelling.
 pub const INTERNAL_EDITOR_COMMANDS: &[EditorCommand] = &[
+    EditorCommand::ModeEnter,
     EditorCommand::CommitUndoCheckpoint,
     EditorCommand::RefreshDirectory,
     EditorCommand::StopMacroRecording,
@@ -3071,6 +3077,10 @@ impl CommandInvocation {
                     InvocationParameters::None | InvocationParameters::OptionalText(_)
                 ) && execution == CommandExecutionContext::default()
             }
+            CommandId::Editor(EditorCommand::ModeEnter) => {
+                matches!(&parameters, InvocationParameters::OptionalText(Some(name)) if matches!(name.as_str(), "normal" | "select" | "insert" | "replace"))
+                    && execution == CommandExecutionContext::default()
+            }
             CommandId::Editor(EditorCommand::ShowHelp) => {
                 matches!(parameters, InvocationParameters::Help(_))
                     && execution == CommandExecutionContext::default()
@@ -3162,10 +3172,29 @@ impl CommandInvocation {
         })
     }
 
+    /// Internal pure mode step; public authoring arrives with mode arguments.
+    pub(crate) fn mode_entry(mode: Mode) -> Self {
+        assert!(matches!(
+            mode,
+            Mode::Normal | Mode::Select | Mode::Insert | Mode::Replace
+        ));
+        Self::new(
+            CommandId::Editor(EditorCommand::ModeEnter),
+            InvocationParameters::OptionalText(Some(
+                crate::keymap::actions::mode_name(mode).into(),
+            )),
+        )
+    }
+
     pub fn editor(
         command: EditorCommand,
         execution: CommandExecutionContext,
     ) -> Result<Self, CommandInvocationError> {
+        if command == EditorCommand::ModeEnter {
+            return Err(CommandInvocationError::InvalidParameters(
+                CommandId::Editor(command),
+            ));
+        }
         if command == EditorCommand::ShowHelp {
             return Err(CommandInvocationError::HelpOriginRequired);
         }

@@ -10,6 +10,22 @@ const NONE: &[Mode] = &[];
 
 pub(super) const fn editor_policy(command: C) -> ActionPolicy {
     match command {
+        C::FitSelectionForNormalMode => ActionPolicy {
+            global_binding_modes: ALL,
+            effects: &[Selection, View],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::ModeEnter => ActionPolicy {
+            global_binding_modes: NONE,
+            effects: &[Mode],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
         C::EnterNormalMode => ActionPolicy {
             global_binding_modes: ALL,
             effects: &[Mode, Selection],
@@ -125,7 +141,15 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
         },
-        C::ReplaceChar | C::SurroundAdd | C::SurroundDelete => ActionPolicy {
+        C::ReplaceChar => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[Operand, Text],
+            count: CountBehavior::Reject,
+            operands: OperandArity::One,
+            requires_writable_buffer: true,
+            buffer_mutation: BufferMutation::MayMutate,
+        },
+        C::SurroundAdd | C::SurroundDelete => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[Operand, Text, Mode],
             count: CountBehavior::Reject,
@@ -141,7 +165,15 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
         },
-        C::ToggleCase | C::ReplaceWithRegister | C::DeleteSelection => ActionPolicy {
+        C::ToggleCase => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[Text],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: true,
+            buffer_mutation: BufferMutation::MayMutate,
+        },
+        C::ReplaceWithRegister | C::DeleteSelection => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[Text, Mode],
             count: CountBehavior::Reject,
@@ -245,9 +277,15 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
-        C::SelectAll
-        | C::CollapseSelection
-        | C::FlipSelection
+        C::SelectAll | C::CollapseSelection => ActionPolicy {
+            global_binding_modes: NORMAL_SELECT,
+            effects: &[Selection],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::FlipSelection
         | C::SplitSelectionAtLineEnds
         | C::SplitSelectionAtLineStarts
         | C::SearchNext

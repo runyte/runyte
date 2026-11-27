@@ -4269,7 +4269,23 @@ impl App {
         self.with_selection_action(|app| app.execute_editor_command_action(command))
     }
 
+    fn finish_atomic_line_selection(&mut self, command: EditorCommand) {
+        if matches!(
+            command,
+            EditorCommand::SelectAll
+                | EditorCommand::CollapseSelection
+                | EditorCommand::ToggleCase
+                | EditorCommand::ReplaceChar
+                | EditorCommand::FitSelectionForNormalMode
+        ) {
+            // These actions no longer own a mode transition. End the transient
+            // line gesture without letting it restore its previous mode later.
+            self.line_select = None;
+        }
+    }
+
     fn execute_editor_command_action(&mut self, command: EditorCommand) -> Result<()> {
+        self.finish_atomic_line_selection(command);
         use EditorCommand as Command;
         if self.handle_merge_command(command) {
             return Ok(());
@@ -4393,6 +4409,8 @@ impl App {
             | Command::DirectoryTreeRename
             | Command::DirectoryTreeDelete
             | Command::DirectoryTreeMove => unreachable!("tree commands are handled first"),
+            Command::FitSelectionForNormalMode => self.fit_selection_for_normal_mode(),
+            Command::ModeEnter => self.action_failed("mode-enter requires a mode argument"),
             Command::EnterNormalMode => self.enter_normal_mode(),
             Command::OpenCommandPalette => self.open_prompt(PromptKind::Command),
             Command::MoveLeft => self.motion(Motion::Left),
@@ -5530,6 +5548,74 @@ impl App {
         }
     }
 
+    /// Mode transition housekeeping without Escape's selection conversion.
+    fn enter_mode_preserving_selection(&mut self, mode: Mode) {
+        if let Some(id) = self.active_terminal() {
+            if mode == Mode::Replace {
+                self.action_failed("replace mode needs an editable buffer");
+                return;
+            }
+            let session = self.terminals.get_mut(id).expect("active terminal");
+            match mode {
+                Mode::Insert => session.scroll_to_live(),
+                Mode::Select => session.begin_review(),
+                _ => {}
+            }
+            self.line_select = None;
+            self.mode = mode;
+            self.grammar.reset_prefix();
+            return;
+        }
+        if matches!(mode, Mode::Insert | Mode::Replace) {
+            if matches!(
+                self.key_binding_scope(),
+                crate::keymap::BindingScope::DirectoryTree | crate::keymap::BindingScope::Media
+            ) {
+                self.action_failed("this view does not support text input modes");
+                return;
+            }
+            if let Some(reason) = self.active_buffer().read_only_reason() {
+                self.action_failed(reason);
+                return;
+            }
+        }
+        self.line_select = None;
+        if self.mode == mode {
+            return;
+        }
+        let buffer = self.active().buffer;
+        if matches!(self.mode, Mode::Insert | Mode::Replace) {
+            self.commit_edit_checkpoint(buffer);
+        }
+        self.replace_session = None;
+        self.append_insert = None;
+        if matches!(mode, Mode::Insert | Mode::Replace) {
+            self.buffers[buffer].begin_undo_group();
+            if mode == Mode::Replace {
+                self.replace_session = Some(super::ReplaceSession {
+                    buffer,
+                    steps: Vec::new(),
+                });
+            }
+        }
+        self.mode = mode;
+        self.grammar.reset_prefix();
+    }
+
+    fn fit_selection_for_normal_mode(&mut self) {
+        let buffer = self.active().buffer;
+        let selection = self.normal_mode_selection(
+            buffer,
+            self.active().selection.clone(),
+            self.active().selection_semantics(),
+            self.mode,
+        );
+        self.active_mut().replace_selection(selection);
+        self.active_mut()
+            .mark_selection_semantics(SelectionSemantics::Runyte);
+        self.dismiss_popups();
+    }
+
     pub(super) fn enter_normal_mode(&mut self) {
         let buffer_id = self.active().buffer;
         if matches!(self.mode, Mode::Insert | Mode::Replace) {
@@ -5760,6 +5846,20 @@ impl App {
         parameters: InvocationParameters,
         execution: CommandExecutionContext,
     ) -> Result<()> {
+        self.finish_atomic_line_selection(command);
+        if let (EditorCommand::ModeEnter, InvocationParameters::OptionalText(Some(name))) =
+            (command, &parameters)
+        {
+            let mode = match name.as_str() {
+                "normal" => Mode::Normal,
+                "select" => Mode::Select,
+                "insert" => Mode::Insert,
+                "replace" => Mode::Replace,
+                _ => unreachable!("validated mode argument"),
+            };
+            self.enter_mode_preserving_selection(mode);
+            return Ok(());
+        }
         if command == EditorCommand::ShowHelp && self.directory_tree.focused {
             match &parameters {
                 InvocationParameters::Help(HelpInvocation::ActiveView) => {
