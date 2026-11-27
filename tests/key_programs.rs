@@ -275,6 +275,7 @@ fn removed_action_names_report_migrations_in_both_configuration_forms() {
     for (old, replacement) in [
         ("yank-delete-selection", "cut-selection"),
         ("yank-change-selection", "cut-selection-for-change"),
+        ("change-selection", "delete-selection-for-change"),
         ("set-search-from-selection", "search-set-from-selection"),
         ("search-selection", "search-select-all-matches"),
     ] {

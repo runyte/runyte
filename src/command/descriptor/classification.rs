@@ -275,9 +275,13 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
                 pending_split: Some(SplitStage::Stage5),
             }
         }
-        C::DeleteSelection
-        | C::ChangeSelection
-        | C::FlipSelection
+        C::DeleteSelection | C::DeleteSelectionForChange => ActionClassification {
+            semantic: SemanticClass::Decision(
+                "Delete and change place the caret and treat whole rows differently.",
+            ),
+            pending_split: None,
+        },
+        C::FlipSelection
         | C::ExpandSyntaxSelection
         | C::ShrinkSyntaxSelection
         | C::SelectSyntaxParent

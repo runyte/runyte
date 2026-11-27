@@ -189,7 +189,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::DeleteSelection => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Text, Mode],
+            effects: &[Text],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
@@ -275,9 +275,9 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
         },
-        C::ChangeSelection => ActionPolicy {
+        C::DeleteSelectionForChange => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Text, Mode],
+            effects: &[Text],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: true,

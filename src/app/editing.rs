@@ -3252,25 +3252,17 @@ impl App {
         Ok((!entries.is_empty()).then_some(DirectoryRegister { entries, mode }))
     }
 
-    /// `yank` decides whether the removed text reaches a register first:
-    /// The cut actions pass true, the
-    /// plain `delete-selection` and `change-selection` pass false.
+    /// Delete without writing a register, retaining delete/change caret semantics.
     pub(super) fn delete_selection_or_char(
         &mut self,
-        enter_insert: bool,
+        for_change: bool,
         transient_line_selection: bool,
-        yank: bool,
     ) {
-        self.delete_selection_inner(enter_insert, transient_line_selection, yank, true);
+        self.delete_selection_inner(for_change, transient_line_selection && !for_change, false);
     }
 
     pub(super) fn cut_selection(&mut self, for_change: bool, transient_line_selection: bool) {
-        self.delete_selection_inner(
-            for_change,
-            transient_line_selection && !for_change,
-            true,
-            false,
-        );
+        self.delete_selection_inner(for_change, transient_line_selection && !for_change, true);
     }
 
     fn delete_selection_inner(
@@ -3278,12 +3270,8 @@ impl App {
         for_change: bool,
         transient_line_selection: bool,
         yank: bool,
-        change_mode: bool,
     ) {
         let buffer_id = self.active().buffer;
-        if for_change && change_mode {
-            self.buffers[buffer_id].begin_undo_group();
-        }
         let linewise = transient_line_selection;
         if yank {
             // This is not `[yank, delete-selection]`, and the difference is
@@ -3325,7 +3313,7 @@ impl App {
                 .filter(|(from, to)| from < to)
                 .map(|(from, to)| Change::new(from, to, ""))
                 .collect();
-            self.finish_delete(buffer_id, changes, for_change, change_mode);
+            self.finish_delete(buffer_id, changes, for_change);
             return;
         }
         // Rows are read from each range the way `line_register` reads them.
@@ -3384,26 +3372,13 @@ impl App {
                 }
             })
             .collect();
-        self.finish_delete(buffer_id, changes, for_change, change_mode);
+        self.finish_delete(buffer_id, changes, for_change);
     }
 
-    fn finish_delete(
-        &mut self,
-        buffer_id: usize,
-        changes: Vec<Change>,
-        for_change: bool,
-        change_mode: bool,
-    ) {
+    fn finish_delete(&mut self, buffer_id: usize, changes: Vec<Change>, for_change: bool) {
         self.edit(Transaction::new(changes));
         let selection = self.active().selection.collapse();
         self.active_mut().replace_selection(selection);
-        if change_mode {
-            self.mode = if for_change {
-                Mode::Insert
-            } else {
-                Mode::Normal
-            };
-        }
         self.normalize_buffer_for_insert(buffer_id, for_change);
     }
 
