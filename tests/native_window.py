@@ -37,7 +37,10 @@ parser.add_argument("--max-idle-wakeups", type=float, help="with --latency, fail
 parser.add_argument("--input-burst", action="store_true", help="verify a rapid ordered key burst is saved without loss")
 parser.add_argument("--paint-styles", action="store_true", help="capture styled terminal cells, including wide glyphs and decorated emoji")
 parser.add_argument("--paint-reference", type=pathlib.Path, help="compare styled-cell pixels against an earlier --paint-styles output directory")
+parser.add_argument("--debug-readiness", action="store_true", help="require debug-build host publication and paint witnesses for mux preview")
 args = parser.parse_args()
+if args.debug_readiness and not (args.document_preview and args.mux):
+    parser.error("--debug-readiness requires --document-preview --mux")
 if args.configured_mode and (not args.mux or args.graphical_launch or args.startup_failure):
     parser.error('--configured-mode requires --mux and excludes --graphical-launch and --startup-failure')
 binary = args.binary.resolve()
@@ -156,7 +159,10 @@ existing=set(children(x.XDefaultRootWindow(d)))
 env=os.environ.copy();env.pop('WAYLAND_DISPLAY',None)
 # A harness started from a Runyte terminal must not hand its parent context to the fixture.
 for inherited in [key for key in env if key.startswith('RUNYTE_') and key != 'RUNYTE_NATIVE_PAINT_TIMING']:env.pop(inherited)
-env['RUNYTE_INPUT_TRACE']=str(storage/'input.log')
+env['RUNYTE_INPUT_TRACE']=str(storage/'input-{pid}.log')
+if args.debug_readiness:
+    (storage/'native-state').mkdir()
+    env['RUNYTE_NATIVE_TEST_STATE']=str(storage/'native-state')
 env['HOME']=str(storage/'home')
 env['XDG_STATE_HOME']=str(storage/'state')
 env['RUNYTE_TEST_STATE_HOME']=str(storage/'state/runyte')
@@ -264,7 +270,9 @@ try:
         for c in s:
             sym,shift=specials.get(c,(c.lower(),c.isupper()))
             key(sym,shift,delay=delay)
-    def command(s,burst=False):text(':'+s,delay=0 if burst else .025);key('Return');time.sleep(.7)
+    def command(s,burst=False,pause=True):
+        text(':'+s,delay=0 if burst else .025);key('Return')
+        if pause:time.sleep(.7)
     def close_window():
         event = XEvent()
         event.client.type = 33
@@ -343,7 +351,7 @@ try:
         assert p.poll() is None, 'refusal disappeared before close'
         assert (root/'notes.txt').read_text().startswith('Runyte native window')
         assert not list(storage.rglob('context.lock')), 'refusal started context services'
-        assert not (storage/'input.log').exists(), 'refusal constructed editor input handling'
+        assert not list(storage.glob('input-*.log')), 'refusal constructed editor input handling'
         assert not (root/'.runyte').exists(), 'refusal started workspace storage'
         assert not (storage/'config/state').exists(), 'refusal created rejected state storage'
         close_window(); p.wait(timeout=15)
@@ -387,13 +395,50 @@ try:
         empty=pixel(600,400)
         assert pixel(1083,400)==empty and pixel(600,803)==empty, ('margin differs from theme background', hex(empty), hex(pixel(1083,400)), hex(pixel(600,803)))
         x.XResizeWindow(d,win,geometry.width,geometry.height);x.XFlush(d);time.sleep(1)
+    def native_states():
+        states = []
+        for path in sorted((storage/'native-state').glob('host-*.json')):
+            try:states.append(json.loads(path.read_text()))
+            except (OSError, ValueError):pass
+        return states
+    def wait_host(project, predicate, message):
+        if not args.debug_readiness:
+            time.sleep(1)
+            return None
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            for state in native_states():
+                if state['workspace'] == str(project) and state.get('painted') and predicate(state):
+                    if args.output:
+                        with (args.output/'readiness.jsonl').open('a') as output:
+                            output.write(json.dumps({'check': message, 'state': state})+'\n')
+                    return state
+            if p.poll() is not None:break
+            time.sleep(.05)
+        raise AssertionError((message, native_states()))
+    def active_state(state):
+        return next((pane for pane in state['panes'] if pane['id'] == state['active_pane']), {})
+    def open_preview(project, filename):
+        if not args.debug_readiness:
+            command('open '+filename);command('preview');time.sleep(1)
+            return
+        command('open '+filename,pause=False)
+        wait_host(project, lambda state: state['mode']=='Normal' and
+                  active_state(state).get('path')==str(project/filename),
+                  'open did not reach the expected file in Normal mode')
+        command('preview',pause=False)
+        wait_host(project, lambda state: state['mode']=='Normal' and
+                  active_state(state).get('path')==str(project/filename) and
+                  active_state(state).get('preview') is not None,
+                  'preview did not publish a capture for the active file')
     if args.document_preview and args.mux:
+        wait_host(root, lambda state: state['mode']=='Normal', 'initial host frame was not ready')
         source_background = pixel(600,400)
         destination = storage/'other'
         destination.mkdir()
         subprocess.run(['git','init','-q',str(destination)],check=True,env=env)
         (destination/'other.html').write_text('<body style="margin:0"><div style="height:2000px;background:#ee00ee">Other workspace</div></body>')
-        command('open selection.html');command('preview');time.sleep(1)
+        open_preview(root,'selection.html')
         wait_pixel(600,400,0x0099aa,'source workspace did not preview')
         # Burst input must wait for host routing state, without consuming h/s
         # as preview navigation or dismissing the retained capture.
@@ -405,15 +450,18 @@ try:
         wait_pixel(600,400,0x0099aa,'closing the plain pane did not restore the preview')
         key('q')
         wait_pixel(600,400,source_background,'source preview did not dismiss before workspace attach')
-        command('session-attach '+str(destination));time.sleep(1)
-        command('open other.html');command('preview');time.sleep(1)
+        command('session-attach '+str(destination),pause=False)
+        wait_host(destination, lambda state: state['mode']=='Normal', 'destination host was not ready')
+        open_preview(destination,'other.html')
         wait_pixel(600,400,0xee00ee,'destination workspace did not preview')
         key('w',ctrl=True);key('a');time.sleep(1)
         wait_pixel(600,400,source_background,'dismissed preview revived after workspace return')
         key('w',ctrl=True);key('a');time.sleep(1)
         wait_pixel(600,400,0xee00ee,'dismissal affected another workspace capture')
         key('q');key('w',ctrl=True);key('a');time.sleep(1)
-        command('preview');time.sleep(1)
+        command('preview',pause=False)
+        wait_host(root, lambda state: active_state(state).get('preview') is not None,
+                  'explicit preview did not publish a capture')
         wait_pixel(600,400,0x0099aa,'explicit preview could not reopen after dismissal')
         key('Escape');key('w',ctrl=True);key('a');time.sleep(1)
         wait_pixel(600,400,source_background,'destination dismissal was not retained')
@@ -981,16 +1029,25 @@ except Exception:
     # Only fixture-owned logs are read; keep CI failure output bounded.
     log.flush()
     print('Native acceptance failed; editor exit status:', p.poll(), flush=True)
+    if args.output:
+        try:
+            screenshot('failure')
+            (args.output/'host-state.json').write_text(json.dumps(native_states(),indent=2))
+        except Exception as error:
+            print('Could not capture failure state:', error, flush=True)
     diagnostics = [root/'window.log'] + [path for path in sorted(storage.rglob('*.log'))
                                        if path != root/'window.log']
     for diagnostic in diagnostics[:8]:
         try:
             with diagnostic.open('rb') as stream:
                 stream.seek(0, os.SEEK_END)
-                limit = 131072 if diagnostic.name == 'input.log' else 32768
+                limit = 131072 if diagnostic.name.startswith('input-') else 32768
                 stream.seek(max(0, stream.tell() - limit))
                 tail = stream.read(limit).decode(errors='replace')
             print('Fixture log:', diagnostic.relative_to(storage), '\n' + tail, flush=True)
+            if args.output:
+                name = '__'.join(diagnostic.relative_to(storage).parts)
+                (args.output/name).write_text(tail)
         except OSError as error:
             print('Could not read fixture log:', error, flush=True)
     raise

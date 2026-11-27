@@ -63,6 +63,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("package", type=Path)
     parser.add_argument("--window", action="store_true", help="run preview acceptance on an isolated X11 display")
+    parser.add_argument("--output", type=Path, help="retain native-window failure diagnostics")
+    parser.add_argument("--debug-readiness", action="store_true", help="require debug-build mux readiness witnesses")
     args = parser.parse_args()
     directory = args.package.resolve()
     repository = Path(__file__).resolve().parents[2]
@@ -90,8 +92,11 @@ def main():
         if args.window:
             # Exercise the packaged executable and its same-build helpers.
             for mode in ([], ["--mux"]):
+                output = (["--output", str(args.output.resolve() / ("mux" if mode else "ide"))]
+                          if args.output else [])
+                readiness = ["--debug-readiness"] if args.debug_readiness and mode else []
                 subprocess.run([sys.executable, str(repository / "tests/native_window.py"),
-                                "--binary", str(binary), "--document-preview", *mode],
+                                "--binary", str(binary), "--document-preview", *mode, *output, *readiness],
                                env=env, cwd=temporary, check=True, timeout=300)
 
 
