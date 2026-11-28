@@ -3174,3 +3174,17 @@ fn input_entry_after_line_gestures_preserves_seams_and_one_typing_undo() {
         }
     }
 }
+
+#[test]
+fn exported_manual_help_and_contextual_help_keep_their_origins() {
+    let source = configured("bind: {normal: {F6: help, F7: show-help}}");
+    let yaml = crate::keymap::export::yaml(&source.keymap).unwrap();
+    for (function, manual) in [(6, true), (7, false)] {
+        let mut config: Config = serde_yaml::from_str(&yaml).unwrap();
+        config.editor.scratch_markdown = false;
+        let mut app = App::new(config, None).unwrap();
+        key(&mut app, KeyCode::Function(function), Modifiers::NONE);
+        assert_eq!(app.active_buffer().is_manual(), manual);
+        assert_eq!(app.active_buffer().is_help(), !manual);
+    }
+}

@@ -231,6 +231,7 @@ The working directory starts where Runyte was launched.
 | --- | --- | --- |
 | `:config` | `settings` | Open the settings menu |
 | `:config-reload` | | Re-read the loaded configuration file into this session |
+| `:keymap-export [path]` | | Write effective key bindings as a new YAML fragment; defaults to `keymap.yaml` beside the per-user configuration |
 | `:write-config [path]` | | Write the effective configuration to a new file, by default the per-user configuration file |
 | `:write-config! [path]` | | Write the effective configuration, replacing any existing file |
 | `:theme [name]` | | Choose a theme in the settings menu, or switch straight to the named one |

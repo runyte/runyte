@@ -1159,6 +1159,29 @@ pub fn persist_setting(
     Ok(updated)
 }
 
+/// Create a new standalone configuration fragment without following an existing
+/// symlink or replacing a file. An I/O failure can leave an incomplete new file.
+pub(crate) fn write_new_fragment(path: &Path, source: &str) -> Result<(), SettingError> {
+    use std::io::Write;
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent).map_err(|e| io_error("create directory", parent, e))?;
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                SettingError::AlreadyExists(path.to_owned())
+            } else {
+                io_error("create", path, e)
+            }
+        })?;
+    file.write_all(source.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|e| io_error("write", path, e))
+}
+
 /// Write `config` to `path` and, beside it, its custom themes in `themes.d`
 /// and its `keys` section in `keybinds.d`, returning every file written.
 ///

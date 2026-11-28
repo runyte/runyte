@@ -284,7 +284,7 @@ longer overlays every specialized buffer type. Move former 0.4 global Normal bin
 `keys.bind.modal-keys`. Use `keys.bind.common` only for actions valid in every
 inheriting mode, including Insert and Replace. Check Select inheritance when translating old separate
 Normal and Select tables. `copy-key-binding` emits the named table that supplies
-the inspected key. Full preset export follows the public program syntax work.
+the inspected key. Use `:keymap-export` to write the effective bindings as a configuration fragment.
 
 ### Action name migration
 
@@ -1274,8 +1274,24 @@ from membership in composed bindings, and show descriptor contracts and runtime
 capability gates. Document state and action-specific guards can still prevent an
 action from running.
 
-Whole-keymap export (`:keymap-export`, without a default key) is planned for
-stage 4, alongside the merged binding table. It is not available yet.
+`:keymap-export [path]` writes the effective bindings, descriptions, mode graph,
+and UI/pointer overrides as a YAML configuration fragment. It has no default
+key. Without a path it writes `keymap.yaml` beside the per-user configuration
+file, like `:write-config`; relative paths use the working directory. Existing
+files are never replaced. Choose another path to export again.
+
+Load the fragment on top of the same preset, platform and fast-pane-key setting.
+It contains root `modes`, `buffer-types` and `keys` sections: merge those sections
+into your configuration, or use the fragment as a configuration file. Remappings
+are resolved to explicit keys and exact removals. Export, load and export again
+produces identical YAML and executable bindings. Planned/unsupported bindings,
+representative targets and alias teaching metadata are omitted. Unchanged list
+and structural UI-owned bindings remain supplied by the preset; plugin
+registrations and bindings remain in `plugins[].bindings`.
+The export refuses a result above 65,536 assignments before writing a file.
+Generated descriptions use canonical action names and arguments, escape control
+characters, and are limited to 1024 UTF-8 bytes; explicit descriptions are
+preserved. The post-0.5 list executor will allow full export of list-owner rows.
 
 ### Bindable action reference
 
@@ -1648,6 +1664,7 @@ Select modes. Prompt and background effects must end a sequence; supplying promp
 | `plugin-stop` | `plugin-stop <configured-id>` | Stop a plugin or cancel its pending restart |
 | `plugin-restart` | `plugin-restart <configured-id>` | Restart a configured plugin after cleanup |
 | `config-reload` | `config-reload` | Re-read the loaded configuration file without restarting |
+| `keymap-export` | `keymap-export [path]` | Export the effective keymap to a new YAML configuration fragment |
 | `write-config` | `write-config [path]` | Write the effective configuration to a new file |
 | `write-config!` | `write-config! [path]` | Write the effective configuration, replacing any existing file |
 | `service-health` | `service-health` | Inspect optional editor service health |
@@ -2382,6 +2399,7 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `git-unstage` | background work, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-worktrees` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
 | `config-reload` | configuration, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `keymap-export` | file | not accepted | false | false | none | keymap-export [path] | palette argument, if any |  | atomic operation |
 | `write-config` | file | not accepted | false | false | none | write-config [path] | palette argument, if any |  | atomic operation |
 | `write-config!` | file | not accepted | false | false | none | write-config! [path] | palette argument, if any |  | atomic operation |
 | `grammar` | configuration, mode, selection | not accepted | false | false | none | grammar [runyte] | palette argument, if any |  | decision: Changes the editing grammar and reconciles its current mode and selection. |

@@ -18,6 +18,39 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — Effective keymap export (stage 5g)
+
+Stage 5g of [#132](https://github.com/runyte/runyte/issues/132) adds keymap export and
+canonical bounded descriptions generated from typed action arguments. Ten alternating
+fresh-process pairs after warm-up compare stage 5f with implementation `cdd0db3d`.
+Rebased `20cf4d09` has the identical tree.
+The x86 baseline uses the saved stage 5f
+probes at `a972df12`; ARM checks out `74bb9e2c`. These revisions have equivalent
+production behavior. [Raw samples](../../benchmarks/results/keymap-export-2026-11-28.json)
+include binary hashes and every reload phase. The
+[ARM comparison](https://github.com/runyte/runyte/actions/runs/46135110205) also
+measures preset initialization and release editing readiness.
+
+| Platform/profile | 5f changed ms | 5g changed ms | 5f unchanged ms | 5g unchanged ms |
+| --- | ---: | ---: | ---: | ---: |
+| x86_64 debug | 1049.723 | 1006.173 | 277.098 | 267.046 |
+| x86_64 release | 93.706 | 97.164 | 25.555 | 26.456 |
+| aarch64 debug | 2940.754 | 2913.561 | 781.492 | 773.542 |
+| aarch64 release | 153.045 | 154.998 | 40.642 | 41.329 |
+
+Both release reload comparisons meet the 25%/20 ms gate. The idle local guard
+measured 97.599 ms changed and 26.512 ms unchanged, below the 350/100 ms
+ceilings; installed-binding and zero repeated flow-work assertions pass.
+
+| ARM release readiness | 5f ms | 5g ms | Change |
+| --- | ---: | ---: | ---: |
+| short.txt | 41.921 | 42.166 | +0.59% |
+| short.lua | 42.791 | 43.009 | +0.51% |
+
+Both readiness comparisons remain within 5%.
+ARM debug preset initialization: 124.511 → 123.997 ms median.
+ARM release preset initialization: 8.755 → 8.765 ms median.
+
 ## 2026-11-28 — Retired bundled mode actions (stage 5f)
 
 Stage 5f of [#132](https://github.com/runyte/runyte/issues/132) replaces bundled

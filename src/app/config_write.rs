@@ -19,6 +19,32 @@ use super::App;
 use crate::settings::{SettingError, write_config};
 
 impl App {
+    pub(super) fn export_keymap(&mut self, path: Option<PathBuf>) {
+        let Some(target) = path.map(|p| self.resolve_working_path(p)).or_else(|| {
+            self.default_config_target
+                .as_ref()
+                .map(|p| p.with_file_name("keymap.yaml"))
+        }) else {
+            self.action_failed("no configuration directory is known; give :keymap-export a path");
+            return;
+        };
+        let source = match crate::keymap::export::yaml(&self.keymap) {
+            Ok(source) => source,
+            Err(error) => {
+                self.action_failed(format!("keymap export failed: {error}"));
+                return;
+            }
+        };
+        match crate::settings::write_new_fragment(&target, &source) {
+            Ok(()) => self.status(format!("wrote keymap to {}", target.display())),
+            Err(SettingError::AlreadyExists(path)) => self.action_warning(
+                "Keymap not written",
+                format!("{} already exists · choose another path", path.display()),
+            ),
+            Err(error) => self.error_from("Runyte", "Keymap export failed", error.to_string()),
+        }
+    }
+
     /// Writes the configuration to `path`, or to the per-user configuration
     /// file when no path is given. An existing file is kept unless `replace`.
     pub(super) fn write_configuration(&mut self, path: Option<PathBuf>, replace: bool) {

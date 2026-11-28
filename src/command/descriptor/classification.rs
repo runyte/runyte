@@ -514,6 +514,7 @@ pub(super) const fn colon_classification(command: ColonCommand) -> ActionClassif
         | C::GitStageLines
         | C::GitUnstage
         | C::ConfigReload
+        | C::KeymapExport
         | C::WriteConfig
         | C::ForceWriteConfig
         | C::LspTrust

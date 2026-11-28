@@ -156,3 +156,26 @@ fn write_config_writes_the_saved_value_of_a_setting_awaiting_restart() {
     assert!(!written.editor.mouse);
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn keymap_export_writes_a_new_fragment_and_never_replaces_a_file() {
+    let directory = scratch("keymap-export");
+    let mut app = editor(&directory, "keys: {bind: {normal: {F6: move-right}}}\n");
+    app.default_config_target = Some(directory.join("config.yaml"));
+    app.execute_command("keymap-export").unwrap();
+    let path = directory.join("keymap.yaml");
+    let first = fs::read_to_string(&path).unwrap();
+    assert!(first.contains("F6:"));
+    assert!(first.contains("move-right"));
+    app.execute_command("keymap-export").unwrap();
+    assert!(app.status.contains("already exists"), "{}", app.status);
+    assert_eq!(first, fs::read_to_string(&path).unwrap());
+    app.default_config_target = None;
+    app.execute_command("keymap-export").unwrap();
+    assert!(app.status.contains("give :keymap-export a path"));
+    let nested = directory.join("nested/export.yaml");
+    app.execute_command(&format!("keymap-export {}", nested.display()))
+        .unwrap();
+    assert_eq!(first, fs::read_to_string(nested).unwrap());
+    fs::remove_dir_all(directory).unwrap();
+}

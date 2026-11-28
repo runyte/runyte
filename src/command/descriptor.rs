@@ -407,7 +407,7 @@ impl ColonCommand {
             }
             C::ConfigReload => &[Configuration, Background],
             C::Grammar => &[Configuration, Mode, Selection],
-            C::WriteConfig | C::ForceWriteConfig => &[File],
+            C::KeymapExport | C::WriteConfig | C::ForceWriteConfig => &[File],
             C::LspStatus => &[Background, View],
             C::AgentChannel => &[Background, View, Mode],
             C::Notifications => &[View, Mode],

@@ -269,6 +269,7 @@ pub enum ColonCommand {
     GitUnstage,
     GitWorktrees,
     ConfigReload,
+    KeymapExport,
     WriteConfig,
     ForceWriteConfig,
     Grammar,
@@ -464,6 +465,7 @@ impl ColonCommand {
         Self::GitUnstage,
         Self::GitWorktrees,
         Self::ConfigReload,
+        Self::KeymapExport,
         Self::WriteConfig,
         Self::ForceWriteConfig,
         Self::Grammar,
@@ -568,6 +570,7 @@ impl ColonCommand {
             | Self::QuitHere
             | Self::ForceQuitHere => CommandCategory::Application,
             Self::ConfigReload
+            | Self::KeymapExport
             | Self::WriteConfig
             | Self::ForceWriteConfig
             | Self::Grammar
@@ -2313,6 +2316,14 @@ pub const COMMANDS: &[CommandSpec] = &[
         NoArguments
     ),
     spec!(
+        ColonId(Colon::KeymapExport),
+        "keymap-export",
+        [],
+        "keymap-export [path]",
+        "Export the effective keymap to a new YAML configuration fragment",
+        Optional(Path)
+    ),
+    spec!(
         ColonId(Colon::WriteConfig),
         "write-config",
         [],
@@ -3495,6 +3506,7 @@ fn valid_colon_parameters(command: ColonCommand, parameters: &InvocationParamete
             Colon::ChangeDirectory
             | Colon::InitializeWorkspace
             | Colon::SessionStop
+            | Colon::KeymapExport
             | Colon::WriteConfig
             | Colon::ForceWriteConfig,
             InvocationParameters::OptionalPath(_),
@@ -3982,6 +3994,7 @@ fn invocation_from_parts(
             ColonCommand::ChangeDirectory
             | ColonCommand::InitializeWorkspace
             | ColonCommand::SessionStop
+            | ColonCommand::KeymapExport
             | ColonCommand::WriteConfig
             | ColonCommand::ForceWriteConfig,
         ) => match argument {

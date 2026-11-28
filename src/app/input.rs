@@ -6811,6 +6811,10 @@ impl App {
                 self.reload_configuration();
                 Ok(())
             }
+            (Colon::KeymapExport, InvocationParameters::OptionalPath(path)) => {
+                self.export_keymap(path);
+                Ok(())
+            }
             (
                 Colon::WriteConfig | Colon::ForceWriteConfig,
                 InvocationParameters::OptionalPath(path),
