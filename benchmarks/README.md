@@ -885,3 +885,19 @@ The serial CI performance job enables `startup-timing` and runs
 `embedded_preset_construction_stays_bounded`. Five fresh child processes report
 parse + program time; their median must stay within a generous 15 ms ceiling.
 This is a regression guard, separate from decision 39's readiness comparison.
+
+## Configured keymap reload
+
+`cargo run --features startup-timing --example config_reload` emits JSON lines
+for an empty key configuration and the native preview fixture's four pane keys.
+Each fresh process measures preset initialization, configured compilation, a real
+semantic `:config-reload` after adding F6 to a running preview configuration,
+and a second unchanged reload. The empty case keeps its empty key configuration. Compilation and reload
+also report the time spent in mode-flow validation; subtract it from the total
+to inspect the remaining work. The fixture owns temporary configuration and
+isolated startup storage. This measures synchronous editor work, not frontend
+repaint latency. Use the same build profile and alternate baseline/current
+processes after a discarded warm-up for comparisons.
+
+The ignored `configured_reload_stays_responsive` test in `tests/performance.rs`
+guards both changed-binding and unchanged reloads in release builds.

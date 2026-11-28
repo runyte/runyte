@@ -276,16 +276,6 @@ pub fn binding_yaml(
     if matches!(binding.target, BindingTarget::Plugin(_)) {
         return Err("Plugin bindings use plugins[].bindings".into());
     }
-    if binding.program.has_conditions() {
-        return Err("This built-in program uses conditional steps, which the configurable binding format does not yet support".into());
-    }
-    if binding
-        .program
-        .iter()
-        .any(|step| step.target() == BindingTarget::Editor(super::EditorCommand::ModeEnter))
-    {
-        return Err("This built-in program uses internal mode steps; copying it requires the future mode-argument binding format".into());
-    }
     let value = if binding.configured_actions {
         let path = binding
             .source_paths
@@ -299,7 +289,7 @@ pub fn binding_yaml(
             )?
             .clone()
     } else {
-        Value::String(binding.target.name().into())
+        crate::keymap::program_yaml(&binding.program)?
     };
     let mut entries = Mapping::new();
     entries.insert(Value::String(binding.sequence.to_string()), value);

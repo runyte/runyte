@@ -1209,3 +1209,79 @@ fn embedded_preset_phase_fixture() {
     assert!(yaml > 0 && programs > 0);
     println!("\npreset_ns={}", yaml + programs);
 }
+
+#[test]
+#[ignore = "run serially in the release performance job"]
+fn configured_reload_stays_responsive() {
+    let root = runyte::test_support::OwnedTempDir::new().unwrap();
+    let path = root.path().join("config.yaml");
+    let keys = "keys:\n  bind:\n    normal:\n      Ctrl-Left: focus-window-left\n      Ctrl-Right: focus-window-right\n      Ctrl-Up: focus-window-up\n      Ctrl-Down: focus-window-down\n";
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    app.note_loaded_config(&path);
+    let mut sample = 0;
+    let elapsed = median_of("changed configured reload", 5, || {
+        sample += 1;
+        // Change an actual binding each time; the guard must cover compilation,
+        // not just the unchanged-source cache hit used by palette-only reloads.
+        fs::write(
+            &path,
+            format!(
+                "{keys}      F6: {}\n",
+                if sample % 2 == 0 {
+                    "move-left"
+                } else {
+                    "move-right"
+                }
+            ),
+        )
+        .unwrap();
+        let start = Instant::now();
+        app.execute(parse_colon_command("config-reload").unwrap())
+            .unwrap();
+        let elapsed = start.elapsed();
+        let key = runyte::keymap::KeySequence::parse("F6").unwrap();
+        let runyte::keymap::Lookup::Exact(binding) =
+            app.keymap().lookup(runyte::command::Mode::Normal, &key)
+        else {
+            panic!("changed binding was not installed");
+        };
+        assert_eq!(
+            binding.target,
+            if sample % 2 == 0 {
+                EditorCommand::MoveLeft
+            } else {
+                EditorCommand::MoveRight
+            }
+            .into()
+        );
+        elapsed
+    });
+    // Dev reloads measured 92 ms locally and 150 ms on ARM CI; the fixed
+    // path measured 160–161 ms on Linux/macOS CI. Allow roughly 2x runner
+    // headroom while catching the multi-second regression. The cache-hit
+    // ceiling below stays proportional to its measured 26–41 ms cost.
+    within(
+        "changed configured reload",
+        elapsed,
+        budget(Duration::from_millis(350)),
+    );
+    #[cfg(feature = "startup-timing")]
+    runyte::keymap::configured::take_mode_flow_time_ns();
+    let elapsed = median_of("unchanged configured reload", 5, || {
+        let start = Instant::now();
+        app.execute(parse_colon_command("config-reload").unwrap())
+            .unwrap();
+        start.elapsed()
+    });
+    within(
+        "unchanged configured reload",
+        elapsed,
+        budget(Duration::from_millis(100)),
+    );
+    #[cfg(feature = "startup-timing")]
+    assert_eq!(
+        runyte::keymap::configured::take_mode_flow_time_ns(),
+        0,
+        "unchanged source must not repeat mode-flow validation"
+    );
+}

@@ -1969,3 +1969,61 @@ fn directory_tree_configuration_uses_tree_search_identities() {
         );
     }
 }
+
+#[test]
+fn temporary_mode_ends_at_tree_and_help_boundaries() {
+    let (mut app, root) = isolated("temporary-directory-help");
+    app.open_explorer(Some(root.clone())).unwrap();
+    for sequence in ["x", "Space d d", "Space ? j"] {
+        for stroke in crate::keymap::KeySequence::parse(sequence)
+            .unwrap()
+            .as_slice()
+        {
+            app.handle_input(crate::input::InputEvent::Key(*stroke))
+                .unwrap();
+        }
+        assert_eq!(app.line_select.is_some(), sequence == "x");
+    }
+    assert_eq!(app.key_binding_scope(), crate::keymap::BindingScope::Help);
+    assert_eq!(app.binding_mode_name().as_deref(), Some("help"));
+    let enter = crate::keymap::KeySequence::parse("Enter").unwrap();
+    if let crate::keymap::Lookup::Exact(binding) = app.lookup_active_binding(&enter) {
+        assert_ne!(binding.target.name(), "directory-open-entry");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn temporary_mode_ends_on_pane_focus_and_buffer_switch() {
+    let (mut app, root) = isolated("temporary-pane-buffer");
+    let source = app.active_pane;
+    app.execute(CommandInvocation::split_vertical(None))
+        .unwrap();
+    let other = app.active_pane;
+    app.activate_pane(source);
+    app.open_explorer(Some(root.clone())).unwrap();
+    key(&mut app, KeyCode::Char('x'), Modifiers::NONE);
+    assert!(app.line_select.is_some());
+    app.activate_pane(other);
+    assert!(app.line_select.is_none());
+    app.activate_pane(source);
+    app.enter_named_binding_mode("normal");
+    key(&mut app, KeyCode::Char('x'), Modifiers::NONE);
+    assert!(app.line_select.is_some());
+    app.open_scratch_buffer();
+    assert!(app.line_select.is_none());
+    let expected = app.binding_mode_name();
+    key(&mut app, KeyCode::Char('j'), Modifiers::NONE);
+    assert_eq!(app.binding_mode_name(), expected);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn direct_tree_focus_discards_a_temporary_mode() {
+    let (mut app, root) = isolated("temporary-direct-tree");
+    key(&mut app, KeyCode::Char('x'), Modifiers::NONE);
+    assert!(app.line_select.is_some());
+    app.enter_directory_tree();
+    assert!(app.line_select.is_none());
+    fs::remove_dir_all(root).unwrap();
+}

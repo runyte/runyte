@@ -1121,3 +1121,44 @@ Implementation order (each slice reviewed separately):
 stage 6. Each implementation slice receives Astra High review rounds, core
 and affected desktop checks, and coverage verification. Compiler changes also
 receive the alternating ARM preset startup probe.
+
+### Decision 49 — Effective mode paths and condition matching
+
+Stage 5b admits a program only when every step is valid on every reachable
+effective buffer-type and named-mode path, after inheritance, replacements and
+removals. Conditional branches join their successful output states before the
+remaining steps are checked. An Insert-only tail inherited by a Normal child
+is a load error identifying the buffer type, active mode, key and step; bind
+such programs in their specific mode. Read-only state, terminal readiness and
+language-server availability remain runtime capability checks.
+
+History-restoring steps, including syntax shrink and selection undo/redo,
+join every named mode they can restore. A mode-specific tail therefore needs
+an explicit `mode-enter` to narrow those possibilities first.
+
+A role condition such as `{ mode: select }` tests the current mode's editing
+role, including a submode inheriting that role's semantics (decision 43).
+It does not compare the exact role-target identity: the preset's `v` still
+leaves a Select-like submode. A declared non-role name instead matches the
+exact active named mode. This refines decision 48's role-condition wording;
+explicit entry still resolves role names through the buffer-type role map.
+
+The stage 5b cost gate compares the native-preview fixture's real
+`:config-reload` against dev `d564c471` on the same ARM runner. In release
+builds, changed-key and unchanged reloads must remain within 25% or 20 ms of
+dev, whichever allowance is larger. Release editing readiness retains the
+5% bound. Report paired debug and release measurements on x86 and ARM;
+preset initialization alone does not establish configured-reload cost.
+Caching may reuse validated work, but must preserve the effective-path
+admission contract above, including paths removed by configuration.
+
+### Decision 50 — Temporary gestures belong to their view
+
+Changing pane focus, active buffer, or active buffer type ends a temporary
+mode gesture and discards its return mode. This includes directory-tree focus,
+Help and generated pages. The destination uses its ordinary activation rule;
+role identities resolve against the destination buffer type. Same-view
+restoration remains unchanged. This extends the focus ownership rule for
+pending programs from #141 and fixes a stage 4 regression where a directory
+return mode could replace Help's key table. Scope-specific commands exposed
+through stale return identities are bugs, not runtime capability exceptions.

@@ -876,7 +876,7 @@ fn counted_terminal_undo_consumes_line_gesture_without_restoring_mode() {
 #[test]
 fn terminal_input_refuses_missing_insert_role_before_discarding_review() {
     let config: Config = serde_yaml::from_str(
-        "buffer-types:\n  terminal: {normal: terminal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F6: open-command-palette}\n    select: {Esc: enter-normal-mode}\n    insert: {Esc: enter-normal-mode}\n    replace: {Esc: enter-normal-mode}\n    terminal: {p: null, P: null}\n",
+        "buffer-types:\n  terminal: {normal: terminal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F6: open-command-palette}\n    select: {Esc: enter-normal-mode}\n    insert: {Esc: enter-normal-mode}\n    replace: {Esc: enter-normal-mode}\n    terminal: {p: null, P: null, i: null, a: null, I: null, A: null, o: null, O: null}\n",
     ).unwrap();
     let compiled =
         crate::keymap::configured::compile_configuration(&config, crate::keymap::default_keymap());
@@ -977,4 +977,16 @@ fn terminal_undo_refusal_stops_its_program_before_leaving_the_terminal() {
     assert!(app.status_error);
     assert_eq!(app.active_terminal(), Some(terminal));
     assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
+fn switching_terminal_sessions_discards_a_temporary_mode() {
+    let (mut app, first) = terminal_app("{}");
+    let second = app.terminals.insert_test_session(80, 24);
+    app.set_editing_role(Mode::Normal);
+    send(&mut app, "x");
+    assert!(app.line_select.is_some());
+    app.show_terminal(second);
+    assert_ne!(app.active_terminal(), Some(first));
+    assert!(app.line_select.is_none());
 }

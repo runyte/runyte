@@ -17,7 +17,43 @@ pub(super) struct ActiveMode {
     buffer: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct TemporaryMode {
+    mode: Mode,
+    name: Option<String>,
+    pane: usize,
+    destination: super::OpenDestination,
+    scope: BindingScope,
+}
+
 impl App {
+    pub(super) fn temporary_mode_origin(&self) -> TemporaryMode {
+        TemporaryMode {
+            mode: self.mode,
+            name: self.binding_mode_name(),
+            pane: self.active_pane,
+            destination: self.active().destination(),
+            scope: self.key_binding_scope(),
+        }
+    }
+
+    pub(super) fn discard_departed_temporary_mode(&mut self) {
+        if self.line_select.as_ref().is_some_and(|origin| {
+            origin.pane != self.active_pane
+                || origin.destination != self.active().destination()
+                || origin.scope != self.key_binding_scope()
+        }) {
+            self.line_select = None;
+        }
+    }
+
+    pub(super) fn take_temporary_mode(&mut self) -> Option<(Mode, Option<String>)> {
+        self.discard_departed_temporary_mode();
+        self.line_select
+            .take()
+            .map(|origin| (origin.mode, origin.name))
+    }
+
     pub fn current_binding_mode(&self) -> Option<ModeId> {
         let scope = self.key_binding_scope();
         if let Some(active) = &self.binding_mode
@@ -102,6 +138,7 @@ impl App {
     /// Ownership changes may carry a role the destination does not provide.
     /// Unlike explicit entry, settlement returns to its required Normal role.
     pub(super) fn settle_carried_binding_mode(&mut self) {
+        self.discard_departed_temporary_mode();
         if !self.role_available(self.mode) {
             if let Some(source) = self.binding_mode.as_ref().map(|active| active.buffer)
                 && source != self.active().buffer
@@ -135,6 +172,9 @@ impl App {
 
     /// Explicit role entry, including Normal→Normal when leaving a submode.
     pub(super) fn set_editing_role(&mut self, mode: Mode) {
+        if self.panes.contains_key(&self.active_pane) {
+            self.discard_departed_temporary_mode();
+        }
         if self.panes.contains_key(&self.active_pane) && !self.require_editing_role(mode) {
             return;
         }
@@ -246,6 +286,62 @@ mod tests {
         app.active_mut()
             .replace_selection(crate::selection::Selection::point(0));
         app
+    }
+
+    #[test]
+    fn public_named_conditions_and_temporary_programs_execute() {
+        let config: Config = serde_yaml::from_str(
+            r#"
+editor: {scratch_markdown: false}
+modes:
+  custom-normal: {inherits: normal}
+  custom-select: {inherits: select}
+buffer-types:
+  text: {normal: custom-normal, select: select, insert: insert, replace: replace}
+keys:
+  bind:
+    custom-normal:
+      F6:
+        - {action: mode-enter, arg: custom-select}
+        - {if: {mode: select}, then: [move-right], else: [move-left]}
+        - {if: {mode: custom-select}, then: [move-right], else: [move-left]}
+      F7:
+        - {action: mode-enter, arg: select, temporary: true}
+        - {if: {mode: select}, then: [yank], else: []}
+      F8: [{action: mode-enter, arg: insert}, insert-newline]
+"#,
+        )
+        .unwrap();
+        let compiled = crate::keymap::configured::compile_configuration(
+            &config,
+            crate::keymap::default_keymap(),
+        );
+        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+        let mut app = App::new(config, None).unwrap();
+        app.insert_text("abcd");
+        app.active_mut()
+            .replace_selection(crate::selection::Selection::point(0));
+        let press = |app: &mut App, number| {
+            app.handle_input(InputEvent::Key(KeyStroke::plain(
+                crate::input::KeyCode::Function(number),
+            )))
+            .unwrap()
+        };
+        press(&mut app, 6);
+        assert_eq!(app.mode, Mode::Select);
+        assert_eq!(app.binding_mode_name().as_deref(), Some("custom-select"));
+        assert_eq!(app.active().selection.primary().head, 2);
+        app.enter_named_binding_mode("normal");
+        press(&mut app, 7);
+        assert_eq!(app.mode, Mode::Select);
+        assert!(
+            app.line_select.is_none(),
+            "yank consumes the temporary gesture"
+        );
+        app.enter_named_binding_mode("normal");
+        press(&mut app, 8);
+        assert_eq!(app.mode, Mode::Insert);
+        assert!(app.active_buffer().text().to_string().contains('\n'));
     }
 
     #[test]
@@ -366,7 +462,7 @@ mod tests {
         assert!(app.status_error);
     }
     #[test]
-    fn missing_roles_refuse_default_and_configured_entry_before_editing() {
+    fn missing_roles_reject_bindings_and_refuse_direct_entry_before_editing() {
         let config: Config = serde_yaml::from_str(
             "editor: {scratch_markdown: false}\nbuffer-types:\n  text: {normal: normal}\nkeys:\n  defaults: false\n  bind:\n    normal:\n      F5: open-command-palette\n      i: enter-insert-mode\n      R: enter-replace-mode\n      v: enter-select-mode\n      o: open-line-below\n      F6: open-line-below\n      F7: append-after\n",
         ).unwrap();
@@ -374,15 +470,27 @@ mod tests {
             &config,
             crate::keymap::default_keymap(),
         );
-        assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
-        for keys in ["i", "R", "v", "o", "F6", "F7"] {
+        assert_eq!(compiled.errors.len(), 6, "{:?}", compiled.errors);
+        use crate::command::EditorCommand as C;
+        for (keys, command) in [
+            ("i", C::EnterInsertMode),
+            ("R", C::EnterReplaceMode),
+            ("v", C::EnterSelectMode),
+            ("o", C::OpenLineBelow),
+            ("F6", C::OpenLineBelow),
+            ("F7", C::AppendAfter),
+        ] {
+            assert!(matches!(
+                compiled
+                    .keymap
+                    .lookup(Mode::Normal, &KeySequence::parse(keys).unwrap()),
+                crate::keymap::Lookup::NoMatch
+            ));
             let mut app = App::new(config.clone(), None).unwrap();
             app.insert_text("abc");
             app.active_mut()
                 .replace_selection(crate::selection::Selection::point(0));
-            for key in KeySequence::parse(keys).unwrap().as_slice() {
-                app.handle_input(InputEvent::Key(*key)).unwrap();
-            }
+            app.execute_editor_command(command).unwrap();
             assert_eq!(app.mode, Mode::Normal, "{keys}");
             assert_eq!(app.active_buffer().text().to_string(), "abc", "{keys}");
             assert_eq!(app.active().selection.primary().head, 0, "{keys}");

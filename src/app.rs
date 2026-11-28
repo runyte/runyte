@@ -3334,7 +3334,7 @@ pub struct App {
     /// Temporary mode entry authored by the default line/paragraph programs.
     /// Holds the editing role and named binding identity to restore when the
     /// gesture ends. Whole-line extent lives independently on the selection.
-    line_select: Option<(Mode, Option<String>)>,
+    line_select: Option<binding_modes::TemporaryMode>,
     selection_action_depth: usize,
     selection_history_epoch: u64,
     /// Selection history of each terminal's review, which belongs to the
@@ -3351,6 +3351,7 @@ pub struct App {
     /// Precompiled variants indexed by `editor.fast_pane_keys` when the
     /// optional key-remapping section exists.
     configured_keymaps: Option<[Arc<Keymap>; 2]>,
+    keymap_compilation: (KeymapConfiguration, ConfiguredKeymaps),
     grammar: ActiveGrammar,
     /// Cursor and scroll state per directory, keyed by path rather than by
     /// buffer: one explorer buffer now stands for every directory a pane has
@@ -3819,11 +3820,15 @@ impl App {
         panes.insert(0, Pane::new(0));
         let persisted_config = config.clone();
         let notification_limit = config.notifications.history_limit;
+        let keymap_compilation = (
+            KeymapConfiguration::from(&config),
+            compile_configured_keymaps(&config),
+        );
         let ConfiguredKeymaps {
             keymaps: configured_keymaps,
             errors: key_errors,
             rejected: key_rejection_count,
-        } = compile_configured_keymaps(&config);
+        } = keymap_compilation.1.clone();
         if !key_errors.is_empty() {
             status.push_str(&format!(
                 " · {} key binding entries rejected",
@@ -4091,6 +4096,7 @@ impl App {
             pipe: Default::default(),
             plugins: Default::default(),
             configured_keymaps,
+            keymap_compilation,
             describe_key: None,
             described_binding: None,
             discovery_buffer: None,
@@ -5348,10 +5354,36 @@ fn parse_buffer(buffer: &Buffer, registry: &Registry) -> Option<DocumentSyntax> 
 /// `fast_pane_keys` selects between them at dispatch time, so both are built
 /// from the same section and an error is attributed to a variant only when it
 /// belongs to just one of them.
+#[derive(Clone)]
 pub(crate) struct ConfiguredKeymaps {
     pub keymaps: Option<[Arc<Keymap>; 2]>,
     pub errors: Vec<String>,
     pub rejected: usize,
+}
+
+#[derive(Clone, PartialEq)]
+struct KeymapConfiguration {
+    keys: Option<serde_yaml::Value>,
+    modes: Option<serde_yaml::Value>,
+    buffer_types: Option<serde_yaml::Value>,
+}
+impl From<&Config> for KeymapConfiguration {
+    fn from(config: &Config) -> Self {
+        Self {
+            keys: config.keys.clone(),
+            modes: config.modes.clone(),
+            buffer_types: config.buffer_types.clone(),
+        }
+    }
+}
+impl App {
+    fn keymaps_for_reload(&mut self, config: &Config) -> ConfiguredKeymaps {
+        let source = KeymapConfiguration::from(config);
+        if self.keymap_compilation.0 != source {
+            self.keymap_compilation = (source, compile_configured_keymaps(config));
+        }
+        self.keymap_compilation.1.clone()
+    }
 }
 
 /// Compiles the `keys` section exactly as startup does.

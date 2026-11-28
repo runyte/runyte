@@ -155,7 +155,11 @@ pub(super) fn with_input_policy(
 
             let mut by_sequence: HashMap<&KeySequence, &Binding> = HashMap::new();
             for binding in &effective {
-                if let Err(message) = binding.program.validate(scope) {
+                if let Err(message) = if binding.binding_mode.is_some() {
+                    binding.program.validate_structure()
+                } else {
+                    binding.program.validate(scope)
+                } {
                     violations.push(Violation {
                         named_mode: None,
                         kind: ViolationKind::InvalidProgram,

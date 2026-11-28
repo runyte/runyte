@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Embedded semantic presets. Parsing is independent of user override
 //! admission, whose inventory itself depends on this default registry.
-use super::step::{ActionDef, ConditionDef, ConditionName, StepDef, StepRecord};
+use super::step::{ConditionDef, StepDef, StepRecord};
 use super::*;
 use serde::{
     Deserialize, Deserializer,
@@ -303,26 +303,6 @@ pub(super) fn load(fast: bool) -> Keymap {
     compile(document, fast).expect("embedded Runyte preset must validate")
 }
 
-pub(super) fn has_stage5_steps(value: &Value) -> bool {
-    match value {
-        Value::String(name) => name == "mode-enter",
-        Value::Sequence(values) => values.iter().any(has_stage5_steps),
-        Value::Mapping(map) => {
-            map.contains_key("if")
-                || map.contains_key("temporary")
-                || map
-                    .get("action")
-                    .is_some_and(|v| v.as_str() == Some("mode-enter"))
-                || map.get("steps").is_some_and(has_stage5_steps)
-                || map
-                    .get("command")
-                    .is_some_and(|v| v.as_str() == Some("mode-enter"))
-        }
-        _ => false,
-    }
-}
-pub(super) const STAGE5_DIAGNOSTIC: &str =
-    "mode-enter and conditional steps are reserved for embedded presets until stage 5";
 fn modes(values: &[Mode]) -> Result<&'static [Mode], String> {
     match values {
         [Mode::Normal, Mode::Select] => Ok(MODAL),
@@ -338,7 +318,7 @@ fn scope(name: &str) -> Result<BindingScope, String> {
         .find(|s| s.name() == name)
         .ok_or_else(|| format!("unknown scope {name}"))
 }
-fn target(name: &str) -> Result<BindingTarget, String> {
+pub(super) fn target(name: &str) -> Result<BindingTarget, String> {
     static TARGETS: LazyLock<HashMap<&'static str, BindingTarget>> = LazyLock::new(|| {
         let mut result = HashMap::new();
         for spec in COMMANDS {
@@ -357,75 +337,28 @@ fn target(name: &str) -> Result<BindingTarget, String> {
         .ok_or_else(|| format!("unknown preset target {name}"))
 }
 fn program(steps: &[StepDef], depth: usize) -> Result<program::Program, String> {
-    use program::{Condition as C, Program, Step as S};
-    if depth > program::MAX_DEPTH || steps.len() > program::MAX_STEPS {
-        return Err("program exceeds bounds".into());
-    }
-    let steps = steps
-        .iter()
-        .map(|step| {
-            Ok(match step {
-                StepDef::Name(name) => {
-                    if name == "mode-enter" {
-                        return Err("mode-enter requires action/arg".into());
-                    }
-                    S::Action(match target(name)? {
-                        BindingTarget::Editor(c) => actions::Action::Editor(c),
-                        t => actions::Action::Target(t),
-                    })
-                }
-                StepDef::Action(ActionDef {
-                    action,
-                    arg,
-                    temporary,
-                }) => {
-                    if action == "mode-enter" {
-                        let arg = arg.as_ref().ok_or("mode-enter requires action/arg")?;
-                        mode_graph::valid_name(arg)?;
-                        S::Action(actions::Action::Invocation(
-                            CommandInvocation::from_parts(
-                                crate::command::CommandId::Editor(
-                                    crate::command::EditorCommand::ModeEnter,
-                                ),
-                                if temporary.unwrap_or(false) {
-                                    crate::command::InvocationParameters::TemporaryMode(arg.clone())
-                                } else {
-                                    crate::command::InvocationParameters::OptionalText(Some(
-                                        arg.clone(),
-                                    ))
-                                },
-                                crate::command::CommandExecutionContext::default(),
-                            )
-                            .map_err(|error| error.to_string())?,
-                        ))
-                    } else {
-                        S::Action(
-                            actions::resolve_action(action, arg.as_deref(), Mode::Normal, true)?.0,
-                        )
-                    }
-                }
-                StepDef::Conditional(c) => S::If {
-                    condition: match &c.condition {
-                        ConditionDef::Mode(m) => C::Mode(m.mode),
-                        ConditionDef::Name(n) => match n {
-                            ConditionName::RecordingMacro => C::RecordingMacro,
-                            ConditionName::TreeEntryExpanded => C::TreeEntryExpanded,
-                            ConditionName::TreeEntryIsDirectory => C::TreeEntryIsDirectory,
-                            ConditionName::TreeEntryIsRoot => C::TreeEntryIsRoot,
-                        },
-                    },
-                    then: Box::new(program(&c.then, depth + 1)?),
-                    otherwise: Box::new(program(&c.otherwise, depth + 1)?),
-                },
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    Program::from_steps(steps).map_err(str::to_owned)
+    super::step::compile(steps, depth, true)
 }
-fn validate_entry_targets(
+pub(super) fn validate_entry_targets(
     program: &program::Program,
     graph: &mode_graph::ModeGraph,
 ) -> Result<(), String> {
+    for step in program.steps() {
+        if let program::Step::If {
+            condition,
+            then,
+            otherwise,
+        } = step
+        {
+            if let program::Condition::NamedMode(name) = condition
+                && (matches!(name.as_str(), "list" | "session-manager") || graph.id(name).is_none())
+            {
+                return Err(format!("unknown editor mode condition {name:?}"));
+            }
+            validate_entry_targets(then, graph)?;
+            validate_entry_targets(otherwise, graph)?;
+        }
+    }
     for action in program.iter() {
         if let actions::Action::Invocation(invocation) = action
             && invocation.id() == CommandId::Editor(EditorCommand::ModeEnter)
@@ -677,6 +610,20 @@ mod tests {
     }
 
     #[test]
+    fn named_conditions_resolve_only_declared_editor_modes() {
+        let source = "[{if: {mode: markdown}, then: [move-left], else: []}]";
+        let result = parsed_program(source).unwrap();
+        assert!(matches!(&result.steps()[0], program::Step::If {
+            condition: program::Condition::NamedMode(name), ..
+        } if name == "markdown"));
+        for name in ["missing-mode", "list", "session-manager"] {
+            assert!(
+                parsed_program(&format!("[{{if: {{mode: {name}}}, then: [], else: []}}]")).is_err()
+            );
+        }
+    }
+
+    #[test]
     fn standalone_and_sequence_steps_share_strict_syntax() {
         for source in [
             "{action: help, arg: null}",
@@ -721,6 +668,12 @@ mod tests {
             for fast in [false, true] {
                 let map = compile_for_platform(&DOCUMENT, fast, platform).unwrap();
                 validate::assert_valid(&map);
+                let flow = crate::keymap::flow::failures(&map, &map);
+                assert!(
+                    flow.is_empty(),
+                    "{name} fast={fast}: {:?}",
+                    flow.iter().map(|f| f.message(&map)).collect::<Vec<_>>()
+                );
                 parity::assert_registry(&map, fast, name);
                 for &scope in BindingScope::ALL {
                     for mode in [
@@ -927,26 +880,6 @@ mod tests {
                 let result = configured::compile(&serde_yaml::from_str(source).unwrap(), &base);
                 assert!(!result.errors.is_empty(), "{source}");
                 assert_eq!(result.keymap.bindings(), base.bindings());
-            }
-            for step in [
-                "{action: mode-enter, arg: select}",
-                "{action: mode-enter, arg: select, temporary: true}",
-                "{if: {mode: select}, then: [move-left], else: []}",
-                "mode-enter",
-            ] {
-                for source in [
-                    format!("bind: {{normal: {{F6: {step}}}}}"),
-                    format!("bind: {{directory: {{F6: {step}}}}}"),
-                ] {
-                    let result =
-                        configured::compile(&serde_yaml::from_str(&source).unwrap(), &base);
-                    assert!(
-                        result.errors.iter().any(|e| e.contains("stage 5")),
-                        "{source}: {:?}",
-                        result.errors
-                    );
-                    assert_eq!(result.keymap.bindings(), base.bindings());
-                }
             }
             let described = configured::compile(&serde_yaml::from_str("preset: runyte\nbind:\n  normal:\n    F6: {steps: [select-all, yank], description: Copy document}").unwrap(), &base);
             assert!(described.errors.is_empty(), "{:?}", described.errors);
