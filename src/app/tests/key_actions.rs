@@ -3063,6 +3063,9 @@ fn mode_entry_programs_preserve_raw_endpoints_and_primary_range() {
             Range::new(0, 5),
             Range::new(5, 0),
             Range::point(7),
+            Range::point(9),
+            Range::new(0, 9),
+            Range::new(9, 0),
         ] {
             for multiple in [false, true] {
                 let selection = if multiple {
@@ -3141,5 +3144,33 @@ fn refused_input_mode_programs_leave_read_only_selection_unchanged() {
         assert!(app.status_error);
         assert_eq!(app.mode, Mode::Normal);
         assert_eq!(app.active().selection, before);
+    }
+}
+
+#[test]
+fn input_entry_after_line_gestures_preserves_seams_and_one_typing_undo() {
+    for gesture in ['x', 'X'] {
+        for input in ['i', 'R'] {
+            let mut app = configured("");
+            seed(&mut app, "abc\r\ndef\r\n");
+            app.active_mut().replace_selection(Selection::point(6));
+            press(&mut app, gesture);
+            let before = app.active().selection.clone();
+            let expected = before.transform(|range| {
+                Range::point(if input == 'i' {
+                    range.from()
+                } else {
+                    range.head
+                })
+            });
+            press(&mut app, input);
+            assert_eq!(app.active().selection, expected);
+            assert!(app.line_select.is_none());
+            press(&mut app, 'q');
+            key(&mut app, KeyCode::Escape, Modifiers::NONE);
+            assert_ne!(text(&app), "abc\r\ndef\r\n");
+            app.execute_editor_command(EditorCommand::Undo).unwrap();
+            assert_eq!(text(&app), "abc\r\ndef\r\n");
+        }
     }
 }
