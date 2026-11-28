@@ -49,7 +49,7 @@ pub fn admits_command(scope: BindingScope, command: C) -> bool {
         return scope == BindingScope::DirectoryTree;
     }
     if command == C::FitSelectionForNormalMode {
-        return admits_command(scope, C::EnterNormalMode);
+        return scope != BindingScope::DirectoryTree;
     }
     match scope {
         BindingScope::Media => {
@@ -100,7 +100,6 @@ fn addresses_text(command: C) -> bool {
 /// work across buffers rather than inside this one.
 const MEDIA: &[C] = &[
     C::CollapseSelection,
-    C::EnterSelectMode,
     C::ClipboardYank,
     C::MoveLeft,
     C::MoveRight,
@@ -204,7 +203,6 @@ const TERMINAL: &[C] = &[
     C::CollapseSelection,
     C::CopySelectionDown,
     C::CopySelectionUp,
-    C::EnterSelectMode,
     C::ExtendLineAbove,
     C::ExtendLineBelow,
     C::FindNextChar,

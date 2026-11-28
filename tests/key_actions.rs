@@ -212,7 +212,7 @@ fn action_bindings_preserve_terminal_input_and_its_window_commands() {
 #[test]
 fn configured_continuation_uses_effects_and_actual_prompt_arguments() {
     for steps in [
-        "enter-insert-mode, move-left",
+        "{action: mode-enter, arg: insert}, move-left",
         "find-next-char, yank",
         "surround-replace, yank",
         "focus-window-right, move-left",

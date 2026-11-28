@@ -13,7 +13,7 @@ pub fn effects(values: &[ActionEffect]) -> String {
             ActionEffect::Selection => "selection",
             ActionEffect::Text => "text",
             ActionEffect::Mode => "mode",
-            ActionEffect::View => "view",
+            ActionEffect::View => "presentation",
             ActionEffect::Pane => "pane",
             ActionEffect::File => "file",
             ActionEffect::Operand => "character input",

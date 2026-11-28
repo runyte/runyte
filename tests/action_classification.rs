@@ -37,12 +37,7 @@ fn migration_sets_are_exact_and_must_empty_before_their_stages_complete() {
     // requires its actual split, not merely relabelling its descriptor.
     let stage3 = [];
     let stage4 = [];
-    let stage5 = [
-        CommandId::Editor(C::EnterNormalMode),
-        CommandId::Editor(C::EnterInsertMode),
-        CommandId::Editor(C::EnterReplaceMode),
-        CommandId::Editor(C::EnterSelectMode),
-    ];
+    let stage5 = [];
     for (stage, expected) in [
         (SplitStage::Stage3, stage3.as_slice()),
         (SplitStage::Stage4, stage4.as_slice()),
@@ -90,10 +85,6 @@ fn retained_decisions_and_mode_actions_keep_their_contracts() {
     }
     for c in [
         C::ModeEnter,
-        C::EnterNormalMode,
-        C::EnterSelectMode,
-        C::EnterInsertMode,
-        C::EnterReplaceMode,
         C::AppendAfter,
         C::InsertLineStart,
         C::InsertLineEnd,

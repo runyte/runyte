@@ -950,7 +950,7 @@ fn syntax_object_navigation_supports_modes_counts_and_each_object_kind() {
     assert_eq!(editor.active_selection(), Selection::point(first_fn));
 
     editor
-        .execute(editor_invocation(EditorCommand::EnterSelectMode))
+        .execute(runyte::command::parse_named_command("mode-enter", Some("select")).unwrap())
         .unwrap();
     editor
         .execute(editor_invocation(EditorCommand::GotoNextSyntaxFunction))
@@ -961,7 +961,7 @@ fn syntax_object_navigation_supports_modes_counts_and_each_object_kind() {
     );
 
     editor
-        .execute(editor_invocation(EditorCommand::EnterNormalMode))
+        .execute(runyte::command::parse_named_command("mode-enter", Some("normal")).unwrap())
         .unwrap();
     editor.set_active_selection(Selection::point(char_offset(source, "struct First")));
     editor

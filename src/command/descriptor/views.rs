@@ -17,11 +17,8 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
         C::JumpBackward | C::JumpForward | C::JumpBackwardBuffer | C::JumpForwardBuffer => {
             views!(Terminal: "Navigate retained jump history through the ordinary pane workflow")
         }
-        C::EnterNormalMode => {
-            views!(Terminal: "Leave child input for live Normal mode; otherwise capture review and collapse its selection")
-        }
-        C::EnterSelectMode => {
-            views!(Terminal: "Enter Select mode over captured terminal output", Media: "Begin selection of PDF text or an image region")
+        C::ModeEnter => {
+            views!(Terminal: "Select captures and focuses review output; Insert returns to live output; Replace is unavailable", Media: "Entering Select initializes selection of PDF text or an image region")
         }
         C::TerminalEnterInput => {
             views!(Terminal: "Return to live output and send subsequent input to the child")

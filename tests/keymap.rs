@@ -646,16 +646,12 @@ fn pane_swap_exchanges_complete_contents_follows_the_caret_and_is_its_own_invers
     let edited_pane = app.active_pane;
     app.execute(CommandInvocation::editor(EditorCommand::NewBuffer, Default::default()).unwrap())
         .unwrap();
-    app.execute(
-        CommandInvocation::editor(EditorCommand::EnterInsertMode, Default::default()).unwrap(),
-    )
-    .unwrap();
+    app.execute(runyte::command::parse_named_command("mode-enter", Some("insert")).unwrap())
+        .unwrap();
     app.handle_input(InputEvent::Text("second pane".to_owned()))
         .unwrap();
-    app.execute(
-        CommandInvocation::editor(EditorCommand::EnterNormalMode, Default::default()).unwrap(),
-    )
-    .unwrap();
+    app.execute(runyte::command::parse_named_command("mode-enter", Some("normal")).unwrap())
+        .unwrap();
     app.panes.get_mut(&edited_pane).unwrap().scroll_row = 7;
     let edited_buffer = app.panes[&edited_pane].buffer;
     let edited_head = app.panes[&edited_pane].selection.primary().head;
@@ -946,7 +942,7 @@ fn control_backslash_exits_insert_and_control_w_moves_between_panes() {
             default_keymap().lookup(Mode::Insert, &KeySequence::from(key)),
             Lookup::Exact(binding)
                 if binding.target
-                    == BindingTarget::Editor(EditorCommand::EnterNormalMode)
+                    == BindingTarget::Editor(EditorCommand::FitSelectionForNormalMode)
         ));
     }
 
@@ -955,7 +951,7 @@ fn control_backslash_exits_insert_and_control_w_moves_between_panes() {
             default_keymap().lookup(Mode::Normal, &KeySequence::from(key)),
             Lookup::Exact(binding)
                 if binding.target
-                    == BindingTarget::Editor(EditorCommand::EnterNormalMode)
+                    == BindingTarget::Editor(EditorCommand::FitSelectionForNormalMode)
         ));
     }
     assert!(matches!(

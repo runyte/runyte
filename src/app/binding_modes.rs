@@ -464,7 +464,7 @@ keys:
     #[test]
     fn missing_roles_reject_bindings_and_refuse_direct_entry_before_editing() {
         let config: Config = serde_yaml::from_str(
-            "editor: {scratch_markdown: false}\nbuffer-types:\n  text: {normal: normal}\nkeys:\n  defaults: false\n  bind:\n    normal:\n      F5: open-command-palette\n      i: enter-insert-mode\n      R: enter-replace-mode\n      v: enter-select-mode\n      o: open-line-below\n      F6: open-line-below\n      F7: append-after\n",
+            "editor: {scratch_markdown: false}\nbuffer-types:\n  text: {normal: normal}\nkeys:\n  defaults: false\n  bind:\n    normal:\n      F5: open-command-palette\n      i: {action: mode-enter, arg: insert}\n      R: {action: mode-enter, arg: replace}\n      v: {action: mode-enter, arg: select}\n      o: open-line-below\n      F6: open-line-below\n      F7: append-after\n",
         ).unwrap();
         let compiled = crate::keymap::configured::compile_configuration(
             &config,
@@ -473,12 +473,33 @@ keys:
         assert_eq!(compiled.errors.len(), 6, "{:?}", compiled.errors);
         use crate::command::EditorCommand as C;
         for (keys, command) in [
-            ("i", C::EnterInsertMode),
-            ("R", C::EnterReplaceMode),
-            ("v", C::EnterSelectMode),
-            ("o", C::OpenLineBelow),
-            ("F6", C::OpenLineBelow),
-            ("F7", C::AppendAfter),
+            (
+                "i",
+                crate::command::CommandInvocation::mode_entry(Mode::Insert),
+            ),
+            (
+                "R",
+                crate::command::CommandInvocation::mode_entry(Mode::Replace),
+            ),
+            (
+                "v",
+                crate::command::CommandInvocation::mode_entry(Mode::Select),
+            ),
+            (
+                "o",
+                crate::command::CommandInvocation::editor(C::OpenLineBelow, Default::default())
+                    .unwrap(),
+            ),
+            (
+                "F6",
+                crate::command::CommandInvocation::editor(C::OpenLineBelow, Default::default())
+                    .unwrap(),
+            ),
+            (
+                "F7",
+                crate::command::CommandInvocation::editor(C::AppendAfter, Default::default())
+                    .unwrap(),
+            ),
         ] {
             assert!(matches!(
                 compiled
@@ -490,7 +511,7 @@ keys:
             app.insert_text("abc");
             app.active_mut()
                 .replace_selection(crate::selection::Selection::point(0));
-            app.execute_editor_command(command).unwrap();
+            app.execute(command).unwrap();
             assert_eq!(app.mode, Mode::Normal, "{keys}");
             assert_eq!(app.active_buffer().text().to_string(), "abc", "{keys}");
             assert_eq!(app.active().selection.primary().head, 0, "{keys}");

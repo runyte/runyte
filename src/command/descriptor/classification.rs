@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Explicit classification inventory. No wildcard: new identities require review.
-use super::{ActionClassification, SemanticClass, SplitStage};
+use super::{ActionClassification, SemanticClass};
 use crate::command::{ColonCommand, EditorCommand};
 
 pub(super) const fn editor_classification(command: EditorCommand) -> ActionClassification {
@@ -57,6 +57,8 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
         | C::ToggleComments
         | C::SelectAll
         | C::CollapseSelection
+        | C::CollapseSelectionStart
+        | C::CollapseSelectionHead
         | C::GotoPreviousSyntaxFunction
         | C::GotoNextSyntaxFunction
         | C::GotoPreviousSyntaxClass
@@ -281,12 +283,6 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
             semantic: SemanticClass::ModeAction,
             pending_split: None,
         },
-        C::EnterNormalMode | C::EnterInsertMode | C::EnterReplaceMode | C::EnterSelectMode => {
-            ActionClassification {
-                semantic: SemanticClass::ModeAction,
-                pending_split: Some(SplitStage::Stage5),
-            }
-        }
         C::DeleteSelection | C::DeleteSelectionForChange => ActionClassification {
             semantic: SemanticClass::Decision(
                 "Delete and change place the caret and treat whole rows differently.",

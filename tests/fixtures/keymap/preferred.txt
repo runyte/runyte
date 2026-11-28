@@ -70,8 +70,6 @@ false|normal|directory-open|Space e
 false|normal|directory-tree-focus|Space d d
 false|normal|directory-tree-toggle|Space d t
 false|normal|document-symbols|Space l s
-false|normal|enter-insert-mode|i
-false|normal|enter-replace-mode|R
 false|normal|equalize-windows|Space w =
 false|normal|find-next-char|f
 false|normal|find-previous-char|F
@@ -288,8 +286,6 @@ false|select|directory-open|Space e
 false|select|directory-tree-focus|Space d d
 false|select|directory-tree-toggle|Space d t
 false|select|document-symbols|Space l s
-false|select|enter-insert-mode|i
-false|select|enter-replace-mode|R
 false|select|equalize-windows|Space w =
 false|select|find-next-char|f
 false|select|find-previous-char|F
@@ -517,8 +513,6 @@ true|normal|directory-open|Space e
 true|normal|directory-tree-focus|Space d d
 true|normal|directory-tree-toggle|Space d t
 true|normal|document-symbols|Space l s
-true|normal|enter-insert-mode|i
-true|normal|enter-replace-mode|R
 true|normal|equalize-windows|Space w =
 true|normal|find-next-char|f
 true|normal|find-previous-char|F
@@ -734,8 +728,6 @@ true|select|directory-open|Space e
 true|select|directory-tree-focus|Space d d
 true|select|directory-tree-toggle|Space d t
 true|select|document-symbols|Space l s
-true|select|enter-insert-mode|i
-true|select|enter-replace-mode|R
 true|select|equalize-windows|Space w =
 true|select|find-next-char|f
 true|select|find-previous-char|F

@@ -870,7 +870,7 @@ mod tests {
 
     /// The smallest standalone keymap the editor accepts: a way to the
     /// command palette and a way back to Normal mode.
-    const WAY_OUT: &str = "defaults: false\nbind:\n  normal:\n    ':': open-command-palette\n  select:\n    Esc: enter-normal-mode\n  insert:\n    Esc: enter-normal-mode\n  replace:\n    Esc: enter-normal-mode\n";
+    const WAY_OUT: &str = "defaults: false\nbind:\n  normal:\n    ':': open-command-palette\n  select:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n  insert:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n  replace:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n";
 
     /// Whether `keys.defaults: false` took effect without complaint.
     fn standalone(compiled: &CompiledKeymap) -> bool {
@@ -961,7 +961,7 @@ mod tests {
         assert_eq!(
             compiled.errors,
             [
-                "defaults: false rejected: bind has no enter-normal-mode in insert; the built-in bindings were kept"
+                "defaults: false rejected: bind has no mode-enter normal in insert; the built-in bindings were kept"
             ]
         );
     }
@@ -1064,7 +1064,7 @@ mod tests {
                 assert_eq!(
                     exact(&compiled, mode, keys),
                     Some(BindingTarget::Editor(
-                        crate::command::EditorCommand::EnterNormalMode
+                        crate::command::EditorCommand::FitSelectionForNormalMode
                     )),
                     "{mode:?} {keys}"
                 );
@@ -1238,7 +1238,7 @@ mod tests {
     fn without_defaults_a_sequence_of_actions_is_a_way_out() {
         let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
         value["bind"]["insert"] = serde_yaml::from_str(
-            "{ Esc: [move-left, enter-normal-mode], 'Ctrl-\\': null, Ctrl-4: null }",
+            "{ Esc: [move-left, fit-selection-for-normal-mode, { action: mode-enter, arg: normal }], 'Ctrl-\\': null, Ctrl-4: null }",
         )
         .unwrap();
         value["bind"]["normal"] =
@@ -1246,6 +1246,29 @@ mod tests {
         let compiled = compile(&value, default_keymap());
         assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
         assert!(standalone(&compiled), "{:?}", compiled.errors);
+    }
+
+    #[test]
+    fn without_defaults_requires_a_final_normal_entry_on_every_branch() {
+        for program in [
+            "[{action: mode-enter, arg: normal}, {action: mode-enter, arg: insert}]",
+            "[{if: {mode: normal}, then: [{action: mode-enter, arg: normal}], else: []}]",
+        ] {
+            let mut value: Value = serde_yaml::from_str(WAY_OUT).unwrap();
+            value["bind"]["insert"]["Esc"] = serde_yaml::from_str(program).unwrap();
+            value["bind"]["insert"]["Ctrl-\\"] = Value::Null;
+            value["bind"]["insert"]["Ctrl-4"] = Value::Null;
+            let compiled = compile(&value, default_keymap());
+            assert!(
+                compiled
+                    .errors
+                    .iter()
+                    .any(|e| e.contains("no mode-enter normal in insert")),
+                "{:?}",
+                compiled.errors
+            );
+            assert!(!standalone(&compiled));
+        }
     }
 
     #[test]

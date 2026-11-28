@@ -4469,15 +4469,11 @@ impl App {
         use EditorCommand as Command;
         let role = match command {
             Command::TerminalEnterInput
-            | Command::EnterInsertMode
             | Command::AppendAfter
             | Command::InsertLineStart
             | Command::InsertLineEnd
             | Command::OpenLineBelow
             | Command::OpenLineAbove => Some(Mode::Insert),
-            Command::EnterReplaceMode => Some(Mode::Replace),
-            Command::EnterSelectMode => Some(Mode::Select),
-            Command::EnterNormalMode => Some(Mode::Normal),
             _ => None,
         };
         if role.is_some_and(|role| !self.require_editing_role(role)) {
@@ -4637,7 +4633,6 @@ impl App {
             | Command::DirectoryTreeMove => unreachable!("tree commands are handled first"),
             Command::FitSelectionForNormalMode => self.fit_selection_for_normal_mode(),
             Command::ModeEnter => self.action_failed("mode-enter requires a mode argument"),
-            Command::EnterNormalMode => self.enter_normal_mode(),
             Command::OpenCommandPalette => self.open_prompt(PromptKind::Command),
             Command::MoveLeft => self.motion(Motion::Left),
             Command::MoveRight => self.motion(Motion::Right),
@@ -4687,8 +4682,6 @@ impl App {
             Command::PageDown => self.motion(Motion::PageDown),
             Command::HalfPageUp => self.motion(Motion::HalfPageUp),
             Command::HalfPageDown => self.motion(Motion::HalfPageDown),
-            Command::EnterInsertMode => self.enter_insert(false),
-            Command::EnterReplaceMode => self.enter_replace_mode(),
             Command::AppendAfter => self.enter_insert(true),
             Command::InsertLineStart => {
                 self.motion(Motion::LineStart);
@@ -4739,13 +4732,14 @@ impl App {
             Command::CutSelectionForChange => self.cut_selection(true, false),
             Command::DeleteSelection => self.delete_selection_or_char(false, linewise_extent),
             Command::DeleteSelectionForChange => self.delete_selection_or_char(true, false),
-            Command::EnterSelectMode => self.enter_select_mode(),
             Command::SelectLine => self.extend_line(true),
             Command::SelectLineUp => self.select_line_up(),
             Command::ExtendLineAbove => self.extend_line(false),
             Command::ExtendLineBelow => self.extend_line(true),
             Command::SelectAll => self.select_all(),
             Command::MatchBracket => self.match_bracket(),
+            Command::CollapseSelectionStart => self.collapse_selection_raw(true),
+            Command::CollapseSelectionHead => self.collapse_selection_raw(false),
             Command::CollapseSelection => self.collapse_selection(),
             Command::FlipSelection => self.flip_selection(),
             Command::ExpandSyntaxSelection => self.expand_syntax_selection()?,
@@ -5794,10 +5788,15 @@ impl App {
                 self.action_failed("replace mode needs an editable buffer");
                 return false;
             }
+            let (_, rows) = self.pane_cells(self.active_pane);
+            let scroll_offset = self.config.editor.scroll_offset;
             let session = self.terminals.get_mut(id).expect("active terminal");
             match mode {
                 Mode::Insert => session.scroll_to_live(),
-                Mode::Select => session.begin_review(),
+                Mode::Select => {
+                    session.begin_review();
+                    session.focus_review_selection(rows.max(1), scroll_offset);
+                }
                 _ => {}
             }
             self.line_select = None;
@@ -5810,7 +5809,7 @@ impl App {
                 self.key_binding_scope(),
                 crate::keymap::BindingScope::DirectoryTree | crate::keymap::BindingScope::Media
             ) {
-                self.action_failed("this view does not support text input modes");
+                self.action_failed("this buffer type does not support text input modes");
                 return false;
             }
             if let Some(reason) = self.active_buffer().read_only_reason() {
@@ -5819,6 +5818,9 @@ impl App {
             }
         }
         self.line_select = None;
+        if mode == Mode::Select {
+            self.begin_media_selection();
+        }
         if self.mode == mode {
             self.set_editing_role(mode);
             return true;

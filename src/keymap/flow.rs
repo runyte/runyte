@@ -376,15 +376,11 @@ impl Analysis<'_> {
             }
         }
         let fixed = match id {
-            CommandId::Editor(C::EnterNormalMode) => Some("normal"),
-            CommandId::Editor(C::EnterSelectMode) => Some("select"),
             CommandId::Editor(C::Search | C::SearchRegex) if matches!(action, Action::Invocation(invocation) if matches!(invocation.parameters(), P::OptionalText(Some(_)))) => {
                 Some("select")
             }
-            CommandId::Editor(C::EnterReplaceMode) => Some("replace"),
             CommandId::Editor(
-                C::EnterInsertMode
-                | C::AppendAfter
+                C::AppendAfter
                 | C::InsertLineStart
                 | C::InsertLineEnd
                 | C::OpenLineAbove

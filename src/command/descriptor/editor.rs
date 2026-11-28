@@ -58,17 +58,17 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
-        C::ModeEnter => ActionPolicy {
+        C::CollapseSelectionStart | C::CollapseSelectionHead => ActionPolicy {
             global_binding_modes: ALL,
-            effects: &[Mode],
+            effects: &[Selection],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
-        C::EnterNormalMode => ActionPolicy {
+        C::ModeEnter => ActionPolicy {
             global_binding_modes: ALL,
-            effects: &[Mode, Selection],
+            effects: &[Mode, Selection, View],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
@@ -167,11 +167,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
-        C::EnterInsertMode
-        | C::EnterReplaceMode
-        | C::AppendAfter
-        | C::InsertLineStart
-        | C::InsertLineEnd => ActionPolicy {
+        C::AppendAfter | C::InsertLineStart | C::InsertLineEnd => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[Mode, Selection],
             count: CountBehavior::Reject,
@@ -338,14 +334,6 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
-        },
-        C::EnterSelectMode => ActionPolicy {
-            global_binding_modes: NORMAL_SELECT,
-            effects: &[Mode, Selection],
-            count: CountBehavior::Reject,
-            operands: OperandArity::Zero,
-            requires_writable_buffer: false,
-            buffer_mutation: BufferMutation::Unchanged,
         },
         C::SelectLine | C::ExtendLineAbove | C::ExtendLineBelow | C::SelectLineUp => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,

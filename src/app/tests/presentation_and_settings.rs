@@ -3061,7 +3061,7 @@ fn terminal_paste_missing_insert_role_is_rejected_at_load() {
 #[test]
 fn standalone_terminal_paste_does_not_require_insert_role() {
     let config: Config = serde_yaml::from_str(
-        "buffer-types:\n  terminal: {normal: terminal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F6: open-command-palette}\n    select: {Esc: enter-normal-mode}\n    insert: {Esc: enter-normal-mode}\n    replace: {Esc: enter-normal-mode}\n    terminal: {F5: terminal-paste, p: null, P: null, i: null, a: null, I: null, A: null, o: null, O: null}\n",
+        "buffer-types:\n  terminal: {normal: terminal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F6: open-command-palette}\n    select: {Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]}\n    insert: {Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]}\n    replace: {Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]}\n    terminal: {F5: terminal-paste, p: null, P: null, i: null, a: null, I: null, A: null, o: null, O: null}\n",
     )
     .unwrap();
     let compiled =

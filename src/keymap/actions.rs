@@ -391,10 +391,29 @@ fn has_configurable_target(binding: &Binding, mode: Mode) -> bool {
 /// nothing else could supply, and the two a person chose elsewhere or could
 /// not get back without: the terminal escape `Ctrl-\`, which `Esc` cannot be
 /// inside a terminal, and the fast pane keys `editor.fast_pane_keys` turned on.
+fn enters_normal(binding: &Binding) -> bool {
+    // A conditional leaf or an intermediate Normal entry is not an escape:
+    // it may never execute, or a later step may immediately leave Normal.
+    fn ends_normal(program: &super::program::Program) -> bool {
+        use super::program::Step;
+        match program.steps().last() {
+            Some(Step::Action(action) | Step::ActionWithOptions { action, .. }) => matches!(action,
+                Action::Invocation(invocation)
+                    if invocation.id() == CommandId::Editor(EditorCommand::ModeEnter)
+                        && matches!(invocation.parameters(), command::InvocationParameters::OptionalText(Some(name)) if name == "normal")
+            ),
+            Some(Step::If {
+                then, otherwise, ..
+            }) => ends_normal(then) && ends_normal(otherwise),
+            None => false,
+        }
+    }
+    ends_normal(&binding.program)
+}
+
 fn is_default(binding: &Binding, mode: Mode, fast_pane_keys: bool) -> bool {
     let single = |test: fn(Key) -> bool| matches!(binding.sequence.as_slice(), [key] if test(*key));
-    let terminal_escape = binding.target == BindingTarget::Editor(EditorCommand::EnterNormalMode)
-        && single(super::is_terminal_normal_key);
+    let terminal_escape = enters_normal(binding) && single(super::is_terminal_normal_key);
     binding.scope == BindingScope::Global
         && binding.is_active_in(mode)
         && !(fast_pane_keys && single(super::is_fast_pane_key))
@@ -567,8 +586,13 @@ pub(super) fn missing_way_out(keymap: &Keymap) -> Option<String> {
         {
             continue;
         }
-        if !reaches(mode, EditorCommand::EnterNormalMode) {
-            missing.push(format!("enter-normal-mode in {}", mode_name(mode)));
+        if !keymap
+            .bindings_for_scope(mode, BindingScope::Global)
+            .any(|binding| {
+                binding.availability == BindingAvailability::Implemented && enters_normal(binding)
+            })
+        {
+            missing.push(format!("mode-enter normal in {}", mode_name(mode)));
         }
     }
     (!missing.is_empty()).then(|| missing.join(", "))
@@ -1171,7 +1195,7 @@ mod tests {
                 "leader: Ctrl-x\nwindow: Ctrl-a\nrebind:\n  Space g: Leader G\nbind:\n  normal:\n    J: null\n    F6: [select-all, yank]\n    Leader q: { action: pipe, arg: sort }\n  insert:\n    Ctrl-s: save\n",
             ),
             Some(
-                "defaults: false\nleader: Ctrl-x\nbind:\n  normal:\n    ':': open-command-palette\n    Leader h: move-down\n  select:\n    Esc: enter-normal-mode\n  insert:\n    Esc: enter-normal-mode\n  replace:\n    Esc: enter-normal-mode\n",
+                "defaults: false\nleader: Ctrl-x\nbind:\n  normal:\n    ':': open-command-palette\n    Leader h: move-down\n  select:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n  insert:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n  replace:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n",
             ),
         ];
         for source in sections {
@@ -1235,7 +1259,7 @@ mod tests {
                 assert!(!defaults[mode].contains_key(Value::String(key.into())));
             }
         }
-        let source: Value = serde_yaml::from_str("defaults: false\nbind:\n  normal:\n    ':': open-command-palette\n  select:\n    Esc: enter-normal-mode\n  insert:\n    Esc: enter-normal-mode\n  replace:\n    Esc: enter-normal-mode\n").unwrap();
+        let source: Value = serde_yaml::from_str("defaults: false\nbind:\n  normal:\n    ':': open-command-palette\n  select:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n  insert:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n  replace:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n").unwrap();
         let compiled = super::super::configured::compile(&source, &super::super::keymap_for(false));
         assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
         for mode in [Mode::Normal, Mode::Select] {

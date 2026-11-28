@@ -2062,15 +2062,22 @@ impl App {
             .mark_selection_semantics(SelectionSemantics::Runyte);
     }
 
-    pub(super) fn enter_select_mode(&mut self) {
-        self.set_editing_role(Mode::Select);
-    }
-
     pub(super) fn select_all(&mut self) {
         let buffer = self.active_buffer();
         let end = buffer.row_end_offset(buffer.last_row(), false);
         self.active_mut()
             .replace_selection(Selection::single(Range::new(0, end)));
+    }
+
+    pub(super) fn collapse_selection_raw(&mut self, start: bool) {
+        self.line_select = None;
+        let selection = self
+            .active()
+            .selection
+            .transform(|range| Range::point(if start { range.from() } else { range.head }));
+        self.active_mut().replace_selection(selection);
+        self.active_mut()
+            .mark_selection_semantics(SelectionSemantics::Runyte);
     }
 
     pub(super) fn collapse_selection(&mut self) {

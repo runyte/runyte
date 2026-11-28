@@ -292,7 +292,7 @@ fn cross_mode_aliases_and_scope_action_reference_follow_admission() {
 fn terminal_insert_actions_claim_only_effective_scoped_keys_and_prefixes() {
     use crate::keymap::{Key, terminal_input::Route::*};
     let map = configured(
-        "bind:\n  terminal-insert:\n    F6: enter-normal-mode\n    F7 h: focus-window-left\n    Ctrl-4: null\n    Ctrl-\\: null\n    Ctrl-w: null\n",
+        "bind:\n  terminal-insert:\n    F6: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n    F7 h: focus-window-left\n    Ctrl-4: null\n    Ctrl-\\: null\n    Ctrl-w: null\n",
     );
     let route = |s| map.terminal_input_route(Key::parse(s).unwrap(), false, false);
     assert_eq!(route("F6"), EditorGrammar);
@@ -429,7 +429,7 @@ fn terminal_help_and_routing_follow_scoped_remaps_and_removals() {
         help::{self, HelpTopic},
     };
     let map = configured(
-        "window: F10\nbind:\n  terminal-insert:\n    F6: enter-normal-mode\n    Ctrl-4: null\n    Ctrl-\\: null\n    F7 z: toggle-zen\n",
+        "window: F10\nbind:\n  terminal-insert:\n    F6: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n    Ctrl-4: null\n    Ctrl-\\: null\n    F7 z: toggle-zen\n",
     );
     let document = help::render(
         HelpTopic::Terminal,

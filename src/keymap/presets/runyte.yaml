@@ -267,19 +267,19 @@ keys:
           - fit-selection-for-normal-mode
           - action: mode-enter
             arg: normal
-        target: enter-normal-mode
+        target: fit-selection-for-normal-mode
       Ctrl-\:
         steps:
           - fit-selection-for-normal-mode
           - action: mode-enter
             arg: normal
-        target: enter-normal-mode
+        target: fit-selection-for-normal-mode
       Ctrl-4:
         steps:
           - fit-selection-for-normal-mode
           - action: mode-enter
             arg: normal
-        target: enter-normal-mode
+        target: fit-selection-for-normal-mode
         role: compatibility
       ':': open-command-palette
       h: move-left
@@ -311,7 +311,10 @@ keys:
       PageDown: page-down
       Ctrl-u: half-page-up
       Ctrl-d: half-page-down
-      i: enter-insert-mode
+      i:
+        steps: [{action: mode-enter, arg: insert}, collapse-selection-start]
+        description: Insert before the selection
+        target: collapse-selection-start
       a: append-after
       I: insert-line-start
       A: insert-line-end
@@ -321,7 +324,10 @@ keys:
         - replace-char
         - action: mode-enter
           arg: normal
-      R: enter-replace-mode
+      R:
+        steps: [{action: mode-enter, arg: replace}, collapse-selection-head]
+        description: Replace text from each selection head
+        target: collapse-selection-head
       '~':
         - toggle-case
         - action: mode-enter
@@ -362,9 +368,9 @@ keys:
               - action: mode-enter
                 arg: normal
             else:
-              - enter-select-mode
+              - {action: mode-enter, arg: select}
         description: Toggle Select; collapse when leaving
-        target: enter-select-mode
+        target: mode-enter
       x:
         - select-line
         - action: mode-enter
@@ -1009,19 +1015,19 @@ keys:
           - fit-selection-for-normal-mode
           - action: mode-enter
             arg: normal
-        target: enter-normal-mode
+        target: fit-selection-for-normal-mode
       Ctrl-\:
         steps:
           - fit-selection-for-normal-mode
           - action: mode-enter
             arg: normal
-        target: enter-normal-mode
+        target: fit-selection-for-normal-mode
       Ctrl-4:
         steps:
           - fit-selection-for-normal-mode
           - action: mode-enter
             arg: normal
-        target: enter-normal-mode
+        target: fit-selection-for-normal-mode
         role: compatibility
       Alt-Backspace: delete-word-backward
       Alt-Delete: delete-word-forward

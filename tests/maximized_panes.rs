@@ -71,7 +71,8 @@ fn zen_keeps_the_buffer_editable_and_does_not_move_as_text_changes() {
     app.execute(parse_colon_command("zen").unwrap()).unwrap();
     let before = prepare(&mut app, 160, 30).panes[0].clone();
 
-    run(&mut app, EditorCommand::EnterInsertMode);
+    app.execute(runyte::command::parse_named_command("mode-enter", Some("insert")).unwrap())
+        .unwrap();
     app.handle_input(InputEvent::Text(
         "A sentence written in zen mode.".to_owned(),
     ))

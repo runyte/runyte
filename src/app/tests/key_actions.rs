@@ -13,7 +13,7 @@ fn configured(source: &str) -> App {
 #[test]
 fn action_binding_sequences_execute_and_group_selection_history() {
     let mut app = configured(
-        "bind:\n  normal:\n    F6: [move-right, move-right]\n    F7: [select-all, yank]\n    F8: [select-all, enter-insert-mode]\n",
+        "bind:\n  normal:\n    F6: [move-right, move-right]\n    F7: [select-all, yank]\n    F8: [select-all, { action: mode-enter, arg: insert }, collapse-selection-start]\n",
     );
     seed(&mut app, "abc def");
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
@@ -56,7 +56,7 @@ fn action_binding_counts_character_arguments_and_runtime_errors() {
 #[test]
 fn action_bindings_preserve_insert_replace_modes_and_render_full_help() {
     let mut app = configured(
-        "bind:\n  modal-keys:\n    F1: [select-all, yank]\n  normal:\n    F2: {action: help, arg: key-actions}\n  insert:\n    F3: insert-newline\n  replace:\n    F3: enter-normal-mode\n",
+        "bind:\n  modal-keys:\n    F1: [select-all, yank]\n  normal:\n    F2: {action: help, arg: key-actions}\n  insert:\n    F3: insert-newline\n  replace:\n    F3: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n",
     );
     seed(&mut app, "abc");
     press(&mut app, 'i');
@@ -127,7 +127,7 @@ fn without_defaults_a_terminal_can_still_be_left() {
     let root = super::language::temporary("standalone-terminal-escape");
     std::fs::create_dir_all(&root).unwrap();
     let mut app = configured(
-        "defaults: false\nbind:\n  normal:\n    ':': open-command-palette\n  select:\n    Esc: enter-normal-mode\n  insert:\n    Esc: enter-normal-mode\n  replace:\n    Esc: enter-normal-mode\n",
+        "defaults: false\nbind:\n  normal:\n    ':': open-command-palette\n  select:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n  insert:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n  replace:\n    Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n",
     );
     assert!(!app.status_error, "{}", app.status);
     app.open_terminal_at(Some("/bin/cat".to_owned()), root.clone());
@@ -389,7 +389,7 @@ fn yank_and_yank_line_keep_the_selection_and_mode_while_y_and_y_line_collapse() 
 #[test]
 fn delete_and_change_selection_leave_registers_alone_while_d_and_c_yank() {
     let mut app = configured(
-        "bind:\n  normal:\n    F5: delete-selection\n    F6: [delete-selection-for-change, enter-insert-mode]\n    F7: [select-all, delete-selection]\n",
+        "bind:\n  normal:\n    F5: delete-selection\n    F6: [delete-selection-for-change, { action: mode-enter, arg: insert }, collapse-selection-start]\n    F7: [select-all, delete-selection]\n",
     );
     seed(&mut app, "abc def");
     app.panes.get_mut(&0).unwrap().selection = Selection::new(vec![Range::new(0, 2)], 0);
@@ -557,14 +557,24 @@ fn counted_program_replay_reserves_remaining_budget_before_prefix_effects() {
 
 /// Construct internal programs to exercise execution independently of compilation.
 pub(super) fn program_app(commands: &[EditorCommand]) -> App {
-    use crate::keymap::{Binding, Key, actions::Action, program::Program};
+    program_actions(
+        commands
+            .iter()
+            .copied()
+            .map(crate::keymap::actions::Action::Editor)
+            .collect(),
+    )
+}
+
+pub(super) fn program_actions(actions: Vec<crate::keymap::actions::Action>) -> App {
+    use crate::keymap::{Binding, Key, program::Program};
     let mut app = configured("{}");
     let mut binding = Binding::implemented(
         &[Mode::Normal, Mode::Select],
         Key::plain(KeyCode::Function(6)),
-        commands[0],
+        actions[0].target(),
     );
-    binding.program = Program::new(commands.iter().copied().map(Action::Editor).collect()).unwrap();
+    binding.program = Program::new(actions).unwrap();
     binding.description = "resumable test program".into();
     let mut bindings = app.keymap.bindings().to_vec();
     bindings.push(binding);
@@ -742,7 +752,11 @@ fn a_typed_program_resuming_inside_replay_must_reserve_its_work() {
 #[test]
 fn text_input_cannot_edit_behind_an_operand_wait_in_insert_mode() {
     use EditorCommand as C;
-    let mut app = program_app(&[C::EnterInsertMode, C::ReplaceChar, C::Yank]);
+    let mut app = program_actions(vec![
+        crate::keymap::actions::Action::Invocation(CommandInvocation::mode_entry(Mode::Insert)),
+        crate::keymap::actions::Action::Editor(C::ReplaceChar),
+        crate::keymap::actions::Action::Editor(C::Yank),
+    ]);
     seed(&mut app, "abc");
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
     assert_eq!(app.mode, Mode::Insert);
@@ -1072,7 +1086,7 @@ fn native_link_focus_cancels_the_source_panes_paused_program() {
 #[test]
 fn configured_programs_continue_after_mode_operand_and_view_effects() {
     let mut app = configured(
-        "bind: {normal: {F6: [enter-insert-mode, move-right, enter-normal-mode], F7: [find-next-char, move-right], F8: [show-help, move-file-end]}}",
+        "bind: {normal: {F6: [{ action: mode-enter, arg: insert }, collapse-selection-start, move-right, fit-selection-for-normal-mode, { action: mode-enter, arg: normal }], F7: [find-next-char, move-right], F8: [show-help, move-file-end]}}",
     );
     seed(&mut app, "abxcd");
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
@@ -1122,7 +1136,7 @@ fn configured_grammar_and_tree_mode_changes_preserve_the_tail() {
 #[test]
 fn terminal_mode_changes_and_supplied_name_continue_the_program() {
     let mut app = configured(
-        "bind: {terminal: {F6: [terminal-enter-input, enter-normal-mode, terminal-leave], F7: [{action: terminal-rename, arg: build}, terminal-leave]}}",
+        "bind: {terminal: {F6: [terminal-enter-input, fit-selection-for-normal-mode, {action: mode-enter, arg: normal}, terminal-leave], F7: [{action: terminal-rename, arg: build}, terminal-leave]}}",
     );
     let terminal = app.terminals.insert_test_session(80, 24);
     app.active_mut().terminal = Some(terminal);
@@ -3034,4 +3048,98 @@ fn register_empty_accepts_an_empty_directory_payload() {
     );
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
     assert_eq!(app.active().selection.primary().head, 1);
+}
+
+#[test]
+fn mode_entry_programs_preserve_raw_endpoints_and_primary_range() {
+    // HalfOpen forward endpoints are insertion seams, not inclusive cursors.
+    // This matrix demonstrates why Replace needs collapse-selection-head.
+    let mut differs = false;
+    for semantics in [SelectionSemantics::Runyte, SelectionSemantics::HalfOpen] {
+        for range in [
+            Range::new(0, 3),
+            Range::new(3, 0),
+            Range::point(3),
+            Range::new(0, 5),
+            Range::new(5, 0),
+            Range::point(7),
+        ] {
+            for multiple in [false, true] {
+                let selection = if multiple {
+                    Selection::new(vec![range, Range::point(8)], 1)
+                } else {
+                    Selection::single(range)
+                };
+                let mut app = configured("");
+                seed(&mut app, "ae\u{301}\r\nbc\nx");
+                app.active_mut().replace_selection(selection.clone());
+                app.active_mut().mark_selection_semantics(semantics);
+                app.collapse_selection();
+                let raw_head = selection.transform(|r| Range::point(r.head));
+                differs |= app.active().selection != raw_head;
+                for (key, mode, expected) in [
+                    (
+                        'i',
+                        Mode::Insert,
+                        selection.transform(|r| Range::point(r.from())),
+                    ),
+                    ('R', Mode::Replace, raw_head),
+                ] {
+                    app.enter_normal_mode();
+                    app.active_mut().replace_selection(selection.clone());
+                    app.active_mut().mark_selection_semantics(semantics);
+                    let history = app.active_buffer().history_len();
+                    press(&mut app, key);
+                    assert_eq!(app.mode, mode);
+                    assert_eq!(
+                        app.active().selection,
+                        expected,
+                        "{key}, {semantics:?}, {selection:?}"
+                    );
+                    assert_eq!(app.active_buffer().history_len(), history);
+                }
+            }
+        }
+    }
+    assert!(
+        differs,
+        "raw head and inclusive collapse must remain distinct"
+    );
+}
+
+#[test]
+fn raw_collapse_preserves_temporary_mode_and_discards_its_restore_point() {
+    for command in [
+        EditorCommand::CollapseSelectionStart,
+        EditorCommand::CollapseSelectionHead,
+    ] {
+        let mut app = configured("");
+        seed(&mut app, "abc\ndef");
+        press(&mut app, 'x');
+        assert_eq!(app.mode, Mode::Select);
+        assert!(app.line_select.is_some());
+        app.execute_editor_command(command).unwrap();
+        assert_eq!(app.mode, Mode::Select);
+        assert!(app.line_select.is_none());
+        assert_eq!(
+            app.active().selection.extent(),
+            crate::selection::SelectionExtent::Characterwise
+        );
+    }
+}
+
+#[test]
+fn refused_input_mode_programs_leave_read_only_selection_unchanged() {
+    for key in ['i', 'R'] {
+        let mut app = configured("");
+        let id = app.active().buffer;
+        app.buffers[id] = Buffer::virtual_text("[help] fixture", "abc def");
+        app.active_mut()
+            .replace_selection(Selection::single(Range::new(5, 1)));
+        let before = app.active().selection.clone();
+        press(&mut app, key);
+        assert!(app.status_error);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.active().selection, before);
+    }
 }

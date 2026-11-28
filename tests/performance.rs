@@ -504,13 +504,7 @@ async fn typing_into_a_large_highlighted_file_keeps_colours_during_reparse() {
     let mut events = editor.enable_background_syntax();
 
     editor
-        .execute(
-            CommandInvocation::editor(
-                EditorCommand::EnterInsertMode,
-                CommandExecutionContext::default(),
-            )
-            .unwrap(),
-        )
+        .execute(runyte::command::parse_named_command("mode-enter", Some("insert")).unwrap())
         .unwrap();
     // Mid-document, so the edit is a realistic one rather than a caret sitting
     // outside the structure the grammar has parsed.
@@ -557,13 +551,7 @@ async fn minified_documents_reparse_in_background_past_the_old_byte_limit() {
     assert!(has_syntax_scope(&editor.snapshot(120, 40)));
     let mut events = editor.enable_background_syntax();
     editor
-        .execute(
-            CommandInvocation::editor(
-                EditorCommand::EnterInsertMode,
-                CommandExecutionContext::default(),
-            )
-            .unwrap(),
-        )
+        .execute(runyte::command::parse_named_command("mode-enter", Some("insert")).unwrap())
         .unwrap();
     within(
         "typing into a minified document",

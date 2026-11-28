@@ -640,7 +640,6 @@ macro_rules! editor_commands {
 editor_commands! {
     FitSelectionForNormalMode => ("fit-selection-for-normal-mode", "Fit selection for Normal mode"),
     ModeEnter => ("mode-enter", "Enter a mode, preserving the selection"),
-    EnterNormalMode => ("enter-normal-mode", "Fit selection and enter Normal mode"),
     OpenCommandPalette => ("open-command-palette", "Open the command palette"),
 
     MoveLeft => ("move-left", "Move left"),
@@ -672,8 +671,6 @@ editor_commands! {
     HalfPageUp => ("half-page-up", "Move half a page up"),
     HalfPageDown => ("half-page-down", "Move half a page down"),
 
-    EnterInsertMode => ("enter-insert-mode", "Insert before the selection"),
-    EnterReplaceMode => ("enter-replace-mode", "Replace text from each selection head"),
     AppendAfter => ("append-after", "Insert after the selection"),
     InsertLineStart => ("insert-line-start", "Insert at line start"),
     InsertLineEnd => ("insert-line-end", "Insert at line end"),
@@ -702,12 +699,13 @@ editor_commands! {
     DeleteSelection => ("delete-selection", "Delete the selection or character without yanking"),
     DeleteSelectionForChange => ("delete-selection-for-change", "Delete without yanking, preserving the insertion seam and mode"),
 
-    EnterSelectMode => ("enter-select-mode", "Enter Select mode"),
     SelectLine => ("select-line", "Select the current line, then extend downward"),
     ExtendLineAbove => ("extend-line-above", "Extend whole lines above"),
     ExtendLineBelow => ("extend-line-below", "Extend whole lines below"),
     SelectLineUp => ("select-line-up", "Select the current line, then extend upward"),
     SelectAll => ("select-all", "Select all text"),
+    CollapseSelectionStart => ("collapse-selection-start", "Collapse each range to its raw start offset"),
+    CollapseSelectionHead => ("collapse-selection-head", "Collapse to the raw head without converting half-open endpoints"),
     CollapseSelection => ("collapse-selection", "Collapse selection to the cursor"),
     FlipSelection => ("flip-selection", "Flip the selection anchor and cursor"),
     ExpandSyntaxSelection => ("syntax-expand-selection", "Expand to the enclosing syntax node"),
@@ -1273,9 +1271,7 @@ impl EditorCommand {
 
     pub const fn category(self) -> CommandCategory {
         match self {
-            Self::ModeEnter | Self::EnterNormalMode | Self::OpenCommandPalette => {
-                CommandCategory::Application
-            }
+            Self::ModeEnter | Self::OpenCommandPalette => CommandCategory::Application,
             Self::FitSelectionForNormalMode
             | Self::MoveLeft
             | Self::MoveRight
@@ -1311,9 +1307,7 @@ impl EditorCommand {
             | Self::JumpForward
             | Self::JumpBackwardBuffer
             | Self::JumpForwardBuffer => CommandCategory::Movement,
-            Self::EnterInsertMode
-            | Self::EnterReplaceMode
-            | Self::AppendAfter
+            Self::AppendAfter
             | Self::InsertLineStart
             | Self::InsertLineEnd
             | Self::OpenLineBelow
@@ -1351,13 +1345,14 @@ impl EditorCommand {
             | Self::ShellPipe => CommandCategory::Editing,
             Self::SelectionUndo
             | Self::SelectionRedo
-            | Self::EnterSelectMode
             | Self::SelectLine
             | Self::SelectLineUp
             | Self::ExtendLineAbove
             | Self::ExtendLineBelow
             | Self::SelectAll
             | Self::CollapseSelection
+            | Self::CollapseSelectionStart
+            | Self::CollapseSelectionHead
             | Self::FlipSelection
             | Self::SplitSelectionAtLineEnds
             | Self::SplitSelectionAtLineStarts
@@ -3571,7 +3566,7 @@ impl fmt::Display for CommandParseError {
             Self::Empty => formatter.write_str("empty command"),
             Self::Unknown(name) => write!(formatter, "unknown command: {name}"),
             Self::Removed { name, replacement } => {
-                write!(formatter, "{name} was removed; {replacement}")
+                write!(formatter, "{name} was removed in 0.5; {replacement}")
             }
             Self::MissingArgument(name) => write!(formatter, "{name} requires an argument"),
             Self::UnexpectedArgument(name) => write!(formatter, "{name} does not take arguments"),
@@ -3617,12 +3612,63 @@ pub fn parse_colon_command(input: &str) -> Result<CommandInvocation, CommandPars
     parse_named_command(name, (!remainder.is_empty()).then_some(remainder))
 }
 
-/// Resolves one inventory identity with a separately framed argument.
-///
-/// Protocol frontends use this entry point so command identity is not encoded
-/// as a line of colon-command text.
-/// Migration advice shared by the palette and both key configuration forms.
+/// Removed bundled actions and their complete, loadable replacement programs.
+pub const REMOVED_ACTION_PROGRAMS: &[(&str, &str)] = &[
+    (
+        "enter-normal-mode",
+        "use [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]",
+    ),
+    (
+        "enter-insert-mode",
+        "use [{ action: mode-enter, arg: insert }, collapse-selection-start]",
+    ),
+    (
+        "enter-replace-mode",
+        "use [{ action: mode-enter, arg: replace }, collapse-selection-head]",
+    ),
+    (
+        "enter-select-mode",
+        "use [{ action: mode-enter, arg: select }]",
+    ),
+    (
+        "yank-collapse-normal-mode",
+        "use [{ if: { buffer-type: terminal }, then: [yank], else: [yank, collapse-selection] }, { action: mode-enter, arg: normal }]",
+    ),
+    (
+        "yank-line-collapse-normal-mode",
+        "use [yank-line, collapse-selection, { action: mode-enter, arg: normal }]",
+    ),
+    (
+        "directory-tree-left",
+        "use [{ if: tree-entry-is-root, then: [directory-tree-select-parent], else: [{ if: tree-entry-expanded, then: [directory-tree-collapse], else: [directory-tree-select-parent] }] }]",
+    ),
+    (
+        "directory-tree-right",
+        "use [{ if: tree-entry-is-directory, then: [{ if: tree-entry-expanded, then: [directory-tree-select-first-child], else: [directory-tree-expand] }], else: [] }]",
+    ),
+    (
+        "yank-delete-selection",
+        "use [cut-selection, { action: mode-enter, arg: normal }]",
+    ),
+    (
+        "yank-change-selection",
+        "use [cut-selection-for-change, { action: mode-enter, arg: insert }]",
+    ),
+    (
+        "change-selection",
+        "use [delete-selection-for-change, { action: mode-enter, arg: insert }]",
+    ),
+    (
+        "search-selection",
+        "use [search-set-from-selection, search-select-all-matches, { action: mode-enter, arg: select }]",
+    ),
+];
+
+/// Migration advice shared by the palette and key configuration.
 pub fn removed_action_replacement(name: &str) -> Option<&'static str> {
+    if let Some((_, replacement)) = REMOVED_ACTION_PROGRAMS.iter().find(|(old, _)| *old == name) {
+        return Some(replacement);
+    }
     match name {
         "select-register" => Some("use register-select"),
         "record-macro" => Some("use macro-record"),
@@ -3690,35 +3736,12 @@ pub fn removed_action_replacement(name: &str) -> Option<&'static str> {
         "open-session-directory" => Some("use session-open-directory"),
         "open-explorer-session" => Some("use session-open-explorer"),
         "open-session-destinations" => Some("use session-open-destinations"),
-        "yank-collapse-normal-mode" => Some(
-            "use [yank, collapse-selection, mode-enter normal]; terminal y omits collapse-selection; mode-entry steps remain preset-only until the stage 5 binding format",
-        ),
-        "yank-line-collapse-normal-mode" => Some(
-            "use [yank-line, collapse-selection, mode-enter normal]; mode-entry steps remain preset-only until the stage 5 binding format",
-        ),
-        "directory-tree-left" => Some(
-            "use a conditional: collapse an expanded non-root directory, otherwise directory-tree-select-parent; conditional steps are not yet configurable",
-        ),
-        "directory-tree-right" => Some(
-            "use a conditional: directory-tree-expand or directory-tree-select-first-child for a directory; conditional steps are not yet configurable",
-        ),
-        "yank-delete-selection" => Some(
-            "use [cut-selection, mode-enter normal]; pure mode steps require the future binding format",
-        ),
-        "yank-change-selection" => Some(
-            "use [cut-selection-for-change, mode-enter insert]; pure mode steps require the future binding format",
-        ),
-        "change-selection" => Some(
-            "use [delete-selection-for-change, mode-enter insert]; pure mode steps require the future binding format",
-        ),
         "set-search-from-selection" => Some("use search-set-from-selection"),
-        "search-selection" => Some(
-            "use [search-set-from-selection, search-select-all-matches, mode-enter select]; pure mode steps are internal until the stage 5 binding format",
-        ),
         _ => None,
     }
 }
 
+/// Resolves an inventory identity with a separately framed argument.
 pub fn parse_named_command(
     name: &str,
     argument: Option<&str>,

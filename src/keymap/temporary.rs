@@ -51,6 +51,8 @@ pub(crate) fn discards_temporary(command: C) -> bool {
                 | C::SurroundDelete
                 | C::SelectAll
                 | C::CollapseSelection
+                | C::CollapseSelectionStart
+                | C::CollapseSelectionHead
                 | C::ToggleCase
                 | C::ReplaceChar
                 | C::FitSelectionForNormalMode
