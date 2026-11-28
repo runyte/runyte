@@ -329,7 +329,8 @@ fn literal_controls_stay_visible_in_discovery_and_round_trip_in_copy() {
     };
     let steps = discovery::binding_steps(binding, BindingScope::Global);
     assert!(steps.contains(r"λ\n\t"), "{steps}");
-    let copied = discovery::binding_yaml(binding, Mode::Normal, None, &compiled.keymap).unwrap();
+    let copied =
+        discovery::binding_yaml(binding, Mode::Normal, Some(&section), &compiled.keymap).unwrap();
     let document: serde_yaml::Value = serde_yaml::from_str(&copied).unwrap();
     let rebuilt = configured::compile(&document["keys"], default_keymap());
     assert!(rebuilt.errors.is_empty(), "{:?}", rebuilt.errors);
