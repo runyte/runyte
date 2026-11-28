@@ -751,7 +751,7 @@ preset described below.
 
 Stage 4c separates terminal paste and review search, makes document paste and
 repeat-search mode-preserving, and replaces bundled yank actions with programs.
-Terminal `Y` now copies whole review rows; it was previously refused. Stage 4c2
+Terminal **Y** now copies whole review rows; it was previously refused. Stage 4c2
 must finish terminal undo-paste and insert/open-line transitions before 4d.
 
 ### Pending stage 5 splits

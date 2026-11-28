@@ -40,6 +40,7 @@ pub(super) fn role_target_errors(map: &super::Keymap) -> Vec<String> {
     let Some(tables) = &map.overrides.1 else {
         return Vec::new();
     };
+    let empty_sequence = KeySequence(Vec::new());
     let mut errors = Vec::new();
     for kind in tables.buffer_types.keys() {
         let mut pending = EditingRole::ALL
@@ -51,7 +52,13 @@ pub(super) fn role_target_errors(map: &super::Keymap) -> Vec<String> {
             if !seen.insert(mode) {
                 continue;
             }
-            for index in tables.indices(&map.bindings, mode) {
+            // The empty prefix contains every effective binding, already resolved
+            // for execution (including inheritance, overrides and tombstones).
+            let effective = map
+                .lookup_index
+                .get(&super::LookupContext::Named(mode))
+                .and_then(|sequences| sequences.get(&empty_sequence));
+            for &index in effective.into_iter().flat_map(|entry| &entry.continuations) {
                 let binding = &map.bindings[index];
                 for action in binding.program.iter() {
                     let super::actions::Action::Invocation(invocation) = action else {
