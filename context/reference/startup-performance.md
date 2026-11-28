@@ -18,6 +18,29 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — ARM debug public mode-flow validation
+
+Stage 5b of [#132](https://github.com/runyte/runyte/issues/132) was measured
+against stage 5a with one discarded warm-up per binary and ten alternating
+fresh-process debug-profile `preset_startup` samples on one
+`ubuntu-24.04-arm` runner.
+[Run 46107774562](https://github.com/runyte/runyte/actions/runs/46107774562)
+compares `d564c471` with `4815f4c2`. Later test-only fixture corrections do not
+change the measured production paths.
+
+| Phase | Stage 5a ms | Stage 5b ms |
+| --- | ---: | ---: |
+| Typed YAML parsing | 18.550 (18.338–18.674) | 18.689 (18.401–18.808) |
+| Programs and metadata | 7.346 (7.305–7.390) | 7.444 (7.407–7.500) |
+| Construction, lookup index and role validation | 97.519 (97.203–97.816) | 97.340 (97.164–98.047) |
+| Total keymap initialization | 123.337 (123.202–123.583) | 123.503 (123.362–123.981) |
+
+Cells are median (min–max). Total median increases by 0.166 ms (0.13%).
+The shipped preset retains its role-validation fast path; configured mode-flow
+validation is not exercised by this preset-only probe. These component
+measurements do not establish end-to-end desktop readiness, configured-keymap
+loading costs, or release-profile costs. Raw samples are attached to the linked run.
+
 ## 2026-11-28 — ARM debug shared typed action syntax
 
 Stage 5a of [#132](https://github.com/runyte/runyte/issues/132) was measured
