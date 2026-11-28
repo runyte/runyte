@@ -1255,6 +1255,13 @@ keys:
       Enter: git-review-enter
       Ctrl-c: git-review-cancel
     terminal:
+      i: terminal-enter-input
+      a: terminal-enter-input
+      I: terminal-enter-input
+      A: terminal-enter-input
+      o: terminal-enter-input
+      O: terminal-enter-input
+      u: terminal-undo-paste
       y: [yank, {action: mode-enter, arg: normal}]
       p:
         - terminal-paste

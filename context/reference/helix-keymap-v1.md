@@ -978,3 +978,11 @@ Stage 4c of #132 gives terminal `Y` the shared whole-row yank meaning; it was
 previously refused. Terminal `y` retains its review selection. Terminal paste
 and review search now have separate action identities, with explicit default
 mode tails; their key spellings are unchanged.
+
+Stage 4c2 retains terminal key spellings while separating their meanings:
+`u` is `terminal-undo-paste`, and `i`/`a`/`I`/`A`/`o`/`O` are
+`terminal-enter-input`. The latter enters live child input without document
+caret movement or line insertion. Normal and Select entry remain shared mode
+actions. Document undo, insertion, append, open-line and Replace actions are
+not terminal aliases. Terminal undo preserves the current mode and consumes a
+temporary line-selection gesture without restoring its previous mode.

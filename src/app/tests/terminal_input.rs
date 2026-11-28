@@ -527,6 +527,8 @@ fn terminal_actions_do_not_fall_through_to_the_hidden_document() {
     let mut app = App::new(Config::default(), None).unwrap();
     let before = app.active().selection.clone();
     for command in [
+        EditorCommand::TerminalUndoPaste,
+        EditorCommand::TerminalEnterInput,
         EditorCommand::TerminalPaste,
         EditorCommand::TerminalClipboardPasteText,
         EditorCommand::TerminalSearch,
@@ -575,6 +577,8 @@ fn every_terminal_dispatch_branch_has_a_reviewed_meaning() {
     use EditorCommand as C;
     use std::collections::BTreeSet;
     let terminal = [
+        C::TerminalUndoPaste,
+        C::TerminalEnterInput,
         C::TerminalClipboardPasteText,
         C::TerminalPaste,
         C::TerminalSearch,
@@ -583,6 +587,8 @@ fn every_terminal_dispatch_branch_has_a_reviewed_meaning() {
         C::TerminalSearchRegex,
     ];
     let shared = [
+        C::EnterNormalMode,
+        C::EnterSelectMode,
         C::ClipboardYank,
         C::CollapseSelection,
         C::CopySelectionDown,
@@ -631,18 +637,7 @@ fn every_terminal_dispatch_branch_has_a_reviewed_meaning() {
         C::Yank,
         C::YankLine,
     ];
-    let pending_4c2 = [
-        C::Undo,
-        C::EnterNormalMode,
-        C::EnterSelectMode,
-        C::EnterInsertMode,
-        C::EnterReplaceMode,
-        C::AppendAfter,
-        C::InsertLineStart,
-        C::InsertLineEnd,
-        C::OpenLineAbove,
-        C::OpenLineBelow,
-    ];
+    let pending_4c2: [C; 0] = [];
     let expected = terminal
         .iter()
         .chain(&shared)
@@ -762,6 +757,88 @@ fn terminal_yank_line_deduplicates_rows_touched_by_disjoint_ranges() {
 }
 
 #[test]
+fn terminal_input_keys_resume_the_child_without_editing_the_hidden_document() {
+    for spelling in ["i", "a", "I", "A", "o", "O"] {
+        let (mut app, terminal) = terminal_app("{}");
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id: terminal,
+            bytes: b"review output".to_vec(),
+        });
+        app.terminals.get_mut(terminal).unwrap().select_all_review();
+        app.set_editing_role(Mode::Select);
+        let text = app.active_buffer().text().to_string();
+        let selection = app.active().selection.clone();
+        let generation = app.terminals.get(terminal).unwrap().input_generation();
+        send(&mut app, spelling);
+        assert!(!app.status_error, "{spelling}: {}", app.status);
+        assert_eq!(app.mode, Mode::Insert, "{spelling}");
+        assert!(!app.terminals.get(terminal).unwrap().reviewing());
+        assert_eq!(
+            app.terminals.get(terminal).unwrap().input_generation(),
+            generation
+        );
+        assert_eq!(app.active_buffer().text().to_string(), text);
+        assert_eq!(app.active().selection, selection);
+    }
+}
+
+#[test]
+fn document_editing_actions_are_not_terminal_input_aliases() {
+    let (mut app, terminal) = terminal_app("{}");
+    for command in [
+        EditorCommand::Undo,
+        EditorCommand::EnterInsertMode,
+        EditorCommand::AppendAfter,
+        EditorCommand::InsertLineStart,
+        EditorCommand::InsertLineEnd,
+        EditorCommand::OpenLineAbove,
+        EditorCommand::OpenLineBelow,
+        EditorCommand::EnterReplaceMode,
+    ] {
+        app.terminals.get_mut(terminal).unwrap().begin_review();
+        app.set_editing_role(Mode::Normal);
+        let generation = app.terminals.get(terminal).unwrap().input_generation();
+        app.execute_editor_command(command).unwrap();
+        assert!(app.status_error, "{command:?}: {}", app.status);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.terminals.get(terminal).unwrap().reviewing());
+        assert_eq!(
+            app.terminals.get(terminal).unwrap().input_generation(),
+            generation
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_undo_paste_is_separate_from_document_undo_and_preserves_mode() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_terminal(Some("/bin/cat".into()));
+    let terminal = app.active_terminal().unwrap();
+    assert!(app.terminals.get_mut(terminal).unwrap().send_text("paste"));
+    app.set_editing_role(Mode::Normal);
+    send(&mut app, "u");
+    assert!(!app.status_error, "{}", app.status);
+    assert!(app.status.contains("erase 5 pasted characters"));
+    assert_eq!(app.mode, Mode::Normal);
+    app.execute_editor_command(EditorCommand::TerminalUndoPaste)
+        .unwrap();
+    assert!(!app.status_error);
+    assert!(app.status.contains("nothing Runyte sent"));
+    assert!(
+        app.terminals
+            .get_mut(terminal)
+            .unwrap()
+            .send_text("already run\n")
+    );
+    app.execute_editor_command(EditorCommand::TerminalUndoPaste)
+        .unwrap();
+    assert!(app.status_error);
+    assert!(app.status.contains("already run"));
+    assert_eq!(app.mode, Mode::Normal);
+}
+
+#[test]
 fn whole_row_yank_handles_trimmed_blank_review_rows() {
     let (mut app, terminal) = terminal_app("{}");
     let session = app.terminals.get_mut(terminal).unwrap();
@@ -772,4 +849,132 @@ fn whole_row_yank_handles_trimmed_blank_review_rows() {
         12
     );
     assert_eq!(session.review_selected_lines_text(), "\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn counted_terminal_undo_consumes_line_gesture_without_restoring_mode() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_terminal(Some("/bin/cat".into()));
+    let terminal = app.active_terminal().unwrap();
+    assert!(app.terminals.get_mut(terminal).unwrap().send_text("one"));
+    app.set_editing_role(Mode::Normal);
+    send(&mut app, "x");
+    assert_eq!(app.mode, Mode::Select);
+    send(&mut app, "2");
+    send(&mut app, "u");
+    assert_eq!(app.mode, Mode::Select);
+    assert!(!app.status_error, "{}", app.status);
+    assert!(app.status.contains("nothing Runyte sent"));
+    send(&mut app, "x");
+    app.execute_editor_command(EditorCommand::TerminalUndoPaste)
+        .unwrap();
+    assert_eq!(app.mode, Mode::Select);
+    assert!(!app.status_error);
+}
+
+#[test]
+fn terminal_input_refuses_missing_insert_role_before_discarding_review() {
+    let config: Config = serde_yaml::from_str(
+        "buffer-types:\n  terminal: {normal: terminal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F6: open-command-palette}\n    select: {Esc: enter-normal-mode}\n    insert: {Esc: enter-normal-mode}\n    replace: {Esc: enter-normal-mode}\n    terminal: {p: null, P: null}\n",
+    ).unwrap();
+    let compiled =
+        crate::keymap::configured::compile_configuration(&config, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    let mut app = App::new(config, None).unwrap();
+    let terminal = app.terminals.insert_test_session(80, 24);
+    app.panes.get_mut(&app.active_pane).unwrap().terminal = Some(terminal);
+    app.set_editing_role(Mode::Normal);
+    app.terminals.get_mut(terminal).unwrap().select_all_review();
+    let before = app
+        .terminals
+        .get(terminal)
+        .unwrap()
+        .review_selection_state()
+        .map(|(generation, selection)| (generation, selection.clone()));
+    app.execute_editor_command(EditorCommand::TerminalEnterInput)
+        .unwrap();
+    assert!(app.status_error);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(app.terminals.get(terminal).unwrap().reviewing());
+    assert_eq!(
+        app.terminals
+            .get(terminal)
+            .unwrap()
+            .review_selection_state()
+            .map(|(generation, selection)| (generation, selection.clone())),
+        before
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_undo_paste_replays_against_only_the_latest_child_input() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    app.open_terminal(Some("/bin/cat".into()));
+    let terminal = app.active_terminal().unwrap();
+    app.set_editing_role(Mode::Normal);
+    assert!(app.terminals.get_mut(terminal).unwrap().send_text("first"));
+    for spelling in ["Space", "m", "m", "u", "Space", "m", "m"] {
+        send(&mut app, spelling);
+    }
+    assert!(app.recording_macro.is_none());
+    assert!(app.terminals.get_mut(terminal).unwrap().send_text("second"));
+    for spelling in ["Space", "m", "r"] {
+        send(&mut app, spelling);
+    }
+    finish_macro_replay(&mut app);
+    assert!(!app.status_error, "{}", app.status);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(matches!(
+        app.terminals.get_mut(terminal).unwrap().undo_sent_text(),
+        SentTextUndo::NothingSent
+    ));
+}
+
+#[test]
+fn terminal_configuration_rejects_document_editing_identities() {
+    for name in [
+        "undo",
+        "enter-insert-mode",
+        "append-after",
+        "insert-line-start",
+        "insert-line-end",
+        "open-line-above",
+        "open-line-below",
+        "enter-replace-mode",
+    ] {
+        let mut config = Config::default();
+        config
+            .merge_keys_source(&format!("bind:\n  terminal:\n    F6: {name}\n"))
+            .unwrap();
+        let result = crate::keymap::configured::compile_configuration(
+            &config,
+            crate::keymap::default_keymap(),
+        );
+        assert!(!result.errors.is_empty(), "{name}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_undo_refusal_stops_its_program_before_leaving_the_terminal() {
+    let mut config = Config::default();
+    config
+        .merge_keys_source("bind: {terminal: {F6: [terminal-undo-paste, leave-terminal]}}")
+        .unwrap();
+    let mut app = App::new(config, None).unwrap();
+    app.open_terminal(Some("/bin/cat".into()));
+    let terminal = app.active_terminal().unwrap();
+    assert!(
+        app.terminals
+            .get_mut(terminal)
+            .unwrap()
+            .send_text("submitted\n")
+    );
+    app.set_editing_role(Mode::Normal);
+    send(&mut app, "F6");
+    assert!(app.status_error);
+    assert_eq!(app.active_terminal(), Some(terminal));
+    assert_eq!(app.mode, Mode::Normal);
 }

@@ -369,9 +369,6 @@ Colour depth and palette rendering belong to each attached client.
   full-screen program.
 - Windows provides ide-mode and mux-mode ConPTY terminals.
 
-<!-- navigation -->
-[Contents](README.md) · [Previous: Panes](panes.md) · [Next: Git](git.md)
-
 ### Composable terminal actions
 
 Terminal review uses `terminal-search` and `terminal-search-regex` for its search
@@ -392,3 +389,19 @@ review selection and enters Normal without collapsing it. Terminal `Y`, which
 was previously refused, now copies all review rows touched by the selection,
 including line breaks, then collapses the selection and enters Normal. A
 standalone `yank-line` preserves the selection and mode.
+
+`terminal-enter-input` returns to live output and enters Insert, where ordinary
+keys go to the child. Terminal `i`, `a`, `I`, `A`, `o` and `O` all use this action;
+they do not move a document caret or insert a line. Without an Insert role it
+refuses before discarding review. Normal and Select entry remain shared mode
+actions, with the terminal's live-output and captured-review behavior.
+
+`terminal-undo-paste` asks the child to erase the last text Runyte sent, only
+while that paste is still its last input and has not submitted a line. Terminal
+`u` uses this action; document `undo` no longer has a terminal meaning. It
+preserves the mode, including temporary linewise Select. A count repeats the
+request, but only the first request can erase the last paste. Document insert,
+append, open-line and Replace actions are unavailable in terminal bindings.
+
+<!-- navigation -->
+[Contents](README.md) · [Previous: Panes](panes.md) · [Next: Git](git.md)

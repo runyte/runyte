@@ -4427,6 +4427,7 @@ impl App {
                     | EditorCommand::ClipboardPasteBefore
                     | EditorCommand::SearchNext
                     | EditorCommand::SearchPrevious
+                    | EditorCommand::TerminalUndoPaste
                     | EditorCommand::TerminalPaste
                     | EditorCommand::TerminalClipboardPasteText
                     | EditorCommand::TerminalSearch
@@ -4448,7 +4449,8 @@ impl App {
     fn execute_editor_command_count(&mut self, command: EditorCommand, count: usize) -> Result<()> {
         use EditorCommand as Command;
         let role = match command {
-            Command::EnterInsertMode
+            Command::TerminalEnterInput
+            | Command::EnterInsertMode
             | Command::AppendAfter
             | Command::InsertLineStart
             | Command::InsertLineEnd
@@ -5156,7 +5158,9 @@ impl App {
             Command::LeaveTerminal => self.leave_terminal(),
             Command::CopyTerminalOutput => self.copy_terminal_output(),
             Command::SendToTerminal => self.send_to_terminal(),
-            Command::TerminalPaste
+            Command::TerminalUndoPaste
+            | Command::TerminalEnterInput
+            | Command::TerminalPaste
             | Command::TerminalClipboardPasteText
             | Command::TerminalSearch
             | Command::TerminalSearchRegex

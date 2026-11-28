@@ -23,12 +23,7 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
         C::EnterSelectMode => {
             views!(Terminal: "Enter Select mode over captured terminal output", Media: "Begin selection of PDF text or an image region")
         }
-        C::EnterInsertMode
-        | C::AppendAfter
-        | C::InsertLineStart
-        | C::InsertLineEnd
-        | C::OpenLineBelow
-        | C::OpenLineAbove => {
+        C::TerminalEnterInput => {
             views!(Terminal: "Return to live output and send subsequent input to the child")
         }
         C::SelectAll => {
@@ -133,7 +128,7 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
         C::ClipboardPaste => {
             views!(Terminal: "Paste clipboard text or an image reference into the terminal input queue")
         }
-        C::Undo => {
+        C::TerminalUndoPaste => {
             views!(Terminal: "Ask the child to erase the last text Runyte sent, if it has not been submitted")
         }
         C::SelectionUndo | C::SelectionRedo => {
