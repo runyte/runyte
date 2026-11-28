@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
-use super::key_actions::program_app;
+use super::key_actions::{program_actions, program_app};
 use super::*;
+use crate::keymap::actions::Action;
 use EditorCommand as C;
 
 fn run(app: &mut App) {
@@ -44,7 +45,10 @@ fn successful_and_failed_program_edits_form_one_checkpoint() {
 
 #[test]
 fn insert_handoff_includes_deletion_and_typing_until_escape() {
-    let mut app = program_app(&[C::DeleteSelection, C::EnterInsertMode]);
+    let mut app = program_actions(vec![
+        Action::Editor(C::DeleteSelection),
+        Action::Invocation(CommandInvocation::mode_entry(Mode::Insert)),
+    ]);
     seed(&mut app, "abc");
     run(&mut app);
     assert_eq!(app.mode, Mode::Insert);
@@ -61,12 +65,12 @@ fn insert_handoff_includes_deletion_and_typing_until_escape() {
 
 #[test]
 fn intermediate_mode_changes_do_not_split_the_program_checkpoint() {
-    let mut app = program_app(&[
-        C::DeleteSelection,
-        C::EnterInsertMode,
-        C::InsertNewline,
-        C::EnterNormalMode,
-        C::DeleteSelection,
+    let mut app = program_actions(vec![
+        Action::Editor(C::DeleteSelection),
+        Action::Invocation(CommandInvocation::mode_entry(Mode::Insert)),
+        Action::Editor(C::InsertNewline),
+        Action::Invocation(CommandInvocation::mode_entry(Mode::Normal)),
+        Action::Editor(C::DeleteSelection),
     ]);
     seed(&mut app, "abc");
     run(&mut app);
@@ -142,10 +146,10 @@ fn explicit_undo_and_checkpoint_keep_their_history_meaning() {
     undo(&mut app);
     assert_eq!(text(&app), "abc");
 
-    let mut app = program_app(&[
-        C::DeleteSelection,
-        C::EnterInsertMode,
-        C::CommitUndoCheckpoint,
+    let mut app = program_actions(vec![
+        Action::Editor(C::DeleteSelection),
+        Action::Invocation(CommandInvocation::mode_entry(Mode::Insert)),
+        Action::Editor(C::CommitUndoCheckpoint),
     ]);
     seed(&mut app, "abc");
     run(&mut app);

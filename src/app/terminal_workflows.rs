@@ -726,42 +726,6 @@ impl App {
                 self.dismiss_popups();
                 true
             }
-            Command::EnterNormalMode if self.mode == Mode::Insert => {
-                // Terminal Normal is a live, non-input state of its own. The
-                // first Ctrl-\ leaves the child keyboard without freezing its
-                // output; a second press below captures review. Keeping those
-                // transitions separate also gives pane focus a safe mode to
-                // enter without accidentally creating a snapshot.
-                session.scroll_to_live();
-                let _ = session;
-                self.set_editing_role(Mode::Normal);
-                if self.executing_program {
-                    self.grammar.reset_prefix();
-                } else {
-                    self.reset_program_input();
-                }
-                self.dismiss_popups();
-                self.status("terminal normal · Ctrl-\\ enters review · i returns to input");
-                true
-            }
-            Command::EnterNormalMode => {
-                session.begin_review();
-                // Unconditionally, the way Escape collapses in a file. A line
-                // selection has already handed the mode back by the time this
-                // runs, so a Select-mode test here would leave `x` selected.
-                session.collapse_review_selection();
-                session.focus_review_selection(page, scroll_offset);
-                let _ = session;
-                self.enter_normal_mode();
-                true
-            }
-            Command::EnterSelectMode => {
-                session.begin_review();
-                session.focus_review_selection(page, scroll_offset);
-                let _ = session;
-                self.set_editing_role(Mode::Select);
-                true
-            }
             Command::SelectAll => {
                 session.select_all_review();
                 session.focus_review_selection(page, scroll_offset);

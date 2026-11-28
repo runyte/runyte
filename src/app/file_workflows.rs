@@ -3367,6 +3367,27 @@ impl App {
         true
     }
 
+    pub(super) fn begin_media_selection(&mut self) {
+        if self.key_binding_scope() != crate::keymap::BindingScope::Media || !self.native_media {
+            return;
+        }
+        let Some(path) = self.active_buffer().media_path.clone() else {
+            return;
+        };
+        if self.media_requests.len() < 256 {
+            self.media_requests.push_back(crate::media::ViewRequest {
+                pane: self.active_pane,
+                path,
+                page: self
+                    .active_buffer()
+                    .position_of(self.active().selection.primary().head)
+                    .row
+                    + 1,
+                action: crate::media::ViewAction::BeginSelection,
+            });
+        }
+    }
+
     pub(super) fn handle_media_command(&mut self, command: crate::command::EditorCommand) -> bool {
         use crate::{
             command::EditorCommand as C,
@@ -3441,10 +3462,6 @@ impl App {
             // Media selections remain available to copy after leaving Select mode.
             // There is no text caret to collapse on this surface.
             C::CollapseSelection => return true,
-            C::EnterSelectMode => {
-                self.enter_select_mode();
-                A::BeginSelection
-            }
             C::MoveLeft if self.motion_extends() => A::ExtendLeft,
             C::MoveRight if self.motion_extends() => A::ExtendRight,
             C::MediaMoveUp | C::MoveUp if self.motion_extends() => A::ExtendUp,

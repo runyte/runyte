@@ -18,7 +18,7 @@ fn send(app: &mut App, spelling: &str) {
 #[test]
 fn scoped_escape_removal_forwards_old_keys_and_remapped_escape_changes_mode() {
     let (mut app, terminal) = terminal_app(
-        "bind:\n  terminal-insert:\n    F6: enter-normal-mode\n    Ctrl-4: null\n    Ctrl-\\: null\n",
+        "bind:\n  terminal-insert:\n    F6: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]\n    Ctrl-4: null\n    Ctrl-\\: null\n",
     );
     for spelling in ["Ctrl-4", "Ctrl-\\", "Esc", "a", "Shift-F6"] {
         let before = app.terminals.get(terminal).unwrap().input_generation();
@@ -154,7 +154,8 @@ fn terminal_keys_help_leaves_out_are_refused_when_pressed() {
         }
         // A command missing its syntax tree or language server is refused
         // before the terminal is asked.
-        let refused = app.status.contains("needs a buffer")
+        let refused = app.status.contains("needs an editable buffer")
+            || app.status.contains("needs a buffer")
             || app.status.contains("is unavailable for this buffer")
             || app.status.contains("is unsupported");
         if !refused {
@@ -587,8 +588,6 @@ fn every_terminal_dispatch_branch_has_a_reviewed_meaning() {
         C::TerminalSearchRegex,
     ];
     let shared = [
-        C::EnterNormalMode,
-        C::EnterSelectMode,
         C::ClipboardYank,
         C::CollapseSelection,
         C::CopySelectionDown,
@@ -787,13 +786,11 @@ fn document_editing_actions_are_not_terminal_input_aliases() {
     let (mut app, terminal) = terminal_app("{}");
     for command in [
         EditorCommand::Undo,
-        EditorCommand::EnterInsertMode,
         EditorCommand::AppendAfter,
         EditorCommand::InsertLineStart,
         EditorCommand::InsertLineEnd,
         EditorCommand::OpenLineAbove,
         EditorCommand::OpenLineBelow,
-        EditorCommand::EnterReplaceMode,
     ] {
         app.terminals.get_mut(terminal).unwrap().begin_review();
         app.set_editing_role(Mode::Normal);
@@ -876,7 +873,7 @@ fn counted_terminal_undo_consumes_line_gesture_without_restoring_mode() {
 #[test]
 fn terminal_input_refuses_missing_insert_role_before_discarding_review() {
     let config: Config = serde_yaml::from_str(
-        "buffer-types:\n  terminal: {normal: terminal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F6: open-command-palette}\n    select: {Esc: enter-normal-mode}\n    insert: {Esc: enter-normal-mode}\n    replace: {Esc: enter-normal-mode}\n    terminal: {p: null, P: null, i: null, a: null, I: null, A: null, o: null, O: null}\n",
+        "buffer-types:\n  terminal: {normal: terminal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F6: open-command-palette}\n    select: {Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]}\n    insert: {Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]}\n    replace: {Esc: [fit-selection-for-normal-mode, { action: mode-enter, arg: normal }]}\n    terminal: {p: null, P: null, i: null, a: null, I: null, A: null, o: null, O: null}\n",
     ).unwrap();
     let compiled =
         crate::keymap::configured::compile_configuration(&config, crate::keymap::default_keymap());
@@ -1072,5 +1069,50 @@ fn conditions_read_terminal_review_instead_of_the_backing_buffer() {
             "{condition}: {}",
             app.status
         );
+    }
+}
+
+#[test]
+fn mode_entry_captures_and_focuses_terminal_review_without_editing_hidden_buffer() {
+    for temporary in [false, true] {
+        let (mut app, terminal) = terminal_app("{}");
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id: terminal,
+            bytes: (0..60)
+                .map(|i| format!("line {i}\r\n"))
+                .collect::<String>()
+                .into_bytes(),
+        });
+        app.terminals.get_mut(terminal).unwrap().begin_review();
+        let generation = app
+            .terminals
+            .get(terminal)
+            .unwrap()
+            .review_selection_state()
+            .unwrap()
+            .0;
+        app.terminals
+            .get_mut(terminal)
+            .unwrap()
+            .restore_review_selection(generation, Selection::point(0));
+        let before = app.active().selection.clone();
+        let text = app.active_buffer().text().to_string();
+        let invocation = if temporary {
+            CommandInvocation::from_parts(
+                crate::command::CommandId::Editor(EditorCommand::ModeEnter),
+                crate::command::InvocationParameters::TemporaryMode("select".into()),
+                Default::default(),
+            )
+            .unwrap()
+        } else {
+            CommandInvocation::mode_entry(Mode::Select)
+        };
+        app.execute(invocation).unwrap();
+        assert_eq!(app.mode, Mode::Select);
+        assert!(app.terminals.get(terminal).unwrap().reviewing());
+        assert!(app.terminals.get(terminal).unwrap().scroll() > 0);
+        assert_eq!(app.active().selection, before);
+        assert_eq!(app.active_buffer().text().to_string(), text);
+        assert_eq!(app.line_select.is_some(), temporary);
     }
 }

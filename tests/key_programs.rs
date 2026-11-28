@@ -31,7 +31,7 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
             assert!(matches!(
                 binding.target,
                 BindingTarget::Editor(
-                    C::EnterSelectMode
+                    C::ModeEnter
                         | C::RecordDefaultMacro
                         | C::DirectoryTreeCollapse
                         | C::DirectoryTreeExpand
@@ -48,7 +48,8 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
                 panic!("unexpected composed default")
             };
             let expected = match command {
-                C::EnterNormalMode => vec![C::FitSelectionForNormalMode, C::ModeEnter],
+                C::FitSelectionForNormalMode => vec![C::FitSelectionForNormalMode, C::ModeEnter],
+                C::CollapseSelectionStart | C::CollapseSelectionHead => vec![C::ModeEnter, command],
                 C::Yank if binding.binding_mode.as_deref() == Some("terminal") => {
                     vec![command, C::ModeEnter]
                 }
@@ -123,11 +124,17 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
                     .map(BindingTarget::Editor)
                     .collect::<Vec<_>>()
             );
-            let Action::Invocation(mode) = binding.program.last() else {
+            let Some(Action::Invocation(mode)) = binding
+                .program
+                .iter()
+                .find(|action| action.target() == BindingTarget::Editor(C::ModeEnter))
+            else {
                 panic!("expected mode step")
             };
             assert_eq!(mode.id(), CommandId::Editor(C::ModeEnter));
             let name = match command {
+                C::CollapseSelectionStart => "insert",
+                C::CollapseSelectionHead => "replace",
                 C::SelectAll
                 | C::SearchSetFromSelection
                 | C::SearchNext
@@ -491,14 +498,14 @@ fn conditional_discovery_shows_both_branches_and_exports_complete_programs() {
     let binding = map
         .bindings()
         .iter()
-        .find(|b| b.target == C::EnterSelectMode.into())
+        .find(|b| b.sequence == KeySequence::parse("v").unwrap() && b.program.has_conditions())
         .unwrap();
     let rendered = discovery::binding_steps(binding, BindingScope::Global);
     for expected in [
         "mode: select",
         "collapse-selection",
         "mode-enter",
-        "enter-select-mode",
+        "select",
         "else",
     ] {
         assert!(rendered.contains(expected), "{rendered}");
@@ -510,7 +517,7 @@ fn conditional_discovery_shows_both_branches_and_exports_complete_programs() {
     );
     assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
     let only_conditional = Keymap::new(vec![binding.clone()]).unwrap();
-    for command in [C::EnterSelectMode, C::CollapseSelection, C::ModeEnter] {
+    for command in [C::CollapseSelection, C::ModeEnter] {
         assert!(
             discovery::details(
                 CommandId::Editor(command),
@@ -561,11 +568,11 @@ fn scoped_admission_preserves_representative_actions_rewritten_as_programs() {
         command::discovery,
         keymap::{BindingScope, configured},
     };
-    let source = serde_yaml::from_str("bind:\n  media:\n    F6: enter-normal-mode\n").unwrap();
+    let source = serde_yaml::from_str("bind:\n  media:\n    F6: [fit-selection-for-normal-mode, {action: mode-enter, arg: normal}]\n").unwrap();
     let result = configured::compile(&source, default_keymap());
     assert!(result.errors.is_empty(), "{:?}", result.errors);
     assert!(discovery::admitted_here(
-        CommandId::Editor(C::EnterNormalMode),
+        CommandId::Editor(C::FitSelectionForNormalMode),
         Mode::Normal,
         BindingScope::Media
     ));

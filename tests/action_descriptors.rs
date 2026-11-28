@@ -118,24 +118,22 @@ fn descriptors_distinguish_effects_from_writable_admission() {
     use EditorCommand as C;
     use runyte::command::{ColonCommand, descriptor::*};
     assert_eq!(
-        C::EnterInsertMode.action_policy().buffer_mutation,
+        C::AppendAfter.action_policy().buffer_mutation,
         BufferMutation::Unchanged
     );
-    assert!(C::EnterInsertMode.is_mutating());
+    assert!(C::AppendAfter.is_mutating());
     assert_eq!(
         C::AlignSelections.action_policy().buffer_mutation,
         BufferMutation::MayMutate
     );
     assert!(!C::AlignSelections.is_mutating());
-    assert!(actions::can_continue(BindingTarget::Editor(
-        C::EnterInsertMode
-    )));
+    assert!(actions::can_continue(BindingTarget::Editor(C::AppendAfter)));
     // A split can also open a path, which has prompt/background effects.
     assert!(!actions::can_continue(BindingTarget::Editor(
         C::SplitVertical
     )));
     assert!(
-        C::EnterInsertMode
+        C::AppendAfter
             .action_policy()
             .effects
             .contains(&ActionEffect::Mode)

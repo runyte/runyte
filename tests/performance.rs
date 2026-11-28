@@ -505,9 +505,10 @@ async fn typing_into_a_large_highlighted_file_keeps_colours_during_reparse() {
 
     editor
         .execute(
-            CommandInvocation::editor(
-                EditorCommand::EnterInsertMode,
-                CommandExecutionContext::default(),
+            CommandInvocation::from_parts(
+                runyte::command::CommandId::Editor(EditorCommand::ModeEnter),
+                runyte::command::InvocationParameters::OptionalText(Some("insert".into())),
+                Default::default(),
             )
             .unwrap(),
         )
@@ -558,9 +559,10 @@ async fn minified_documents_reparse_in_background_past_the_old_byte_limit() {
     let mut events = editor.enable_background_syntax();
     editor
         .execute(
-            CommandInvocation::editor(
-                EditorCommand::EnterInsertMode,
-                CommandExecutionContext::default(),
+            CommandInvocation::from_parts(
+                runyte::command::CommandId::Editor(EditorCommand::ModeEnter),
+                runyte::command::InvocationParameters::OptionalText(Some("insert".into())),
+                Default::default(),
             )
             .unwrap(),
         )

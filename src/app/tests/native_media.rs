@@ -757,7 +757,8 @@ fn media_dispatch_refuses_exactly_what_help_leaves_out() {
             .contains("does not apply to an image or PDF page");
         // Some commands are refused before dispatch, for want of a syntax
         // tree or an argument; they are refused here all the same.
-        let refused_earlier = app.status.contains("is unavailable for this buffer")
+        let refused_earlier = app.status.contains("does not support text input modes")
+            || app.status.contains("is unavailable for this buffer")
             || app.status.contains("is unsupported");
         if admits(BindingScope::Media, target) {
             admitted += 1;
@@ -825,5 +826,34 @@ fn conditional_v_exits_native_media_select_without_changing_hidden_page_selectio
         assert!(!app.status_error, "{}", app.status);
         assert_eq!(app.active().selection, selection);
         assert_eq!(app.media_requests.len(), requests);
+    }
+}
+
+#[test]
+fn explicit_and_temporary_mode_entry_initialize_native_media_selection() {
+    for temporary in [false, true] {
+        let root = TestRuntimeRoot::new("media-mode-entry").unwrap();
+        let path = root.join("page.pdf");
+        fs::write(&path, b"%PDF fixture").unwrap();
+        let mut app = App::new_in_project(Config::default(), None, &*root).unwrap();
+        app.native_media = true;
+        app.open_file(path).unwrap();
+        let invocation = if temporary {
+            CommandInvocation::from_parts(
+                crate::command::CommandId::Editor(EditorCommand::ModeEnter),
+                crate::command::InvocationParameters::TemporaryMode("select".into()),
+                Default::default(),
+            )
+            .unwrap()
+        } else {
+            CommandInvocation::mode_entry(Mode::Select)
+        };
+        app.execute(invocation).unwrap();
+        assert_eq!(app.mode, Mode::Select);
+        assert_eq!(
+            app.media_requests.back().unwrap().action,
+            crate::media::ViewAction::BeginSelection
+        );
+        assert_eq!(app.line_select.is_some(), temporary);
     }
 }

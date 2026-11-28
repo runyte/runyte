@@ -245,7 +245,7 @@ input uses `keys.bind.terminal-insert`:
 keys:
   bind:
     terminal-insert:
-      F6: enter-normal-mode
+      F6: [fit-selection-for-normal-mode, {action: mode-enter, arg: normal}]
       Ctrl-4: null
       'Ctrl-\': null
       'F7 h': focus-window-left
@@ -795,11 +795,30 @@ as a name or `{action: <name>}`. They reject step lists, conditionals, arguments
 and step options; `null` still removes a binding. Conditions below apply only
 where editor programs execute.
 
+### Removed bundled mode actions
+
+The four `enter-*-mode` actions are removed in 0.5. Configuration using them
+is rejected with a complete replacement program:
+
+| Removed action | Replacement program |
+| --- | --- |
+| `enter-normal-mode` | `[fit-selection-for-normal-mode, {action: mode-enter, arg: normal}]` |
+| `enter-insert-mode` | `[{action: mode-enter, arg: insert}, collapse-selection-start]` |
+| `enter-replace-mode` | `[{action: mode-enter, arg: replace}, collapse-selection-head]` |
+| `enter-select-mode` | `[{action: mode-enter, arg: select}]` |
+
+Mode entry comes first for Insert and Replace, so refusal on a read-only buffer
+does not change its selection. The raw start and head collapses produce point
+selections without converting half-open endpoints. Ordinary `collapse-selection`
+first converts a half-open selection to inclusive coordinates; its cursor can
+therefore differ from the raw head used by Replace.
+
 ### Mode entry and conditional programs
 
 `mode-enter` preserves the selection and changes the active named mode. Its
 `arg` names a declared editor mode or one of the buffer type's `normal`,
-`select`, `insert`, and `replace` roles. A missing role is a configuration error.
+`select`, `insert`, and `replace` roles. A missing role is a configuration error. Entering Select initializes the native
+media selection or captures and focuses terminal review output as appropriate.
 
 ```yaml
 modes:
@@ -977,17 +996,17 @@ keys:
   bind:
     normal:
       ":": open-command-palette
-      i: enter-insert-mode
+      i: [{action: mode-enter, arg: insert}, collapse-selection-start]
       h: move-left
       l: move-right
     select:
-      Esc: enter-normal-mode
+      Esc: [fit-selection-for-normal-mode, {action: mode-enter, arg: normal}]
     insert:
-      Esc: enter-normal-mode
+      Esc: [fit-selection-for-normal-mode, {action: mode-enter, arg: normal}]
       Enter: insert-newline
       Backspace: delete-char-backward
     replace:
-      Esc: enter-normal-mode
+      Esc: [fit-selection-for-normal-mode, {action: mode-enter, arg: normal}]
 ```
 
 - **What goes:** every built-in key in Normal, Select, Insert, and Replace
@@ -1013,7 +1032,7 @@ keys:
   and `Window` mean in `bind`, and may be keys that only a built-in binding
   used.
 - **A way out is required.** The keyboard must reach `open-command-palette` in
-  Normal mode and `enter-normal-mode` in Select, Insert, and Replace modes,
+  Normal mode and `mode-enter` with `arg: normal` in Select, Insert, and Replace modes,
   directly or as one of a sequence of actions. `Ctrl-\` covers the second
   unless you reassign both of its spellings. Without them you couldn't leave a
   mode or reach the configuration to fix it. In that case Runyte reports what
@@ -1046,12 +1065,10 @@ triggers other bindings.
 
 **Selection and mode steps.** `select-all`, `collapse-selection`, `toggle-case`
 and `replace-char` preserve the current mode. Their default keys (`%`, `;`,
-`~` and `r`) include a separate internal mode step, so the keys behave as
+`~` and `r`) include a separate mode step, so the keys behave as
 before. `fit-selection-for-normal-mode` fits the selection without changing
 mode: it collapses ranges and applies the existing Insert-exit caret rules.
-Escape runs that action followed by a Normal `mode-enter` step. Public
-mode-entry actions retain their selection-fitting behavior, except
-`enter-select-mode`, which now only enters Select. The default `v` key toggles
+Escape runs that action followed by a Normal `mode-enter` step. The removed bundled mode actions are replaced by the programs below. The default `v` key toggles
 through a conditional: from Select it collapses and enters Normal;
 otherwise it enters Select. Half-open mouse and syntax selections convert to
 inclusive endpoints before collapse, so the resulting caret may be one
@@ -1118,8 +1135,8 @@ work. For example, `{ action: terminal-rename, arg: build }` can continue;
 with arguments. Plugin commands and queued macro replay must be last. The `goto-word` label
 chooser also owns input and remains last-only.
 
-Previously rejected lists such as `[enter-insert-mode, move-right,
-enter-normal-mode]`, `[find-next-char, yank]`, `[surround-replace, yank]`,
+Previously rejected lists such as `[{action: mode-enter, arg: insert}, move-right,
+{action: mode-enter, arg: normal}]`, `[find-next-char, yank]`, `[surround-replace, yank]`,
 `[focus-window-right, move-left]`, and `[show-help, move-file-end]` are now
 accepted. Colon commands with only synchronous effects can also continue.
 Mixed-effect actions such as `split-vertical` and `split-horizontal` remain
@@ -1172,10 +1189,11 @@ and honors transient whole rows; `delete-selection-for-change` preserves the
 insertion seam and deletes operative spans. Neither writes a register.
 `set-search-from-selection` is now `search-set-from-selection`.
 `search-selection` becomes query setup, `search-select-all-matches`, and pure
-Select entry. These exact default programs require internal mode steps until
-the public binding format supports pure mode entry. The additive
+Select entry with `{action: mode-enter, arg: select}`. These programs use the
+public binding format. The additive
 `search-extend-next`/`search-extend-previous` actions preserve mode;
-`search-next` and `search-previous` still enter Select in documents. Extension retains existing ranges and makes the added
+the default `n` and `N` bindings add a Select entry after `search-next` or
+`search-previous` in documents. Extension retains existing ranges and makes the added
 match primary, wrapping through the query's matches.
 
 Word and delimiter objects, syntax objects, expansion and relation selections, flipping a
@@ -1200,7 +1218,7 @@ selection and mode behavior until the shared line-selection split.
   edits separated by character operands. Cancellation or failure keeps edits
   already made together; later unrelated edits start a separate step.
 - A program ending in Insert or Replace keeps its group open for typing until
-  that mode is left. For example, `[delete-selection, enter-insert-mode]` and
+  that mode is left. For example, `[delete-selection, {action: mode-enter, arg: insert}]` and
   the text typed afterward undo together.
 - Explicit `undo`, `redo` and `commit-undo-checkpoint` actions retain their
   history boundaries. A save's whitespace cleanup belongs to the program.
@@ -1283,15 +1301,12 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
 | `mode-enter` | normal, select, insert, replace | can be followed by another action | Enter a mode, preserving the selection |
-| `enter-normal-mode` | normal, select, insert, replace | can be followed by another action | Fit selection and enter Normal mode |
 | `open-command-palette` | normal, select | must be the last action | Open the command palette |
 
 #### Editing actions
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `enter-insert-mode` | normal, select | can be followed by another action | Insert before the selection |
-| `enter-replace-mode` | normal, select | can be followed by another action | Replace text from each selection head |
 | `append-after` | normal, select | can be followed by another action | Insert after the selection |
 | `insert-line-start` | normal, select | can be followed by another action | Insert at line start |
 | `insert-line-end` | normal, select | can be followed by another action | Insert at line end |
@@ -1380,12 +1395,13 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | --- | --- | --- | --- |
 | `selection-undo` | normal, select | can be followed by another action | Undo the last selection change |
 | `selection-redo` | normal, select | can be followed by another action | Redo the last selection change |
-| `enter-select-mode` | normal, select | can be followed by another action | Enter Select mode |
 | `select-line` | normal, select | can be followed by another action | Select the current line, then extend downward |
 | `extend-line-above` | normal, select | can be followed by another action | Extend whole lines above |
 | `extend-line-below` | normal, select | can be followed by another action | Extend whole lines below |
 | `select-line-up` | normal, select | can be followed by another action | Select the current line, then extend upward |
 | `select-all` | normal, select | can be followed by another action | Select all text |
+| `collapse-selection-start` | normal, select, insert, replace | can be followed by another action | Collapse each range to its raw start offset |
+| `collapse-selection-head` | normal, select, insert, replace | can be followed by another action | Collapse to the raw head without converting half-open endpoints |
 | `collapse-selection` | normal, select | can be followed by another action | Collapse selection to the cursor |
 | `flip-selection` | normal, select | can be followed by another action | Flip the selection anchor and cursor |
 | `select-around-parentheses` | normal, select | can be followed by another action | Select around parentheses |
@@ -1945,19 +1961,18 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 
 | Action | Effects | Count | Uses register | Supports extend | Character operands | Palette argument | Key-program argument | Buffer-type differences | Classification |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `fit-selection-for-normal-mode` | selection, view | not accepted | false | false | none | none | palette argument, if any | terminal: Fit the live or captured review selection for Normal mode without entering it | atomic operation |
-| `mode-enter` | mode | not accepted | false | false | none | none | palette argument, if any |  | mode action |
-| `enter-normal-mode` | mode, selection | not accepted | false | false | none | none | palette argument, if any | terminal: Leave child input for live Normal mode; otherwise capture review and collapse its selection | pending stage 5 split; then mode action |
+| `fit-selection-for-normal-mode` | selection, presentation | not accepted | false | false | none | none | palette argument, if any | terminal: Fit the live or captured review selection for Normal mode without entering it | atomic operation |
+| `mode-enter` | mode, selection, presentation | not accepted | false | false | none | none | palette argument, if any | terminal: Select captures and focuses review output; Insert returns to live output; Replace is unavailable; media: Entering Select initializes selection of PDF text or an image region | mode action |
 | `open-command-palette` | prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `move-left` | selection, view | repeats | false | true | none | none | palette argument, if any | terminal: Move or extend the cursor in captured output; media: Pan horizontally, or extend the media selection in Select mode | atomic operation |
-| `move-right` | selection, view | repeats | false | true | none | none | palette argument, if any | terminal: Move or extend the cursor in captured output; media: Pan horizontally, or extend the media selection in Select mode | atomic operation |
-| `move-up` | selection, view | repeats | false | true | none | none | palette argument, if any | terminal: Move or extend the cursor in captured output; media: Pan vertically, change PDF page at fit, or extend the media selection | atomic operation |
-| `move-down` | selection, view | repeats | false | true | none | none | palette argument, if any | terminal: Move or extend the cursor in captured output; media: Pan vertically, change PDF page at fit, or extend the media selection | atomic operation |
+| `move-left` | selection, presentation | repeats | false | true | none | none | palette argument, if any | terminal: Move or extend the cursor in captured output; media: Pan horizontally, or extend the media selection in Select mode | atomic operation |
+| `move-right` | selection, presentation | repeats | false | true | none | none | palette argument, if any | terminal: Move or extend the cursor in captured output; media: Pan horizontally, or extend the media selection in Select mode | atomic operation |
+| `move-up` | selection, presentation | repeats | false | true | none | none | palette argument, if any | terminal: Move or extend the cursor in captured output; media: Pan vertically, change PDF page at fit, or extend the media selection | atomic operation |
+| `move-down` | selection, presentation | repeats | false | true | none | none | palette argument, if any | terminal: Move or extend the cursor in captured output; media: Pan vertically, change PDF page at fit, or extend the media selection | atomic operation |
 | `move-line-start` | selection | not accepted | false | true | none | none | palette argument, if any | terminal: Move or extend the review selection within captured output | atomic operation |
 | `move-line-end` | selection | not accepted | false | true | none | none | palette argument, if any | terminal: Move or extend the review selection within captured output | atomic operation |
 | `move-first-non-whitespace` | selection | not accepted | false | true | none | none | palette argument, if any | terminal: Move or extend the review selection within captured output | atomic operation |
-| `move-file-start` | selection, view | interpreted as an address or extent | false | true | none | none | palette argument, if any | terminal: Move to the captured output boundary; media: Select a PDF page by address or move to its first or last page | atomic operation |
-| `move-file-end` | selection, view | interpreted as an address or extent | false | true | none | none | palette argument, if any | terminal: Move to the captured output boundary; media: Select a PDF page by address or move to its first or last page | atomic operation |
+| `move-file-start` | selection, presentation | interpreted as an address or extent | false | true | none | none | palette argument, if any | terminal: Move to the captured output boundary; media: Select a PDF page by address or move to its first or last page | atomic operation |
+| `move-file-end` | selection, presentation | interpreted as an address or extent | false | true | none | none | palette argument, if any | terminal: Move to the captured output boundary; media: Select a PDF page by address or move to its first or last page | atomic operation |
 | `move-word-forward` | selection | repeats | false | true | none | none | palette argument, if any | terminal: Move or extend the review selection within captured output | atomic operation |
 | `move-word-backward` | selection | repeats | false | true | none | none | palette argument, if any | terminal: Move or extend the review selection within captured output | atomic operation |
 | `move-word-end` | selection | repeats | false | true | none | none | palette argument, if any | terminal: Move or extend the review selection within captured output | atomic operation |
@@ -1970,12 +1985,10 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `find-previous-char` | character input, selection | not accepted | false | true | one character | none | one Unicode scalar; replaces the character operand | terminal: Find the supplied character within captured output | atomic operation |
 | `find-till-next-char` | character input, selection | not accepted | false | true | one character | none | one Unicode scalar; replaces the character operand | terminal: Find the supplied character within captured output | atomic operation |
 | `find-till-previous-char` | character input, selection | not accepted | false | true | one character | none | one Unicode scalar; replaces the character operand | terminal: Find the supplied character within captured output | atomic operation |
-| `page-up` | selection, view | repeats | false | true | none | none | palette argument, if any | terminal: Move the review cursor by a page of captured output; media: Move to the previous or next PDF page | atomic operation |
-| `page-down` | selection, view | repeats | false | true | none | none | palette argument, if any | terminal: Move the review cursor by a page of captured output; media: Move to the previous or next PDF page | atomic operation |
-| `half-page-up` | selection, view | repeats | false | true | none | none | palette argument, if any | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page | atomic operation |
-| `half-page-down` | selection, view | repeats | false | true | none | none | palette argument, if any | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page | atomic operation |
-| `enter-insert-mode` | mode, selection | not accepted | false | false | none | none | palette argument, if any |  | pending stage 5 split; then mode action |
-| `enter-replace-mode` | mode, selection | not accepted | false | false | none | none | palette argument, if any |  | pending stage 5 split; then mode action |
+| `page-up` | selection, presentation | repeats | false | true | none | none | palette argument, if any | terminal: Move the review cursor by a page of captured output; media: Move to the previous or next PDF page | atomic operation |
+| `page-down` | selection, presentation | repeats | false | true | none | none | palette argument, if any | terminal: Move the review cursor by a page of captured output; media: Move to the previous or next PDF page | atomic operation |
+| `half-page-up` | selection, presentation | repeats | false | true | none | none | palette argument, if any | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page | atomic operation |
+| `half-page-down` | selection, presentation | repeats | false | true | none | none | palette argument, if any | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page | atomic operation |
 | `append-after` | mode, selection | not accepted | false | false | none | none | palette argument, if any |  | mode action |
 | `insert-line-start` | mode, selection | not accepted | false | false | none | none | palette argument, if any |  | mode action |
 | `insert-line-end` | mode, selection | not accepted | false | false | none | none | palette argument, if any |  | mode action |
@@ -2003,12 +2016,13 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `cut-selection-for-change` | register, text, selection | not accepted | true | false | none | none | palette argument, if any | directory: Record selected entries as a move payload without removing files; delete or change the listing selection | decision: Chooses operative-span register content or directory move payload and coordinates deletion; independent yank/delete steps cannot retain that ownership. |
 | `delete-selection` | text | not accepted | false | false | none | none | palette argument, if any |  | decision: Delete and change place the caret and treat whole rows differently. |
 | `delete-selection-for-change` | text | not accepted | false | false | none | none | palette argument, if any |  | decision: Delete and change place the caret and treat whole rows differently. |
-| `enter-select-mode` | mode, selection | not accepted | false | false | none | none | palette argument, if any | terminal: Enter Select mode over captured terminal output; media: Begin selection of PDF text or an image region | pending stage 5 split; then mode action |
 | `select-line` | selection | repeats | false | false | none | none | palette argument, if any | terminal: Select or extend captured output with whole-line extent, preserving mode | atomic operation |
 | `extend-line-above` | selection | repeats | false | false | none | none | palette argument, if any | terminal: Select or extend captured output with whole-line extent, preserving mode | atomic operation |
 | `extend-line-below` | selection | repeats | false | false | none | none | palette argument, if any | terminal: Select or extend captured output with whole-line extent, preserving mode | atomic operation |
 | `select-line-up` | selection | repeats | false | false | none | none | palette argument, if any | terminal: Select or extend captured output with whole-line extent, preserving mode | atomic operation |
 | `select-all` | selection | not accepted | false | false | none | none | palette argument, if any | terminal: Select all captured terminal output | atomic operation |
+| `collapse-selection-start` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `collapse-selection-head` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `collapse-selection` | selection | not accepted | false | false | none | none | palette argument, if any | terminal: Collapse the review selection; media: Retain the native media selection; this surface has no document caret to collapse | atomic operation |
 | `flip-selection` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `syntax-expand-selection` | selection | repeats | false | false | none | none | palette argument, if any |  | atomic operation |
@@ -2051,10 +2065,10 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `goto-next-syntax-class` | selection | repeats | false | false | none | none | palette argument, if any |  | atomic operation |
 | `goto-previous-syntax-parameter` | selection | repeats | false | false | none | none | palette argument, if any |  | atomic operation |
 | `goto-next-syntax-parameter` | selection | repeats | false | false | none | none | palette argument, if any |  | atomic operation |
-| `syntax-document-outline` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `syntax-toggle-fold` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `syntax-fold-all` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `syntax-unfold-all` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `syntax-document-outline` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `syntax-toggle-fold` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `syntax-fold-all` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `syntax-unfold-all` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `split-selection-at-line-ends` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `split-selection-at-line-starts` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `keep-primary-selection` | selection | not accepted | false | false | none | none | palette argument, if any | terminal: Keep only the primary review selection | atomic operation |
@@ -2080,147 +2094,147 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `format-table` | text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `search` | prompt, search state, selection, mode | not accepted | false | false | none | none | nonempty pattern; replaces the prompt |  | decision: Owns the search prompt and enters Select only when its accepted search succeeds (decision 30). |
 | `search-regex` | prompt, search state, selection, mode | not accepted | false | false | none | none | nonempty pattern; replaces the prompt |  | decision: Owns the regular-expression search prompt and its selection-mode completion (decision 30). |
-| `search-next` | selection, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `search-previous` | selection, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `search-extend-next` | selection, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `search-extend-previous` | selection, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `search-select-all-matches` | selection, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `search-next` | selection, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `search-previous` | selection, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `search-extend-next` | selection, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `search-extend-previous` | selection, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `search-select-all-matches` | selection, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `search-set-from-selection` | search state | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `media-show-page` | view, mode, selection | not accepted | false | false | none | none | palette argument, if any | pdf-pages: Display the selected PDF page and enter Normal mode | decision: Chooses and presents a native media page with its corresponding selection and mode. |
-| `media-zoom-in` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `media-zoom-out` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `media-fit` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `media-actual-size` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `media-pan-left` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `media-pan-right` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `media-move-up` | view, selection | repeats | false | true | none | none | palette argument, if any |  | decision: Pans zoomed or non-PDF media, but changes PDF pages at fit zoom; the native viewport owns that decision (decision 31). |
-| `media-move-down` | view, selection | repeats | false | true | none | none | palette argument, if any |  | decision: Pans zoomed or non-PDF media, but changes PDF pages at fit zoom; the native viewport owns that decision (decision 31). |
+| `media-show-page` | presentation, mode, selection | not accepted | false | false | none | none | palette argument, if any | pdf-pages: Display the selected PDF page and enter Normal mode | decision: Chooses and presents a native media page with its corresponding selection and mode. |
+| `media-zoom-in` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `media-zoom-out` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `media-fit` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `media-actual-size` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `media-pan-left` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `media-pan-right` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `media-move-up` | presentation, selection | repeats | false | true | none | none | palette argument, if any |  | decision: Pans zoomed or non-PDF media, but changes PDF pages at fit zoom; the native viewport owns that decision (decision 31). |
+| `media-move-down` | presentation, selection | repeats | false | true | none | none | palette argument, if any |  | decision: Pans zoomed or non-PDF media, but changes PDF pages at fit zoom; the native viewport owns that decision (decision 31). |
 | `media-copy-selection` | register | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `media-back` | view, mode, selection | not accepted | false | false | none | none | palette argument, if any | media: Enter Normal mode, then fit media, clear selection or leave preview; pdf-pages: Collapse a Select-mode page selection, otherwise open the parent explorer | decision: Fits zoomed media, otherwise clears native selection, otherwise leaves preview; authoritative native state chooses the branch (decision 31). |
+| `media-back` | presentation, mode, selection | not accepted | false | false | none | none | palette argument, if any | media: Enter Normal mode, then fit media, clear selection or leave preview; pdf-pages: Collapse a Select-mode page selection, otherwise open the parent explorer | decision: Fits zoomed media, otherwise clears native selection, otherwise leaves preview; authoritative native state chooses the branch (decision 31). |
 | `media-select-all` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `align-view-center` | view | not accepted | false | false | none | none | palette argument, if any | media: Center the image or PDF in its pane | atomic operation |
-| `align-view-top` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `align-view-bottom` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `align-view-middle` | view | not accepted | false | false | none | none | palette argument, if any | media: Center the image or PDF in its pane | atomic operation |
-| `scroll-view-down` | view | repeats | false | false | none | none | palette argument, if any | terminal: Capture review and scroll its output; media: Pan the image or PDF vertically | atomic operation |
-| `scroll-view-up` | view | repeats | false | false | none | none | palette argument, if any | terminal: Capture review and scroll its output; media: Pan the image or PDF vertically | atomic operation |
+| `align-view-center` | presentation | not accepted | false | false | none | none | palette argument, if any | media: Center the image or PDF in its pane | atomic operation |
+| `align-view-top` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `align-view-bottom` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `align-view-middle` | presentation | not accepted | false | false | none | none | palette argument, if any | media: Center the image or PDF in its pane | atomic operation |
+| `scroll-view-down` | presentation | repeats | false | false | none | none | palette argument, if any | terminal: Capture review and scroll its output; media: Pan the image or PDF vertically | atomic operation |
+| `scroll-view-up` | presentation | repeats | false | false | none | none | palette argument, if any | terminal: Capture review and scroll its output; media: Pan the image or PDF vertically | atomic operation |
 | `goto-window-top` | selection | not accepted | false | true | none | none | palette argument, if any | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view | atomic operation |
 | `goto-window-center` | selection | not accepted | false | true | none | none | palette argument, if any | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view | atomic operation |
 | `goto-window-bottom` | selection | not accepted | false | true | none | none | palette argument, if any | terminal: Move the review cursor within the visible captured output; directory-tree: Select the tree row at the top, middle or bottom of the view | atomic operation |
-| `goto-file` | file, view, prompt, background work | not accepted | false | false | none | none | palette argument, if any | terminal: Open a path or URL inferred from the review selection and terminal directory | atomic operation |
+| `goto-file` | file, presentation, prompt, background work | not accepted | false | false | none | none | palette argument, if any | terminal: Open a path or URL inferred from the review selection and terminal directory | atomic operation |
 | `goto-word` | prompt, selection | not accepted | false | false | none | none | palette argument, if any | terminal: Label visible captured output words and jump to one; directory-tree: Label visible tree entries and select one | atomic operation |
-| `toggle-soft-wrap` | view, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `toggle-whitespace` | view, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `preview-document` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `toggle-markdown-render` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `toggle-focus` | view, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `toggle-zen` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Restores the previous editor mode when leaving directory-tree focus before changing the window presentation. |
-| `toggle-fullscreen` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Restores the previous editor mode when leaving directory-tree focus before changing the window presentation. |
-| `directory-open` | file, view, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-tree-toggle` | pane, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-focus` | pane, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `toggle-soft-wrap` | presentation, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `toggle-whitespace` | presentation, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `preview-document` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `toggle-markdown-render` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `toggle-focus` | presentation, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `toggle-zen` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Restores the previous editor mode when leaving directory-tree focus before changing the window presentation. |
+| `toggle-fullscreen` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Restores the previous editor mode when leaving directory-tree focus before changing the window presentation. |
+| `directory-open` | file, presentation, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-tree-toggle` | pane, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-focus` | pane, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `directory-tree-up` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `directory-tree-down` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-tree-collapse` | view, selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-tree-select-parent` | view, selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-tree-expand` | view, selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-tree-select-first-child` | view, selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-tree-collapse` | presentation, selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-tree-select-parent` | presentation, selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-tree-expand` | presentation, selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-tree-select-first-child` | presentation, selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `directory-paste` | text, selection | interpreted as an address or extent | true | false | none | none | palette argument, if any | directory: Stage copies or moves from a directory register into the listing | decision: Stages directory copy or move payloads beside entry rows, or pastes a text register using each range's insertion/replacement decision. |
-| `directory-tree-search` | prompt, selection, view, search state | not accepted | false | false | none | none | nonempty pattern; replaces the prompt | directory-tree: Prompt to search visible tree entries | atomic operation |
-| `directory-tree-search-next` | selection, view | not accepted | false | false | none | none | palette argument, if any | directory-tree: Select the next or previous matching tree entry | atomic operation |
-| `directory-tree-search-previous` | selection, view | not accepted | false | false | none | none | palette argument, if any | directory-tree: Select the next or previous matching tree entry | atomic operation |
+| `directory-tree-search` | prompt, selection, presentation, search state | not accepted | false | false | none | none | nonempty pattern; replaces the prompt | directory-tree: Prompt to search visible tree entries | atomic operation |
+| `directory-tree-search-next` | selection, presentation | not accepted | false | false | none | none | palette argument, if any | directory-tree: Select the next or previous matching tree entry | atomic operation |
+| `directory-tree-search-previous` | selection, presentation | not accepted | false | false | none | none | palette argument, if any | directory-tree: Select the next or previous matching tree entry | atomic operation |
 | `directory-tree-first` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `directory-tree-last` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `directory-tree-page-up` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `directory-tree-page-down` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-tree-open` | file, view, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-close` | pane, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-refresh` | file, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-tree-legend` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-tree-open-vertical` | file, view, mode, prompt, background work, pane | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-open-horizontal` | file, view, mode, prompt, background work, pane | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-pane-1` | file, view, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-pane-2` | file, view, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-pane-3` | file, view, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-pane-4` | file, view, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-pane-5` | file, view, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-pane-6` | file, view, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-pane-7` | file, view, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-pane-8` | file, view, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-tree-pane-9` | file, view, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-open` | file, presentation, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-close` | pane, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-refresh` | file, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-tree-legend` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-tree-open-vertical` | file, presentation, mode, prompt, background work, pane | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-open-horizontal` | file, presentation, mode, prompt, background work, pane | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-pane-1` | file, presentation, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-pane-2` | file, presentation, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-pane-3` | file, presentation, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-pane-4` | file, presentation, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-pane-5` | file, presentation, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-pane-6` | file, presentation, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-pane-7` | file, presentation, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-pane-8` | file, presentation, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-tree-pane-9` | file, presentation, mode, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `directory-tree-new` | prompt, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `directory-tree-rename` | prompt, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `directory-tree-delete` | prompt, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `directory-tree-move` | prompt, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-open-working-directory` | file, view, prompt | not accepted | false | false | none | explorer [path] | palette argument, if any |  | atomic operation |
-| `open-file-picker` | view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `open-all-files-picker` | view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `open-path-file-picker` | prompt, view, background work | not accepted | false | false | none | file-picker-path [path] | palette argument, if any |  | atomic operation |
-| `directory-open-file-picker` | view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `search-open-fuzzy-grep` | view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-open-fuzzy-grep` | view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-open-entry` | file, view, mode, selection, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-open-parent` | file, view, mode, selection, prompt | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `directory-refresh` | file, view, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-toggle-hidden-files` | view, configuration | not accepted | false | false | none | none | palette argument, if any | directory-tree: Show or hide hidden tree entries | atomic operation |
-| `directory-toggle-details` | view, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-choose-order` | prompt, view, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-open-system` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-open-finder` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-open-changed-file` | background work, file, view, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-stage-all-changed-files` | background work, file, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-checkout-branch` | background work, file, view, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-open-working-directory` | file, presentation, prompt | not accepted | false | false | none | explorer [path] | palette argument, if any |  | atomic operation |
+| `open-file-picker` | presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `open-all-files-picker` | presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `open-path-file-picker` | prompt, presentation, background work | not accepted | false | false | none | file-picker-path [path] | palette argument, if any |  | atomic operation |
+| `directory-open-file-picker` | presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `search-open-fuzzy-grep` | presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-open-fuzzy-grep` | presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-open-entry` | file, presentation, mode, selection, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-open-parent` | file, presentation, mode, selection, prompt | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `directory-refresh` | file, presentation, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-toggle-hidden-files` | presentation, configuration | not accepted | false | false | none | none | palette argument, if any | directory-tree: Show or hide hidden tree entries | atomic operation |
+| `directory-toggle-details` | presentation, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-choose-order` | prompt, presentation, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-open-system` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-open-finder` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-open-changed-file` | background work, file, presentation, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-stage-all-changed-files` | background work, file, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-checkout-branch` | background work, file, presentation, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-create-branch` | prompt, background work, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-delete-branch` | prompt, background work, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-merge-branch` | background work, file, view, prompt, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `git-conflicts` | background work, file, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `git-open-conflict` | background work, file, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-merge-continue` | background work, file, view, prompt, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `git-merge-branch` | background work, file, presentation, prompt, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `git-conflicts` | background work, file, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `git-open-conflict` | background work, file, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-merge-continue` | background work, file, presentation, prompt, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `git-merge-abort` | prompt, background work, file, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `git-conflict-next` | selection, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-conflict-previous` | selection, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-conflict-next` | selection, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-conflict-previous` | selection, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-conflict-keep-current` | text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-conflict-take-other` | text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-conflict-sides` | background work, file, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-conflict-sides` | background work, file, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-conflict-resolve-literal-markers` | prompt, background work, file, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `git-conflict-resolve` | prompt, background work, file, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `git-conflict-list` | background work, file, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `git-conflict-list` | background work, file, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `git-conflict-file-current` | prompt, background work, file, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `git-conflict-file-other` | prompt, background work, file, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `git-review-approve` | view, background work, file, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `git-review-cancel` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-review-back` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-review-approve` | presentation, background work, file, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `git-review-cancel` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-review-back` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-review-next` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-review-previous` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-review-left` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-review-right` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-review-enter` | view, background work, file, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `git-fetch-branch` | background work, file, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-pull-branch` | background work, file, view, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-push-branch` | background work, file, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-open-worktree` | background work, file, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-review-enter` | presentation, background work, file, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `git-fetch-branch` | background work, file, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-pull-branch` | background work, file, presentation, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-push-branch` | background work, file, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-open-worktree` | background work, file, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-create-worktree` | prompt, background work, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-create-new-worktree` | prompt, background work, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-remove-worktree` | prompt, background work, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-network-next-page` | background work, file, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `git-network-previous-page` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `git-log-next-page` | background work, file, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `git-log-previous-page` | background work, file, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `git-open-commit` | background work, file, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `search-open-workspace-result` | view, file, selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-network-next-page` | background work, file, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `git-network-previous-page` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `git-log-next-page` | background work, file, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `git-log-previous-page` | background work, file, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `git-open-commit` | background work, file, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `search-open-workspace-result` | presentation, file, selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `override-setting-language` | prompt, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `override-setting-pattern` | prompt, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `remove-setting-override` | configuration, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `remove-setting-override` | configuration, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `activate-setting` | prompt, configuration | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `open-settings` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `open-theme-settings` | configuration, view | not accepted | false | false | none | theme [name] | palette argument, if any |  | atomic operation |
+| `open-settings` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `open-theme-settings` | configuration, presentation | not accepted | false | false | none | theme [name] | palette argument, if any |  | atomic operation |
 | `split-vertical` | pane, mode, file, prompt, background work | not accepted | false | false | none | vsplit [path] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `split-horizontal` | pane, mode, file, prompt, background work | not accepted | false | false | none | hsplit [path] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `save` | file, text, prompt, background work | not accepted | false | false | none | write [path] | palette argument, if any | directory: Review and apply edits to the directory listing as filesystem operations; commit-message: Review staged changes and submit the commit message | atomic operation |
 | `force-save` | file, text, prompt, background work | not accepted | false | false | none | write! [path] | palette argument, if any | directory: Review and apply edits to the directory listing as filesystem operations; commit-message: Review staged changes and submit the commit message | atomic operation |
-| `show-help` | view, mode | not accepted | false | false | none | help [topic] | palette argument, if any | directory-tree: Open directory-tree help | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `show-about` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `show-tutorial` | view, pane, mode | not accepted | false | false | none | tutorial [reset&#124;sessions&#124;next] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `show-help` | presentation, mode | not accepted | false | false | none | help [topic] | palette argument, if any | directory-tree: Open directory-tree help | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `show-about` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `show-tutorial` | presentation, pane, mode | not accepted | false | false | none | tutorial [reset&#124;sessions&#124;next] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `focus-window-left` | pane, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `focus-window-down` | pane, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `focus-window-up` | pane, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
@@ -2235,23 +2249,23 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `only-window` | pane | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `equalize-windows` | pane | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `terminal-undo-paste` | terminal input | repeats | false | false | none | none | palette argument, if any | terminal: Ask the child to erase the last text Runyte sent, if it has not been submitted | atomic operation |
-| `terminal-enter-input` | mode, view | not accepted | false | false | none | none | palette argument, if any | terminal: Return to live output and send subsequent input to the child | mode action |
+| `terminal-enter-input` | mode, presentation | not accepted | false | false | none | none | palette argument, if any | terminal: Return to live output and send subsequent input to the child | mode action |
 | `terminal-paste` | terminal input | interpreted as an address or extent | true | false | none | none | palette argument, if any | terminal: Send register text to the child without changing mode | atomic operation |
 | `terminal-clipboard-paste-text` | terminal input | interpreted as an address or extent | false | false | none | none | palette argument, if any | terminal: Send system clipboard text to the child without changing mode | atomic operation |
-| `terminal-search` | prompt, search state, selection, view | not accepted | false | false | none | none | nonempty pattern; replaces the prompt | terminal: Prompt for a case-insensitive search of captured output | atomic operation |
-| `terminal-search-regex` | prompt, search state, selection, view | not accepted | false | false | none | none | nonempty pattern; replaces the prompt | terminal: Prompt for a regular-expression search of captured output | atomic operation |
-| `terminal-search-next` | selection, view | not accepted | false | false | none | none | palette argument, if any | terminal: Select the next or previous terminal review search match | atomic operation |
-| `terminal-search-previous` | selection, view | not accepted | false | false | none | none | palette argument, if any | terminal: Select the next or previous terminal review search match | atomic operation |
-| `terminal-open` | background work, view, mode | not accepted | false | false | none | terminal [command] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `terminal-open-file-directory` | background work, view, mode | not accepted | false | false | none | terminal-file-directory [command] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `terminal-open-directory-root` | background work, view, mode | not accepted | false | false | none | terminal-directory-root [command] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `terminal-open-selected-directory` | background work, view, mode | not accepted | false | false | none | terminal-selected-directory [command] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `terminal-open-session-directory` | background work, view, mode | not accepted | false | false | none | terminal-session-directory <number&#124;name> | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `terminal-open-list` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `terminal-show` | view, mode | not accepted | false | false | none | terminal-show <number&#124;name> | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `terminal-search` | prompt, search state, selection, presentation | not accepted | false | false | none | none | nonempty pattern; replaces the prompt | terminal: Prompt for a case-insensitive search of captured output | atomic operation |
+| `terminal-search-regex` | prompt, search state, selection, presentation | not accepted | false | false | none | none | nonempty pattern; replaces the prompt | terminal: Prompt for a regular-expression search of captured output | atomic operation |
+| `terminal-search-next` | selection, presentation | not accepted | false | false | none | none | palette argument, if any | terminal: Select the next or previous terminal review search match | atomic operation |
+| `terminal-search-previous` | selection, presentation | not accepted | false | false | none | none | palette argument, if any | terminal: Select the next or previous terminal review search match | atomic operation |
+| `terminal-open` | background work, presentation, mode | not accepted | false | false | none | terminal [command] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `terminal-open-file-directory` | background work, presentation, mode | not accepted | false | false | none | terminal-file-directory [command] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `terminal-open-directory-root` | background work, presentation, mode | not accepted | false | false | none | terminal-directory-root [command] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `terminal-open-selected-directory` | background work, presentation, mode | not accepted | false | false | none | terminal-selected-directory [command] | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `terminal-open-session-directory` | background work, presentation, mode | not accepted | false | false | none | terminal-session-directory <number&#124;name> | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `terminal-open-list` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `terminal-show` | presentation, mode | not accepted | false | false | none | terminal-show <number&#124;name> | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `terminal-rename` | prompt, configuration | not accepted | false | false | none | terminal-rename <name> | palette argument, if any |  | atomic operation |
-| `terminal-leave` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `terminal-copy-output` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `terminal-leave` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `terminal-copy-output` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `terminal-send` | terminal input | not accepted | false | false | none | terminal-send [number&#124;name] | palette argument, if any |  | atomic operation |
 | `delete-word-backward` | text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `delete-word-forward` | text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
@@ -2263,55 +2277,55 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `insert-indent` | text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `insert-other-indent` | text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `commit-undo-checkpoint` | history | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `goto-definition` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `goto-declaration` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `goto-type-definition` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `goto-references` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `goto-implementation` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `new-buffer` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `open-navigator` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `previous-destination` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `session-previous` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-1` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-2` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-3` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-4` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-5` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-6` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-7` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-8` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-9` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-next-running` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-previous-running` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-open-directory` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-open-explorer` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `directory-open-workspace` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `open-buffer-picker` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `list-accept` | view, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `list-open-actions` | view, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `list-backspace` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `goto-definition` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `goto-declaration` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `goto-type-definition` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `goto-references` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `goto-implementation` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `new-buffer` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `open-navigator` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `previous-destination` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `session-previous` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-1` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-2` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-3` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-4` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-5` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-6` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-7` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-8` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-9` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-next-running` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-previous-running` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-open-directory` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-open-explorer` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `directory-open-workspace` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `open-buffer-picker` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `list-accept` | presentation, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `list-open-actions` | presentation, prompt | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `list-backspace` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `list-next` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `list-previous` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `list-page-down` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `list-page-up` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `list-first` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `list-last` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `list-toggle-preview` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `list-close-target` | view, prompt, background work, text, file, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Closes the captured target only after its guards or confirmation succeed and reconciles the surviving destination mode. |
-| `list-clear-filter` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `list-close` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `session-open-destinations` | file, view, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `search-workspace` | prompt, background work, view, mode | not accepted | false | false | none | none | nonempty pattern; replaces the prompt |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `search-workspace-regex` | prompt, background work, view, mode | not accepted | false | false | none | none | nonempty pattern; replaces the prompt |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `show-documentation` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `document-symbols` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `workspace-symbols` | prompt, background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `diagnostics` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `list-toggle-preview` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `list-close-target` | presentation, prompt, background work, text, file, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Closes the captured target only after its guards or confirmation succeed and reconciles the surviving destination mode. |
+| `list-clear-filter` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `list-close` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `session-open-destinations` | file, presentation, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `search-workspace` | prompt, background work, presentation, mode | not accepted | false | false | none | none | nonempty pattern; replaces the prompt |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `search-workspace-regex` | prompt, background work, presentation, mode | not accepted | false | false | none | none | nonempty pattern; replaces the prompt |  | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `show-documentation` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `document-symbols` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `workspace-symbols` | prompt, background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `diagnostics` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `trigger-completion` | background work, prompt, text, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Enters Insert only when a language server is available, then owns the completion request and later text acceptance. |
-| `jump-backward` | view, selection, mode | not accepted | false | false | none | none | palette argument, if any | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `jump-forward` | view, selection, mode | not accepted | false | false | none | none | palette argument, if any | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `jump-backward-buffer` | view, selection, mode | not accepted | false | false | none | none | palette argument, if any | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a destination and its mode as one guarded workflow. |
-| `jump-forward-buffer` | view, selection, mode | not accepted | false | false | none | none | palette argument, if any | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `jump-backward` | presentation, selection, mode | not accepted | false | false | none | none | palette argument, if any | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `jump-forward` | presentation, selection, mode | not accepted | false | false | none | none | palette argument, if any | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `jump-backward-buffer` | presentation, selection, mode | not accepted | false | false | none | none | palette argument, if any | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a destination and its mode as one guarded workflow. |
+| `jump-forward-buffer` | presentation, selection, mode | not accepted | false | false | none | none | palette argument, if any | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a destination and its mode as one guarded workflow. |
 | `rename-symbol` | background work, prompt, text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `code-action` | background work, prompt, text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `clipboard-paste-after` | text, selection | interpreted as an address or extent | false | false | none | none | palette argument, if any |  | atomic operation |
@@ -2324,39 +2338,39 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `macro-stop-recording` | macro | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `macro-replay` | character input, macro, text, background work | repeats | false | false | one character | none | one Unicode scalar; replaces the character operand |  | atomic operation |
 | `macro-replay-default` | macro, text, background work | repeats | false | false | none | none | palette argument, if any |  | atomic operation |
-| `macro-list` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `macro-list` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `shell-pipe` | prompt, background work, text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `match-bracket` | selection | not accepted | false | true | none | none | palette argument, if any |  | atomic operation |
-| `cd` | file, configuration, prompt, background work, view, application | not accepted | false | false | none | cd [path] | palette argument, if any |  | atomic operation |
-| `init` | file, configuration, background work, view, application | not accepted | false | false | none | init [directory] | palette argument, if any |  | atomic operation |
-| `close` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `diff-disk` | file, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `diff-remote` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `diff-off` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `diff-this` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `close!` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `cd` | file, configuration, prompt, background work, presentation, application | not accepted | false | false | none | cd [path] | palette argument, if any |  | atomic operation |
+| `init` | file, configuration, background work, presentation, application | not accepted | false | false | none | init [directory] | palette argument, if any |  | atomic operation |
+| `close` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `diff-disk` | file, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `diff-remote` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `diff-off` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `diff-this` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `close!` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `format` | background work, text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-compare` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-branches` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-blame` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-blame-file` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-compare` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-branches` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-blame` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-blame-file` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
 | `git-cancel` | background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-commit` | prompt, background work, file, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-diff` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-diff-side-by-side` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-commit` | prompt, background work, file, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-diff` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-diff-side-by-side` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-discard` | prompt, background work, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-index` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-log` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-network` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-network-head` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-network-all` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-network-ref` | background work, view, mode | not accepted | false | false | none | git-network-ref <full-ref> | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-network-choose-ref` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-search-commits` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-refresh` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-index` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-log` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-network` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-network-head` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-network-all` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-network-ref` | background work, presentation, mode | not accepted | false | false | none | git-network-ref <full-ref> | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-network-choose-ref` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-search-commits` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `git-refresh` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-stage` | background work, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-status` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `git-stashes` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-status` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-stashes` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
 | `git-stash-tracked` | prompt, background work, file | not accepted | false | false | none | git-stash-tracked <name> | palette argument, if any |  | atomic operation |
 | `git-stash-all` | prompt, background work, file | not accepted | false | false | none | git-stash-all <name> | palette argument, if any |  | atomic operation |
 | `git-stash-untracked` | prompt, background work, file | not accepted | false | false | none | git-stash-untracked <name> | palette argument, if any |  | atomic operation |
@@ -2366,26 +2380,26 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `git-unstage-hunk` | background work, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-stage-lines` | background work, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `git-unstage` | background work, file | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `git-worktrees` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `git-worktrees` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
 | `config-reload` | configuration, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `write-config` | file | not accepted | false | false | none | write-config [path] | palette argument, if any |  | atomic operation |
 | `write-config!` | file | not accepted | false | false | none | write-config! [path] | palette argument, if any |  | atomic operation |
 | `grammar` | configuration, mode, selection | not accepted | false | false | none | grammar [runyte] | palette argument, if any |  | decision: Changes the editing grammar and reconciles its current mode and selection. |
 | `lsp-trust` | prompt, configuration, background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `mcp` | prompt, configuration, background work | not accepted | false | false | none | mcp [identity] | palette argument, if any |  | atomic operation |
-| `agent-channel` | background work, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `agent-channel` | background work, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
 | `lsp-restart` | background work | not accepted | false | false | none | lsp-restart [language] | palette argument, if any |  | atomic operation |
-| `log-open` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `lsp-status` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `notifications` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `open` | file, view, prompt, background work | not accepted | false | false | none | open <path> | palette argument, if any |  | atomic operation |
-| `path` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `describe-key` | prompt, view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
-| `browse-actions` | view, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `log-open` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `lsp-status` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `notifications` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `open` | file, presentation, prompt, background work | not accepted | false | false | none | open <path> | palette argument, if any |  | atomic operation |
+| `path` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `describe-key` | prompt, presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
+| `browse-actions` | presentation, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Opens or updates a workflow destination with the mode belonging to that destination. |
 | `copy-key-binding` | register | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `detach` | application | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `quit` | pane, view, application | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `quit!` | pane, view, application | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `quit` | pane, presentation, application | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `quit!` | pane, presentation, application | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `quit-all` | application | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `quit-all!` | application | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `quit-all!!` | application | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
@@ -2393,16 +2407,16 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `quit-here!` | application | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `reload` | prompt, background work, file, text | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `resize` | pane, prompt, mode | not accepted | false | false | none | none | palette argument, if any |  | decision: Owns the resize prompt and its mode transition. |
-| `service-health` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `service-health` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `pipe` | background work, text | not accepted | false | false | none | pipe <shell-command> | palette argument, if any |  | atomic operation |
 | `pipe-cancel` | background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `plugins` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `plugins` | presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `plugin-stop` | background work | not accepted | false | false | none | plugin-stop <configured-id> | palette argument, if any |  | atomic operation |
 | `plugin-restart` | background work | not accepted | false | false | none | plugin-restart <configured-id> | palette argument, if any |  | atomic operation |
-| `write-quit` | file, text, view, application, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Owns the save continuation; closes only after successful save and preserves commit-message or changed-buffer guards. |
-| `write-buffer-close` | file, text, view, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Owns the save continuation; closes only after successful save and preserves commit-message or changed-buffer guards. |
-| `session-attach` | background work, view | not accepted | false | false | none | session-attach <workspace> | palette argument, if any |  | atomic operation |
-| `session-list` | background work, view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+| `write-quit` | file, text, presentation, application, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Owns the save continuation; closes only after successful save and preserves commit-message or changed-buffer guards. |
+| `write-buffer-close` | file, text, presentation, prompt, background work | not accepted | false | false | none | none | palette argument, if any |  | decision: Owns the save continuation; closes only after successful save and preserves commit-message or changed-buffer guards. |
+| `session-attach` | background work, presentation | not accepted | false | false | none | session-attach <workspace> | palette argument, if any |  | atomic operation |
+| `session-list` | background work, presentation | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `session-stop` | background work | not accepted | false | false | none | session-stop [workspace] | palette argument, if any |  | atomic operation |
 | `session-rename` | background work, configuration | not accepted | false | false | none | session-rename <workspace> <name> | palette argument, if any |  | atomic operation |
 | `session-clean` | background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |

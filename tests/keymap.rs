@@ -647,13 +647,23 @@ fn pane_swap_exchanges_complete_contents_follows_the_caret_and_is_its_own_invers
     app.execute(CommandInvocation::editor(EditorCommand::NewBuffer, Default::default()).unwrap())
         .unwrap();
     app.execute(
-        CommandInvocation::editor(EditorCommand::EnterInsertMode, Default::default()).unwrap(),
+        CommandInvocation::from_parts(
+            runyte::command::CommandId::Editor(EditorCommand::ModeEnter),
+            runyte::command::InvocationParameters::OptionalText(Some("insert".into())),
+            Default::default(),
+        )
+        .unwrap(),
     )
     .unwrap();
     app.handle_input(InputEvent::Text("second pane".to_owned()))
         .unwrap();
     app.execute(
-        CommandInvocation::editor(EditorCommand::EnterNormalMode, Default::default()).unwrap(),
+        CommandInvocation::from_parts(
+            runyte::command::CommandId::Editor(EditorCommand::ModeEnter),
+            runyte::command::InvocationParameters::OptionalText(Some("normal".into())),
+            Default::default(),
+        )
+        .unwrap(),
     )
     .unwrap();
     app.panes.get_mut(&edited_pane).unwrap().scroll_row = 7;
@@ -946,7 +956,7 @@ fn control_backslash_exits_insert_and_control_w_moves_between_panes() {
             default_keymap().lookup(Mode::Insert, &KeySequence::from(key)),
             Lookup::Exact(binding)
                 if binding.target
-                    == BindingTarget::Editor(EditorCommand::EnterNormalMode)
+                    == BindingTarget::Editor(EditorCommand::FitSelectionForNormalMode)
         ));
     }
 
@@ -955,7 +965,7 @@ fn control_backslash_exits_insert_and_control_w_moves_between_panes() {
             default_keymap().lookup(Mode::Normal, &KeySequence::from(key)),
             Lookup::Exact(binding)
                 if binding.target
-                    == BindingTarget::Editor(EditorCommand::EnterNormalMode)
+                    == BindingTarget::Editor(EditorCommand::FitSelectionForNormalMode)
         ));
     }
     assert!(matches!(
@@ -1071,8 +1081,8 @@ fn namespace_rows_are_non_executable_prefixes_backed_by_real_bindings() {
         ));
     }
     for binding in keymap.bindings() {
-        // A conditional binding describes the complete gesture, not one leaf.
-        if !binding.program.has_conditions() {
+        // A composed binding describes the complete gesture, not one leaf.
+        if binding.is_plain_action() {
             assert_eq!(binding.description, binding.target.description());
         }
     }

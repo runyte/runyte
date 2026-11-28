@@ -122,10 +122,6 @@ fn shared_colon_migrations_preserve_identity_and_existing_terminal_spellings() {
         assert_eq!(invocation.id(), CommandId::Editor(expected));
     }
     for command in [
-        C::EnterNormalMode,
-        C::EnterSelectMode,
-        C::EnterInsertMode,
-        C::EnterReplaceMode,
         C::FitSelectionForNormalMode,
         C::ReplaceWithRegister,
         C::MatchBracket,

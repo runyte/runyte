@@ -41,7 +41,7 @@ fn rejects(program: &str, detail: &str) {
 #[test]
 fn mode_entry_changes_admission_for_the_remaining_program() {
     accepts("[{action: mode-enter, arg: insert}, insert-newline]");
-    accepts("[enter-insert-mode, insert-newline]");
+    accepts("[{action: mode-enter, arg: insert}, insert-newline]");
     rejects(
         "[insert-newline, {action: mode-enter, arg: insert}]",
         "step 1",
@@ -55,7 +55,7 @@ fn mode_entry_changes_admission_for_the_remaining_program() {
 #[test]
 fn conditional_joins_validate_every_reachable_tail() {
     accepts(
-        "[{if: recording-macro, then: [{action: mode-enter, arg: insert}], else: [enter-insert-mode]}, insert-newline]",
+        "[{if: recording-macro, then: [{action: mode-enter, arg: insert}], else: [{action: mode-enter, arg: insert}]}, insert-newline]",
     );
     rejects(
         "[{if: recording-macro, then: [{action: mode-enter, arg: insert}], else: []}, insert-newline]",

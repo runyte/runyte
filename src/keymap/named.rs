@@ -506,7 +506,7 @@ fn apply_candidate(
                     .next()
                     .map(actions::Action::target)
                     .unwrap_or(BindingTarget::Editor(
-                        crate::command::EditorCommand::EnterNormalMode,
+                        crate::command::EditorCommand::ModeEnter,
                     ));
                 let mut binding = Binding::implemented_in(
                     actions::mode_slice(rule.mode),
@@ -710,13 +710,11 @@ mod tests {
                     action.target(),
                     crate::keymap::BindingTarget::Editor(
                         crate::command::EditorCommand::ModeEnter
-                            | crate::command::EditorCommand::EnterInsertMode
                             | crate::command::EditorCommand::AppendAfter
                             | crate::command::EditorCommand::InsertLineStart
                             | crate::command::EditorCommand::InsertLineEnd
                             | crate::command::EditorCommand::OpenLineAbove
                             | crate::command::EditorCommand::OpenLineBelow
-                            | crate::command::EditorCommand::EnterReplaceMode
                     )
                 )
             }) {

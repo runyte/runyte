@@ -561,11 +561,8 @@ fn cursor_pointer_replay_and_semantic_input_cancel_delayed_submit_authority() {
                 .handle_replayed_input(InputEvent::Text("should not edit".into()))
                 .unwrap(),
             "semantic" => {
-                app.execute(
-                    CommandInvocation::editor(EditorCommand::EnterNormalMode, Default::default())
-                        .unwrap(),
-                )
-                .unwrap();
+                app.execute(CommandInvocation::mode_entry(Mode::Normal))
+                    .unwrap();
             }
             "native-pointer" => {
                 let view = app.prepare_view(FrameGeometry {

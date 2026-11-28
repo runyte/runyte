@@ -460,7 +460,7 @@ dispatch, validation, help, key hints and the action browser all read it.
 | Name, description, category | As today; names follow decision 21 | `CommandMetadata` |
 | Buffer types | The buffer types it works in, with a one-line description of how each carries it out, e.g. `terminal: copies the review selection` | Interceptions in `terminal_workflows.rs` and similar |
 | Modes | The modes it may be bound in | `scan_editor_modes` |
-| Effect | One of: selection, text, mode, view, pane, file, waits for an operand, opens a prompt, runs in the background | `can_continue` |
+| Effect | One of: selection, text, mode, presentation, pane, file, waits for an operand, opens a prompt, runs in the background | `can_continue` |
 | Count | Rejects, repeats, or interprets the count | `accepts_count` |
 | Argument | None, or its format and whether it replaces the operand or prompt | Palette argument parsing |
 | Mutating | Ends at a buffer transaction | `is_mutating` |
@@ -763,7 +763,23 @@ search has three dedicated actions and ordinary bindings, including **N**.
 
 ### Pending stage 5 splits
 
-`enter-normal-mode`, `enter-insert-mode`, `enter-replace-mode`, `enter-select-mode`.
+None. Stage 5f removes the four bundled mode-entry identities.
+
+### Decision 55 — retire bundled mode-entry actions
+
+The four bundled mode-entry actions are removed in 0.5. Their diagnostics
+supply complete programs, tested by parsing the actual hints and admitting
+them against the preset. Older bundled-action hints use the same public syntax.
+Insert and Replace enter the mode before collapsing, so read-only refusal
+leaves the selection unchanged. Insert then uses collapse-selection-start.
+Replace uses collapse-selection-head: forward half-open ranges demonstrate
+that the raw head differs from collapse-selection's converted inclusive head,
+including grapheme and line-end boundaries. Both raw collapse actions preserve
+mode and produce characterwise point selections.
+Normal uses the existing fit step followed by mode-enter normal. Select mode
+entry owns native media BeginSelection and terminal review capture and focus,
+so direct actions, programs and temporary mode entry share that housekeeping.
+The displayed View effect is named presentation; its internal identity stays.
 
 ## Delivery stages
 
@@ -803,7 +819,7 @@ where input or help can reach the native frontend.
    conditional steps with the documented condition set. Add mode-flow validation:
    validate each step against the mode it will run in, derived from preceding
    mode steps and independently for each conditional branch, rather than the
-   binding's starting mode. For example, `[enter-insert-mode, insert-newline]`
+   binding's starting mode. For example, `[{action: mode-enter, arg: insert}, insert-newline]`
    becomes valid. Add `:keymap-export` (no default key) with export/reload
    parity after lifting the public step gate (decision 42).
 6. **Macros in configuration.** `keys.macros`, `macros.d/`, the compact

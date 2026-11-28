@@ -297,7 +297,7 @@ fn discovery_explains_effect_and_argument_continuation() {
     use runyte::command::{CommandId, EditorCommand as C};
     for (command, expected) in [
         (C::FindNextChar, "can be followed by another action"),
-        (C::EnterInsertMode, "can be followed by another action"),
+        (C::ModeEnter, "can be followed by another action"),
         (
             C::RenameTerminal,
             "last unless an argument supplies the prompt input",

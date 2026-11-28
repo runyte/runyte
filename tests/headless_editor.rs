@@ -950,7 +950,14 @@ fn syntax_object_navigation_supports_modes_counts_and_each_object_kind() {
     assert_eq!(editor.active_selection(), Selection::point(first_fn));
 
     editor
-        .execute(editor_invocation(EditorCommand::EnterSelectMode))
+        .execute(
+            CommandInvocation::from_parts(
+                runyte::command::CommandId::Editor(EditorCommand::ModeEnter),
+                runyte::command::InvocationParameters::OptionalText(Some("select".into())),
+                Default::default(),
+            )
+            .unwrap(),
+        )
         .unwrap();
     editor
         .execute(editor_invocation(EditorCommand::GotoNextSyntaxFunction))
@@ -961,7 +968,14 @@ fn syntax_object_navigation_supports_modes_counts_and_each_object_kind() {
     );
 
     editor
-        .execute(editor_invocation(EditorCommand::EnterNormalMode))
+        .execute(
+            CommandInvocation::from_parts(
+                runyte::command::CommandId::Editor(EditorCommand::ModeEnter),
+                runyte::command::InvocationParameters::OptionalText(Some("normal".into())),
+                Default::default(),
+            )
+            .unwrap(),
+        )
         .unwrap();
     editor.set_active_selection(Selection::point(char_offset(source, "struct First")));
     editor
