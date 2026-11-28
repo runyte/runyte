@@ -296,7 +296,7 @@ fn typed_steps_keep_types_options_and_scoped_internal_syntax_strict() {
         "{action: yank, surprise: false}",
         "{action: search, arg: TODO}",
     ] {
-        for mode in ["normal", "directory", "terminal-normal"] {
+        for mode in ["normal", "directory", "terminal"] {
             let result = compile(&format!("bind: {{{mode}: {{F6: {step}}}}}"));
             assert!(!result.errors.is_empty(), "{mode}: {step}");
             assert_eq!(

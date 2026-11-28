@@ -889,7 +889,7 @@ mod tests {
             "mystery: true",
             "bind: {normal: {x: {steps: [move-left], platforms: []}}}",
             "bind: {normal: {x: {steps: [move-left], platforms: [unknown]}}}",
-            "bind: {normal: {x: {command: move-left, platforms: [macos]}}}",
+            "bind: {normal: {x: {action: move-left, platforms: [macos]}}}",
             "bind: {normal: {x: move-left, x: move-right}}",
             "bind: {normal: {x: {steps: [move-left], mystery: true}}}",
             "bind: {normal: {x: {steps: [move-left], role: other}}}",
