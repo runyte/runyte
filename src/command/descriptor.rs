@@ -161,6 +161,8 @@ pub struct ActionDescriptor {
     pub category: CommandCategory,
     pub policy: ActionPolicy,
     pub classification: ActionClassification,
+    pub uses_register: bool,
+    pub supports_extend: bool,
     /// The existing palette spelling, aliases, argument format and requirement.
     /// `usage` records formats more precise than Path/FreeText. Presence of
     /// interactive operands never grants a new palette argument form.
@@ -172,6 +174,26 @@ pub struct ActionDescriptor {
 }
 
 impl ActionDescriptor {
+    /// Extension must be implemented by the visible view, not its hidden buffer.
+    pub fn supports_extend_in(self, scope: BindingScope) -> bool {
+        self.supports_extend
+            && match scope {
+                BindingScope::DirectoryTree | BindingScope::SessionManager => false,
+                BindingScope::Media => matches!(
+                    self.id,
+                    CommandId::Editor(
+                        EditorCommand::MoveLeft
+                            | EditorCommand::MoveRight
+                            | EditorCommand::MoveUp
+                            | EditorCommand::MoveDown
+                            | EditorCommand::MediaMoveUp
+                            | EditorCommand::MediaMoveDown
+                    )
+                ),
+                _ => true,
+            }
+    }
+
     /// Continue only when no input owner or deferred work remains. Supplying
     /// prompt input removes that prompt, never independent background work.
     pub fn can_continue(self, parameters: &super::InvocationParameters) -> bool {
@@ -256,6 +278,53 @@ impl EditorCommand {
             category: self.category(),
             policy: self.action_policy(),
             classification: classification::editor_classification(self),
+            uses_register: matches!(
+                self,
+                EditorCommand::Yank
+                    | EditorCommand::YankLine
+                    | EditorCommand::CutSelection
+                    | EditorCommand::CutSelectionForChange
+                    | EditorCommand::PasteAfter
+                    | EditorCommand::PasteBefore
+                    | EditorCommand::PasteAfterOrReplace
+                    | EditorCommand::ReplaceWithRegister
+                    | EditorCommand::DirectoryPaste
+                    | EditorCommand::TerminalPaste
+            ),
+            supports_extend: matches!(
+                self,
+                EditorCommand::MediaMoveUp
+                    | EditorCommand::MediaMoveDown
+                    | EditorCommand::MoveLeft
+                    | EditorCommand::MoveRight
+                    | EditorCommand::MoveUp
+                    | EditorCommand::MoveDown
+                    | EditorCommand::MoveLineStart
+                    | EditorCommand::MoveLineEnd
+                    | EditorCommand::MoveFirstNonWhitespace
+                    | EditorCommand::MoveFileStart
+                    | EditorCommand::MoveFileEnd
+                    | EditorCommand::MoveWordForward
+                    | EditorCommand::MoveWordBackward
+                    | EditorCommand::MoveWordEnd
+                    | EditorCommand::MoveLongWordForward
+                    | EditorCommand::MoveLongWordBackward
+                    | EditorCommand::MoveLongWordEnd
+                    | EditorCommand::GotoNextParagraph
+                    | EditorCommand::GotoPreviousParagraph
+                    | EditorCommand::PageUp
+                    | EditorCommand::PageDown
+                    | EditorCommand::HalfPageUp
+                    | EditorCommand::HalfPageDown
+                    | EditorCommand::GotoWindowTop
+                    | EditorCommand::GotoWindowCenter
+                    | EditorCommand::GotoWindowBottom
+                    | EditorCommand::FindNextChar
+                    | EditorCommand::FindPreviousChar
+                    | EditorCommand::FindTillNextChar
+                    | EditorCommand::FindTillPreviousChar
+                    | EditorCommand::MatchBracket
+            ),
             palette: palette(id),
             palette_context: id.context(),
             view_overrides: views::editor_views(self),
@@ -283,6 +352,8 @@ impl ColonCommand {
             category: self.category(),
             policy: self.action_policy(),
             classification: classification::colon_classification(self),
+            uses_register: false,
+            supports_extend: false,
             palette: Some(spec),
             palette_context: id.context(),
             view_overrides: &[],

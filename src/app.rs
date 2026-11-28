@@ -3311,6 +3311,7 @@ pub struct App {
     ports: HostPorts,
     registers: HashMap<char, Register>,
     selected_register: char,
+    step_extend: Option<bool>,
     macros: HashMap<char, Vec<InputEvent>>,
     recording_macro: Option<char>,
     /// Recorded events whose key sequence has not resolved yet.
@@ -4078,6 +4079,7 @@ impl App {
             ports,
             registers: HashMap::new(),
             selected_register: '"',
+            step_extend: None,
             macros: HashMap::new(),
             recording_macro: None,
             macro_staging: Vec::new(),

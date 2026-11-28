@@ -2691,7 +2691,8 @@ impl App {
                 });
             let context = GrammarContext::new(self.mode, self.key_binding_scope(), &self.keymap)
                 .with_binding_mode(self.current_binding_mode())
-                .with_recording_macro(self.recording_macro.is_some());
+                .with_recording_macro(self.recording_macro.is_some())
+                .with_register(self.selected_register);
             let GrammarOutput {
                 intents,
                 reprocess,
@@ -2710,7 +2711,9 @@ impl App {
                 && !self
                     .grammar
                     .program_reserved_for(self.macro_replay_generation)
-                && !self.reserve_macro_replay_range_work(program_repetitions.unwrap_or(1))
+                && !self.reserve_macro_replay_program_work(
+                    program_repetitions.as_deref().unwrap_or(&[]),
+                )
             {
                 self.reset_program_input();
                 return Ok(());
@@ -2933,7 +2936,36 @@ impl App {
                     self.sequence_halted = true;
                     return Ok(None);
                 }
-                return Ok(Some(self.execute(invocation)?));
+                let (register, extend) = self.grammar.step_overrides();
+                if extend.is_some()
+                    && !invocation
+                        .id()
+                        .descriptor()
+                        .is_some_and(|d| d.supports_extend_in(self.key_binding_scope()))
+                {
+                    self.action_failed("extend is unavailable in this view");
+                    return Ok(None);
+                }
+                let previous_register = self.selected_register;
+                if let Some((register, _)) = register {
+                    self.selected_register = register;
+                }
+                let previous_extend = std::mem::replace(&mut self.step_extend, extend);
+                let result = self.execute(invocation);
+                self.step_extend = previous_extend;
+                if extend == Some(false)
+                    && result.is_ok()
+                    && !self.status_error
+                    && self.active_terminal().is_none()
+                    && self.active().selection.ranges().iter().all(Range::is_empty)
+                {
+                    self.active_mut()
+                        .mark_selection_semantics(SelectionSemantics::Runyte);
+                }
+                if let Some((_, consume)) = register {
+                    self.selected_register = if consume { '"' } else { previous_register };
+                }
+                return result.map(Some);
             }
             EditorIntent::InsertText(text) => {
                 if self.active_terminal().is_some() {
@@ -6232,7 +6264,7 @@ impl App {
                         );
                         let (_, rows) = self.pane_cells(self.active_pane);
                         let scroll_offset = self.config.editor.scroll_offset;
-                        let extend = self.mode == Mode::Select;
+                        let extend = self.motion_extends();
                         let mut found = true;
                         if let Some(session) = self.terminals.get_mut(id) {
                             for _ in 0..repetitions {
@@ -6345,7 +6377,10 @@ impl App {
                 let (_, rows) = self.pane_cells(self.active_pane);
                 let scroll_offset = self.config.editor.scroll_offset;
                 if let Some(session) = self.terminals.get_mut(id) {
-                    session.goto_review_line(line, self.mode == Mode::Select);
+                    session.goto_review_line(
+                        line,
+                        self.step_extend.unwrap_or(self.mode == Mode::Select),
+                    );
                     session.focus_review_selection(rows.max(1), scroll_offset);
                 }
             } else {

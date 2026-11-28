@@ -3445,10 +3445,10 @@ impl App {
                 self.enter_select_mode();
                 A::BeginSelection
             }
-            C::MoveLeft if self.mode == Mode::Select => A::ExtendLeft,
-            C::MoveRight if self.mode == Mode::Select => A::ExtendRight,
-            C::MediaMoveUp | C::MoveUp if self.mode == Mode::Select => A::ExtendUp,
-            C::MediaMoveDown | C::MoveDown if self.mode == Mode::Select => A::ExtendDown,
+            C::MoveLeft if self.motion_extends() => A::ExtendLeft,
+            C::MoveRight if self.motion_extends() => A::ExtendRight,
+            C::MediaMoveUp | C::MoveUp if self.motion_extends() => A::ExtendUp,
+            C::MediaMoveDown | C::MoveDown if self.motion_extends() => A::ExtendDown,
             C::MediaPanLeft | C::MoveLeft => A::PanLeft,
             C::MediaPanRight | C::MoveRight => A::PanRight,
             C::ScrollViewUp => A::PanUp,

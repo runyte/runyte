@@ -624,15 +624,20 @@ impl App {
         });
     }
 
+    pub(super) fn motion_extends(&self) -> bool {
+        self.step_extend.unwrap_or(self.mode == Mode::Select)
+    }
+
     pub(super) fn motion(&mut self, motion: Motion) {
-        self.motion_with_extension(motion, self.mode == Mode::Select);
+        self.motion_with_extension(motion, self.motion_extends());
     }
 
     /// Whether a word or find motion should select what it crosses rather
     /// than move a caret. Only Normal mode changes: Select mode already
     /// extends, and a terminal's review selection has motions of its own.
     pub(super) fn selecting_motions_apply(&self) -> bool {
-        self.config.editor.selecting_motions
+        self.step_extend.is_none()
+            && self.config.editor.selecting_motions
             && self.mode == Mode::Normal
             && self.active_terminal().is_none()
     }
@@ -656,7 +661,7 @@ impl App {
             Motion::LongWordBack => (WordTarget::PreviousStart, true),
             _ => unreachable!("only word motions select words"),
         };
-        let extend = self.mode == Mode::Select && self.active_terminal().is_none();
+        let extend = self.motion_extends() && self.active_terminal().is_none();
         if !extend && !self.selecting_motions_apply() {
             self.motion(motion);
             return;
@@ -740,7 +745,7 @@ impl App {
         let buffer = self.active_buffer();
         let row = one_based.saturating_sub(1).min(buffer.last_row());
         let head = buffer.clamp_offset(buffer.line_to_offset(row), false);
-        let selection = if self.mode == Mode::Select {
+        let selection = if self.motion_extends() {
             self.active()
                 .selection
                 .transform(|range| range.extend_to(head))
@@ -1007,7 +1012,10 @@ impl App {
                     let (_, rows) = self.pane_cells(self.active_pane);
                     let scroll_offset = self.config.editor.scroll_offset;
                     if let Some(session) = self.terminals.get_mut(id) {
-                        session.goto_review_offset(offset, self.mode == Mode::Select);
+                        session.goto_review_offset(
+                            offset,
+                            self.step_extend.unwrap_or(self.mode == Mode::Select),
+                        );
                         session.focus_review_selection(rows.max(1), scroll_offset);
                     }
                 } else {
@@ -1025,7 +1033,7 @@ impl App {
     /// other motion would.
     fn jump_to_word(&mut self, offset: Offset) {
         let head = self.active_buffer().clamp_offset(offset, false);
-        let selection = if self.mode == Mode::Select {
+        let selection = if self.motion_extends() {
             self.active()
                 .selection
                 .transform(|range| range.extend_to(head))
@@ -2645,7 +2653,7 @@ impl App {
             return;
         };
         let text = self.buffers[buffer_id].text();
-        let extend = self.mode == Mode::Select;
+        let extend = self.motion_extends();
         let mut matched = false;
         let selection = self.active().selection.transform(|range| {
             let Some(target) = syntax.matching_bracket(text, range.head) else {
@@ -3321,10 +3329,6 @@ impl App {
                 linewise,
                 directory,
             });
-        } else {
-            // A register chosen with `"` applies to the next command only,
-            // whether or not that command writes it.
-            self.selected_register = '"';
         }
         let buffer = self.active_buffer();
         if !linewise_extent {
@@ -4082,6 +4086,7 @@ impl App {
             return;
         }
         self.selected_register = name;
+        self.grammar.set_pending_register(name);
         self.status(format!("register {name} selected"));
     }
 

@@ -882,7 +882,10 @@ impl App {
                     Command::GotoWindowBottom => ReviewMotion::WindowBottom,
                     _ => unreachable!(),
                 };
-                session.move_review(motion, self.mode == Mode::Select);
+                session.move_review(
+                    motion,
+                    self.step_extend.unwrap_or(self.mode == Mode::Select),
+                );
                 session.focus_review_selection(page, scroll_offset);
                 let _ = session;
                 true
