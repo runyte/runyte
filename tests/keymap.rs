@@ -646,12 +646,26 @@ fn pane_swap_exchanges_complete_contents_follows_the_caret_and_is_its_own_invers
     let edited_pane = app.active_pane;
     app.execute(CommandInvocation::editor(EditorCommand::NewBuffer, Default::default()).unwrap())
         .unwrap();
-    app.execute(runyte::command::parse_named_command("mode-enter", Some("insert")).unwrap())
-        .unwrap();
+    app.execute(
+        CommandInvocation::from_parts(
+            runyte::command::CommandId::Editor(EditorCommand::ModeEnter),
+            runyte::command::InvocationParameters::OptionalText(Some("insert".into())),
+            Default::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     app.handle_input(InputEvent::Text("second pane".to_owned()))
         .unwrap();
-    app.execute(runyte::command::parse_named_command("mode-enter", Some("normal")).unwrap())
-        .unwrap();
+    app.execute(
+        CommandInvocation::from_parts(
+            runyte::command::CommandId::Editor(EditorCommand::ModeEnter),
+            runyte::command::InvocationParameters::OptionalText(Some("normal".into())),
+            Default::default(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     app.panes.get_mut(&edited_pane).unwrap().scroll_row = 7;
     let edited_buffer = app.panes[&edited_pane].buffer;
     let edited_head = app.panes[&edited_pane].selection.primary().head;
@@ -1067,8 +1081,8 @@ fn namespace_rows_are_non_executable_prefixes_backed_by_real_bindings() {
         ));
     }
     for binding in keymap.bindings() {
-        // A conditional binding describes the complete gesture, not one leaf.
-        if !binding.program.has_conditions() {
+        // A composed binding describes the complete gesture, not one leaf.
+        if binding.is_plain_action() {
             assert_eq!(binding.description, binding.target.description());
         }
     }

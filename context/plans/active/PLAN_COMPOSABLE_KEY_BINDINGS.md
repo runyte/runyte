@@ -819,7 +819,7 @@ where input or help can reach the native frontend.
    conditional steps with the documented condition set. Add mode-flow validation:
    validate each step against the mode it will run in, derived from preceding
    mode steps and independently for each conditional branch, rather than the
-   binding's starting mode. For example, `[enter-insert-mode, insert-newline]`
+   binding's starting mode. For example, `[{action: mode-enter, arg: insert}, insert-newline]`
    becomes valid. Add `:keymap-export` (no default key) with export/reload
    parity after lifting the public step gate (decision 42).
 6. **Macros in configuration.** `keys.macros`, `macros.d/`, the compact

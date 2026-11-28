@@ -1189,10 +1189,11 @@ and honors transient whole rows; `delete-selection-for-change` preserves the
 insertion seam and deletes operative spans. Neither writes a register.
 `set-search-from-selection` is now `search-set-from-selection`.
 `search-selection` becomes query setup, `search-select-all-matches`, and pure
-Select entry. These exact default programs require internal mode steps until
-the public binding format supports pure mode entry. The additive
+Select entry with `{action: mode-enter, arg: select}`. These programs use the
+public binding format. The additive
 `search-extend-next`/`search-extend-previous` actions preserve mode;
-`search-next` and `search-previous` still enter Select in documents. Extension retains existing ranges and makes the added
+the default `n` and `N` bindings add a Select entry after `search-next` or
+`search-previous` in documents. Extension retains existing ranges and makes the added
 match primary, wrapping through the query's matches.
 
 Word and delimiter objects, syntax objects, expansion and relation selections, flipping a
