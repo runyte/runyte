@@ -40,6 +40,31 @@ pub(super) fn role_target_errors(map: &super::Keymap) -> Vec<String> {
     let Some(tables) = &map.overrides.1 else {
         return Vec::new();
     };
+    // Programs can be inherited by many modes and buffer types. Inspect their
+    // leaves once, then resolve only entry targets in each reachable context.
+    let targets: Vec<Vec<&str>> = map
+        .bindings
+        .iter()
+        .map(|binding| {
+            binding
+                .program
+                .iter()
+                .filter_map(|action| {
+                    let super::actions::Action::Invocation(invocation) = action else {
+                        return None;
+                    };
+                    if invocation.id() != CommandId::Editor(EditorCommand::ModeEnter) {
+                        return None;
+                    }
+                    match invocation.parameters() {
+                        InvocationParameters::OptionalText(Some(target))
+                        | InvocationParameters::TemporaryMode(target) => Some(target.as_str()),
+                        _ => None,
+                    }
+                })
+                .collect()
+        })
+        .collect();
     let empty_sequence = KeySequence(Vec::new());
     let mut errors = Vec::new();
     for kind in tables.buffer_types.keys() {
@@ -60,18 +85,7 @@ pub(super) fn role_target_errors(map: &super::Keymap) -> Vec<String> {
                 .and_then(|sequences| sequences.get(&empty_sequence));
             for &index in effective.into_iter().flat_map(|entry| &entry.continuations) {
                 let binding = &map.bindings[index];
-                for action in binding.program.iter() {
-                    let super::actions::Action::Invocation(invocation) = action else {
-                        continue;
-                    };
-                    if invocation.id() != CommandId::Editor(EditorCommand::ModeEnter) {
-                        continue;
-                    }
-                    let (InvocationParameters::OptionalText(Some(target))
-                    | InvocationParameters::TemporaryMode(target)) = invocation.parameters()
-                    else {
-                        continue;
-                    };
+                for &target in &targets[index] {
                     match tables.graph.entry_mode(kind, target) {
                         Some(destination) => pending.push(destination),
                         None => errors.push(format!(
