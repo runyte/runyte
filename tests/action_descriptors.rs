@@ -236,22 +236,17 @@ fn differing_view_implementations_are_described_without_changing_admission() {
             .contains("copy payload")
     );
     assert!(yank.view(S::Media).is_none());
-    assert!(
-        C::PasteAfter
-            .descriptor()
-            .view(S::Terminal)
-            .unwrap()
-            .description
-            .contains("without changing mode")
-    );
-    assert!(
-        C::PasteBefore
-            .descriptor()
-            .view(S::Terminal)
-            .unwrap()
-            .description
-            .contains("enter Insert mode")
-    );
+    for c in [C::PasteAfter, C::PasteBefore] {
+        assert!(c.descriptor().view(S::Terminal).is_none());
+    }
+    for c in [C::TerminalPaste, C::TerminalClipboardPasteText] {
+        assert!(c.descriptor().view(S::Terminal).is_some());
+        assert!(
+            !c.action_policy()
+                .effects
+                .contains(&runyte::command::descriptor::ActionEffect::Mode)
+        );
+    }
     assert!(
         C::MoveUp
             .descriptor()
@@ -380,7 +375,8 @@ fn effects_distinguish_synchronous_views_from_owned_async_and_prompt_work() {
         assert!(c.action_policy().effects.contains(&E::Background));
     }
     for c in [
-        EditorCommand::PasteAfter,
+        EditorCommand::TerminalPaste,
+        EditorCommand::TerminalClipboardPasteText,
         EditorCommand::ClipboardPaste,
         EditorCommand::Undo,
     ] {
