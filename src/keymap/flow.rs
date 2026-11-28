@@ -215,19 +215,22 @@ impl Analysis<'_> {
                     .as_ref()
                     .map(|invocation| invocation.parameters()),
             };
-            let direct_invocation = parameters.is_some_and(|parameters| match parameters {
-                P::None => false,
-                P::OptionalText(None) => command != C::OpenThemeSettings,
-                P::OptionalPath(None) => !matches!(
-                    command,
-                    C::Save
-                        | C::SplitVertical
-                        | C::SplitHorizontal
-                        | C::OpenWorkingDirectoryExplorer
-                ),
-                P::Help(crate::command::HelpInvocation::ActiveView) => false,
-                _ => true,
-            });
+            let direct_invocation = !command
+                .supplied_argument()
+                .is_some_and(|arg| arg.replaces_prompt())
+                && parameters.is_some_and(|parameters| match parameters {
+                    P::None => false,
+                    P::OptionalText(None) => command != C::OpenThemeSettings,
+                    P::OptionalPath(None) => !matches!(
+                        command,
+                        C::Save
+                            | C::SplitVertical
+                            | C::SplitHorizontal
+                            | C::OpenWorkingDirectoryExplorer
+                    ),
+                    P::Help(crate::command::HelpInvocation::ActiveView) => false,
+                    _ => true,
+                });
             let early_merge = matches!(
                 command,
                 C::MergeBranch
@@ -330,6 +333,9 @@ impl Analysis<'_> {
         let fixed = match id {
             CommandId::Editor(C::EnterNormalMode) => Some("normal"),
             CommandId::Editor(C::EnterSelectMode) => Some("select"),
+            CommandId::Editor(C::Search | C::SearchRegex) if matches!(action, Action::Invocation(invocation) if matches!(invocation.parameters(), P::OptionalText(Some(_)))) => {
+                Some("select")
+            }
             CommandId::Editor(C::EnterReplaceMode) => Some("replace"),
             CommandId::Editor(
                 C::EnterInsertMode

@@ -2,6 +2,7 @@
 
 pub mod descriptor;
 pub mod discovery;
+pub mod supplied;
 
 use std::{fmt, path::PathBuf};
 
@@ -836,6 +837,7 @@ editor_commands! {
     ),
     HardWrap => ("hard-wrap", "Hard-wrap the selection"),
     Reflow => ("reflow", "Reflow paragraphs in the selection"),
+    InsertText => ("insert-text", "Insert literal text at each caret"),
     JoinSelections => ("join-selections", "Join the selected lines with a typed delimiter"),
     JoinLines => ("join-lines", "Join the selected lines, or the line below, with a space"),
     FormatTable => ("format-table", "Align the columns of the selected table"),
@@ -1397,6 +1399,7 @@ impl EditorCommand {
             | Self::SelectAroundParagraph => CommandCategory::Selection,
             Self::HardWrap
             | Self::Reflow
+            | Self::InsertText
             | Self::JoinSelections
             | Self::JoinLines
             | Self::FormatTable
@@ -3010,6 +3013,21 @@ impl CommandExecutionContext {
         }
     }
 
+    /// Supply a literal operand without manufacturing a count prefix.
+    pub const fn with_character(self, character: char) -> Self {
+        Self {
+            character: Some(character),
+            ..self
+        }
+    }
+
+    pub const fn with_count(self, count: std::num::NonZeroUsize) -> Self {
+        Self {
+            count: Some(count),
+            ..self
+        }
+    }
+
     /// The same context carrying the operand that followed the first, for a
     /// command whose `takes_second_character` is true.
     pub const fn with_second_character(self, character: char) -> Self {
@@ -3193,6 +3211,25 @@ impl CommandInvocation {
                     true
                 } else {
                     false
+                }
+            }
+            CommandId::Editor(EditorCommand::InsertText) => {
+                validate_editor_execution(EditorCommand::InsertText, execution)?;
+                matches!(&parameters, InvocationParameters::OptionalText(Some(text))
+                    if supplied::SuppliedArgument::Literal.validate(text).is_ok())
+            }
+            CommandId::Editor(command)
+                if command
+                    .supplied_argument()
+                    .is_some_and(|arg| arg.replaces_prompt()) =>
+            {
+                validate_editor_execution(command, execution)?;
+                match &parameters {
+                    InvocationParameters::None => true,
+                    InvocationParameters::OptionalText(Some(text)) => {
+                        command.supplied_argument().unwrap().validate(text).is_ok()
+                    }
+                    _ => false,
                 }
             }
             CommandId::Editor(command) => {

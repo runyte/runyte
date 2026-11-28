@@ -175,14 +175,20 @@ impl ActionDescriptor {
     /// Continue only when no input owner or deferred work remains. Supplying
     /// prompt input removes that prompt, never independent background work.
     pub fn can_continue(self, parameters: &super::InvocationParameters) -> bool {
-        let supplies_prompt = self.argument().is_some_and(|argument| {
-            argument.delivery == ArgumentDelivery::ReplacesPrompt
-                && matches!(
-                    parameters,
-                    super::InvocationParameters::OptionalText(Some(_))
-                        | super::InvocationParameters::OptionalPath(Some(_))
-                )
-        });
+        let supplies_prompt = matches!(self.id, CommandId::Editor(command)
+            if command.supplied_argument().is_some_and(|arg| arg.replaces_prompt()))
+            && matches!(
+                parameters,
+                super::InvocationParameters::OptionalText(Some(_))
+            )
+            || self.argument().is_some_and(|argument| {
+                argument.delivery == ArgumentDelivery::ReplacesPrompt
+                    && matches!(
+                        parameters,
+                        super::InvocationParameters::OptionalText(Some(_))
+                            | super::InvocationParameters::OptionalPath(Some(_))
+                    )
+            });
         !self.policy.effects.iter().any(|effect| match effect {
             ActionEffect::Background => true,
             ActionEffect::Prompt => !supplies_prompt,

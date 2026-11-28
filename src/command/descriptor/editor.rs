@@ -525,6 +525,14 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: true,
             buffer_mutation: BufferMutation::MayMutate,
         },
+        C::InsertText => ActionPolicy {
+            global_binding_modes: ALL,
+            effects: &[Text, Selection],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: true,
+            buffer_mutation: BufferMutation::MayMutate,
+        },
         C::JoinSelections => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
             effects: &[Prompt, Text],

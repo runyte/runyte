@@ -990,3 +990,22 @@ fn switching_terminal_sessions_discards_a_temporary_mode() {
     assert_ne!(app.active_terminal(), Some(first));
     assert!(app.line_select.is_none());
 }
+
+#[test]
+fn supplied_terminal_search_continues_only_after_a_match() {
+    for (pattern, found) in [("foo", true), ("absent", false), ("[", false)] {
+        let (mut app, terminal) = terminal_app(&format!(
+            "bind: {{terminal: {{F6: [{{action: terminal-search-regex, arg: '{pattern}'}}, toggle-zen]}}}}"
+        ));
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id: terminal,
+            bytes: b"foo bar foo".to_vec(),
+        });
+        app.search.pattern = "document query".into();
+        app.set_editing_role(Mode::Normal);
+        send(&mut app, "F6");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.maximized.is_some(), found);
+        assert_eq!(app.search.pattern, "document query");
+    }
+}

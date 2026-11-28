@@ -313,3 +313,32 @@ fn discovery_explains_effect_and_argument_continuation() {
         assert!(details.contains(expected), "{details}");
     }
 }
+
+#[test]
+fn literal_controls_stay_visible_in_discovery_and_round_trip_in_copy() {
+    let section =
+        serde_yaml::from_str(r#"bind: {normal: {F6: {action: insert-text, arg: "λ\n\t"}}}"#)
+            .unwrap();
+    let compiled = configured::compile(&section, default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    let Lookup::Exact(binding) = compiled
+        .keymap
+        .lookup(Mode::Normal, &KeySequence::parse("F6").unwrap())
+    else {
+        panic!()
+    };
+    let steps = discovery::binding_steps(binding, BindingScope::Global);
+    assert!(steps.contains(r"λ\n\t"), "{steps}");
+    let copied =
+        discovery::binding_yaml(binding, Mode::Normal, Some(&section), &compiled.keymap).unwrap();
+    let document: serde_yaml::Value = serde_yaml::from_str(&copied).unwrap();
+    let rebuilt = configured::compile(&document["keys"], default_keymap());
+    assert!(rebuilt.errors.is_empty(), "{:?}", rebuilt.errors);
+    let Lookup::Exact(copy) = rebuilt
+        .keymap
+        .lookup(Mode::Normal, &KeySequence::parse("F6").unwrap())
+    else {
+        panic!()
+    };
+    assert_eq!(binding.program, copy.program);
+}

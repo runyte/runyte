@@ -2027,3 +2027,34 @@ fn direct_tree_focus_discards_a_temporary_mode() {
     assert!(app.line_select.is_none());
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn supplied_tree_search_uses_visible_entries_and_continues_without_a_prompt() {
+    let (mut app, root) = isolated("supplied-tree-search");
+    fs::write(root.join("alpha.txt"), "unchanged").unwrap();
+    fs::write(root.join("beta.txt"), "unchanged").unwrap();
+    app.config.merge_keys_source("bind: {directory-tree: {F6: {action: directory-tree-search, arg: beta}, F7: [{action: directory-tree-search, arg: absent}, directory-tree-select-parent], F8: [{action: directory-tree-search, arg: alpha}, directory-tree-select-parent]}}").unwrap();
+    let compiled = crate::keymap::configured::compile_configuration(
+        &app.config,
+        crate::keymap::default_keymap(),
+    );
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    app.set_keymap(compiled.keymap);
+    app.open_file(root.join("alpha.txt")).unwrap();
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(
+        app.directory_tree.selected,
+        root.join("beta.txt"),
+        "{}",
+        app.status
+    );
+    assert_ne!(app.mode, Mode::Command);
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, root.join("beta.txt"));
+    assert!(app.status_error);
+    key(&mut app, KeyCode::Function(8), Modifiers::NONE);
+    assert_eq!(app.directory_tree.selected, root);
+    fs::remove_dir_all(root).unwrap();
+}

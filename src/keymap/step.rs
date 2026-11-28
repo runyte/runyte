@@ -41,7 +41,12 @@ pub(super) fn validate_action(name: &str, arg: Option<&str>) -> Result<(), &'sta
     if name.is_empty()
         || name.len() > 128
         || name.chars().any(char::is_control)
-        || arg.is_some_and(|arg| arg.len() > 4096 || arg.chars().any(char::is_control))
+        || arg.is_some_and(|arg| {
+            arg.len() > 4096
+                || arg.chars().any(|c| {
+                    c.is_control() && !(name == "insert-text" && matches!(c, '\n' | '\r' | '\t'))
+                })
+        })
     {
         return Err("action name or argument exceeds its bound or contains control characters");
     }
@@ -279,7 +284,18 @@ pub(super) fn yaml(program: &program::Program) -> Result<serde_yaml::Value, Stri
                         let mut map = Mapping::new();
                         map.insert("action".into(), name.into());
                         match invocation.parameters() {
-                            P::None => return Ok(name.into()),
+                            P::None => {
+                                if let Some(first) = invocation.execution().character() {
+                                    let mut arg = first.to_string();
+                                    if let Some(second) = invocation.execution().second_character()
+                                    {
+                                        arg.push(second);
+                                    }
+                                    map.insert("arg".into(), arg.into());
+                                } else {
+                                    return Ok(name.into());
+                                }
+                            }
                             P::OptionalText(Some(arg)) => {
                                 map.insert("arg".into(), arg.clone().into());
                             }
@@ -350,6 +366,9 @@ mod tests {
             "[{action: mode-enter, arg: select, temporary: true}, {if: {mode: select}, then: [yank], else: []}]",
             "[{action: mode-enter, arg: review, temporary: false}, {if: {mode: review}, then: [move-right], else: [move-left]}]",
             "[{if: recording-macro, then: [macro-stop-recording], else: []}]",
+            "[{action: find-next-char, arg: λ}, {action: surround-replace, arg: '(]'}]",
+            "[{action: search, arg: abc}, {action: join-selections, arg: ''}]",
+            r#"[{action: insert-text, arg: "λ\n\t"}]"#,
             "[{if: tree-entry-expanded, then: [directory-tree-collapse], else: [directory-tree-expand]}]",
             "[{if: tree-entry-is-directory, then: [directory-tree-expand], else: []}]",
             "[{if: tree-entry-is-root, then: [], else: [directory-tree-select-parent]}]",

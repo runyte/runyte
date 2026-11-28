@@ -403,7 +403,10 @@ decision revises an earlier one, the earlier entry says so.
     Reject identifiable removed constructs, including `keys.scopes`, with
     migration diagnostics. The guide and 0.5 migration notes explain that
     `bind.normal` applies to normal and modes inheriting it; bindings intended
-    across views belong in `bind.common`.
+    across modal views belong in `bind.modal-keys`. `bind.common` also reaches
+    Insert and Replace, so only actions valid in every inheriting mode belong
+    there (clarified after decision 49). `common`, `modal-keys` and `insert-keys`
+    are public, stable shared-mode names in the Runyte preset.
 41. **Stage 4 mode boundary.** Stage 4 introduces named binding-mode identity,
     the mode graph, buffer-type starting modes, `inherits` and `unbound-keys`.
     Property-driven editing, the remaining mode schema, `describe-mode` and
@@ -1162,3 +1165,21 @@ restoration remains unchanged. This extends the focus ownership rule for
 pending programs from #141 and fixes a stage 4 regression where a directory
 return mode could replace Help's key table. Scope-specific commands exposed
 through stale return identities are bugs, not runtime capability exceptions.
+
+
+### Decision 51 — Supplied argument inventory and literal insertion
+
+Stage 5c accepts one Unicode scalar for find-next/previous/till-char,
+replace-char, surround-add/delete, register-select and macro-record/replay;
+surround-replace accepts the old and new scalars. Search/search-regex,
+terminal search, directory-tree search, keep/remove-matching-selections,
+join-selections and workspace search accept their prompt text. Workspace search
+remains asynchronous and last-only. Existing palette arguments remain supported.
+Captured or multi-step Git, native confirmation, settings, LSP rename and tree
+filesystem prompts have no generic bypass.
+
+`insert-text` inserts a nonempty literal (at most 4096 bytes, allowing newline
+and tab) at every range head without deleting the selection. Every resulting
+caret is after its insertion. It is one transaction under program undo, valid
+in all four editing roles, with read-only refusal and no automatic indentation,
+pairing or mode change. Replacement composes an explicit deletion with insertion.

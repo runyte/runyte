@@ -207,7 +207,7 @@ fn configuration_rejects_blocking_effects_and_retains_mode_boundaries() {
         "bind: {normal: {F8: list-next}}",
         "bind: {normal: {F8: commit-undo-checkpoint}}",
         "bind: {insert: {F8: git-status}}",
-        "bind: {normal: {F8: {action: surround-replace, arg: ab}}}",
+        "bind: {normal: {F8: {action: surround-replace, arg: abc}}}",
     ] {
         let value = serde_yaml::from_str(source).unwrap();
         let compiled = configured::compile(&value, default_keymap());

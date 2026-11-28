@@ -4805,6 +4805,7 @@ impl App {
             Command::TrimTrailingWhitespace => self.trim_trailing_whitespace_in_selection(),
             Command::HardWrap => self.hard_wrap_selections(self.config.editor.hard_wrap_width),
             Command::Reflow => self.reflow_selections(self.config.editor.hard_wrap_width),
+            Command::InsertText => self.action_failed("insert-text requires a literal argument"),
             Command::JoinSelections => self.open_prompt(PromptKind::JoinDelimiter),
             Command::JoinLines => self.join_lines(),
             Command::FormatTable => self.format_selected_tables(),
@@ -6034,6 +6035,29 @@ impl App {
             self.enter_named_binding_mode(name);
             return Ok(());
         }
+        if command == EditorCommand::InsertText
+            && let InvocationParameters::OptionalText(Some(value)) = &parameters
+        {
+            if !crate::keymap::admission::admits_command(self.key_binding_scope(), command) {
+                self.action_failed("action is unavailable in this view");
+            } else if let Some(reason) = self.active_buffer().read_only_reason() {
+                self.action_failed(reason);
+            } else {
+                self.completion = None;
+                self.hover = None;
+                self.active_mut().preserve_scroll = false;
+                self.insert_literal_at_carets(value);
+            }
+            return Ok(());
+        }
+        if command
+            .supplied_argument()
+            .is_some_and(|arg| arg.replaces_prompt())
+            && let InvocationParameters::OptionalText(Some(value)) = &parameters
+        {
+            self.execute_supplied_prompt(command, value);
+            return Ok(());
+        }
         if command == EditorCommand::ShowHelp && self.directory_tree.focused {
             match &parameters {
                 InvocationParameters::Help(HelpInvocation::ActiveView) => {
@@ -6169,6 +6193,13 @@ impl App {
         }
 
         if let Some(character) = execution.character() {
+            if self.active_terminal().is_none()
+                && command.is_mutating()
+                && let Some(reason) = self.active_buffer().read_only_reason()
+            {
+                self.action_failed(reason);
+                return Ok(());
+            }
             let repeated_character_command = matches!(
                 command,
                 EditorCommand::FindNextChar

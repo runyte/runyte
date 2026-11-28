@@ -323,6 +323,7 @@ mod search_history;
 mod search_preview;
 mod selection_history;
 mod settings_workflows;
+mod supplied_actions;
 mod surround;
 mod syntax_workflows;
 mod terminal_workflows;

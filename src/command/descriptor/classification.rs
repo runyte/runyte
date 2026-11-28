@@ -6,7 +6,8 @@ use crate::command::{ColonCommand, EditorCommand};
 pub(super) const fn editor_classification(command: EditorCommand) -> ActionClassification {
     use EditorCommand as C;
     match command {
-        C::TerminalUndoPaste
+        C::InsertText
+        | C::TerminalUndoPaste
         | C::TerminalPaste
         | C::TerminalClipboardPasteText
         | C::TerminalSearch

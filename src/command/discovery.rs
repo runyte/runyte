@@ -155,6 +155,14 @@ pub fn details_indexed(
             ));
         }
     }
+    if let CommandId::Editor(command) = id
+        && let Some(argument) = command.supplied_argument()
+    {
+        text.push_str(&format!(
+            "Key-program argument: {}\n",
+            argument.description()
+        ));
+    }
     if let Some(argument) = d.argument() {
         text.push_str(&format!(
             "Palette argument: {} ({}; {})\n",
@@ -223,7 +231,15 @@ fn render_program(
                 let argument = match action {
                     actions::Action::Invocation(invocation) => format!(
                         " (argument: {})",
-                        abbreviated(&argument_text(invocation.parameters()))
+                        abbreviated(&if let Some(first) = invocation.execution().character() {
+                            let mut value = first.to_string();
+                            if let Some(second) = invocation.execution().second_character() {
+                                value.push(second);
+                            }
+                            value
+                        } else {
+                            argument_text(invocation.parameters())
+                        })
                     ),
                     _ => String::new(),
                 };
@@ -253,7 +269,10 @@ fn argument_text(value: &super::InvocationParameters) -> String {
     match value {
         P::None | P::OptionalPath(None) | P::OptionalText(None) => "none".into(),
         P::Path(path) | P::OptionalPath(Some(path)) => path.display().to_string(),
-        P::OptionalText(Some(text)) => text.clone(),
+        P::OptionalText(Some(text)) => text
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t"),
         P::TemporaryMode(name) => format!("{name}, temporary: true"),
         P::SessionRename { workspace, name } => format!("{} {name}", workspace.display()),
         P::Grammar(value) => value
@@ -334,7 +353,7 @@ pub fn admitted_here(id: CommandId, mode: Mode, scope: BindingScope) -> bool {
 pub fn descriptor_reference() -> String {
     use std::fmt::Write;
     let mut out = String::from(
-        "\n## Action contracts\n\nGenerated from built-in descriptors. Effects include owned continuations and specialized views; remaining prompt and background effects require the last step. Character operands and palette arguments are separate.\n\n| Action | Effects | Count | Character operands | Palette argument | View differences | Classification |\n| --- | --- | --- | --- | --- | --- | --- |\n",
+        "\n## Action contracts\n\nGenerated from built-in descriptors. Effects include owned continuations and specialized views; remaining prompt and background effects require the last step. Key-program arguments replace the listed operands or prompts; palette spellings remain separate.\n\n| Action | Effects | Count | Character operands | Palette argument | Key-program argument | View differences | Classification |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n",
     );
     for id in identities() {
         let d = id.descriptor().unwrap();
@@ -347,12 +366,19 @@ pub fn descriptor_reference() -> String {
         let argument = d.argument().map(|a| a.usage).unwrap_or("none");
         let _ = writeln!(
             out,
-            "| `{}` | {} | {} | {} | {} | {} | {} |",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} |",
             d.metadata.name,
             display::effects(d.policy.effects),
             display::count(d.policy.count),
             display::operands(d.policy.operands),
             argument.replace('|', "&#124;"),
+            match id {
+                CommandId::Editor(command) => command
+                    .supplied_argument()
+                    .map(|a| a.description())
+                    .unwrap_or("palette argument, if any"),
+                _ => "palette argument, if any",
+            },
             views.replace('|', "&#124;"),
             d.classification.description().replace('|', "&#124;")
         );
