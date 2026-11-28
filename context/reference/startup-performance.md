@@ -18,6 +18,28 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — ARM debug subject-first action names
+
+Stage 4e of [#132](https://github.com/runyte/runyte/issues/132) was measured
+against stage 4d with one discarded warm-up per binary and ten alternating
+fresh-process debug-profile `preset_startup` samples on one
+`ubuntu-24.04-arm` runner.
+[Run 46097657028](https://github.com/runyte/runyte/actions/runs/46097657028)
+compares `afb5ad1a` with `22792eba`. Later fixture and rendered-hint assertion
+updates do not change the measured production paths.
+
+| Phase | Stage 4d ms | Stage 4e ms |
+| --- | ---: | ---: |
+| Typed YAML parsing | 17.917 (17.788–18.049) | 17.961 (17.745–18.280) |
+| Programs and metadata | 7.379 (7.346–7.433) | 7.369 (7.295–7.657) |
+| Construction, lookup index and role validation | 98.101 (97.560–98.689) | 97.281 (97.100–97.697) |
+| Total keymap initialization | 123.349 (122.900–123.946) | 122.692 (122.387–122.998) |
+
+Cells are median (min–max). Total median decreases by 0.657 ms (0.53%);
+this small difference does not establish a performance improvement.
+These component measurements do not establish end-to-end desktop readiness
+or release-profile costs. Raw samples are attached to the linked run.
+
 ## 2026-11-28 — ARM debug directory/tree and clipboard actions
 
 Stage 4d of [#132](https://github.com/runyte/runyte/issues/132) was measured
