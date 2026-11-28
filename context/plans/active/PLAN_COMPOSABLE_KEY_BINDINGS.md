@@ -1214,10 +1214,10 @@ table documents applicability alongside the action contracts.
 
 ### Decision 54 — List bindings remain single actions in 0.5
 
-List-dispatched owners, including `list` and `session-manager`, accept one
+List-dispatched owners, including `list`, `session-manager` and the separate
+`git-merge-review`, `git-merge-detail`, and `git-merge-input` UI dispatchers, accept one
 plain action only. Step lists (even singleton lists), conditionals, arguments
-and step options are rejected at load with `list bindings take a single action
-in 0.5`. This prevents programs from being accepted while dispatch silently
+and step options are rejected at load with `bindings in <owner> take a single action in 0.5`. This prevents programs from being accepted while dispatch silently
 executes only the representative target. Decision 53's universal conditions
 apply everywhere programs execute, not to list owners. This preserves decision
 10's separation of UI and list owners from editor programs.

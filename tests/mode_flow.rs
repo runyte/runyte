@@ -377,10 +377,8 @@ fn list_owners_reject_program_syntax_with_the_migration_diagnostic() {
         ] {
             let result = compile(&format!("keys: {{bind: {{{owner}: {{F6: {value}}}}}}}"));
             assert!(
-                result
-                    .errors
-                    .iter()
-                    .any(|error| error.contains("list bindings take a single action in 0.5")),
+                result.errors.iter().any(|error| error
+                    .contains(&format!("bindings in {owner} take a single action in 0.5"))),
                 "{owner}: {value}: {:?}",
                 result.errors
             );
@@ -419,8 +417,44 @@ fn shared_list_ancestors_cannot_bypass_single_action_validation() {
         result
             .errors
             .iter()
-            .any(|error| error.contains("list bindings take a single action in 0.5")),
+            .any(|error| error.contains("bindings in list take a single action in 0.5")),
         "{:?}",
         result.errors
     );
+}
+
+#[test]
+fn merge_review_owners_reject_programs_instead_of_flattening_them() {
+    for owner in ["git-merge-review", "git-merge-detail", "git-merge-input"] {
+        for value in [
+            "[git-review-next]",
+            "{if: read-only, then: [git-review-next], else: [git-review-previous]}",
+            "{action: git-review-next, arg: x}",
+            "{action: git-review-next, count: 2}",
+        ] {
+            let result = compile(&format!("keys: {{bind: {{{owner}: {{F6: {value}}}}}}}"));
+            assert!(
+                result.errors.iter().any(|error| error
+                    .contains(&format!("bindings in {owner} take a single action in 0.5"))),
+                "{owner}: {value}: {:?}",
+                result.errors
+            );
+        }
+    }
+    use runyte::keymap::{BindingScope, program::Step};
+    for scope in [
+        BindingScope::GitMergeReview,
+        BindingScope::GitMergeDetail,
+        BindingScope::GitMergeInput,
+    ] {
+        for binding in default_keymap().bindings_for_scope(Mode::Normal, scope) {
+            if binding.scope == scope {
+                assert!(
+                    matches!(binding.program.steps(), [Step::Action(_)]),
+                    "{}",
+                    binding.sequence
+                );
+            }
+        }
+    }
 }

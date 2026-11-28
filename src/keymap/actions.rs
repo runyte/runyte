@@ -589,7 +589,7 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
     parse_rule_in(mode, source, value, base, None)
 }
 
-pub(super) fn validate_list_binding(value: &Value) -> Result<(), String> {
+pub(super) fn validate_list_binding(value: &Value, owner: &str) -> Result<(), String> {
     if !value.is_null() {
         let plain = value.is_string()
             || value.as_mapping().is_some_and(|fields| {
@@ -599,7 +599,7 @@ pub(super) fn validate_list_binding(value: &Value) -> Result<(), String> {
                         .is_some_and(Value::is_string)
             });
         if !plain {
-            return Err("list bindings take a single action in 0.5".into());
+            return Err(format!("bindings in {owner} take a single action in 0.5"));
         }
     }
     Ok(())
@@ -612,8 +612,13 @@ pub(super) fn parse_rule_in(
     base: &Keymap,
     scope: Option<BindingScope>,
 ) -> Result<Rule, String> {
-    if mode == Mode::List {
-        validate_list_binding(value)?;
+    if mode == Mode::List || scope.is_some_and(BindingScope::is_merge_review) {
+        validate_list_binding(
+            value,
+            scope
+                .filter(|scope| scope.is_merge_review() || *scope == BindingScope::SessionManager)
+                .map_or("list", BindingScope::name),
+        )?;
     }
     let tokens: Vec<_> = source.split_whitespace().collect();
     if tokens.is_empty() || tokens.len() > 8 {

@@ -445,8 +445,17 @@ fn apply_candidate(
                 ));
                 continue;
             };
-            if contexts.iter().any(|(mode, _)| *mode == Mode::List)
-                && let Err(reason) = actions::validate_list_binding(value)
+            if let Some((_, scope)) = contexts
+                .iter()
+                .find(|(mode, scope)| *mode == Mode::List || scope.is_merge_review())
+                && let Err(reason) = actions::validate_list_binding(
+                    value,
+                    if scope.is_merge_review() || *scope == BindingScope::SessionManager {
+                        scope.name()
+                    } else {
+                        "list"
+                    },
+                )
             {
                 errors.push(format!("bind.{name}.{source}: {reason}"));
                 continue;

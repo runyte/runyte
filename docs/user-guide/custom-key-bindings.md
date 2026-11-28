@@ -789,7 +789,8 @@ that policy is overridden for this step, including in a preset without Select.
 The action browser and generated reference list count, register, and extension
 support; describe-key and copy-key-binding retain the authored options.
 
-List owners (`list` and `session-manager`) accept a single plain action in 0.5,
+List and review owners (`list`, `session-manager`, `git-merge-review`,
+`git-merge-detail`, and `git-merge-input`) accept a single plain action in 0.5,
 as a name or `{action: <name>}`. They reject step lists, conditionals, arguments
 and step options; `null` still removes a binding. Conditions below apply only
 where editor programs execute.
