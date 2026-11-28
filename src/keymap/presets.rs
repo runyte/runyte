@@ -738,6 +738,10 @@ fn compile_for_platform(
     .with_fast_pane_keys_enabled(fast);
     map.namespaces = namespaces;
     map.record_identity_spellings();
+    let role_errors = named::role_target_errors(&map);
+    if !role_errors.is_empty() {
+        return Err(role_errors.join("; "));
+    }
     #[cfg(feature = "startup-timing")]
     TIMINGS[2].store(
         timer.elapsed().as_nanos() as u64,

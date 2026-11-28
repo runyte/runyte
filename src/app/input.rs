@@ -4418,6 +4418,21 @@ impl App {
                     | EditorCommand::SearchExtendNext
                     | EditorCommand::SearchExtendPrevious
                     | EditorCommand::SearchSelectAllMatches
+                    | EditorCommand::Yank
+                    | EditorCommand::YankLine
+                    | EditorCommand::PasteAfter
+                    | EditorCommand::PasteBefore
+                    | EditorCommand::PasteAfterOrReplace
+                    | EditorCommand::ClipboardPasteAfter
+                    | EditorCommand::ClipboardPasteBefore
+                    | EditorCommand::SearchNext
+                    | EditorCommand::SearchPrevious
+                    | EditorCommand::TerminalPaste
+                    | EditorCommand::TerminalClipboardPasteText
+                    | EditorCommand::TerminalSearch
+                    | EditorCommand::TerminalSearchRegex
+                    | EditorCommand::TerminalSearchNext
+                    | EditorCommand::TerminalSearchPrevious
             )
         {
             // These actions no longer own a mode transition. End the transient
@@ -4508,6 +4523,11 @@ impl App {
                     | Command::CutSelectionForChange
                     | Command::ReplaceWithRegister
                     | Command::DeleteSelection
+                    | Command::PasteAfter
+                    | Command::PasteBefore
+                    | Command::PasteAfterOrReplace
+                    | Command::ClipboardPasteAfter
+                    | Command::ClipboardPasteBefore
                     | Command::DeleteSelectionForChange
             ) {
                 self.set_editing_role(Mode::Normal);
@@ -4688,16 +4708,6 @@ impl App {
             }
             Command::YankLine => {
                 self.yank_line();
-            }
-            Command::YankCollapseNormalMode => {
-                if self.yank(linewise_extent) {
-                    self.collapse_after_yank();
-                }
-            }
-            Command::YankLineCollapseNormalMode => {
-                if self.yank_line() {
-                    self.collapse_after_yank();
-                }
             }
             Command::PasteAfterOrReplace => self.paste_count(
                 super::editing::Paste::AfterOrReplace,
@@ -5146,6 +5156,12 @@ impl App {
             Command::LeaveTerminal => self.leave_terminal(),
             Command::CopyTerminalOutput => self.copy_terminal_output(),
             Command::SendToTerminal => self.send_to_terminal(),
+            Command::TerminalPaste
+            | Command::TerminalClipboardPasteText
+            | Command::TerminalSearch
+            | Command::TerminalSearchRegex
+            | Command::TerminalSearchNext
+            | Command::TerminalSearchPrevious => self.action_failed("this action needs a terminal"),
             Command::ClipboardPasteAfter => {
                 self.clipboard_paste_count(false, linewise_extent, count)
             }
@@ -6376,7 +6392,9 @@ impl App {
         }
         if matches!(
             command,
-            EditorCommand::PasteAfterOrReplace
+            EditorCommand::TerminalPaste
+                | EditorCommand::TerminalClipboardPasteText
+                | EditorCommand::PasteAfterOrReplace
                 | EditorCommand::PasteBefore
                 | EditorCommand::PasteAfter
                 | EditorCommand::ClipboardPasteAfter

@@ -689,8 +689,6 @@ editor_commands! {
     Redo => ("redo", "Redo the last change"),
     Yank => ("yank", "Yank the selection or character"),
     YankLine => ("yank-line", "Yank the lines the selection touches"),
-    YankCollapseNormalMode => ("yank-collapse-normal-mode", "Yank, then leave a caret in normal mode"),
-    YankLineCollapseNormalMode => ("yank-line-collapse-normal-mode", "Yank lines, then leave a normal-mode caret"),
     PasteAfterOrReplace => ("paste-after-or-replace", "Replace the selection, or paste after the caret"),
     PasteAfter => ("paste-after", "Paste after the selection or caret"),
     ReplaceWithRegister => ("replace-with-register", "Replace the selection or character"),
@@ -1057,6 +1055,12 @@ editor_commands! {
         "Equalize pane widths, then pane heights within each column"
     ),
 
+    TerminalPaste => ("terminal-paste", "Send register text to the terminal child"),
+    TerminalClipboardPasteText => ("terminal-clipboard-paste-text", "Send clipboard text to the terminal child"),
+    TerminalSearch => ("terminal-search", "Search captured terminal output"),
+    TerminalSearchRegex => ("terminal-search-regex", "Search terminal output with a regex"),
+    TerminalSearchNext => ("terminal-search-next", "Select the next terminal review match"),
+    TerminalSearchPrevious => ("terminal-search-previous", "Select the previous terminal review match"),
     OpenTerminal => ("open-terminal", "Start a terminal in this pane"),
     OpenTerminalFileDirectory => (
         "open-terminal-file-directory",
@@ -1315,8 +1319,6 @@ impl EditorCommand {
             | Self::Redo
             | Self::Yank
             | Self::YankLine
-            | Self::YankCollapseNormalMode
-            | Self::YankLineCollapseNormalMode
             | Self::PasteAfterOrReplace
             | Self::PasteAfter
             | Self::ReplaceWithRegister
@@ -1619,7 +1621,13 @@ impl EditorCommand {
             | Self::OpenThemeSettings => CommandCategory::Configuration,
             Self::OpenWorkspaceSearchResult => CommandCategory::View,
             Self::ShowHelp | Self::ShowAbout | Self::ShowTutorial => CommandCategory::Help,
-            Self::OpenTerminal
+            Self::TerminalPaste
+            | Self::TerminalClipboardPasteText
+            | Self::TerminalSearch
+            | Self::TerminalSearchRegex
+            | Self::TerminalSearchNext
+            | Self::TerminalSearchPrevious
+            | Self::OpenTerminal
             | Self::OpenTerminalFileDirectory
             | Self::OpenTerminalDirectoryRoot
             | Self::OpenTerminalSelectedDirectory
@@ -3569,6 +3577,12 @@ pub fn parse_colon_command(input: &str) -> Result<CommandInvocation, CommandPars
 /// Migration advice shared by the palette and both key configuration forms.
 pub fn removed_action_replacement(name: &str) -> Option<&'static str> {
     match name {
+        "yank-collapse-normal-mode" => Some(
+            "use [yank, collapse-selection, mode-enter normal]; terminal y omits collapse-selection; mode-entry steps remain preset-only until the stage 5 binding format",
+        ),
+        "yank-line-collapse-normal-mode" => Some(
+            "use [yank-line, collapse-selection, mode-enter normal]; mode-entry steps remain preset-only until the stage 5 binding format",
+        ),
         "directory-tree-left" => Some(
             "use a conditional: collapse an expanded non-root directory, otherwise directory-tree-select-parent; conditional steps are not yet configurable",
         ),

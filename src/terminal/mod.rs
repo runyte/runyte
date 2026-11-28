@@ -1193,6 +1193,25 @@ impl TerminalSession {
         self.ensure_review().selection.primary().is_empty()
     }
 
+    /// Whole rows touched by each review range, without changing the selection.
+    pub fn review_selected_lines_text(&mut self) -> String {
+        let review = self.ensure_review();
+        let text = review.text.chars().collect::<Vec<_>>();
+        let mut rows = std::collections::BTreeSet::new();
+        for range in review.selection.ranges() {
+            let first = review_line_for_offset(review, range.from());
+            let last = review_line_for_offset(review, range.to());
+            rows.extend(first..=last);
+        }
+        let mut result = String::new();
+        for row in rows {
+            let line = &review.lines[row];
+            result.extend(line.characters(&text).iter());
+            result.push('\n');
+        }
+        result
+    }
+
     pub fn review_selection_text(&mut self) -> String {
         let review = self.ensure_review();
         let text = review.text.chars().collect::<Vec<_>>();

@@ -771,9 +771,9 @@ fn right_click_uses_viewport_relative_tab_stops_after_horizontal_scroll() {
 
 #[cfg(unix)]
 #[test]
-fn terminal_paste_after_sends_the_register_and_keeps_the_mode_while_p_enters_insert() {
+fn terminal_paste_action_keeps_the_mode_while_default_p_enters_insert() {
     let config = Config {
-        keys: Some(serde_yaml::from_str("bind:\n  terminal:\n    F5: paste-after\n").unwrap()),
+        keys: Some(serde_yaml::from_str("bind:\n  terminal:\n    F5: terminal-paste\n").unwrap()),
         ..Config::default()
     };
     let mut app = App::new(config, None).unwrap();
@@ -3031,35 +3031,61 @@ fn inactive_theme_picker_previews_cancels_and_saves_null_without_changing_main_t
     fs::remove_dir_all(directory).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
-fn terminal_paste_refuses_missing_insert_role_before_sending() {
+fn terminal_paste_missing_insert_role_is_rejected_at_load() {
     let config: Config = serde_yaml::from_str(
         "buffer-types:\n  terminal: {normal: terminal, select: terminal-select}\n",
     )
     .unwrap();
+    let compiled =
+        crate::keymap::configured::compile_configuration(&config, crate::keymap::default_keymap());
+    assert!(
+        compiled
+            .errors
+            .iter()
+            .any(|error| error.contains("terminal")
+                && error.contains("key \"p\"")
+                && error.contains("insert")),
+        "{:?}",
+        compiled.errors
+    );
+    assert!(
+        compiled
+            .keymap
+            .named_mode_for(Mode::Insert, BindingScope::Terminal)
+            .is_some()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn standalone_terminal_paste_does_not_require_insert_role() {
+    let config: Config = serde_yaml::from_str(
+        "buffer-types:\n  terminal: {normal: terminal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F6: open-command-palette}\n    select: {Esc: enter-normal-mode}\n    insert: {Esc: enter-normal-mode}\n    replace: {Esc: enter-normal-mode}\n    terminal: {F5: terminal-paste, p: null, P: null}\n",
+    )
+    .unwrap();
+    let compiled =
+        crate::keymap::configured::compile_configuration(&config, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
     let mut app = App::new(config, None).unwrap();
     app.open_terminal(Some("/bin/cat".to_owned()));
     let terminal = app.active_terminal().unwrap();
     app.terminals.get_mut(terminal).unwrap().begin_review();
     app.set_editing_role(Mode::Normal);
+    assert!(!app.role_available(Mode::Insert));
     app.registers.insert(
         '"',
         Register {
-            text: "do not send".into(),
+            text: "send".into(),
             ..Register::default()
         },
     );
-    for command in [
-        EditorCommand::PasteAfterOrReplace,
-        EditorCommand::PasteBefore,
-    ] {
-        app.execute_editor_command(command).unwrap();
-        assert!(app.status_error, "{}", app.status);
-        assert_eq!(app.mode, Mode::Normal);
-        assert!(matches!(
-            app.terminals.get_mut(terminal).unwrap().undo_sent_text(),
-            crate::terminal::SentTextUndo::NothingSent
-        ));
-    }
+    app.execute_editor_command(EditorCommand::TerminalPaste)
+        .unwrap();
+    assert!(!app.status_error, "{}", app.status);
+    assert_eq!(app.mode, Mode::Normal);
+    assert!(!matches!(
+        app.terminals.get_mut(terminal).unwrap().undo_sent_text(),
+        crate::terminal::SentTextUndo::NothingSent
+    ));
 }

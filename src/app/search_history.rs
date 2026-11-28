@@ -91,9 +91,16 @@ impl App {
     /// text paste. Both bound keys use this command, so the clipboard format
     /// does not require choosing a different command before pasting.
     pub(super) fn clipboard_paste_any(&mut self, linewise_extent: bool) {
+        self.sequence_halted = false;
         match self.ports.clipboard().read_image() {
             Ok(Some(bytes)) => self.paste_clipboard_image(&bytes),
-            Ok(None) => self.clipboard_paste_count(false, linewise_extent, 1),
+            Ok(None) => {
+                self.clipboard_paste_count(false, linewise_extent, 1);
+                if !self.status_error && !self.sequence_halted {
+                    self.set_editing_role(Mode::Normal);
+                    self.normalize_buffer(self.active().buffer);
+                }
+            }
             Err(error) => {
                 self.error_from("Clipboard", "Clipboard operation failed", error.to_string())
             }
@@ -157,6 +164,9 @@ impl App {
                 super::editing::Paste::AfterOrReplace,
                 false,
             );
+            if !self.status_error && !self.sequence_halted {
+                self.set_editing_role(Mode::Normal);
+            }
         }
         self.status(format!("pasted Image {number} as {target}"));
     }
@@ -958,9 +968,6 @@ impl App {
             revision: self.active().selection_revision,
         };
         self.search_selection = Some(presentation);
-        if !extend {
-            self.set_editing_role(Mode::Select);
-        }
         self.status(format!(
             "match {}/{total}: {}",
             index + 1,

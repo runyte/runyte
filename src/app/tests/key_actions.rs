@@ -324,7 +324,7 @@ fn set_search_from_selection_sets_the_pattern_and_search_next_continues_from_it(
     key(&mut app, KeyCode::Function(8), Modifiers::NONE);
     assert_eq!(app.search.pattern, "foo");
     assert_eq!(app.active().selection.primary(), Range::new(8, 10));
-    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.mode, Mode::Normal);
 
     // `search-previous` continues too: the yank after it copies the match.
     app.mode = Mode::Normal;
@@ -1428,7 +1428,7 @@ fn collapse_half_open_ranges_keeps_the_caret_on_the_selected_grapheme() {
 }
 
 #[test]
-fn counted_paste_inserts_all_copies_once_and_preserves_bundled_mode() {
+fn counted_paste_inserts_all_copies_once_and_applies_only_the_default_mode_tail() {
     for (value, expected, end) in [("x", "xxxbc", 2), ("XY", "XYXYXYbc", 5)] {
         for replay in [false, true] {
             let mut app = configured("");
@@ -1462,7 +1462,7 @@ fn counted_paste_inserts_all_copies_once_and_preserves_bundled_mode() {
     press(&mut app, '3');
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
     assert_eq!(text(&app), "xxxbc");
-    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.mode, Mode::Select);
 }
 
 #[test]
@@ -1553,7 +1553,7 @@ fn oversized_counted_paste_fails_before_editing_and_transient_yank_retains_linew
     seed(&mut app, "abc\ndef");
     press(&mut app, 'x');
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
-    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.mode, Mode::Select);
     assert!(app.registers[&'"'].linewise);
     assert_eq!(app.registers[&'"'].text, "abc\n");
     assert!(app.line_select.is_none());
@@ -1564,7 +1564,7 @@ fn oversized_counted_paste_fails_before_editing_and_transient_yank_retains_linew
     .unwrap();
     app.execute(invocation).unwrap();
     assert_eq!(text(&app), "abc\ndef");
-    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.mode, Mode::Select);
     assert!(app.status.contains("64 MiB"));
 }
 

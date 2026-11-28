@@ -10,6 +10,30 @@ const NONE: &[Mode] = &[];
 
 pub(super) const fn editor_policy(command: C) -> ActionPolicy {
     match command {
+        C::TerminalPaste | C::TerminalClipboardPasteText => ActionPolicy {
+            global_binding_modes: NONE,
+            effects: &[TerminalInput],
+            count: CountBehavior::Interpret,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::TerminalSearch | C::TerminalSearchRegex => ActionPolicy {
+            global_binding_modes: NONE,
+            effects: &[Prompt, SearchState, Selection, View],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::TerminalSearchNext | C::TerminalSearchPrevious => ActionPolicy {
+            global_binding_modes: NONE,
+            effects: &[Selection, View],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
         C::FitSelectionForNormalMode => ActionPolicy {
             global_binding_modes: ALL,
             effects: &[Selection, View],
@@ -219,17 +243,9 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             requires_writable_buffer: false,
             buffer_mutation: BufferMutation::Unchanged,
         },
-        C::YankCollapseNormalMode | C::YankLineCollapseNormalMode => ActionPolicy {
-            global_binding_modes: NORMAL_SELECT,
-            effects: &[Register, Selection, Mode],
-            count: CountBehavior::Reject,
-            operands: OperandArity::Zero,
-            requires_writable_buffer: false,
-            buffer_mutation: BufferMutation::Unchanged,
-        },
         C::PasteAfter => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Text, Selection, TerminalInput],
+            effects: &[Text, Selection],
             count: CountBehavior::Interpret,
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
@@ -237,7 +253,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::PasteAfterOrReplace | C::PasteBefore => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Text, Selection, Mode, TerminalInput],
+            effects: &[Text, Selection],
             count: CountBehavior::Interpret,
             operands: OperandArity::Zero,
             requires_writable_buffer: true,
@@ -487,7 +503,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::SearchNext | C::SearchPrevious => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Selection, View, Mode],
+            effects: &[Selection, View],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
@@ -1188,7 +1204,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::ClipboardPasteAfter | C::ClipboardPasteBefore => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Text, Selection, Mode, TerminalInput],
+            effects: &[Text, Selection],
             count: CountBehavior::Interpret,
             operands: OperandArity::Zero,
             requires_writable_buffer: true,

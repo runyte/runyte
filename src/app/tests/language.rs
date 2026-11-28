@@ -5072,7 +5072,7 @@ fn completion_does_not_request_or_open_overlay_when_insert_role_is_absent() {
     let (mut app, _, mut queue) = rust_app("left\n");
     ready(&mut app, Encoding::Utf8);
     drain(&mut queue);
-    let config: Config = serde_yaml::from_str("buffer-types: {text: {normal: normal}}").unwrap();
+    let config: Config = serde_yaml::from_str("buffer-types: {text: {normal: normal}}\nkeys: {defaults: false, bind: {normal: {F5: open-command-palette}}}").unwrap();
     let compiled =
         crate::keymap::configured::compile_configuration(&config, crate::keymap::default_keymap());
     assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);

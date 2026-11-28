@@ -323,7 +323,11 @@ impl BindingScope {
         )
     }
     pub(crate) const fn owns_modal_input(self) -> bool {
-        self.is_merge_review() || matches!(self, Self::DirectoryTree | Self::Media | Self::PdfPages)
+        self.is_merge_review()
+            || matches!(
+                self,
+                Self::DirectoryTree | Self::Media | Self::PdfPages | Self::Terminal
+            )
     }
 
     /// Whether the scope belongs to a generated view rather than to a document
@@ -760,6 +764,13 @@ impl Keymap {
 
     pub(crate) fn with_fast_pane_keys_enabled(mut self, enabled: bool) -> Self {
         self.fast_pane_keys = enabled;
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_fixture_bindings(mut self, bindings: Vec<Binding>) -> Self {
+        self.bindings = bindings;
+        self.rebuild_lookup_index();
         self
     }
 

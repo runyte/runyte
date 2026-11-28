@@ -156,6 +156,7 @@ fn production_source() -> String {
     let source_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let app = fs::read_to_string(source_root.join("app.rs"))
         .expect("application coordinator source")
+        .replace("\r\n", "\n")
         .split("\n#[cfg(test)]\nmod tests")
         .next()
         .unwrap()
@@ -168,6 +169,7 @@ fn production_source() -> String {
         .chain(paths.into_iter().map(|path| {
             fs::read_to_string(&path)
                 .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()))
+                .replace("\r\n", "\n")
                 .split("\n#[cfg(test)]\nmod tests")
                 .next()
                 .unwrap()

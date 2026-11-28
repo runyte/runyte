@@ -915,15 +915,15 @@ impl App {
                 let _ = session;
                 true
             }
-            Command::Search => {
+            Command::TerminalSearch => {
                 self.open_prompt(PromptKind::TerminalSearch(SearchMode::Insensitive));
                 true
             }
-            Command::SearchRegex => {
+            Command::TerminalSearchRegex => {
                 self.open_prompt(PromptKind::TerminalSearch(SearchMode::Regex));
                 true
             }
-            Command::SearchNext | Command::RotateSelectionForward => {
+            Command::TerminalSearchNext => {
                 if !session.step_review_match(true) {
                     self.action_failed("terminal review has no search matches");
                 } else {
@@ -931,7 +931,7 @@ impl App {
                 }
                 true
             }
-            Command::SearchPrevious | Command::RotateSelectionBackward => {
+            Command::TerminalSearchPrevious => {
                 if !session.step_review_match(false) {
                     self.action_failed("terminal review has no search matches");
                 } else {
@@ -939,8 +939,13 @@ impl App {
                 }
                 true
             }
-            Command::Yank | Command::YankCollapseNormalMode => {
-                let mut text = session.review_selection_text();
+            Command::Yank | Command::YankLine => {
+                let linewise_extent = linewise_extent || command == Command::YankLine;
+                let mut text = if command == Command::YankLine {
+                    session.review_selected_lines_text()
+                } else {
+                    session.review_selection_text()
+                };
                 if linewise_extent && !text.ends_with('\n') {
                     text.push('\n');
                 }
@@ -950,9 +955,6 @@ impl App {
                     linewise: linewise_extent,
                     directory: None,
                 });
-                if command == Command::YankCollapseNormalMode {
-                    self.set_editing_role(Mode::Normal);
-                }
                 self.status("terminal review selection yanked");
                 true
             }
@@ -976,11 +978,8 @@ impl App {
                 }
                 true
             }
-            Command::PasteAfterOrReplace | Command::PasteAfter | Command::PasteBefore => {
+            Command::TerminalPaste => {
                 let _ = session;
-                if command != Command::PasteAfter && !self.require_editing_role(Mode::Insert) {
-                    return true;
-                }
                 let register = self.read_selected_register();
                 if register.text.is_empty() {
                     self.status("Runyte register is empty");
@@ -995,16 +994,13 @@ impl App {
                     .get_mut(id)
                     .is_some_and(|session| session.send_text(&register.text));
                 if sent {
-                    if command != Command::PasteAfter {
-                        self.set_editing_role(Mode::Insert);
-                    }
                     self.status("pasted Runyte register to terminal");
                 } else {
                     self.action_failed("terminal input queue is full or the paste exceeds 1 MiB");
                 }
                 true
             }
-            Command::ClipboardPasteAfter | Command::ClipboardPasteBefore => {
+            Command::TerminalClipboardPasteText => {
                 let _ = session;
                 match self.ports.clipboard().read() {
                     Ok(text) if text.is_empty() => {

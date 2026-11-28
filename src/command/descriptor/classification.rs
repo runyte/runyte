@@ -6,7 +6,13 @@ use crate::command::{ColonCommand, EditorCommand};
 pub(super) const fn editor_classification(command: EditorCommand) -> ActionClassification {
     use EditorCommand as C;
     match command {
-        C::SurroundAdd
+        C::TerminalPaste
+        | C::TerminalClipboardPasteText
+        | C::TerminalSearch
+        | C::TerminalSearchRegex
+        | C::TerminalSearchNext
+        | C::TerminalSearchPrevious
+        | C::SurroundAdd
         | C::SurroundReplace
         | C::SurroundDelete
         | C::ReplaceWithRegister
@@ -333,15 +339,13 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
             semantic: SemanticClass::Atomic,
             pending_split: None,
         },
-        C::YankCollapseNormalMode
-        | C::YankLineCollapseNormalMode
-        | C::PasteBefore
+        C::PasteBefore
         | C::SearchNext
         | C::SearchPrevious
         | C::ClipboardPasteAfter
         | C::ClipboardPasteBefore => ActionClassification {
             semantic: SemanticClass::Atomic,
-            pending_split: Some(SplitStage::Stage4),
+            pending_split: None,
         },
         C::PasteAfterOrReplace => ActionClassification {
             semantic: SemanticClass::Decision(

@@ -18,6 +18,35 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — ARM debug terminal programs and role validation
+
+Stage 4c of [#132](https://github.com/runyte/runyte/issues/132) was measured
+against its approved stage 4b parent with the same debug-profile
+`preset_startup` protocol: one discarded warm-up per binary and ten alternating
+fresh-process samples on one `ubuntu-24.04-arm` runner.
+[Run 46088600328](https://github.com/runyte/runyte/actions/runs/46088600328)
+compares `a0ad296e` with stage 4c `b197b36d`.
+
+| Phase | Stage 4b ms | Stage 4c ms |
+| --- | ---: | ---: |
+| Typed YAML parsing | 17.514 (17.232–17.591) | 17.631 (17.510–17.801) |
+| Programs and metadata | 7.148 (7.139–7.191) | 7.331 (7.268–7.371) |
+| Construction, lookup index and role validation | 89.532 (89.453–90.499) | 97.421 (96.438–97.680) |
+| Total keymap initialization | 114.214 (114.136–115.045) | 122.365 (121.449–122.634) |
+
+Cells are median (min–max). Total median increases by 8.151 ms (7.14%).
+This includes new load-time role-target validation and the changed default
+programs. These component measurements do not establish end-to-end desktop
+readiness or release-profile costs. Raw samples are attached to the linked run.
+
+The first implementation repeatedly resolved effective tables during validation.
+[Run 46087335770](https://github.com/runyte/runyte/actions/runs/46087335770)
+measured 114.286 ms baseline versus 205.818 ms at `c31dff94` (+80.09%).
+Validation now reuses the execution index's empty-prefix binding list and
+extracts mode-entry targets once per binding before resolving them in each
+reachable buffer-type/mode context. Overrides, removals and conditional branches
+retain their validation semantics. No disk cache is introduced.
+
 ## 2026-11-28 — ARM debug whole-line selection extent
 
 Stage 4b of [#132](https://github.com/runyte/runyte/issues/132) was measured
