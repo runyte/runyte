@@ -747,13 +747,16 @@ preset described below.
 
 ### Pending stage 4 splits
 
-`paste-after-or-replace`, `clipboard-paste`.
+None.
 
 Stage 4c separates terminal paste and review search, makes document paste and
 repeat-search mode-preserving, and replaces bundled yank actions with programs.
 Terminal **Y** now copies whole review rows; it was previously refused. Stage 4c2
 separates terminal undo-paste and live-input entry; its pending dispatch
 inventory is empty. Normal and Select entry retain their shared meanings.
+Directory paste now has its own entry-payload decision with text-register
+fallback, while shared before/after placement retains transfer ownership. Tree
+search has three dedicated actions and ordinary bindings, including **N**.
 
 ### Pending stage 5 splits
 
@@ -975,3 +978,12 @@ preset graph while retaining valid key edits. Embedded presets pass the same
 check. Terminal paste programs therefore cannot deliver text with an unresolved
 Insert tail. This is the role-resolution part of stage 5 validation; sequential
 mode tracking remains in stage 5. No runtime paste-tail preflight is used.
+
+### Decision 46 — Uniform clipboard paste modes
+
+Clipboard paste preserves mode for both image and text content. Normal/Select
+bindings append explicit Normal entry; Insert/Replace bindings retain their role.
+Native clipboard input uses the same explicit role policy independently of key
+remapping. This deliberately changes Insert/Replace text fallback, which formerly
+returned to Normal. Format selection remains one image-first clipboard decision;
+empty, failed and refused pastes do not run a mode tail.

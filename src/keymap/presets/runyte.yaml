@@ -422,8 +422,8 @@ keys:
         steps:
           - clipboard-yank
         platforms: [macos]
-      Ctrl-v: clipboard-paste
-      Alt-v: clipboard-paste
+      Ctrl-v: [clipboard-paste, {action: mode-enter, arg: normal}]
+      Alt-v: [clipboard-paste, {action: mode-enter, arg: normal}]
       Ctrl-o: jump-backward
       Alt-o: jump-backward-buffer
       Alt-i: jump-forward-buffer
@@ -1085,6 +1085,7 @@ keys:
       '-': open-parent-directory
       .: toggle-hidden-files
       '?': toggle-directory-details
+      p: [directory-paste, {action: mode-enter, arg: normal}]
     directory-tree:
       g g: directory-tree-first
       g e: directory-tree-last
@@ -1101,10 +1102,10 @@ keys:
       M: goto-window-center
       L: goto-window-bottom
       .: toggle-hidden-files
-      /: search-regex
-      N: search-previous
-      Ctrl-n: search-next
-      Ctrl-p: search-previous
+      /: directory-tree-search
+      N: directory-tree-search-previous
+      Ctrl-n: directory-tree-search-next
+      Ctrl-p: directory-tree-search-previous
       n: directory-tree-new
       d: directory-tree-delete
       m: directory-tree-move

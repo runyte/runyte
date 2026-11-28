@@ -54,6 +54,8 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
                 }
                 C::Yank | C::YankLine => vec![command, C::CollapseSelection, C::ModeEnter],
                 C::PasteAfterOrReplace
+                | C::DirectoryPaste
+                | C::ClipboardPaste
                 | C::PasteBefore
                 | C::ClipboardPasteAfter
                 | C::ClipboardPasteBefore

@@ -902,6 +902,10 @@ editor_commands! {
     DirectoryTreeSelectParent => ("directory-tree-select-parent", "Select the parent directory"),
     DirectoryTreeExpand => ("directory-tree-expand", "Expand the selected directory"),
     DirectoryTreeSelectFirstChild => ("directory-tree-select-first-child", "Select the first visible child"),
+    DirectoryPaste => ("directory-paste", "Stage directory entries after the current row, or paste text"),
+    DirectoryTreeSearch => ("directory-tree-search", "Search visible tree entry names with a regex"),
+    DirectoryTreeSearchNext => ("directory-tree-search-next", "Select the next matching tree entry"),
+    DirectoryTreeSearchPrevious => ("directory-tree-search-previous", "Select the previous matching tree entry"),
     DirectoryTreeFirst => ("directory-tree-first", "Select the workspace root"),
     DirectoryTreeLast => ("directory-tree-last", "Select the last visible tree entry"),
     DirectoryTreePageUp => ("directory-tree-page-up", "Move up one tree page"),
@@ -1465,6 +1469,10 @@ impl EditorCommand {
             | Self::DirectoryTreeSelectParent
             | Self::DirectoryTreeExpand
             | Self::DirectoryTreeSelectFirstChild
+            | Self::DirectoryPaste
+            | Self::DirectoryTreeSearch
+            | Self::DirectoryTreeSearchNext
+            | Self::DirectoryTreeSearchPrevious
             | Self::DirectoryTreeFirst
             | Self::DirectoryTreeLast
             | Self::DirectoryTreePageUp

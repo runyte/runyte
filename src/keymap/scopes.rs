@@ -94,10 +94,10 @@ pub(crate) fn admit(scope: BindingScope, mode: Mode, name: &str) -> Option<Bindi
                     let command = crate::command::EditorCommand::ListClearFilter;
                     actions.insert(command.metadata().name, BindingTarget::Editor(command));
                 }
-                // Inherited document defaults are not terminal capabilities.
+                // Inherited document defaults are not terminal/tree capabilities.
                 // Runtime refusal and configured admission must agree even when
-                // a refused key (for example Replace) remains inherited.
-                if scope == BindingScope::Terminal {
+                // a refused document key remains inherited.
+                if matches!(scope, BindingScope::Terminal | BindingScope::DirectoryTree) {
                     actions.retain(|_, target| super::admission::admits(scope, *target));
                 }
                 actions.retain(|_, target| match target {

@@ -4191,3 +4191,86 @@ fn authored_window_chords_yield_to_menu_mnemonics_and_prompt_text() {
     app.handle_key(super_x).unwrap();
     assert_eq!(app.command, "x");
 }
+
+#[test]
+fn clipboard_formats_share_explicit_mode_policy_for_keys_native_and_primitives() {
+    for mode in [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace] {
+        for image in [false, true] {
+            for route in 0..4 {
+                let root = temporary("clipboard-mode-policy");
+                fs::create_dir_all(&root).unwrap();
+                let file = root.join("note.md");
+                fs::write(&file, "abc").unwrap();
+                let mut app = App::new_in_project(Config::default(), Some(file), &root).unwrap();
+                app.set_editing_role(mode);
+                app.set_system_clipboard(Box::new(if image {
+                    ImageClipboard::holding(&png("mode policy"))
+                } else {
+                    ImageClipboard::text("Z")
+                }));
+                if route == 3 {
+                    app.execute_editor_command(EditorCommand::ClipboardPaste)
+                        .unwrap();
+                } else {
+                    let input = match route {
+                        0 => InputEvent::Key(KeyStroke::ctrl('v')),
+                        1 => InputEvent::Key(KeyStroke {
+                            code: KeyCode::Char('v'),
+                            modifiers: Modifiers::ALT,
+                        }),
+                        _ => InputEvent::ClipboardPaste,
+                    };
+                    app.handle_input(input).unwrap();
+                }
+                assert!(
+                    !app.status_error,
+                    "{mode:?} image={image} route={route}: {}",
+                    app.status
+                );
+                let expected = if route == 3 || matches!(mode, Mode::Insert | Mode::Replace) {
+                    mode
+                } else {
+                    Mode::Normal
+                };
+                assert_eq!(app.mode, expected, "{mode:?} image={image} route={route}");
+                assert!(text(&app).contains(if image { "[Image 1](" } else { "Z" }));
+                fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn clipboard_empty_error_and_refusal_preserve_mode_without_image_storage() {
+    for mode in [Mode::Normal, Mode::Select, Mode::Insert, Mode::Replace] {
+        for native in [false, true] {
+            for failure in 0..3 {
+                let root = temporary("clipboard-mode-refusal");
+                fs::create_dir_all(&root).unwrap();
+                let file = root.join("note.md");
+                fs::write(&file, "abc").unwrap();
+                let mut app = App::new_in_project(Config::default(), Some(file), &root).unwrap();
+                app.set_editing_role(mode);
+                app.set_system_clipboard(Box::new(match failure {
+                    0 => ImageClipboard::text(""),
+                    1 => ImageClipboard {
+                        image: None,
+                        text: "must not fall back".into(),
+                        refuse_image: true,
+                    },
+                    _ => ImageClipboard::holding(b"invalid image"),
+                }));
+                app.handle_input(if native {
+                    InputEvent::ClipboardPaste
+                } else {
+                    InputEvent::Key(KeyStroke::ctrl('v'))
+                })
+                .unwrap();
+                assert_eq!(app.mode, mode);
+                assert_eq!(text(&app), "abc");
+                assert!(!crate::pasted_image::cache_directory(&app.state_root).exists());
+                fs::remove_dir_all(root).unwrap();
+            }
+        }
+    }
+}

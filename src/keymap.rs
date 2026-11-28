@@ -1782,17 +1782,29 @@ mod tests {
     /// Buffer scopes may add behavior but never replace a global key. The
     /// sidebar is a separate focus surface and owns navigation outright.
     #[test]
-    fn no_scoped_binding_shadows_a_global_binding() {
+    fn document_mode_overrides_are_limited_to_directory_paste() {
         for (keymap_name, keymap) in built_in_keymaps() {
             for mode in [Mode::Normal, Mode::Select] {
                 for &scope in BindingScope::ALL {
                     if scope.owns_modal_input() {
                         continue;
                     }
-                    assert!(
-                        keymap.shadowed_bindings(mode, scope).is_empty(),
-                        "{keymap_name} keymap {scope:?} shadows a global binding in {mode:?}"
-                    );
+                    let overrides = keymap.shadowed_bindings(mode, scope);
+                    if scope == BindingScope::Directory {
+                        assert_eq!(overrides.len(), 1);
+                        let (directory, inherited) = &overrides[0];
+                        assert_eq!(directory.sequence.to_string(), "p");
+                        assert_eq!(
+                            directory.target,
+                            BindingTarget::Editor(EditorCommand::DirectoryPaste)
+                        );
+                        assert_eq!(
+                            inherited.target,
+                            BindingTarget::Editor(EditorCommand::PasteAfterOrReplace)
+                        );
+                    } else {
+                        assert!(overrides.is_empty(), "{keymap_name} {scope:?} {mode:?}");
+                    }
                 }
             }
         }

@@ -36,10 +36,7 @@ fn migration_sets_are_exact_and_must_empty_before_their_stages_complete() {
     // Independent reviewed inventories (decisions 34 and 36). Removing an entry
     // requires its actual split, not merely relabelling its descriptor.
     let stage3 = [];
-    let stage4 = [
-        CommandId::Editor(C::PasteAfterOrReplace),
-        CommandId::Editor(C::ClipboardPaste),
-    ];
+    let stage4 = [];
     let stage5 = [
         CommandId::Editor(C::EnterNormalMode),
         CommandId::Editor(C::EnterInsertMode),
@@ -109,13 +106,13 @@ fn retained_decisions_and_mode_actions_keep_their_contracts() {
         );
     }
     assert!(
-        C::ClipboardPaste
+        !C::ClipboardPaste
             .action_policy()
             .effects
             .contains(&ActionEffect::Mode)
     );
     let paste = C::PasteAfterOrReplace.descriptor().classification;
-    assert_eq!(paste.pending_split, Some(SplitStage::Stage4));
+    assert_eq!(paste.pending_split, None);
     assert!(paste.description().contains("each selection range"));
 }
 

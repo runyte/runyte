@@ -980,7 +980,16 @@ impl App {
                         && self.mode != Mode::Command
                     {
                         self.reset_program_input();
-                        self.execute_editor_command(EditorCommand::ClipboardPaste)?;
+                        // Native paste is a semantic input, independent of key
+                        // remapping. Its explicit tail matches the preset roles.
+                        let normal_tail = matches!(self.mode, Mode::Normal | Mode::Select);
+                        if !normal_tail || self.require_editing_role(Mode::Normal) {
+                            self.execute_editor_command(EditorCommand::ClipboardPaste)?;
+                            if normal_tail && !self.status_error && !self.sequence_halted {
+                                self.set_editing_role(Mode::Normal);
+                                self.normalize_buffer(self.active().buffer);
+                            }
+                        }
                     }
                     Ok(())
                 }
@@ -4422,7 +4431,9 @@ impl App {
                     | EditorCommand::YankLine
                     | EditorCommand::PasteAfter
                     | EditorCommand::PasteBefore
+                    | EditorCommand::DirectoryPaste
                     | EditorCommand::PasteAfterOrReplace
+                    | EditorCommand::ClipboardPaste
                     | EditorCommand::ClipboardPasteAfter
                     | EditorCommand::ClipboardPasteBefore
                     | EditorCommand::SearchNext
@@ -4527,7 +4538,9 @@ impl App {
                     | Command::DeleteSelection
                     | Command::PasteAfter
                     | Command::PasteBefore
+                    | Command::DirectoryPaste
                     | Command::PasteAfterOrReplace
+                    | Command::ClipboardPaste
                     | Command::ClipboardPasteAfter
                     | Command::ClipboardPasteBefore
                     | Command::DeleteSelectionForChange
@@ -4606,6 +4619,9 @@ impl App {
             | Command::DirectoryTreeSelectParent
             | Command::DirectoryTreeExpand
             | Command::DirectoryTreeSelectFirstChild
+            | Command::DirectoryTreeSearch
+            | Command::DirectoryTreeSearchNext
+            | Command::DirectoryTreeSearchPrevious
             | Command::DirectoryTreeFirst
             | Command::DirectoryTreeLast
             | Command::DirectoryTreePageUp
@@ -4711,6 +4727,7 @@ impl App {
             Command::YankLine => {
                 self.yank_line();
             }
+            Command::DirectoryPaste => self.directory_paste_count(linewise_extent, count),
             Command::PasteAfterOrReplace => self.paste_count(
                 super::editing::Paste::AfterOrReplace,
                 linewise_extent,
@@ -6398,6 +6415,7 @@ impl App {
             command,
             EditorCommand::TerminalPaste
                 | EditorCommand::TerminalClipboardPasteText
+                | EditorCommand::DirectoryPaste
                 | EditorCommand::PasteAfterOrReplace
                 | EditorCommand::PasteBefore
                 | EditorCommand::PasteAfter
