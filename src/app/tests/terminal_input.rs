@@ -769,4 +769,3 @@ fn whole_row_yank_handles_trimmed_blank_review_rows() {
     );
     assert_eq!(session.review_selected_lines_text(), "\n");
 }
-
