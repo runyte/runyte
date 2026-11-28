@@ -413,7 +413,7 @@ fn builtin_list_owners_only_contain_single_plain_actions() {
 #[test]
 fn shared_list_ancestors_cannot_bypass_single_action_validation() {
     let result = compile(
-        "modes:\n  shared: {}\n  custom-normal: {inherits: shared}\n  list: {inherits: shared}\nbuffer-types:\n  text: {normal: custom-normal, select: select, insert: insert, replace: replace}\nkeys:\n  bind:\n    custom-normal:\n      Space p: open-command-palette\n    shared:\n      F6: {if: {mode: normal}, then: [yank], else: [list-next]}\n",
+        "modes:\n  shared: {inherits: normal}\n  custom-normal: {inherits: shared}\n  list: {inherits: shared}\nbuffer-types:\n  text: {normal: custom-normal, select: select, insert: insert, replace: replace}\nkeys:\n  bind:\n    custom-normal:\n      Space p: open-command-palette\n    shared:\n      F6: {if: {mode: normal}, then: [yank], else: [list-next]}\n",
     );
     assert!(
         result
