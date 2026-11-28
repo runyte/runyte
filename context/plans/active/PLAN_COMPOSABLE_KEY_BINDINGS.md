@@ -1143,6 +1143,15 @@ leaves a Select-like submode. A declared non-role name instead matches the
 exact active named mode. This refines decision 48's role-condition wording;
 explicit entry still resolves role names through the buffer-type role map.
 
+The stage 5b cost gate compares the native-preview fixture's real
+`:config-reload` against dev `d564c471` on the same ARM runner. In release
+builds, changed-key and unchanged reloads must remain within 25% or 20 ms of
+dev, whichever allowance is larger. Release editing readiness retains the
+5% bound. Report paired debug and release measurements on x86 and ARM;
+preset initialization alone does not establish configured-reload cost.
+Caching may reuse validated work, but must preserve the effective-path
+admission contract above, including paths removed by configuration.
+
 ### Decision 50 — Temporary gestures belong to their view
 
 Changing pane focus, active buffer, or active buffer type ends a temporary

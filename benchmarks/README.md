@@ -891,7 +891,8 @@ This is a regression guard, separate from decision 39's readiness comparison.
 `cargo run --features startup-timing --example config_reload` emits JSON lines
 for an empty key configuration and the native preview fixture's four pane keys.
 Each fresh process measures preset initialization, configured compilation, a real
-semantic `:config-reload`, and a second unchanged reload. Compilation and reload
+semantic `:config-reload` after adding F6 to a running preview configuration,
+and a second unchanged reload. The empty case keeps its empty key configuration. Compilation and reload
 also report the time spent in mode-flow validation; subtract it from the total
 to inspect the remaining work. The fixture owns temporary configuration and
 isolated startup storage. This measures synchronous editor work, not frontend

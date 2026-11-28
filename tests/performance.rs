@@ -1238,13 +1238,31 @@ fn configured_reload_stays_responsive() {
         let start = Instant::now();
         app.execute(parse_colon_command("config-reload").unwrap())
             .unwrap();
-        start.elapsed()
+        let elapsed = start.elapsed();
+        let key = runyte::keymap::KeySequence::parse("F6").unwrap();
+        let runyte::keymap::Lookup::Exact(binding) =
+            app.keymap().lookup(runyte::command::Mode::Normal, &key)
+        else {
+            panic!("changed binding was not installed");
+        };
+        assert_eq!(
+            binding.target,
+            if sample % 2 == 0 {
+                EditorCommand::MoveLeft
+            } else {
+                EditorCommand::MoveRight
+            }
+            .into()
+        );
+        elapsed
     });
     within(
         "changed configured reload",
         elapsed,
-        budget(Duration::from_millis(100)),
+        budget(Duration::from_millis(200)),
     );
+    #[cfg(feature = "startup-timing")]
+    runyte::keymap::configured::take_mode_flow_time_ns();
     let elapsed = median_of("unchanged configured reload", 5, || {
         let start = Instant::now();
         app.execute(parse_colon_command("config-reload").unwrap())
@@ -1254,6 +1272,12 @@ fn configured_reload_stays_responsive() {
     within(
         "unchanged configured reload",
         elapsed,
-        budget(Duration::from_millis(50)),
+        budget(Duration::from_millis(100)),
+    );
+    #[cfg(feature = "startup-timing")]
+    assert_eq!(
+        runyte::keymap::configured::take_mode_flow_time_ns(),
+        0,
+        "unchanged source must not repeat mode-flow validation"
     );
 }

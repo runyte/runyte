@@ -30,7 +30,12 @@ fn main() {
         let compile_ns = start.elapsed().as_nanos();
         let compile_flow_ns = configured::take_mode_flow_time_ns();
         assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
-        let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+        let mut app = App::new(isolated_startup_config(config.clone()), None).unwrap();
+        // Measure an edit to a running fixture configuration, after startup
+        // has validated both variants. Cold compilation remains separate above.
+        if case == "preview" {
+            fs::write(&path, format!("{source}      F6: move-right\n")).unwrap();
+        }
         app.note_loaded_config(&path);
         configured::take_mode_flow_time_ns();
         let start = Instant::now();
