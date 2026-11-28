@@ -54,7 +54,6 @@ false|normal|align-view-middle|z m
 false|normal|align-view-top|z t
 false|normal|append-after|a
 false|normal|browse-actions|Space h a
-false|normal|clipboard-paste|Ctrl-v
 false|normal|clipboard-yank|Ctrl-C
 false|normal|close-window|Space w c
 false|normal|close|Space b c
@@ -273,7 +272,6 @@ false|select|align-view-middle|z m
 false|select|align-view-top|z t
 false|select|append-after|a
 false|select|browse-actions|Space h a
-false|select|clipboard-paste|Ctrl-v
 false|select|clipboard-yank|Ctrl-C
 false|select|close-window|Space w c
 false|select|close|Space b c
@@ -503,7 +501,6 @@ true|normal|align-view-middle|z m
 true|normal|align-view-top|z t
 true|normal|append-after|a
 true|normal|browse-actions|Space h a
-true|normal|clipboard-paste|Ctrl-v
 true|normal|clipboard-yank|Ctrl-C
 true|normal|close-window|Space w c
 true|normal|close|Space b c
@@ -721,7 +718,6 @@ true|select|align-view-middle|z m
 true|select|align-view-top|z t
 true|select|append-after|a
 true|select|browse-actions|Space h a
-true|select|clipboard-paste|Ctrl-v
 true|select|clipboard-yank|Ctrl-C
 true|select|close-window|Space w c
 true|select|close|Space b c
