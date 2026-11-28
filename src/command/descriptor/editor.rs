@@ -10,6 +10,22 @@ const NONE: &[Mode] = &[];
 
 pub(super) const fn editor_policy(command: C) -> ActionPolicy {
     match command {
+        C::TerminalUndoPaste => ActionPolicy {
+            global_binding_modes: NONE,
+            effects: &[TerminalInput],
+            count: CountBehavior::Repeat,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
+        C::TerminalEnterInput => ActionPolicy {
+            global_binding_modes: NONE,
+            effects: &[Mode, View],
+            count: CountBehavior::Reject,
+            operands: OperandArity::Zero,
+            requires_writable_buffer: false,
+            buffer_mutation: BufferMutation::Unchanged,
+        },
         C::TerminalPaste | C::TerminalClipboardPasteText => ActionPolicy {
             global_binding_modes: NONE,
             effects: &[TerminalInput],
@@ -221,7 +237,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::Undo => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Text, TerminalInput],
+            effects: &[Text],
             count: CountBehavior::Repeat,
             operands: OperandArity::Zero,
             requires_writable_buffer: true,

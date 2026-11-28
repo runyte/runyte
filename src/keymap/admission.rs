@@ -28,7 +28,9 @@ pub fn admits(scope: BindingScope, target: BindingTarget) -> bool {
 pub fn admits_command(scope: BindingScope, command: C) -> bool {
     if matches!(
         command,
-        C::TerminalPaste
+        C::TerminalUndoPaste
+            | C::TerminalEnterInput
+            | C::TerminalPaste
             | C::TerminalClipboardPasteText
             | C::TerminalSearch
             | C::TerminalSearchRegex
@@ -185,17 +187,14 @@ pub(crate) const TREE_PASSES: &[C] = &[
 
 /// Text commands terminal review answers to, on its captured snapshot. The
 /// character-taking ones are resolved before the terminal handler sees them;
-/// insert-mode entries send input to the child. Macros record and replay keys
+/// dedicated terminal actions own child input. Macros record and replay keys
 /// rather than text, so the whole set works here: a recording started in a
 /// terminal must be one the same pane can stop.
 const TERMINAL: &[C] = &[
-    C::AppendAfter,
     C::ClipboardYank,
     C::CollapseSelection,
     C::CopySelectionDown,
     C::CopySelectionUp,
-    C::EnterInsertMode,
-    C::EnterReplaceMode,
     C::EnterSelectMode,
     C::ExtendLineAbove,
     C::ExtendLineBelow,
@@ -212,8 +211,6 @@ const TERMINAL: &[C] = &[
     C::GotoWord,
     C::HalfPageDown,
     C::HalfPageUp,
-    C::InsertLineEnd,
-    C::InsertLineStart,
     C::JumpBackward,
     C::JumpBackwardBuffer,
     C::JumpForward,
@@ -235,8 +232,6 @@ const TERMINAL: &[C] = &[
     C::MoveWordBackward,
     C::MoveWordEnd,
     C::MoveWordForward,
-    C::OpenLineAbove,
-    C::OpenLineBelow,
     C::PageDown,
     C::PageUp,
     C::RecordDefaultMacro,
@@ -252,7 +247,6 @@ const TERMINAL: &[C] = &[
     C::SelectionRedo,
     C::SelectionUndo,
     C::StopMacroRecording,
-    C::Undo,
     C::Yank,
     C::YankLine,
 ];

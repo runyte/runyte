@@ -887,20 +887,10 @@ impl App {
                 let _ = session;
                 true
             }
-            Command::EnterInsertMode
-            | Command::AppendAfter
-            | Command::InsertLineStart
-            | Command::InsertLineEnd
-            | Command::OpenLineBelow
-            | Command::OpenLineAbove => {
+            Command::TerminalEnterInput => {
                 session.scroll_to_live();
                 self.set_editing_role(Mode::Insert);
                 self.status("terminal input · Ctrl-\\ returns to normal mode");
-                true
-            }
-            Command::EnterReplaceMode => {
-                let _ = session;
-                self.action_failed("replace mode needs an editable buffer");
                 true
             }
             Command::ScrollViewUp => {
@@ -1034,7 +1024,7 @@ impl App {
                 }
                 true
             }
-            Command::Undo => {
+            Command::TerminalUndoPaste => {
                 let outcome = session.undo_sent_text();
                 let _ = session;
                 match outcome {

@@ -752,7 +752,8 @@ preset described below.
 Stage 4c separates terminal paste and review search, makes document paste and
 repeat-search mode-preserving, and replaces bundled yank actions with programs.
 Terminal **Y** now copies whole review rows; it was previously refused. Stage 4c2
-must finish terminal undo-paste and insert/open-line transitions before 4d.
+separates terminal undo-paste and live-input entry; its pending dispatch
+inventory is empty. Normal and Select entry retain their shared meanings.
 
 ### Pending stage 5 splits
 
@@ -832,8 +833,9 @@ with its implementation. This is the order for the remaining stage 4 work:
 - **4c — Terminal meanings and programs.** Split operations with distinct
   terminal meanings and author their explicit programs and mode tails. Retain
   shared operations where their meaning is unchanged.
-- **4c2 — Remaining terminal meanings.** Split undo-paste and insert/open-line
-  transitions; empty the terminal dispatch inventory’s pending entries.
+- **4c2 — Remaining terminal meanings.** Terminal undo-paste and live-input
+  entry have distinct identities; Normal/Select entry remains shared with view
+  prose. Document input aliases are refused. The pending inventory is empty.
 - **4d — Remaining directory, tree and clipboard splits.** Include inherited
   tree `N` and preserve clipboard image/text decisions. Leave the stage 4
   pending-split classification empty.

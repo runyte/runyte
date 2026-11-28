@@ -1123,7 +1123,7 @@ fn configured_grammar_and_tree_mode_changes_preserve_the_tail() {
 #[test]
 fn terminal_mode_changes_and_supplied_name_continue_the_program() {
     let mut app = configured(
-        "bind: {terminal: {F6: [enter-insert-mode, enter-normal-mode, leave-terminal], F7: [{command: rename-terminal, argument: build}, leave-terminal]}}",
+        "bind: {terminal: {F6: [terminal-enter-input, enter-normal-mode, leave-terminal], F7: [{command: rename-terminal, argument: build}, leave-terminal]}}",
     );
     let terminal = app.terminals.insert_test_session(80, 24);
     app.active_mut().terminal = Some(terminal);

@@ -378,7 +378,7 @@ fn effects_distinguish_synchronous_views_from_owned_async_and_prompt_work() {
         EditorCommand::TerminalPaste,
         EditorCommand::TerminalClipboardPasteText,
         EditorCommand::ClipboardPaste,
-        EditorCommand::Undo,
+        EditorCommand::TerminalUndoPaste,
     ] {
         assert!(c.action_policy().effects.contains(&E::TerminalInput));
     }

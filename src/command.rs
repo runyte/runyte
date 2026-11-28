@@ -1055,6 +1055,8 @@ editor_commands! {
         "Equalize pane widths, then pane heights within each column"
     ),
 
+    TerminalUndoPaste => ("terminal-undo-paste", "Ask the child to erase the last paste"),
+    TerminalEnterInput => ("terminal-enter-input", "Return to live terminal input"),
     TerminalPaste => ("terminal-paste", "Send register text to the terminal child"),
     TerminalClipboardPasteText => ("terminal-clipboard-paste-text", "Send clipboard text to the terminal child"),
     TerminalSearch => ("terminal-search", "Search captured terminal output"),
@@ -1621,7 +1623,9 @@ impl EditorCommand {
             | Self::OpenThemeSettings => CommandCategory::Configuration,
             Self::OpenWorkspaceSearchResult => CommandCategory::View,
             Self::ShowHelp | Self::ShowAbout | Self::ShowTutorial => CommandCategory::Help,
-            Self::TerminalPaste
+            Self::TerminalUndoPaste
+            | Self::TerminalEnterInput
+            | Self::TerminalPaste
             | Self::TerminalClipboardPasteText
             | Self::TerminalSearch
             | Self::TerminalSearchRegex

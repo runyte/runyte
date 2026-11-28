@@ -1633,11 +1633,13 @@ indicated buffer owner; raw UI input remains under `keys.ui`.
 - `split-horizontal`: insert
 - `split-vertical`: insert
 - `terminal-clipboard-paste-text`: normal, select
+- `terminal-enter-input`: normal, select
 - `terminal-paste`: normal, select
 - `terminal-search`: normal, select
 - `terminal-search-next`: normal, select
 - `terminal-search-previous`: normal, select
 - `terminal-search-regex`: normal, select
+- `terminal-undo-paste`: normal, select
 - `toggle-fullscreen`: insert
 - `toggle-zen`: insert
 
@@ -1725,13 +1727,13 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `page-down` | selection, view | repeats | none | none | terminal: Move the review cursor by a page of captured output; media: Move to the previous or next PDF page | atomic operation |
 | `half-page-up` | selection, view | repeats | none | none | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page | atomic operation |
 | `half-page-down` | selection, view | repeats | none | none | terminal: Move the review cursor by half a page of captured output; media: Move to the previous or next PDF page; directory-tree: Move the selected tree row by half a page | atomic operation |
-| `enter-insert-mode` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | pending stage 5 split; then mode action |
+| `enter-insert-mode` | mode, selection | not accepted | none | none |  | pending stage 5 split; then mode action |
 | `enter-replace-mode` | mode, selection | not accepted | none | none |  | pending stage 5 split; then mode action |
-| `append-after` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
-| `insert-line-start` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
-| `insert-line-end` | mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
-| `open-line-below` | text, mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
-| `open-line-above` | text, mode, selection | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
+| `append-after` | mode, selection | not accepted | none | none |  | mode action |
+| `insert-line-start` | mode, selection | not accepted | none | none |  | mode action |
+| `insert-line-end` | mode, selection | not accepted | none | none |  | mode action |
+| `open-line-below` | text, mode, selection | not accepted | none | none |  | mode action |
+| `open-line-above` | text, mode, selection | not accepted | none | none |  | mode action |
 | `replace-char` | character input, text | not accepted | one character | none |  | atomic operation |
 | `surround-add` | character input, text | not accepted | one character | none |  | atomic operation |
 | `surround-replace` | character input, text | not accepted | two characters | none |  | atomic operation |
@@ -1739,7 +1741,7 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `toggle-case` | text | not accepted | none | none |  | atomic operation |
 | `selection-undo` | selection, mode | repeats | none | none | terminal: Restore the previous or next terminal review selection | decision: Restores the selection and mode together from the chosen history entry. |
 | `selection-redo` | selection, mode | repeats | none | none | terminal: Restore the previous or next terminal review selection | decision: Restores the selection and mode together from the chosen history entry. |
-| `undo` | text, terminal input | repeats | none | none | terminal: Ask the child to erase the last text Runyte sent, if it has not been submitted | atomic operation |
+| `undo` | text | repeats | none | none |  | atomic operation |
 | `redo` | text | repeats | none | none |  | atomic operation |
 | `yank` | register | not accepted | none | none | terminal: Copy the review selection to the selected register and retain its selection and mode; directory: Copy selected entries and record a directory copy payload | atomic operation |
 | `yank-line` | register | not accepted | none | none | terminal: Copy whole review rows to the selected register, preserving selection and mode; directory: Copy selected entry lines and record a directory copy payload | atomic operation |
@@ -1980,6 +1982,8 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `close-window` | pane, mode | not accepted | none | none | directory-tree: Close the directory tree and restore pane focus | decision: Activates or restores a view and its destination mode as one guarded workflow. |
 | `only-window` | pane | not accepted | none | none |  | atomic operation |
 | `equalize-windows` | pane | not accepted | none | none |  | atomic operation |
+| `terminal-undo-paste` | terminal input | repeats | none | none | terminal: Ask the child to erase the last text Runyte sent, if it has not been submitted | atomic operation |
+| `terminal-enter-input` | mode, view | not accepted | none | none | terminal: Return to live output and send subsequent input to the child | mode action |
 | `terminal-paste` | terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child without changing mode | atomic operation |
 | `terminal-clipboard-paste-text` | terminal input | interpreted as an address or extent | none | none | terminal: Send system clipboard text to the child without changing mode | atomic operation |
 | `terminal-search` | prompt, search state, selection, view | not accepted | none | none | terminal: Prompt for a case-insensitive search of captured output | atomic operation |
