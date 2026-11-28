@@ -293,7 +293,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::SelectLine | C::ExtendLineAbove | C::ExtendLineBelow | C::SelectLineUp => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Selection, Mode],
+            effects: &[Selection],
             count: CountBehavior::Repeat,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,
@@ -372,7 +372,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
         },
         C::SelectInsideParagraph | C::SelectAroundParagraph => ActionPolicy {
             global_binding_modes: NORMAL_SELECT,
-            effects: &[Selection, Mode],
+            effects: &[Selection],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
             requires_writable_buffer: false,

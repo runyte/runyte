@@ -31,7 +31,7 @@ impl App {
     }
 
     pub(super) fn clipboard_yank(&mut self) {
-        let register = self.yank_value(false);
+        let register = self.yank_value(self.active().selection.is_linewise());
         match self.ports.clipboard().write(&register.text) {
             Ok(()) => self.status("yanked to system clipboard"),
             Err(error) => {
@@ -43,7 +43,7 @@ impl App {
     pub(super) fn clipboard_paste_count(
         &mut self,
         before: bool,
-        transient_line_selection: bool,
+        linewise_extent: bool,
         count: usize,
     ) {
         match self.ports.clipboard().read() {
@@ -70,7 +70,7 @@ impl App {
                     } else {
                         super::editing::Paste::AfterOrReplace
                     },
-                    transient_line_selection,
+                    linewise_extent,
                 );
             }
             Err(error) => {
@@ -90,10 +90,10 @@ impl App {
     /// hand an image over with, falls through to the ordinary system-clipboard
     /// text paste. Both bound keys use this command, so the clipboard format
     /// does not require choosing a different command before pasting.
-    pub(super) fn clipboard_paste_any(&mut self, transient_line_selection: bool) {
+    pub(super) fn clipboard_paste_any(&mut self, linewise_extent: bool) {
         match self.ports.clipboard().read_image() {
             Ok(Some(bytes)) => self.paste_clipboard_image(&bytes),
-            Ok(None) => self.clipboard_paste_count(false, transient_line_selection, 1),
+            Ok(None) => self.clipboard_paste_count(false, linewise_extent, 1),
             Err(error) => {
                 self.error_from("Clipboard", "Clipboard operation failed", error.to_string())
             }
@@ -972,6 +972,7 @@ impl App {
         let buffer = self.active_buffer();
         let extend = self.mode == Mode::Select;
         let mut missed = false;
+        let mut matched = false;
         let selection = self.active().selection.transform(|range| {
             let found = if forward {
                 offsets_after(buffer, range.head)
@@ -984,6 +985,7 @@ impl App {
                 missed = true;
                 return range;
             };
+            matched = true;
             if till {
                 target = if forward {
                     previous_offset(buffer, target).unwrap_or(range.head)
@@ -1000,6 +1002,9 @@ impl App {
         if missed {
             self.action_failed(format!("character not found: {character}"));
         }
+        if !matched {
+            return;
+        }
         let pane = self.active_mut();
         pane.replace_selection(selection);
         pane.preserve_scroll = false;
@@ -1012,6 +1017,7 @@ impl App {
     pub(super) fn select_to_character(&mut self, character: char, forward: bool, till: bool) {
         let buffer = self.active_buffer();
         let mut missed = false;
+        let mut matched = false;
         let selection = self.active().selection.transform(|range| {
             let found = if forward {
                 offsets_after(buffer, range.head)
@@ -1027,6 +1033,7 @@ impl App {
             // Stepping back from the match skips line terminators, so from a
             // caret on an empty row it could land behind the caret; a till
             // never selects in the direction opposite to its search.
+            matched = true;
             if till {
                 target = if forward {
                     previous_offset(buffer, target).map_or(range.head, |at| at.max(range.head))
@@ -1038,6 +1045,9 @@ impl App {
         });
         if missed {
             self.action_failed(format!("character not found: {character}"));
+        }
+        if !matched {
+            return;
         }
         let pane = self.active_mut();
         pane.replace_selection(selection);

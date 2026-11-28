@@ -249,6 +249,23 @@ mod tests {
     }
 
     #[test]
+    fn temporary_line_mode_restores_the_named_invocation_mode() {
+        let mut app = app();
+        app.enter_named_binding_mode("second");
+        for key in KeySequence::parse("x x").unwrap().as_slice() {
+            app.handle_input(InputEvent::Key(*key)).unwrap();
+        }
+        assert_eq!(app.mode, Mode::Select);
+        assert!(app.active().selection.is_linewise());
+        for key in KeySequence::parse("j").unwrap().as_slice() {
+            app.handle_input(InputEvent::Key(*key)).unwrap();
+        }
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.binding_mode_name().as_deref(), Some("second"));
+        assert!(!app.active().selection.is_linewise());
+    }
+
+    #[test]
     fn named_modes_dispatch_and_explicit_role_entry_leaves_submode() {
         let mut app = app();
         assert_eq!(app.binding_mode_name().as_deref(), Some("first"));

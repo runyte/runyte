@@ -74,7 +74,6 @@ false|normal|document-symbols|Space l s
 false|normal|enter-insert-mode|i
 false|normal|enter-replace-mode|R
 false|normal|equalize-windows|Space w =
-false|normal|extend-line-above|X
 false|normal|find-next-char|f
 false|normal|find-previous-char|F
 false|normal|find-till-next-char|t
@@ -201,9 +200,6 @@ false|normal|search-next|n
 false|normal|search-previous|N
 false|normal|search-regex|/
 false|normal|search|s
-false|normal|select-around-paragraph|m a p
-false|normal|select-inside-paragraph|m i p
-false|normal|select-line|x
 false|normal|select-register|"
 false|normal|selection-redo|Alt-U
 false|normal|selection-undo|Alt-u
@@ -305,7 +301,6 @@ false|select|document-symbols|Space l s
 false|select|enter-insert-mode|i
 false|select|enter-replace-mode|R
 false|select|equalize-windows|Space w =
-false|select|extend-line-above|X
 false|select|find-next-char|f
 false|select|find-previous-char|F
 false|select|find-till-next-char|t
@@ -432,9 +427,6 @@ false|select|search-next|n
 false|select|search-previous|N
 false|select|search-regex|/
 false|select|search|s
-false|select|select-around-paragraph|m a p
-false|select|select-inside-paragraph|m i p
-false|select|select-line|x
 false|select|select-register|"
 false|select|selection-redo|Alt-U
 false|select|selection-undo|Alt-u
@@ -547,7 +539,6 @@ true|normal|document-symbols|Space l s
 true|normal|enter-insert-mode|i
 true|normal|enter-replace-mode|R
 true|normal|equalize-windows|Space w =
-true|normal|extend-line-above|X
 true|normal|find-next-char|f
 true|normal|find-previous-char|F
 true|normal|find-till-next-char|t
@@ -674,9 +665,6 @@ true|normal|search-next|n
 true|normal|search-previous|N
 true|normal|search-regex|/
 true|normal|search|s
-true|normal|select-around-paragraph|m a p
-true|normal|select-inside-paragraph|m i p
-true|normal|select-line|x
 true|normal|select-register|"
 true|normal|selection-redo|Alt-U
 true|normal|selection-undo|Alt-u
@@ -777,7 +765,6 @@ true|select|document-symbols|Space l s
 true|select|enter-insert-mode|i
 true|select|enter-replace-mode|R
 true|select|equalize-windows|Space w =
-true|select|extend-line-above|X
 true|select|find-next-char|f
 true|select|find-previous-char|F
 true|select|find-till-next-char|t
@@ -904,9 +891,6 @@ true|select|search-next|n
 true|select|search-previous|N
 true|select|search-regex|/
 true|select|search|s
-true|select|select-around-paragraph|m a p
-true|select|select-inside-paragraph|m i p
-true|select|select-line|x
 true|select|select-register|"
 true|select|selection-redo|Alt-U
 true|select|selection-undo|Alt-u

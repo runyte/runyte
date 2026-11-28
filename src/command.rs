@@ -2970,6 +2970,7 @@ pub enum InvocationParameters {
     Path(PathBuf),
     OptionalPath(Option<PathBuf>),
     OptionalText(Option<String>),
+    TemporaryMode(String),
     SessionRename { workspace: PathBuf, name: String },
     Grammar(Option<GrammarKind>),
     Help(HelpInvocation),
@@ -3109,7 +3110,7 @@ impl CommandInvocation {
                 ) && execution == CommandExecutionContext::default()
             }
             CommandId::Editor(EditorCommand::ModeEnter) => {
-                matches!(&parameters, InvocationParameters::OptionalText(Some(name)) if crate::keymap::mode_graph::valid_name(name).is_ok())
+                matches!(&parameters, InvocationParameters::OptionalText(Some(name)) | InvocationParameters::TemporaryMode(name) if crate::keymap::mode_graph::valid_name(name).is_ok())
                     && execution == CommandExecutionContext::default()
             }
             CommandId::Editor(EditorCommand::ShowHelp) => {

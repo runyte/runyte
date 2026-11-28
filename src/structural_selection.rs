@@ -5,7 +5,7 @@
 use crate::{
     command::Mode,
     jumplist::SelectionSemantics,
-    selection::{Range, Selection},
+    selection::{Range, Selection, SelectionExtent},
     syntax::{
         DelimiterPair, DocumentSyntax, Registry, SyntaxCapture, SyntaxError, SyntaxObject,
         SyntaxObjectPart, SyntaxRange, SyntaxSelectionRange, SyntaxSelectionTransform,
@@ -107,6 +107,7 @@ struct ExpansionFrame {
 
 #[derive(Clone, Debug)]
 struct SelectionSnapshot {
+    extent: SelectionExtent,
     ranges: Vec<DirectedRange>,
     primary: usize,
     mode: Mode,
@@ -156,6 +157,7 @@ impl SelectionSnapshot {
             })
             .collect::<Result<_, SyntaxError>>()?;
         Ok(Self {
+            extent: selection.extent(),
             ranges,
             primary: selection.primary_index(),
             mode,
@@ -176,7 +178,7 @@ impl SelectionSnapshot {
                 })
             })
             .collect::<Result<_, SyntaxError>>()?;
-        Ok(Selection::new(ranges, self.primary))
+        Ok(Selection::new(ranges, self.primary).with_extent(self.extent))
     }
 }
 
@@ -473,7 +475,8 @@ mod tests {
                 Range::point(second),
             ],
             1,
-        );
+        )
+        .with_extent(SelectionExtent::Linewise);
         let mut history = ExpansionHistory::default();
 
         let expanded = history

@@ -148,6 +148,8 @@ enum StepDef {
 struct Enter {
     action: String,
     arg: String,
+    #[serde(default)]
+    temporary: bool,
 }
 #[derive(Deserialize, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -230,6 +232,7 @@ struct BindingMap {
     platforms: Option<Vec<Platform>>,
     action: Option<String>,
     arg: Option<String>,
+    temporary: Option<bool>,
     command: Option<String>,
     argument: Option<String>,
     #[serde(rename = "if")]
@@ -240,6 +243,9 @@ struct BindingMap {
 }
 impl BindingMap {
     fn into_step<E: serde::de::Error>(self) -> Result<StepDef, E> {
+        if self.temporary.is_some() && self.action.as_deref() != Some("mode-enter") {
+            return Err(E::custom("temporary requires mode-enter"));
+        }
         if self.steps.is_some()
             || self.description.is_some()
             || self.target.is_some()
@@ -260,9 +266,11 @@ impl BindingMap {
             self.then,
             self.otherwise,
         ) {
-            (Some(action), Some(arg), None, None, None, None, None) => {
-                Ok(StepDef::Enter(Enter { action, arg }))
-            }
+            (Some(action), Some(arg), None, None, None, None, None) => Ok(StepDef::Enter(Enter {
+                action,
+                arg,
+                temporary: self.temporary.unwrap_or(false),
+            })),
             (None, None, Some(command), argument, None, None, None) => {
                 Ok(StepDef::Command(NamedCommand { command, argument }))
             }
@@ -310,7 +318,8 @@ impl<'de> Deserialize<'de> for BindingDef {
                     return Err(serde::de::Error::custom("platforms must not be empty"));
                 }
                 if let Some(steps) = record.steps.take() {
-                    if record.action.is_some()
+                    if record.temporary.is_some()
+                        || record.action.is_some()
                         || record.arg.is_some()
                         || record.command.is_some()
                         || record.argument.is_some()
@@ -443,7 +452,11 @@ fn program(steps: &[StepDef], depth: usize) -> Result<program::Program, String> 
                         t => actions::Action::Target(t),
                     })
                 }
-                StepDef::Enter(Enter { action, arg }) => {
+                StepDef::Enter(Enter {
+                    action,
+                    arg,
+                    temporary,
+                }) => {
                     if action != "mode-enter" {
                         return Err("invalid mode-enter action/arg".into());
                     }
@@ -453,7 +466,13 @@ fn program(steps: &[StepDef], depth: usize) -> Result<program::Program, String> 
                             crate::command::CommandId::Editor(
                                 crate::command::EditorCommand::ModeEnter,
                             ),
-                            crate::command::InvocationParameters::OptionalText(Some(arg.clone())),
+                            if *temporary {
+                                crate::command::InvocationParameters::TemporaryMode(arg.clone())
+                            } else {
+                                crate::command::InvocationParameters::OptionalText(Some(
+                                    arg.clone(),
+                                ))
+                            },
                             crate::command::CommandExecutionContext::default(),
                         )
                         .map_err(|error| error.to_string())?,
@@ -495,8 +514,8 @@ fn validate_entry_targets(
     for action in program.iter() {
         if let actions::Action::Invocation(invocation) = action
             && invocation.id() == CommandId::Editor(EditorCommand::ModeEnter)
-            && let crate::command::InvocationParameters::OptionalText(Some(name)) =
-                invocation.parameters()
+            && let crate::command::InvocationParameters::OptionalText(Some(name))
+            | crate::command::InvocationParameters::TemporaryMode(name) = invocation.parameters()
             && (matches!(name.as_str(), "list" | "session-manager")
                 || (mode_graph::EditingRole::named(name).is_none() && graph.id(name).is_none()))
         {
@@ -799,6 +818,20 @@ mod tests {
     }
 
     #[test]
+    fn temporary_mode_entry_is_visible_in_default_program_discovery() {
+        let map = keymap_for(false);
+        for key in ["x", "X", "m i p", "m a p"] {
+            let sequence = KeySequence::parse(key).unwrap();
+            let binding = map
+                .bindings_for_scope(Mode::Normal, BindingScope::Global)
+                .find(|binding| binding.sequence == sequence)
+                .unwrap();
+            let text = crate::command::discovery::binding_steps(binding, BindingScope::Global);
+            assert!(text.contains("temporary: true"), "{key}: {text}");
+        }
+    }
+
+    #[test]
     fn preset_programs_reject_unknown_fields_conditions_and_bounds() {
         for source in [
             "[{if: mystery, then: [], else: []}]",
@@ -809,6 +842,10 @@ mod tests {
             "[{action: mode-enter, arg: mystery}]",
             "[{action: unknown, arg: normal}]",
             "[{action: mode-enter, arg: normal, extra: true}]",
+            "[{action: mode-enter, arg: select, temporary: nope}]",
+            "[{command: yank, temporary: true}]",
+            "[{if: recording-macro, then: [], else: [], temporary: true}]",
+            "[{steps: [yank], temporary: true}]",
             "[unknown-action]",
             "[mode-enter]",
             "[{command: mode-enter}]",
@@ -941,6 +978,7 @@ mod tests {
             }
             for step in [
                 "{action: mode-enter, arg: select}",
+                "{action: mode-enter, arg: select, temporary: true}",
                 "{if: {mode: select}, then: [move-left], else: []}",
                 "mode-enter",
                 "{command: mode-enter}",

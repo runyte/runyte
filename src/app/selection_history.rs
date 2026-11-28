@@ -22,7 +22,7 @@ struct State {
     semantics: SelectionSemantics,
     mode: Mode,
     binding_mode: Option<String>,
-    line_select: Option<Mode>,
+    line_select: Option<(Mode, Option<String>)>,
 }
 
 /// What a selection is made in: a pane's buffer or a terminal's review.
@@ -117,7 +117,7 @@ impl App {
                     semantics: SelectionSemantics::default(),
                     mode,
                     binding_mode,
-                    line_select: self.line_select,
+                    line_select: self.line_select.clone(),
                 },
             });
         }
@@ -142,7 +142,7 @@ impl App {
                 semantics: pane.selection_semantics,
                 mode,
                 binding_mode,
-                line_select: self.line_select,
+                line_select: self.line_select.clone(),
             },
         })
     }

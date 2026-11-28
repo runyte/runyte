@@ -1943,7 +1943,7 @@ fn counted_line_selection_takes_that_many_lines() {
 }
 
 #[test]
-fn keyed_and_direct_counted_line_selection_are_equivalent() {
+fn keyed_and_direct_counted_line_selection_share_extent_but_only_default_enters_mode() {
     let mut keyed = App::new(Config::default(), None).unwrap();
     let mut direct = App::new(Config::default(), None).unwrap();
     for app in [&mut keyed, &mut direct] {
@@ -1963,9 +1963,11 @@ fn keyed_and_direct_counted_line_selection_are_equivalent() {
         )
         .unwrap();
 
-    assert_eq!(keyed.mode, direct.mode);
+    assert_eq!(keyed.mode, Mode::Select);
+    assert_eq!(direct.mode, Mode::Normal);
     assert_eq!(keyed.active().selection, direct.active().selection);
-    assert_eq!(keyed.line_select, direct.line_select);
+    assert!(keyed.line_select.is_some());
+    assert!(direct.line_select.is_none());
 }
 
 #[test]

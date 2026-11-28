@@ -41,7 +41,8 @@ fn explorer_clipboard_round_trip_through_terminal_paste_preserves_rows() {
         explorer.handle_key(KeyStroke::char(key)).unwrap();
     }
     let copied = clipboard.lock().unwrap().clone();
-    assert_eq!(copied, "alpha.txt\nβeta.txt");
+    // Whole-line extent survives temporary Select restoration for clipboard yank.
+    assert_eq!(copied, "alpha.txt\nβeta.txt\n");
 
     let mut document = App::new_in_project(
         isolated_startup_config(Config::default()),

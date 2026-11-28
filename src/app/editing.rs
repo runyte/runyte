@@ -2,6 +2,8 @@
 
 //! Selection-first movement, transactional edits, registers, and syntax actions.
 
+use crate::selection::SelectionExtent;
+
 // Application-module dependencies:
 use super::{
     App, Assoc, BTreeMap, Buffer, Change, DelimiterPair, DirectoryRegister, HashMap, HashSet,
@@ -596,7 +598,7 @@ impl App {
             self.action_failed("that position's buffer is gone");
             return;
         };
-        let selection = target.selection.transform(|range| {
+        let selection = target.selection.transform_coordinates(|range| {
             Range::new(
                 buffer.clamp_offset(range.anchor, false),
                 buffer.clamp_offset(range.head, false),
@@ -1961,9 +1963,14 @@ impl App {
     /// Every press after that moves the head row up by one. `x` and `X` do not
     /// use this: they grow the outer edges through `extend_line`.
     pub(super) fn select_line_up(&mut self) {
+        let original = if self.active().selection_semantics() == SelectionSemantics::HalfOpen {
+            self.half_open_to_inclusive(self.active().selection.clone())
+        } else {
+            self.active().selection.clone()
+        };
         let buffer = self.active_buffer();
-        let live = self.line_select.is_some();
-        let selection = self.active().selection.transform(|range| {
+        let live = self.active().selection.is_linewise();
+        let selection = original.transform(|range| {
             let anchor_row = buffer.offset_to_row(range.anchor);
             let mut head_row = buffer.offset_to_row(range.head);
             if live {
@@ -1983,18 +1990,22 @@ impl App {
                 )
             }
         });
-        self.active_mut().replace_selection(selection);
-        if self.line_select.is_none() {
-            self.line_select = Some(self.mode);
-            self.set_editing_role(Mode::Select);
-        }
+        self.active_mut()
+            .replace_selection(selection.with_extent(SelectionExtent::Linewise));
+        self.active_mut()
+            .mark_selection_semantics(SelectionSemantics::Runyte);
     }
 
     /// Grow at an outer line boundary, never retract the existing selection.
     pub(super) fn extend_line(&mut self, down: bool) {
+        let original = if self.active().selection_semantics() == SelectionSemantics::HalfOpen {
+            self.half_open_to_inclusive(self.active().selection.clone())
+        } else {
+            self.active().selection.clone()
+        };
         let buffer = self.active_buffer();
-        let live = self.line_select.is_some();
-        let selection = self.active().selection.transform(|range| {
+        let live = self.active().selection.is_linewise();
+        let selection = original.transform(|range| {
             let mut first = buffer.offset_to_row(range.from());
             let mut last = buffer.offset_to_row(range.to());
             let full = (live || !range.is_empty())
@@ -2015,11 +2026,10 @@ impl App {
                 Range::new(end, start)
             }
         });
-        self.active_mut().replace_selection(selection);
-        if self.line_select.is_none() {
-            self.line_select = Some(self.mode);
-            self.set_editing_role(Mode::Select);
-        }
+        self.active_mut()
+            .replace_selection(selection.with_extent(SelectionExtent::Linewise));
+        self.active_mut()
+            .mark_selection_semantics(SelectionSemantics::Runyte);
     }
 
     pub(super) fn enter_select_mode(&mut self) {
@@ -2283,12 +2293,8 @@ impl App {
             return;
         }
         let pane = self.active_mut();
-        pane.replace_selection(selection);
+        pane.replace_selection(selection.with_extent(SelectionExtent::Linewise));
         pane.mark_selection_semantics(SelectionSemantics::Runyte);
-        if self.line_select.is_none() {
-            self.line_select = Some(self.mode);
-            self.set_editing_role(Mode::Select);
-        }
     }
 
     /// The active selection as the half-open spans a text object compares
@@ -2302,7 +2308,7 @@ impl App {
     fn half_open_object_selection(&self) -> Selection {
         self.active()
             .selection
-            .transform(|range| self.half_open_object_range(range))
+            .transform_coordinates(|range| self.half_open_object_range(range))
     }
 
     fn half_open_object_range(&self, range: Range) -> Range {
@@ -3255,26 +3261,17 @@ impl App {
     }
 
     /// Delete without writing a register, retaining delete/change caret semantics.
-    pub(super) fn delete_selection_or_char(
-        &mut self,
-        for_change: bool,
-        transient_line_selection: bool,
-    ) {
-        self.delete_selection_inner(for_change, transient_line_selection && !for_change, false);
+    pub(super) fn delete_selection_or_char(&mut self, for_change: bool, linewise_extent: bool) {
+        self.delete_selection_inner(for_change, linewise_extent && !for_change, false);
     }
 
-    pub(super) fn cut_selection(&mut self, for_change: bool, transient_line_selection: bool) {
-        self.delete_selection_inner(for_change, transient_line_selection && !for_change, true);
+    pub(super) fn cut_selection(&mut self, for_change: bool, linewise_extent: bool) {
+        self.delete_selection_inner(for_change, linewise_extent && !for_change, true);
     }
 
-    fn delete_selection_inner(
-        &mut self,
-        for_change: bool,
-        transient_line_selection: bool,
-        yank: bool,
-    ) {
+    fn delete_selection_inner(&mut self, for_change: bool, linewise_extent: bool, yank: bool) {
         let buffer_id = self.active().buffer;
-        let linewise = transient_line_selection;
+        let linewise = linewise_extent;
         if yank {
             // This is not `[yank, delete-selection]`, and the difference is
             // what a directory buffer does with the register. `yank` records
@@ -3308,7 +3305,7 @@ impl App {
             self.selected_register = '"';
         }
         let buffer = self.active_buffer();
-        if !transient_line_selection {
+        if !linewise_extent {
             let changes = self
                 .operative_spans()
                 .into_iter()
@@ -3603,8 +3600,8 @@ impl App {
     /// selected register and leaves the selection and mode as they were, so
     /// a bound sequence can act on what it just copied. Reports whether the
     /// register was written.
-    pub(super) fn yank(&mut self, transient_line_selection: bool) -> bool {
-        let register = self.yank_value(transient_line_selection);
+    pub(super) fn yank(&mut self, linewise_extent: bool) -> bool {
+        let register = self.yank_value(linewise_extent);
         self.write_yank(register)
     }
 
@@ -3636,7 +3633,7 @@ impl App {
         self.set_editing_role(Mode::Normal);
     }
 
-    pub(super) fn yank_value(&self, transient_line_selection: bool) -> Register {
+    pub(super) fn yank_value(&self, linewise_extent: bool) -> Register {
         // An explorer caret names the entry on its row rather than the
         // character under it, which is how `directory_register` already reads
         // it. Yank the row so the text beside those entries agrees with them.
@@ -3645,7 +3642,7 @@ impl App {
         {
             return self.line_register();
         }
-        let linewise = transient_line_selection;
+        let linewise = linewise_extent;
         if linewise {
             return self.line_register();
         }
@@ -3698,16 +3695,11 @@ impl App {
         }
     }
 
-    pub(super) fn paste(&mut self, paste: Paste, transient_line_selection: bool) {
-        self.paste_count(paste, transient_line_selection, 1);
+    pub(super) fn paste(&mut self, paste: Paste, linewise_extent: bool) {
+        self.paste_count(paste, linewise_extent, 1);
     }
 
-    pub(super) fn paste_count(
-        &mut self,
-        paste: Paste,
-        transient_line_selection: bool,
-        count: usize,
-    ) {
+    pub(super) fn paste_count(&mut self, paste: Paste, linewise_extent: bool, count: usize) {
         let register = self.read_selected_register();
         if register.text.is_empty() {
             self.sequence_halted = true;
@@ -3716,7 +3708,7 @@ impl App {
         let Some(register) = self.counted_register(register, count) else {
             return;
         };
-        self.paste_register(&register, paste, transient_line_selection);
+        self.paste_register(&register, paste, linewise_extent);
     }
 
     /// Counted paste expands once, before choosing each range's insertion or
@@ -3787,7 +3779,7 @@ impl App {
         &mut self,
         register: &Register,
         paste: Paste,
-        transient_line_selection: bool,
+        linewise_extent: bool,
     ) {
         let before = paste == Paste::Before;
         if self.active_buffer().is_directory()
@@ -3811,7 +3803,7 @@ impl App {
             self.active().selection_semantics(),
             SelectionSemantics::HalfOpen
         );
-        let line_selection = transient_line_selection;
+        let line_selection = linewise_extent;
         // In Runyte's inclusive grammar a selected single character and a
         // Normal-mode caret both have equal endpoints. Select mode is what
         // distinguishes the former, including one-character search matches.

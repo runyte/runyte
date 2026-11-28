@@ -3331,10 +3331,10 @@ pub struct App {
     /// Live `goto-word` jump labels, painted over the active pane until two
     /// keystrokes name one or a stray key spends them.
     pub jump: Option<JumpLabels>,
-    /// Live line selection from `x`/`X`, holding the mode to restore when it
-    /// ends. Unlike `v`, a line selection is transient: it survives only
-    /// consecutive `x`/`X` presses, and any other command drops it.
-    line_select: Option<Mode>,
+    /// Temporary mode entry authored by the default line/paragraph programs.
+    /// Holds the editing role and named binding identity to restore when the
+    /// gesture ends. Whole-line extent lives independently on the selection.
+    line_select: Option<(Mode, Option<String>)>,
     selection_action_depth: usize,
     selection_history_epoch: u64,
     /// Selection history of each terminal's review, which belongs to the

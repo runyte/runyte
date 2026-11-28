@@ -18,6 +18,26 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — ARM debug whole-line selection extent
+
+Stage 4b of [#132](https://github.com/runyte/runyte/issues/132) was measured
+against its approved stage 4a parent using the same debug-profile
+`preset_startup` protocol below: one discarded warm-up per binary and ten
+alternating fresh-process samples on one `ubuntu-24.04-arm` runner.
+[Run 46083639209](https://github.com/runyte/runyte/actions/runs/46083639209)
+compares `1c8cd16b` with stage 4b `9ebe499e`.
+
+| Phase | Stage 4a ms | Stage 4b ms |
+| --- | ---: | ---: |
+| Typed YAML parsing | 17.378 (17.226–17.485) | 17.419 (17.238–17.850) |
+| Programs and metadata | 7.184 (7.162–7.217) | 7.141 (7.111–7.155) |
+| Construction and lookup index | 89.379 (89.120–89.545) | 89.685 (89.264–90.114) |
+| Total keymap initialization | 113.943 (113.647–114.145) | 114.224 (113.856–114.604) |
+
+Cells are median (min–max). Total median increases by 0.281 ms (0.25%).
+These component measurements do not establish end-to-end desktop readiness
+or release-profile costs. Raw samples are attached to the linked run.
+
 ## 2026-11-28 — ARM debug named-mode initialization
 
 The repeated ARM native-preview acceptance failure on

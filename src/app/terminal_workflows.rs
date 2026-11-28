@@ -703,7 +703,7 @@ impl App {
         &mut self,
         id: TerminalId,
         command: EditorCommand,
-        transient_line_selection: bool,
+        linewise_extent: bool,
         count: usize,
     ) -> bool {
         use EditorCommand as Command;
@@ -785,20 +785,19 @@ impl App {
             | Command::SelectLineUp
             | Command::ExtendLineAbove
             | Command::ExtendLineBelow => {
+                let linewise = session
+                    .review_selection_state()
+                    .is_some_and(|(_, selection)| selection.is_linewise());
                 if command != Command::SelectLineUp {
                     session.extend_review_line(
                         matches!(command, Command::SelectLine | Command::ExtendLineBelow),
-                        self.line_select.is_some(),
+                        linewise,
                     );
                 } else {
-                    session.select_review_line(false, self.line_select.is_some());
+                    session.select_review_line(false, linewise);
                 }
                 session.focus_review_selection(page, scroll_offset);
                 let _ = session;
-                if self.line_select.is_none() {
-                    self.line_select = Some(self.mode);
-                    self.set_editing_role(Mode::Select);
-                }
                 true
             }
             Command::CopySelectionDown | Command::CopySelectionUp => {
@@ -942,13 +941,13 @@ impl App {
             }
             Command::Yank | Command::YankCollapseNormalMode => {
                 let mut text = session.review_selection_text();
-                if transient_line_selection && !text.ends_with('\n') {
+                if linewise_extent && !text.ends_with('\n') {
                     text.push('\n');
                 }
                 let _ = session;
                 self.write_selected_register(Register {
                     text,
-                    linewise: transient_line_selection,
+                    linewise: linewise_extent,
                     directory: None,
                 });
                 if command == Command::YankCollapseNormalMode {
@@ -963,7 +962,7 @@ impl App {
                     return true;
                 }
                 let mut text = session.review_selection_text();
-                if transient_line_selection && !text.ends_with('\n') {
+                if linewise_extent && !text.ends_with('\n') {
                     text.push('\n');
                 }
                 let _ = session;

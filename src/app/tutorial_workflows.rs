@@ -186,7 +186,7 @@ impl App {
         if self.panes[&exercise_pane].buffer == expected_exercise_buffer {
             return;
         }
-        let selection = scratch_selection.transform(|range| {
+        let selection = scratch_selection.transform_coordinates(|range| {
             Range::new(
                 self.buffers[scratch_buffer].clamp_offset(range.anchor, false),
                 self.buffers[scratch_buffer].clamp_offset(range.head, false),

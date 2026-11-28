@@ -326,13 +326,16 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
         },
         C::SelectInsideParagraph
         | C::SelectAroundParagraph
-        | C::YankCollapseNormalMode
+        | C::SelectLine
+        | C::SelectLineUp
+        | C::ExtendLineAbove
+        | C::ExtendLineBelow => ActionClassification {
+            semantic: SemanticClass::Atomic,
+            pending_split: None,
+        },
+        C::YankCollapseNormalMode
         | C::YankLineCollapseNormalMode
         | C::PasteBefore
-        | C::SelectLine
-        | C::ExtendLineAbove
-        | C::ExtendLineBelow
-        | C::SelectLineUp
         | C::SearchNext
         | C::SearchPrevious
         | C::ClipboardPasteAfter
