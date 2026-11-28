@@ -263,7 +263,7 @@ the inspected key. Full preset export follows the public program syntax work.
 ### Action name migration
 
 In 0.5, actions belonging to a subject family use subject-first names.
-Replace old names in key bindings, sequences and `{ command: ... }` entries
+Replace old names in key bindings, sequences and `{ action: ... }` entries
 using this table. Old names report their replacement; they are not aliases.
 The same change applies to colon commands whose spelling matches a row.
 Other colon spellings, such as `:terminal` and `:terminal-file-directory`,
@@ -721,8 +721,17 @@ The terminal or window manager still needs to deliver the configured gesture.
 | --- | --- | --- |
 | action name | Run one action. | `X: extend-line-above` |
 | list | Run several actions in order. | `F6: [select-all, yank]` |
-| `{ command, argument }` | Run a command with an argument. | `F7: { command: pipe, argument: sort }` |
+| `{ action, arg }` | Run a command with an argument. | `F7: { action: pipe, arg: sort }` |
 | `null` | Remove the binding in this mode. | `F8: null` |
+
+The mapping form also accepts `{ action: yank }` without an argument. `arg`
+must be a string; quote numeric or boolean text. Omission and an empty string
+retain each command's existing argument semantics. Unknown fields, `null`
+arguments and `{ name: arg }` shorthand are rejected. Replace the old
+`{ command: pipe, argument: sort }` syntax with
+`{ action: pipe, arg: sort }`; the old form is no longer accepted.
+Mode/conditional steps and `count`, `register`, and `extend` fields are not yet
+public configuration syntax.
 
 Action names are the hyphenated names in the
 [reference](custom-key-bindings.md#bindable-action-reference). An action does not need a default key
@@ -745,7 +754,7 @@ keys:
       X: extend-line-above
       Alt-x: select-line-up
       F6: [select-all, yank]
-      F7: { command: pipe, argument: sort }
+      F7: { action: pipe, arg: sort }
       F8: null
     select:
       X: extend-line-above
@@ -786,9 +795,9 @@ report their replacement programs.
 keys:
   bind:
     normal:
-      Alt-s: { command: pipe, argument: sort }
+      Alt-s: { action: pipe, arg: sort }
     select:
-      Alt-s: { command: pipe, argument: sort }
+      Alt-s: { action: pipe, arg: sort }
 ```
 
 **Switch to a particular theme** (`theme` is the palette name of
@@ -798,7 +807,7 @@ keys:
 keys:
   bind:
     normal:
-      F10: { command: theme, argument: mocha }
+      F10: { action: theme, arg: mocha }
 ```
 
 **Open a file:**
@@ -807,7 +816,7 @@ keys:
 keys:
   bind:
     normal:
-      F11: { command: open, argument: README.md }
+      F11: { action: open, arg: README.md }
 ```
 
 **Select a line and start typing at its end:**
@@ -838,7 +847,7 @@ keys:
 keys:
   bind:
     normal:
-      F2: { command: help, argument: key-actions }
+      F2: { action: help, arg: key-actions }
 ```
 
 ### Without the built-in keys
@@ -955,7 +964,7 @@ the next step runs. Escape cancels the remaining steps.
 
 Prompt and background effects must end the list. A supplied argument that
 replaces a prompt removes that prompt requirement, but does not remove background
-work. For example, `{ command: terminal-rename, argument: build }` can continue;
+work. For example, `{ action: terminal-rename, arg: build }` can continue;
 `file-picker-path` still starts a scan and `pipe` still starts a worker, even
 with arguments. Plugin commands and queued macro replay must be last. The `goto-word` label
 chooser also owns input and remains last-only.
@@ -1444,7 +1453,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 #### Colon commands
 
 These accept the same arguments as the command palette, supplied separately
-as `{ command: name, argument: text }`. They are available in Normal and
+as `{ action: name, arg: text }`. They are available in Normal and
 Select modes. Prompt and background effects must end a sequence; supplying prompt input removes only that prompt. Required arguments must be supplied.
 
 | Command | Usage | Description |

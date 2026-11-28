@@ -1071,3 +1071,53 @@ names in this slice.
 | `open-session-directory` | `session-open-directory` |
 | `open-explorer-session` | `session-open-explorer` |
 | `open-session-destinations` | `session-open-destinations` |
+
+### Decision 48 — Public program contracts and stage 5 slices
+
+The public step syntax is a bare action name or `{ action: <name>, arg:
+<argument> }`. Stage 5a rejects the former `{ command:, argument: }` form and
+`{ name: arg }` shorthand with a migration diagnostic. Copy and export emit
+only the new syntax. Embedded presets and configured bindings share typed
+step decoding and action resolution; preset-only mode/conditional syntax
+remains gated until mode-flow validation is ready.
+
+For `{ mode: <name> }`, `normal`, `select`, `insert` and `replace` resolve
+through the current buffer type's role map, including collisions with declared
+mode names. Other names address an exact declared mode. This matches
+`mode-enter` role resolution.
+
+Without a count/register step field, the first eligible executed step consumes
+the pending prefix. Fixed values and `none` do not consume it; `inherit`
+reuses the original captured value. `register: none` selects the unnamed
+register. `register-empty` sees the pending selected register until consumed,
+then the unnamed register. Skipped conditional branches consume nothing.
+
+Export preserves normalized executable lookup, programs, arguments, options,
+descriptions and the mode graph, not representative targets or alias
+provenance. Planned and unsupported bindings are omitted, with that omission
+stated in the export header; export does not invent a public representation
+for them.
+
+Implementation order (each slice reviewed separately):
+
+1. **5a — Shared typed action syntax.** Bare names and `{ action, arg }`,
+   existing colon arguments, descriptions, strict fields/types, migration
+   diagnostics and copy round trips. Reject count/register/extend for now.
+2. **5b — Mode-flow validation and public mode/conditional steps together.**
+   Resolve roles per buffer type, track sequential modes and branch joins,
+   inheritance/removals, temporary restoration and dynamic effects such as
+   syntax-shrink. Lift the embedded-only gate only with this validation.
+3. **5c — Supplied operands and prompts.** Publish the supported argument
+   inventory and `insert-text`; do not resume interactive prompts mid-program.
+4. **5d — Count, register and extend fields.** Apply the consumption contract
+   above, including conditional branches.
+5. **5e — Remaining decision 14 conditions.** Native media splits remain
+   deferred beyond 0.5.
+6. **5f — Retire the four enter-mode wrappers.** Supply compilable migration
+   hints using public mode steps.
+7. **5g — Effective export.** Implement the normalized contract above last.
+
+`keep-count` and other mode properties remain stage 7; saved macros remain
+stage 6. Each implementation slice receives Astra High review rounds, core
+and affected desktop checks, and coverage verification. Compiler changes also
+receive the alternating ARM preset startup probe.
