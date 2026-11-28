@@ -18,6 +18,38 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — Supplied arguments and literal insertion (stage 5c)
+
+[PR #162](https://github.com/runyte/runyte/pull/162) adds supplied argument
+validation and literal insertion. The same live native-preview fixture probe
+compares dev `d564c471` with the stage 5c implementation `16afc260` in ten
+alternating fresh-process samples after warm-up. Later corrections affect
+discovery display and test fixtures, not the measured reload or startup paths.
+[Raw samples](../../benchmarks/results/keymap-arguments-2026-11-28.json) retain
+all observations and local probe hashes. The
+[ARM run](https://github.com/runyte/runyte/actions/runs/46116398298) also measures
+cold compilation, preset initialization and stock release readiness.
+
+| Platform/profile | Dev changed ms | 5c changed ms | Dev unchanged ms | 5c unchanged ms |
+| --- | ---: | ---: | ---: | ---: |
+| x86_64 debug | 1001.612 | 1024.226 | 987.940 | 270.491 |
+| x86_64 release | 91.193 | 93.828 | 90.555 | 25.587 |
+| aarch64 debug | 2860.936 | 2912.407 | 2858.077 | 774.359 |
+| aarch64 release | 150.381 | 153.629 | 148.848 | 40.780 |
+
+Both release reload comparisons meet the 25%/20 ms gate. The local release
+guard measured 97.361 ms changed and 26.276 ms unchanged, below its 350/100 ms
+ceilings; installed-binding and zero repeated flow-work assertions also pass.
+
+| ARM release readiness | Dev ms | 5c ms | Change |
+| --- | ---: | ---: | ---: |
+| short.txt | 40.870 | 40.888 | +0.04% |
+| short.lua | 42.135 | 42.402 | +0.63% |
+
+Readiness uses ten alternating pairs per fixture; both remain within 5%.
+ARM debug preset initialization: 123.390 → 123.532 ms median.
+ARM release preset initialization: 8.789 → 8.797 ms median.
+
 ## 2026-11-28 — configured mode-flow reload regression
 
 PR [#161](https://github.com/runyte/runyte/pull/161) initially took 6.76 s to
