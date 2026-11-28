@@ -18,6 +18,27 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — ARM debug remaining terminal meanings
+
+Stage 4c2 of [#132](https://github.com/runyte/runyte/issues/132) was measured
+against stage 4c with the same debug-profile `preset_startup` protocol: one
+discarded warm-up per binary and ten alternating fresh-process samples on one
+`ubuntu-24.04-arm` runner.
+[Run 46091408418](https://github.com/runyte/runyte/actions/runs/46091408418)
+compares `6a5b66b7` with `d47e0d1f`. The latter has the same source tree as
+rebased `4c24cd63`; the blank-row yank fix moved to the parent before rebasing.
+
+| Phase | Stage 4c ms | Stage 4c2 ms |
+| --- | ---: | ---: |
+| Typed YAML parsing | 17.735 (17.536–17.818) | 17.833 (17.635–18.057) |
+| Programs and metadata | 7.334 (7.308–7.364) | 7.340 (7.331–7.359) |
+| Construction, lookup index and role validation | 97.223 (96.776–97.547) | 97.543 (97.070–97.807) |
+| Total keymap initialization | 122.279 (121.934–122.657) | 122.701 (122.375–122.969) |
+
+Cells are median (min–max). Total median increases by 0.422 ms (0.34%).
+These component measurements do not establish end-to-end desktop readiness
+or release-profile costs. Raw samples are attached to the linked run.
+
 ## 2026-11-28 — ARM debug terminal programs and role validation
 
 Stage 4c of [#132](https://github.com/runyte/runyte/issues/132) was measured
