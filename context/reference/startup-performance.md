@@ -18,6 +18,38 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — Retired bundled mode actions (stage 5f)
+
+Stage 5f of [#132](https://github.com/runyte/runyte/issues/132) replaces bundled
+mode actions with explicit programs and executable migration hints. Ten alternating
+fresh-process pairs after warm-up compare stage 5e with implementation `a972df12`.
+Later commits change tests and prose only. The x86 baseline uses the saved stage 5e
+probes at `7ad0066b`; ARM checks out `201d5196`. The two baseline revisions have equivalent
+production behavior. [Raw samples](../../benchmarks/results/keymap-mode-actions-2026-11-28.json)
+include binary hashes and every reload phase. The
+[ARM comparison](https://github.com/runyte/runyte/actions/runs/46130676744) also
+measures preset initialization and release editing readiness.
+
+| Platform/profile | 5e changed ms | 5f changed ms | 5e unchanged ms | 5f unchanged ms |
+| --- | ---: | ---: | ---: | ---: |
+| x86_64 debug | 1024.701 | 1051.481 | 271.062 | 279.292 |
+| x86_64 release | 97.285 | 95.211 | 26.582 | 25.942 |
+| aarch64 debug | 2934.872 | 2934.685 | 779.592 | 780.538 |
+| aarch64 release | 152.039 | 152.619 | 40.357 | 40.438 |
+
+Both release reload comparisons meet the 25%/20 ms gate. The idle local guard
+measured 94.627 ms changed and 25.942 ms unchanged, below the 350/100 ms
+ceilings; installed-binding and zero repeated flow-work assertions pass.
+
+| ARM release readiness | 5e ms | 5f ms | Change |
+| --- | ---: | ---: | ---: |
+| short.txt | 40.861 | 41.152 | +0.71% |
+| short.lua | 41.843 | 41.950 | +0.26% |
+
+Both readiness comparisons remain within 5%.
+ARM debug preset initialization: 123.674 → 124.511 ms median.
+ARM release preset initialization: 8.682 → 8.756 ms median.
+
 ## 2026-11-28 — Full key-program condition set (stage 5e)
 
 [PR #164](https://github.com/runyte/runyte/pull/164) adds selection, register,
