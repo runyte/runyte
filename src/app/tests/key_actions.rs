@@ -56,7 +56,7 @@ fn action_binding_counts_character_arguments_and_runtime_errors() {
 #[test]
 fn action_bindings_preserve_insert_replace_modes_and_render_full_help() {
     let mut app = configured(
-        "bind:\n  common:\n    F1: [select-all, yank]\n  normal:\n    F2: {action: help, arg: key-actions}\n  insert:\n    F3: insert-newline\n  replace:\n    F3: enter-normal-mode\n",
+        "bind:\n  modal-keys:\n    F1: [select-all, yank]\n  normal:\n    F2: {action: help, arg: key-actions}\n  insert:\n    F3: insert-newline\n  replace:\n    F3: enter-normal-mode\n",
     );
     seed(&mut app, "abc");
     press(&mut app, 'i');
@@ -1883,7 +1883,7 @@ fn conditional_macro_calls_keep_frame_scheduling_beyond_atomic_repeat_limit() {
 
 #[test]
 fn replace_with_register_preserves_mode_on_refusal_and_consumes_line_selection() {
-    let mut app = configured("bind: {common: {F6: replace-with-register}}");
+    let mut app = configured("bind: {modal-keys: {F6: replace-with-register}}");
     seed(&mut app, "abc\ndef");
     register(&mut app, "XY\n", true);
     press(&mut app, 'x');
@@ -2396,7 +2396,7 @@ fn failed_syntax_shrink_stops_configured_editing_tails() {
         let config = Config {
             keys: Some(
                 serde_yaml::from_str(
-                    "bind: {normal: {F6: [syntax-shrink-selection, delete-selection]}}",
+                    "bind: {normal: {F6: [syntax-shrink-selection, {action: mode-enter, arg: normal}, delete-selection]}}",
                 )
                 .unwrap(),
             ),
