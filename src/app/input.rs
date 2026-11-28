@@ -2883,7 +2883,7 @@ impl App {
             {
                 self.restore_binding_mode(mode, name.as_deref());
             }
-            if !condition.applicable_in(self.key_binding_scope()) {
+            if !condition.applicable_to(self.key_binding_scope(), self.mode) {
                 self.action_failed("condition is not available for this buffer type");
                 return Ok(None);
             }
@@ -2891,6 +2891,44 @@ impl App {
                 Condition::Mode(mode) => self.mode == mode,
                 Condition::NamedMode(name) => {
                     self.binding_mode_name().as_deref() == Some(name.as_str())
+                }
+                Condition::BufferType(_) => condition.matches_buffer_type(self.key_binding_scope()),
+                Condition::RegisterEmpty => self
+                    .registers
+                    .get(&self.grammar.pending_register())
+                    .is_none_or(|register| {
+                        register.text.is_empty()
+                            && register
+                                .directory
+                                .as_ref()
+                                .is_none_or(|directory| directory.entries.is_empty())
+                    }),
+                Condition::SelectionHasText | Condition::MultipleSelections => {
+                    let selection = if let Some(id) = self.active_terminal() {
+                        self.terminals
+                            .get(id)
+                            .and_then(|session| session.review_selection_state())
+                            .map(|(_, selection)| selection)
+                    } else {
+                        Some(&self.active().selection)
+                    };
+                    selection.is_some_and(|selection| match condition {
+                        Condition::SelectionHasText => {
+                            selection.ranges().iter().any(|range| !range.is_empty())
+                        }
+                        _ => selection.len() > 1,
+                    })
+                }
+                Condition::ReadOnly => {
+                    self.active_terminal().is_some()
+                        || matches!(
+                            self.key_binding_scope(),
+                            crate::keymap::BindingScope::Media
+                                | crate::keymap::BindingScope::DirectoryTree
+                                | crate::keymap::BindingScope::SessionManager
+                        )
+                        || self.mode == Mode::List
+                        || self.active_buffer().is_read_only()
                 }
                 Condition::RecordingMacro => self.recording_macro.is_some(),
                 Condition::TreeEntryExpanded => self.directory_tree.selected_expanded(),

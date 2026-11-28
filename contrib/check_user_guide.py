@@ -41,6 +41,17 @@ def anchors(source):
     return result
 
 
+def check_key_binding_terminology(source, path):
+    """Catch content-kind wording without rejecting spatial view/scroll terms."""
+    text = " ".join(prose(source))
+    forbidden = re.compile(
+        r"\b(?:(?:special(?:ized)?|modal|generated(?: text)?|current|active|Git) views?"
+        r"|view (?:type|differences|lookup)|view-specific)\b", re.IGNORECASE
+    )
+    match = forbidden.search(text)
+    assert match is None, f"{path}: use buffer type for content kinds, not {match[0]!r}"
+
+
 def check(root=ROOT):
     guide = root / "docs/user-guide"
     index = (guide / "README.md").read_text(encoding="utf-8")
@@ -58,6 +69,8 @@ def check(root=ROOT):
             assert f"]({chapters[position - 1]})" in navigation, path
         if position + 1 < len(chapters):
             assert f"]({chapters[position + 1]})" in navigation, path
+        if chapter in {"key-bindings.md", "custom-key-bindings.md"}:
+            check_key_binding_terminology(source, path)
         documents.append(path)
     for path in documents:
         for line in prose(path.read_text(encoding="utf-8")):

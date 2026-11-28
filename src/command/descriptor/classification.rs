@@ -470,7 +470,7 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
         | C::ShowTerminal
         | C::LeaveTerminal => ActionClassification {
             semantic: SemanticClass::Decision(
-                "Activates or restores a view and its destination mode as one guarded workflow.",
+                "Activates or restores a destination and its mode as one guarded workflow.",
             ),
             pending_split: None,
         },
@@ -571,7 +571,7 @@ pub(super) const fn colon_classification(command: ColonCommand) -> ActionClassif
         | C::DescribeKey
         | C::ActionBrowser => ActionClassification {
             semantic: SemanticClass::Decision(
-                "Opens or updates a workflow view with the mode belonging to that view.",
+                "Opens or updates a workflow destination with the mode belonging to that destination.",
             ),
             pending_split: None,
         },

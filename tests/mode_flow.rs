@@ -307,3 +307,146 @@ fn standalone_program_does_not_inherit_removed_temporary_origins() {
     );
     assert!(result.errors.is_empty(), "{:?}", result.errors);
 }
+
+#[test]
+fn buffer_type_guards_narrow_reachable_conditions_and_actions() {
+    accepts(
+        "{if: {buffer-type: directory-tree}, then: [{if: tree-entry-expanded, then: [directory-tree-collapse], else: []}], else: [yank]}",
+    );
+    rejects(
+        "{if: {buffer-type: text}, then: [{if: tree-entry-expanded, then: [yank], else: []}], else: [yank]}",
+        "condition is unavailable",
+    );
+    for condition in [
+        "{buffer-type: unknown}",
+        "{buffer-type: 1}",
+        "{buffer-type: null}",
+        "{buffer-type: text, mode: normal}",
+    ] {
+        let result = compile(&format!(
+            "keys: {{bind: {{normal: {{F6: {{if: {condition}, then: [yank], else: []}}}}}}}}"
+        ));
+        assert!(!result.errors.is_empty(), "{condition}");
+    }
+}
+
+#[test]
+fn selection_conditions_reject_non_text_owners_but_allow_generated_text() {
+    for owner in ["media", "directory-tree", "session-manager", "list"] {
+        for condition in ["selection-has-text", "multiple-selections"] {
+            let result = compile(&format!(
+                "keys: {{bind: {{{owner}: {{F6: {{if: {condition}, then: [yank], else: []}}}}}}}}"
+            ));
+            assert!(!result.errors.is_empty(), "{owner}: {condition}");
+        }
+    }
+    for owner in [
+        "normal",
+        "markdown",
+        "help",
+        "settings",
+        "terminal",
+        "directory",
+    ] {
+        let result = compile(&format!(
+            "keys: {{bind: {{{owner}: {{F6: {{if: selection-has-text, then: [yank], else: []}}}}}}}}"
+        ));
+        assert!(result.errors.is_empty(), "{owner}: {:?}", result.errors);
+    }
+}
+
+#[test]
+fn buffer_guard_follows_a_programs_focus_destination() {
+    accepts(
+        "[directory-tree-focus, {if: {buffer-type: directory-tree}, then: [{if: tree-entry-expanded, then: [directory-tree-collapse], else: [directory-tree-expand]}], else: [insert-newline]}]",
+    );
+}
+
+#[test]
+fn list_owners_reject_program_syntax_with_the_migration_diagnostic() {
+    for owner in ["list", "session-manager"] {
+        for value in [
+            "[list-next]",
+            "[list-next, list-previous]",
+            "{steps: [list-next], description: next}",
+            "{if: register-empty, then: [list-next], else: [list-previous]}",
+            "{action: list-next, arg: x}",
+            "{action: list-next, count: 2}",
+            "{action: list-next, register: none}",
+            "{action: list-next, extend: false}",
+        ] {
+            let result = compile(&format!("keys: {{bind: {{{owner}: {{F6: {value}}}}}}}"));
+            assert!(
+                result.errors.iter().any(|error| error
+                    .contains(&format!("bindings in {owner} take a single action in 0.5"))),
+                "{owner}: {value}: {:?}",
+                result.errors
+            );
+        }
+        for value in ["list-next", "{action: list-next}", "null"] {
+            let result = compile(&format!("keys: {{bind: {{{owner}: {{F6: {value}}}}}}}"));
+            assert!(
+                result.errors.is_empty(),
+                "{owner}: {value}: {:?}",
+                result.errors
+            );
+        }
+    }
+}
+
+#[test]
+fn builtin_list_owners_only_contain_single_plain_actions() {
+    use runyte::keymap::BindingScope;
+    for &scope in BindingScope::ALL {
+        for binding in default_keymap().bindings_for_scope(Mode::List, scope) {
+            assert!(binding.is_plain_action(), "{}", binding.sequence);
+        }
+    }
+}
+
+#[test]
+fn shared_list_ancestors_cannot_bypass_single_action_validation() {
+    let result = compile(
+        "modes:\n  shared: {inherits: normal}\n  custom-normal: {inherits: shared}\n  list: {inherits: shared}\nbuffer-types:\n  text: {normal: custom-normal, select: select, insert: insert, replace: replace}\nkeys:\n  bind:\n    custom-normal:\n      Space p: open-command-palette\n    shared:\n      F6: {if: {mode: normal}, then: [yank], else: [list-next]}\n",
+    );
+    assert!(
+        result
+            .errors
+            .iter()
+            .any(|error| error.contains("bindings in list take a single action in 0.5")),
+        "{:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn merge_review_owners_reject_programs_instead_of_flattening_them() {
+    for owner in ["git-merge-review", "git-merge-detail", "git-merge-input"] {
+        for value in [
+            "[git-review-next]",
+            "{if: read-only, then: [git-review-next], else: [git-review-previous]}",
+            "{action: git-review-next, arg: x}",
+            "{action: git-review-next, count: 2}",
+        ] {
+            let result = compile(&format!("keys: {{bind: {{{owner}: {{F6: {value}}}}}}}"));
+            assert!(
+                result.errors.iter().any(|error| error
+                    .contains(&format!("bindings in {owner} take a single action in 0.5"))),
+                "{owner}: {value}: {:?}",
+                result.errors
+            );
+        }
+    }
+    use runyte::keymap::BindingScope;
+    for scope in [
+        BindingScope::GitMergeReview,
+        BindingScope::GitMergeDetail,
+        BindingScope::GitMergeInput,
+    ] {
+        for binding in default_keymap().bindings_for_scope(Mode::Normal, scope) {
+            if binding.scope == scope {
+                assert!(binding.is_plain_action(), "{}", binding.sequence);
+            }
+        }
+    }
+}

@@ -2893,7 +2893,7 @@ pub const COMMANDS: &[CommandSpec] = &[
         "reload",
         [],
         "reload",
-        "Reload the active view",
+        "Reload the active buffer",
         NoArguments
     ),
     spec!(

@@ -1146,7 +1146,7 @@ mod tests {
             .into_iter()
             .find(|row| row.target == Some(BindingTarget::Colon(ColonCommand::Reload)))
             .expect("the Space namespace lists reload");
-        assert_eq!(reload.description, "Reload the active view");
+        assert_eq!(reload.description, "Reload the active buffer");
     }
 
     #[test]

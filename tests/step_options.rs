@@ -133,3 +133,23 @@ fn tree_motion_options_are_rejected_in_the_reachable_view() {
         );
     }
 }
+
+#[test]
+fn condition_copy_roundtrip_preserves_exact_buffer_type_and_all_predicates() {
+    let section = serde_yaml::from_str("bind: {normal: {F6: [{if: {buffer-type: text}, then: [{if: selection-has-text, then: [yank], else: []}], else: []}, {if: multiple-selections, then: [yank], else: []}, {if: register-empty, then: [yank], else: []}, {if: read-only, then: [yank], else: []}]}}").unwrap();
+    let compiled = configured::compile(&section, default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
+    let key = KeySequence::parse("F6").unwrap();
+    let Lookup::Exact(binding) = compiled.keymap.lookup(Mode::Normal, &key) else {
+        panic!()
+    };
+    let yaml =
+        discovery::binding_yaml(binding, Mode::Normal, Some(&section), &compiled.keymap).unwrap();
+    let value: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
+    let copied = configured::compile(&value["keys"], default_keymap());
+    assert!(copied.errors.is_empty(), "{:?}", copied.errors);
+    let Lookup::Exact(copy) = copied.keymap.lookup(Mode::Normal, &key) else {
+        panic!()
+    };
+    assert_eq!(binding.program, copy.program);
+}

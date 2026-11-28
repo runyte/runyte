@@ -13,6 +13,11 @@ pub const MAX_DEPTH: usize = 4;
 pub enum Condition {
     Mode(Mode),
     NamedMode(String),
+    BufferType(String),
+    SelectionHasText,
+    MultipleSelections,
+    RegisterEmpty,
+    ReadOnly,
     RecordingMacro,
     TreeEntryExpanded,
     TreeEntryIsDirectory,
@@ -20,17 +25,41 @@ pub enum Condition {
 }
 
 impl Condition {
+    pub fn matches_buffer_type(&self, scope: BindingScope) -> bool {
+        matches!(self, Self::BufferType(name) if name == super::named::buffer_type(scope))
+    }
+
     pub fn applicable_in(&self, scope: BindingScope) -> bool {
         match self {
-            Self::Mode(_) | Self::NamedMode(_) | Self::RecordingMacro => true,
+            Self::Mode(_)
+            | Self::NamedMode(_)
+            | Self::BufferType(_)
+            | Self::RegisterEmpty
+            | Self::ReadOnly
+            | Self::RecordingMacro => true,
+            Self::SelectionHasText | Self::MultipleSelections => !matches!(
+                scope,
+                BindingScope::Media | BindingScope::DirectoryTree | BindingScope::SessionManager
+            ),
             _ => scope == BindingScope::DirectoryTree,
         }
+    }
+
+    pub fn applicable_to(&self, scope: BindingScope, mode: Mode) -> bool {
+        self.applicable_in(scope)
+            && !(mode == Mode::List
+                && matches!(self, Self::SelectionHasText | Self::MultipleSelections))
     }
 
     pub fn label(&self) -> String {
         match self {
             Self::Mode(mode) => format!("mode: {}", super::actions::mode_name(*mode)),
             Self::NamedMode(name) => format!("mode: {name}"),
+            Self::BufferType(name) => format!("buffer-type: {name}"),
+            Self::SelectionHasText => "selection-has-text".into(),
+            Self::MultipleSelections => "multiple-selections".into(),
+            Self::RegisterEmpty => "register-empty".into(),
+            Self::ReadOnly => "read-only".into(),
             Self::RecordingMacro => "recording-macro".into(),
             Self::TreeEntryExpanded => "tree-entry-expanded".into(),
             Self::TreeEntryIsDirectory => "tree-entry-is-directory".into(),
@@ -142,7 +171,7 @@ impl Program {
                             .is_some_and(|d| d.supports_extend_in(scope))
                     })
                 {
-                    return Err("extend is unavailable in this view");
+                    return Err("extend is unavailable for this buffer type");
                 }
             }
             let tail = outer_tail || index + 1 < self.steps().len();
@@ -290,3 +319,57 @@ impl Program {
         })
     }
 }
+
+/// Public condition inventory used by the generated guide.
+pub const CONDITION_DESCRIPTORS: &[(&str, &str, &str)] = &[
+    (
+        "selection-has-text",
+        "At least one range has different anchor and head offsets; a caret is false",
+        "Buffer types with ordinary text selections, including generated buffer types and terminal review; excludes media, directory-tree and UI owners",
+    ),
+    (
+        "multiple-selections",
+        "Two or more selection ranges",
+        "Buffer types with ordinary text selections, including generated buffer types and terminal review; excludes media, directory-tree and UI owners",
+    ),
+    (
+        "register-empty",
+        "Pending selected register has no text or directory entries; after consumption, tests the unnamed register",
+        "Everywhere programs execute; excludes UI owners",
+    ),
+    (
+        "read-only",
+        "The active buffer type's text cannot be edited, including terminal and media surfaces",
+        "Everywhere programs execute; excludes UI owners",
+    ),
+    (
+        "{mode: <name>}",
+        "Role membership for normal/select/insert/replace; exact named mode otherwise",
+        "Everywhere programs execute; excludes UI owners",
+    ),
+    (
+        "{buffer-type: <type>}",
+        "Exact buffer-types key; unknown names are rejected",
+        "Everywhere programs execute; excludes UI owners",
+    ),
+    (
+        "recording-macro",
+        "A macro is currently being recorded",
+        "Everywhere programs execute; excludes UI owners",
+    ),
+    (
+        "tree-entry-expanded",
+        "The selected tree entry is expanded",
+        "directory-tree",
+    ),
+    (
+        "tree-entry-is-directory",
+        "The selected tree entry is a directory",
+        "directory-tree",
+    ),
+    (
+        "tree-entry-is-root",
+        "The selected tree entry is the tree root",
+        "directory-tree",
+    ),
+];

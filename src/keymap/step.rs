@@ -76,6 +76,7 @@ pub(super) struct Conditional {
 #[serde(untagged)]
 pub(super) enum ConditionDef {
     Mode(ModeCondition),
+    BufferType(BufferTypeCondition),
     Name(ConditionName),
 }
 #[derive(Deserialize, Debug, PartialEq)]
@@ -85,8 +86,18 @@ pub(super) struct ModeCondition {
     pub mode: String,
 }
 #[derive(Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BufferTypeCondition {
+    #[serde(rename = "buffer-type", deserialize_with = "strict_string")]
+    pub buffer_type: String,
+}
+#[derive(Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub(super) enum ConditionName {
+    SelectionHasText,
+    MultipleSelections,
+    RegisterEmpty,
+    ReadOnly,
     RecordingMacro,
     TreeEntryExpanded,
     TreeEntryIsDirectory,
@@ -301,7 +312,19 @@ pub(super) fn compile(
                                 None => C::NamedMode(m.mode.clone()),
                             }
                         }
+                        ConditionDef::BufferType(b) => {
+                            if !super::named::required_buffer_types()
+                                .contains(&b.buffer_type.as_str())
+                            {
+                                return Err(format!("unknown buffer type {:?}", b.buffer_type));
+                            }
+                            C::BufferType(b.buffer_type.clone())
+                        }
                         ConditionDef::Name(n) => match n {
+                            ConditionName::SelectionHasText => C::SelectionHasText,
+                            ConditionName::MultipleSelections => C::MultipleSelections,
+                            ConditionName::RegisterEmpty => C::RegisterEmpty,
+                            ConditionName::ReadOnly => C::ReadOnly,
                             ConditionName::RecordingMacro => C::RecordingMacro,
                             ConditionName::TreeEntryExpanded => C::TreeEntryExpanded,
                             ConditionName::TreeEntryIsDirectory => C::TreeEntryIsDirectory,
@@ -415,6 +438,11 @@ pub(super) fn yaml(program: &program::Program) -> Result<serde_yaml::Value, Stri
                         map.insert("mode".into(), actions::mode_name(*mode).into());
                         Value::Mapping(map)
                     }
+                    program::Condition::BufferType(name) => {
+                        let mut map = serde_yaml::Mapping::new();
+                        map.insert("buffer-type".into(), name.clone().into());
+                        map.into()
+                    }
                     program::Condition::NamedMode(name) => {
                         let mut map = Mapping::new();
                         map.insert("mode".into(), name.clone().into());
@@ -455,6 +483,7 @@ mod tests {
             "[{action: mode-enter, arg: select, temporary: true}, {if: {mode: select}, then: [yank], else: []}]",
             "[{action: mode-enter, arg: review, temporary: false}, {if: {mode: review}, then: [move-right], else: [move-left]}]",
             "[{if: recording-macro, then: [macro-stop-recording], else: []}]",
+            "[{if: {buffer-type: text}, then: [yank], else: []}, {if: selection-has-text, then: [yank], else: []}, {if: multiple-selections, then: [yank], else: []}, {if: register-empty, then: [yank], else: []}, {if: read-only, then: [yank], else: []}]",
             "[{action: find-next-char, arg: λ}, {action: surround-replace, arg: '(]'}]",
             "[{action: search, arg: abc}, {action: join-selections, arg: ''}]",
             "[{action: move-right, count: 3, extend: true}, {action: yank, register: a}]",
