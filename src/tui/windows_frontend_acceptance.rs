@@ -1260,8 +1260,8 @@ fn switch_parent_fixture() {
     // handler before the host's provisional directory acceptance.
     let mut chooser_frontend = Console::spawn(&a, SWITCH_FRONTEND, 100);
     chooser_frontend.until_screen("WORKSPACE_A");
-    chooser_frontend.send(":open-session-directory");
-    chooser_frontend.until_screen(":open-session-directory");
+    chooser_frontend.send(":session-open-directory");
+    chooser_frontend.until_screen(":session-open-directory");
     chooser_frontend.send("\r");
     chooser_frontend.until_screen("Open this directory");
     chooser_frontend.send(&format!("{}\\", b.display()));

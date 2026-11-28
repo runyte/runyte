@@ -567,7 +567,7 @@ terminals.
   open, and you can remap them. They never start a stopped session or force an
   occupied attachment. If an outer tmux takes Shift-Left/Right, release or
   change those tmux bindings.
-- **`Ctrl-w a`** (`previous-session`) alternates between the last two
+- **`Ctrl-w a`** (`session-previous`) alternates between the last two
   successful attachments. Failed switches don't change that history.
 - Every attachment refreshes the session list in the background.
 

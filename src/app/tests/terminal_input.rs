@@ -71,7 +71,7 @@ fn scoped_terminal_prefix_executes_and_cancels_without_leaking_suffixes() {
 #[cfg(any(unix, windows))]
 fn explicit_session_action_in_standalone_reports_unavailable_without_child_input() {
     let (mut app, terminal) =
-        terminal_app("bind:\n  terminal-insert:\n    F8: next-running-session\n");
+        terminal_app("bind:\n  terminal-insert:\n    F8: session-next-running\n");
     let before = app.terminals.get(terminal).unwrap().input_generation();
     send(&mut app, "F8");
     assert_eq!(app.status, "session navigation needs mux mode");
@@ -961,7 +961,7 @@ fn terminal_configuration_rejects_document_editing_identities() {
 fn terminal_undo_refusal_stops_its_program_before_leaving_the_terminal() {
     let mut config = Config::default();
     config
-        .merge_keys_source("bind: {terminal: {F6: [terminal-undo-paste, leave-terminal]}}")
+        .merge_keys_source("bind: {terminal: {F6: [terminal-undo-paste, terminal-leave]}}")
         .unwrap();
     let mut app = App::new(config, None).unwrap();
     app.open_terminal(Some("/bin/cat".into()));

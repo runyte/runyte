@@ -124,11 +124,11 @@ The working directory starts where Runyte was launched.
 | --- | --- |
 | `:file-picker` | Open the Finder over files, buffers, and terminals |
 | `:file-picker-directory` | Fuzzy-find below the active file/explorer directory |
-| `:open-explorer-finder` | Open the Finder at the active explorer's directory |
-| `:open-explorer-system` | Open the explorer's directory in the system file manager |
+| `:directory-open-finder` | Open the Finder at the active explorer's directory |
+| `:directory-open-system` | Open the explorer's directory in the system file manager |
 | `:fuzzy-grep` | Open the Finder in content mode |
 | `:fuzzy-grep-directory` | Fuzzy-search contents below the active file/explorer directory |
-| `:outline` (`document-outline`) | Open the Tree-sitter document outline |
+| `:outline` (`syntax-document-outline`) | Open the Tree-sitter document outline |
 
 #### Pane and view commands
 

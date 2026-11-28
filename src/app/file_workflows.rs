@@ -1689,7 +1689,7 @@ impl App {
         if buffer_id == self.active().buffer {
             // The buffer still names the document covered by a terminal. A
             // request to switch to that document is therefore not a no-op:
-            // reveal it through the same transition as `leave-terminal`.
+            // reveal it through the same transition as `terminal-leave`.
             if self.active_terminal().is_some() {
                 self.leave_terminal();
             }

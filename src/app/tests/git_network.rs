@@ -152,8 +152,8 @@ fn ascii_network_tab_scopes_and_commit_detail_return_use_native_navigation() {
         "git-network-all",
         "git-network-ref refs/heads/side",
         "git-network-choose-ref",
-        "next-git-network-page",
-        "previous-git-network-page",
+        "git-network-next-page",
+        "git-network-previous-page",
     ] {
         command(&mut app, input);
         assert!(app.active_buffer().is_git_network());

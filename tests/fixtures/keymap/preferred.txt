@@ -23,14 +23,14 @@ false|insert|move-window-down|Ctrl-w J
 false|insert|move-window-left|Ctrl-w H
 false|insert|move-window-right|Ctrl-w L
 false|insert|move-window-up|Ctrl-w K
-false|insert|next-running-session|Shift-Right
+false|insert|session-next-running|Shift-Right
 false|insert|next-window|Ctrl-w w
 false|insert|open-navigator|Ctrl-w n
 false|insert|page-down|PageDown
 false|insert|page-up|PageUp
 false|insert|previous-destination|Ctrl-w p
-false|insert|previous-running-session|Shift-Left
-false|insert|previous-session|Ctrl-w a
+false|insert|session-previous-running|Shift-Left
+false|insert|session-previous|Ctrl-w a
 false|insert|save|Ctrl-s
 false|insert|swap-window|Ctrl-w x
 false|insert|toggle-comments|Ctrl-c
@@ -62,11 +62,11 @@ false|normal|copy-selection-down-padded|V
 false|normal|copy-selection-down|C
 false|normal|copy-selection-up-padded|Alt-V
 false|normal|copy-selection-up|Alt-C
-false|normal|copy-terminal-output|Space t y
+false|normal|terminal-copy-output|Space t y
 false|normal|describe-key|Space h k
 false|normal|diagnostics|Space l d
 false|normal|diff-disk|Space b d
-false|normal|document-outline|Space x o
+false|normal|syntax-document-outline|Space x o
 false|normal|document-symbols|Space l s
 false|normal|enter-insert-mode|i
 false|normal|enter-replace-mode|R
@@ -75,12 +75,12 @@ false|normal|find-next-char|f
 false|normal|find-previous-char|F
 false|normal|find-till-next-char|t
 false|normal|find-till-previous-char|T
-false|normal|focus-directory-tree|Space d d
+false|normal|directory-tree-focus|Space d d
 false|normal|focus-window-down|Space w j
 false|normal|focus-window-left|Space w h
 false|normal|focus-window-right|Space w l
 false|normal|focus-window-up|Space w k
-false|normal|fold-all-syntax|Space x f
+false|normal|syntax-fold-all|Space x f
 false|normal|format-table|Space p t
 false|normal|format|Space l f
 false|normal|git-blame-file|Space g B
@@ -95,8 +95,8 @@ false|normal|git-search-commits|Space g f
 false|normal|git-stashes|Space g t
 false|normal|git-status|Space g g
 false|normal|git-worktrees|Space g w
-false|normal|global-search-regex|Space / /
-false|normal|global-search|Space / s
+false|normal|search-workspace-regex|Space / /
+false|normal|search-workspace|Space / s
 false|normal|goto-declaration|g D
 false|normal|goto-definition|g d
 false|normal|goto-file|g f
@@ -127,8 +127,8 @@ false|normal|jump-forward-buffer|Alt-i
 false|normal|jump-forward|Ctrl-i
 false|normal|keep-matching-selections|Space s k
 false|normal|keep-primary-selection|,
-false|normal|leave-terminal|Space t q
-false|normal|list-macros|Space m l
+false|normal|terminal-leave|Space t q
+false|normal|macro-list|Space m l
 false|normal|lsp-restart|Space l R
 false|normal|lsp-status|Space l ?
 false|normal|match-bracket|m m
@@ -152,38 +152,38 @@ false|normal|move-word-backward|b
 false|normal|move-word-end|e
 false|normal|move-word-forward|w
 false|normal|new-buffer|Space b n
-false|normal|next-running-session|Shift-Right
+false|normal|session-next-running|Shift-Right
 false|normal|next-window|Space w w
 false|normal|only-window|Space w o
 false|normal|open-all-files-picker|Space / a
 false|normal|open-buffer-picker|Space b b
 false|normal|open-command-palette|:
-false|normal|open-explorer|Space e
+false|normal|directory-open|Space e
 false|normal|open-file-picker|Space / f
 false|normal|open-line-above|O
 false|normal|open-line-below|o
 false|normal|open-navigator|Space n
 false|normal|open-path-file-picker|Space / p
 false|normal|open-settings|Space o o
-false|normal|open-terminal-list|Space t t
-false|normal|open-terminal|Space t n
+false|normal|terminal-open-list|Space t t
+false|normal|terminal-open|Space t n
 false|normal|open-theme-settings|Space o t
-false|normal|open-working-directory-explorer|Space E
+false|normal|directory-open-working-directory|Space E
 false|normal|page-down|Ctrl-f
 false|normal|page-up|Ctrl-b
 false|normal|previous-destination|Ctrl-w p
-false|normal|previous-running-session|Shift-Left
-false|normal|previous-session|Ctrl-w a
-false|normal|record-macro|Space m M
+false|normal|session-previous-running|Shift-Left
+false|normal|session-previous|Ctrl-w a
+false|normal|macro-record|Space m M
 false|normal|redo|U
 false|normal|reflow|Space p r
 false|normal|reload|Space r
 false|normal|remove-matching-selections|Space s r
 false|normal|remove-primary-selection|Alt-,
 false|normal|rename-symbol|Space l r
-false|normal|rename-terminal|Space t r
-false|normal|replay-default-macro|Space m r
-false|normal|replay-macro|Space m R
+false|normal|terminal-rename|Space t r
+false|normal|macro-replay-default|Space m r
+false|normal|macro-replay|Space m R
 false|normal|rotate-selection-backward|(
 false|normal|rotate-selection-contents-backward|Alt-(
 false|normal|rotate-selection-contents-forward|Alt-)
@@ -193,10 +193,10 @@ false|normal|scroll-view-down|z j
 false|normal|scroll-view-up|z k
 false|normal|search-regex|/
 false|normal|search|s
-false|normal|select-register|"
+false|normal|register-select|"
 false|normal|selection-redo|Alt-U
 false|normal|selection-undo|Alt-u
-false|normal|send-to-terminal|Space t s
+false|normal|terminal-send|Space t s
 false|normal|service-health|Space o s
 false|normal|session-1|Space 1
 false|normal|session-2|Space 2
@@ -210,22 +210,22 @@ false|normal|session-9|Space 9
 false|normal|session-list|Space Space
 false|normal|show-documentation|Space l h
 false|normal|show-help|Space ?
-false|normal|shrink-syntax-selection|Space x s
+false|normal|syntax-shrink-selection|Space x s
 false|normal|split-horizontal|Space w s
 false|normal|split-vertical|Space w v
 false|normal|swap-window|Space w x
 false|normal|toggle-comments|Ctrl-c
-false|normal|toggle-directory-tree|Space d t
+false|normal|directory-tree-toggle|Space d t
 false|normal|toggle-fullscreen|Space w f
 false|normal|toggle-soft-wrap|Space p s
-false|normal|toggle-syntax-fold|Space x x
+false|normal|syntax-toggle-fold|Space x x
 false|normal|toggle-whitespace|Space p .
 false|normal|toggle-zen|Space w z
 false|normal|trigger-completion|Space l c
 false|normal|trim-selections|Alt-_
 false|normal|trim-trailing-whitespace|_
 false|normal|undo|u
-false|normal|unfold-all-syntax|Space x u
+false|normal|syntax-unfold-all|Space x u
 false|normal|unindent|<
 false|normal|workspace-symbols|Space l S
 false|replace|clipboard-paste|Ctrl-v
@@ -253,14 +253,14 @@ false|replace|move-window-down|Ctrl-w J
 false|replace|move-window-left|Ctrl-w H
 false|replace|move-window-right|Ctrl-w L
 false|replace|move-window-up|Ctrl-w K
-false|replace|next-running-session|Shift-Right
+false|replace|session-next-running|Shift-Right
 false|replace|next-window|Ctrl-w w
 false|replace|open-navigator|Ctrl-w n
 false|replace|page-down|PageDown
 false|replace|page-up|PageUp
 false|replace|previous-destination|Ctrl-w p
-false|replace|previous-running-session|Shift-Left
-false|replace|previous-session|Ctrl-w a
+false|replace|session-previous-running|Shift-Left
+false|replace|session-previous|Ctrl-w a
 false|replace|save|Ctrl-s
 false|replace|swap-window|Ctrl-w x
 false|replace|toggle-comments|Ctrl-c
@@ -280,11 +280,11 @@ false|select|copy-selection-down-padded|V
 false|select|copy-selection-down|C
 false|select|copy-selection-up-padded|Alt-V
 false|select|copy-selection-up|Alt-C
-false|select|copy-terminal-output|Space t y
+false|select|terminal-copy-output|Space t y
 false|select|describe-key|Space h k
 false|select|diagnostics|Space l d
 false|select|diff-disk|Space b d
-false|select|document-outline|Space x o
+false|select|syntax-document-outline|Space x o
 false|select|document-symbols|Space l s
 false|select|enter-insert-mode|i
 false|select|enter-replace-mode|R
@@ -293,12 +293,12 @@ false|select|find-next-char|f
 false|select|find-previous-char|F
 false|select|find-till-next-char|t
 false|select|find-till-previous-char|T
-false|select|focus-directory-tree|Space d d
+false|select|directory-tree-focus|Space d d
 false|select|focus-window-down|Space w j
 false|select|focus-window-left|Space w h
 false|select|focus-window-right|Space w l
 false|select|focus-window-up|Space w k
-false|select|fold-all-syntax|Space x f
+false|select|syntax-fold-all|Space x f
 false|select|format-table|Space p t
 false|select|format|Space l f
 false|select|git-blame-file|Space g B
@@ -313,8 +313,8 @@ false|select|git-search-commits|Space g f
 false|select|git-stashes|Space g t
 false|select|git-status|Space g g
 false|select|git-worktrees|Space g w
-false|select|global-search-regex|Space / /
-false|select|global-search|Space / s
+false|select|search-workspace-regex|Space / /
+false|select|search-workspace|Space / s
 false|select|goto-declaration|g D
 false|select|goto-definition|g d
 false|select|goto-file|g f
@@ -345,8 +345,8 @@ false|select|jump-forward-buffer|Alt-i
 false|select|jump-forward|Ctrl-i
 false|select|keep-matching-selections|Space s k
 false|select|keep-primary-selection|,
-false|select|leave-terminal|Space t q
-false|select|list-macros|Space m l
+false|select|terminal-leave|Space t q
+false|select|macro-list|Space m l
 false|select|lsp-restart|Space l R
 false|select|lsp-status|Space l ?
 false|select|match-bracket|m m
@@ -370,38 +370,38 @@ false|select|move-word-backward|b
 false|select|move-word-end|e
 false|select|move-word-forward|w
 false|select|new-buffer|Space b n
-false|select|next-running-session|Shift-Right
+false|select|session-next-running|Shift-Right
 false|select|next-window|Space w w
 false|select|only-window|Space w o
 false|select|open-all-files-picker|Space / a
 false|select|open-buffer-picker|Space b b
 false|select|open-command-palette|:
-false|select|open-explorer|Space e
+false|select|directory-open|Space e
 false|select|open-file-picker|Space / f
 false|select|open-line-above|O
 false|select|open-line-below|o
 false|select|open-navigator|Space n
 false|select|open-path-file-picker|Space / p
 false|select|open-settings|Space o o
-false|select|open-terminal-list|Space t t
-false|select|open-terminal|Space t n
+false|select|terminal-open-list|Space t t
+false|select|terminal-open|Space t n
 false|select|open-theme-settings|Space o t
-false|select|open-working-directory-explorer|Space E
+false|select|directory-open-working-directory|Space E
 false|select|page-down|Ctrl-f
 false|select|page-up|Ctrl-b
 false|select|previous-destination|Ctrl-w p
-false|select|previous-running-session|Shift-Left
-false|select|previous-session|Ctrl-w a
-false|select|record-macro|Space m M
+false|select|session-previous-running|Shift-Left
+false|select|session-previous|Ctrl-w a
+false|select|macro-record|Space m M
 false|select|redo|U
 false|select|reflow|Space p r
 false|select|reload|Space r
 false|select|remove-matching-selections|Space s r
 false|select|remove-primary-selection|Alt-,
 false|select|rename-symbol|Space l r
-false|select|rename-terminal|Space t r
-false|select|replay-default-macro|Space m r
-false|select|replay-macro|Space m R
+false|select|terminal-rename|Space t r
+false|select|macro-replay-default|Space m r
+false|select|macro-replay|Space m R
 false|select|rotate-selection-backward|(
 false|select|rotate-selection-contents-backward|Alt-(
 false|select|rotate-selection-contents-forward|Alt-)
@@ -411,10 +411,10 @@ false|select|scroll-view-down|z j
 false|select|scroll-view-up|z k
 false|select|search-regex|/
 false|select|search|s
-false|select|select-register|"
+false|select|register-select|"
 false|select|selection-redo|Alt-U
 false|select|selection-undo|Alt-u
-false|select|send-to-terminal|Space t s
+false|select|terminal-send|Space t s
 false|select|service-health|Space o s
 false|select|session-1|Space 1
 false|select|session-2|Space 2
@@ -428,22 +428,22 @@ false|select|session-9|Space 9
 false|select|session-list|Space Space
 false|select|show-documentation|Space l h
 false|select|show-help|Space ?
-false|select|shrink-syntax-selection|Space x s
+false|select|syntax-shrink-selection|Space x s
 false|select|split-horizontal|Space w s
 false|select|split-vertical|Space w v
 false|select|swap-window|Space w x
 false|select|toggle-comments|Ctrl-c
-false|select|toggle-directory-tree|Space d t
+false|select|directory-tree-toggle|Space d t
 false|select|toggle-fullscreen|Space w f
 false|select|toggle-soft-wrap|Space p s
-false|select|toggle-syntax-fold|Space x x
+false|select|syntax-toggle-fold|Space x x
 false|select|toggle-whitespace|Space p .
 false|select|toggle-zen|Space w z
 false|select|trigger-completion|Space l c
 false|select|trim-selections|Alt-_
 false|select|trim-trailing-whitespace|_
 false|select|undo|u
-false|select|unfold-all-syntax|Space x u
+false|select|syntax-unfold-all|Space x u
 false|select|unindent|<
 false|select|workspace-symbols|Space l S
 true|insert|clipboard-paste|Ctrl-v
@@ -470,14 +470,14 @@ true|insert|move-window-down|Ctrl-w J
 true|insert|move-window-left|Ctrl-w H
 true|insert|move-window-right|Ctrl-w L
 true|insert|move-window-up|Ctrl-w K
-true|insert|next-running-session|Shift-Right
+true|insert|session-next-running|Shift-Right
 true|insert|next-window|Ctrl-w w
 true|insert|open-navigator|Ctrl-w n
 true|insert|page-down|PageDown
 true|insert|page-up|PageUp
 true|insert|previous-destination|Ctrl-w p
-true|insert|previous-running-session|Shift-Left
-true|insert|previous-session|Ctrl-w a
+true|insert|session-previous-running|Shift-Left
+true|insert|session-previous|Ctrl-w a
 true|insert|save|Ctrl-s
 true|insert|swap-window|Ctrl-w x
 true|insert|toggle-comments|Ctrl-c
@@ -509,11 +509,11 @@ true|normal|copy-selection-down-padded|V
 true|normal|copy-selection-down|C
 true|normal|copy-selection-up-padded|Alt-V
 true|normal|copy-selection-up|Alt-C
-true|normal|copy-terminal-output|Space t y
+true|normal|terminal-copy-output|Space t y
 true|normal|describe-key|Space h k
 true|normal|diagnostics|Space l d
 true|normal|diff-disk|Space b d
-true|normal|document-outline|Space x o
+true|normal|syntax-document-outline|Space x o
 true|normal|document-symbols|Space l s
 true|normal|enter-insert-mode|i
 true|normal|enter-replace-mode|R
@@ -522,12 +522,12 @@ true|normal|find-next-char|f
 true|normal|find-previous-char|F
 true|normal|find-till-next-char|t
 true|normal|find-till-previous-char|T
-true|normal|focus-directory-tree|Space d d
+true|normal|directory-tree-focus|Space d d
 true|normal|focus-window-down|Space w j
 true|normal|focus-window-left|Space w h
 true|normal|focus-window-right|Space w l
 true|normal|focus-window-up|Space w k
-true|normal|fold-all-syntax|Space x f
+true|normal|syntax-fold-all|Space x f
 true|normal|format-table|Space p t
 true|normal|format|Space l f
 true|normal|git-blame-file|Space g B
@@ -542,8 +542,8 @@ true|normal|git-search-commits|Space g f
 true|normal|git-stashes|Space g t
 true|normal|git-status|Space g g
 true|normal|git-worktrees|Space g w
-true|normal|global-search-regex|Space / /
-true|normal|global-search|Space / s
+true|normal|search-workspace-regex|Space / /
+true|normal|search-workspace|Space / s
 true|normal|goto-declaration|g D
 true|normal|goto-definition|g d
 true|normal|goto-file|g f
@@ -574,8 +574,8 @@ true|normal|jump-forward-buffer|Alt-i
 true|normal|jump-forward|Ctrl-i
 true|normal|keep-matching-selections|Space s k
 true|normal|keep-primary-selection|,
-true|normal|leave-terminal|Space t q
-true|normal|list-macros|Space m l
+true|normal|terminal-leave|Space t q
+true|normal|macro-list|Space m l
 true|normal|lsp-restart|Space l R
 true|normal|lsp-status|Space l ?
 true|normal|match-bracket|m m
@@ -599,38 +599,38 @@ true|normal|move-word-backward|b
 true|normal|move-word-end|e
 true|normal|move-word-forward|w
 true|normal|new-buffer|Space b n
-true|normal|next-running-session|Shift-Right
+true|normal|session-next-running|Shift-Right
 true|normal|next-window|Space w w
 true|normal|only-window|Space w o
 true|normal|open-all-files-picker|Space / a
 true|normal|open-buffer-picker|Space b b
 true|normal|open-command-palette|:
-true|normal|open-explorer|Space e
+true|normal|directory-open|Space e
 true|normal|open-file-picker|Space / f
 true|normal|open-line-above|O
 true|normal|open-line-below|o
 true|normal|open-navigator|Space n
 true|normal|open-path-file-picker|Space / p
 true|normal|open-settings|Space o o
-true|normal|open-terminal-list|Space t t
-true|normal|open-terminal|Space t n
+true|normal|terminal-open-list|Space t t
+true|normal|terminal-open|Space t n
 true|normal|open-theme-settings|Space o t
-true|normal|open-working-directory-explorer|Space E
+true|normal|directory-open-working-directory|Space E
 true|normal|page-down|Ctrl-f
 true|normal|page-up|Ctrl-b
 true|normal|previous-destination|Ctrl-w p
-true|normal|previous-running-session|Shift-Left
-true|normal|previous-session|Ctrl-w a
-true|normal|record-macro|Space m M
+true|normal|session-previous-running|Shift-Left
+true|normal|session-previous|Ctrl-w a
+true|normal|macro-record|Space m M
 true|normal|redo|U
 true|normal|reflow|Space p r
 true|normal|reload|Space r
 true|normal|remove-matching-selections|Space s r
 true|normal|remove-primary-selection|Alt-,
 true|normal|rename-symbol|Space l r
-true|normal|rename-terminal|Space t r
-true|normal|replay-default-macro|Space m r
-true|normal|replay-macro|Space m R
+true|normal|terminal-rename|Space t r
+true|normal|macro-replay-default|Space m r
+true|normal|macro-replay|Space m R
 true|normal|rotate-selection-backward|(
 true|normal|rotate-selection-contents-backward|Alt-(
 true|normal|rotate-selection-contents-forward|Alt-)
@@ -640,10 +640,10 @@ true|normal|scroll-view-down|z j
 true|normal|scroll-view-up|z k
 true|normal|search-regex|/
 true|normal|search|s
-true|normal|select-register|"
+true|normal|register-select|"
 true|normal|selection-redo|Alt-U
 true|normal|selection-undo|Alt-u
-true|normal|send-to-terminal|Space t s
+true|normal|terminal-send|Space t s
 true|normal|service-health|Space o s
 true|normal|session-1|Space 1
 true|normal|session-2|Space 2
@@ -657,22 +657,22 @@ true|normal|session-9|Space 9
 true|normal|session-list|Space Space
 true|normal|show-documentation|Space l h
 true|normal|show-help|Space ?
-true|normal|shrink-syntax-selection|Space x s
+true|normal|syntax-shrink-selection|Space x s
 true|normal|split-horizontal|Space w s
 true|normal|split-vertical|Space w v
 true|normal|swap-window|Space w x
 true|normal|toggle-comments|Ctrl-c
-true|normal|toggle-directory-tree|Space d t
+true|normal|directory-tree-toggle|Space d t
 true|normal|toggle-fullscreen|Space w f
 true|normal|toggle-soft-wrap|Space p s
-true|normal|toggle-syntax-fold|Space x x
+true|normal|syntax-toggle-fold|Space x x
 true|normal|toggle-whitespace|Space p .
 true|normal|toggle-zen|Space w z
 true|normal|trigger-completion|Space l c
 true|normal|trim-selections|Alt-_
 true|normal|trim-trailing-whitespace|_
 true|normal|undo|u
-true|normal|unfold-all-syntax|Space x u
+true|normal|syntax-unfold-all|Space x u
 true|normal|unindent|<
 true|normal|workspace-symbols|Space l S
 true|replace|clipboard-paste|Ctrl-v
@@ -699,14 +699,14 @@ true|replace|move-window-down|Ctrl-w J
 true|replace|move-window-left|Ctrl-w H
 true|replace|move-window-right|Ctrl-w L
 true|replace|move-window-up|Ctrl-w K
-true|replace|next-running-session|Shift-Right
+true|replace|session-next-running|Shift-Right
 true|replace|next-window|Ctrl-w w
 true|replace|open-navigator|Ctrl-w n
 true|replace|page-down|PageDown
 true|replace|page-up|PageUp
 true|replace|previous-destination|Ctrl-w p
-true|replace|previous-running-session|Shift-Left
-true|replace|previous-session|Ctrl-w a
+true|replace|session-previous-running|Shift-Left
+true|replace|session-previous|Ctrl-w a
 true|replace|save|Ctrl-s
 true|replace|swap-window|Ctrl-w x
 true|replace|toggle-comments|Ctrl-c
@@ -726,11 +726,11 @@ true|select|copy-selection-down-padded|V
 true|select|copy-selection-down|C
 true|select|copy-selection-up-padded|Alt-V
 true|select|copy-selection-up|Alt-C
-true|select|copy-terminal-output|Space t y
+true|select|terminal-copy-output|Space t y
 true|select|describe-key|Space h k
 true|select|diagnostics|Space l d
 true|select|diff-disk|Space b d
-true|select|document-outline|Space x o
+true|select|syntax-document-outline|Space x o
 true|select|document-symbols|Space l s
 true|select|enter-insert-mode|i
 true|select|enter-replace-mode|R
@@ -739,12 +739,12 @@ true|select|find-next-char|f
 true|select|find-previous-char|F
 true|select|find-till-next-char|t
 true|select|find-till-previous-char|T
-true|select|focus-directory-tree|Space d d
+true|select|directory-tree-focus|Space d d
 true|select|focus-window-down|Space w j
 true|select|focus-window-left|Space w h
 true|select|focus-window-right|Space w l
 true|select|focus-window-up|Space w k
-true|select|fold-all-syntax|Space x f
+true|select|syntax-fold-all|Space x f
 true|select|format-table|Space p t
 true|select|format|Space l f
 true|select|git-blame-file|Space g B
@@ -759,8 +759,8 @@ true|select|git-search-commits|Space g f
 true|select|git-stashes|Space g t
 true|select|git-status|Space g g
 true|select|git-worktrees|Space g w
-true|select|global-search-regex|Space / /
-true|select|global-search|Space / s
+true|select|search-workspace-regex|Space / /
+true|select|search-workspace|Space / s
 true|select|goto-declaration|g D
 true|select|goto-definition|g d
 true|select|goto-file|g f
@@ -791,8 +791,8 @@ true|select|jump-forward-buffer|Alt-i
 true|select|jump-forward|Ctrl-i
 true|select|keep-matching-selections|Space s k
 true|select|keep-primary-selection|,
-true|select|leave-terminal|Space t q
-true|select|list-macros|Space m l
+true|select|terminal-leave|Space t q
+true|select|macro-list|Space m l
 true|select|lsp-restart|Space l R
 true|select|lsp-status|Space l ?
 true|select|match-bracket|m m
@@ -816,38 +816,38 @@ true|select|move-word-backward|b
 true|select|move-word-end|e
 true|select|move-word-forward|w
 true|select|new-buffer|Space b n
-true|select|next-running-session|Shift-Right
+true|select|session-next-running|Shift-Right
 true|select|next-window|Space w w
 true|select|only-window|Space w o
 true|select|open-all-files-picker|Space / a
 true|select|open-buffer-picker|Space b b
 true|select|open-command-palette|:
-true|select|open-explorer|Space e
+true|select|directory-open|Space e
 true|select|open-file-picker|Space / f
 true|select|open-line-above|O
 true|select|open-line-below|o
 true|select|open-navigator|Space n
 true|select|open-path-file-picker|Space / p
 true|select|open-settings|Space o o
-true|select|open-terminal-list|Space t t
-true|select|open-terminal|Space t n
+true|select|terminal-open-list|Space t t
+true|select|terminal-open|Space t n
 true|select|open-theme-settings|Space o t
-true|select|open-working-directory-explorer|Space E
+true|select|directory-open-working-directory|Space E
 true|select|page-down|Ctrl-f
 true|select|page-up|Ctrl-b
 true|select|previous-destination|Ctrl-w p
-true|select|previous-running-session|Shift-Left
-true|select|previous-session|Ctrl-w a
-true|select|record-macro|Space m M
+true|select|session-previous-running|Shift-Left
+true|select|session-previous|Ctrl-w a
+true|select|macro-record|Space m M
 true|select|redo|U
 true|select|reflow|Space p r
 true|select|reload|Space r
 true|select|remove-matching-selections|Space s r
 true|select|remove-primary-selection|Alt-,
 true|select|rename-symbol|Space l r
-true|select|rename-terminal|Space t r
-true|select|replay-default-macro|Space m r
-true|select|replay-macro|Space m R
+true|select|terminal-rename|Space t r
+true|select|macro-replay-default|Space m r
+true|select|macro-replay|Space m R
 true|select|rotate-selection-backward|(
 true|select|rotate-selection-contents-backward|Alt-(
 true|select|rotate-selection-contents-forward|Alt-)
@@ -857,10 +857,10 @@ true|select|scroll-view-down|z j
 true|select|scroll-view-up|z k
 true|select|search-regex|/
 true|select|search|s
-true|select|select-register|"
+true|select|register-select|"
 true|select|selection-redo|Alt-U
 true|select|selection-undo|Alt-u
-true|select|send-to-terminal|Space t s
+true|select|terminal-send|Space t s
 true|select|service-health|Space o s
 true|select|session-1|Space 1
 true|select|session-2|Space 2
@@ -874,21 +874,21 @@ true|select|session-9|Space 9
 true|select|session-list|Space Space
 true|select|show-documentation|Space l h
 true|select|show-help|Space ?
-true|select|shrink-syntax-selection|Space x s
+true|select|syntax-shrink-selection|Space x s
 true|select|split-horizontal|Space w s
 true|select|split-vertical|Space w v
 true|select|swap-window|Space w x
 true|select|toggle-comments|Ctrl-c
-true|select|toggle-directory-tree|Space d t
+true|select|directory-tree-toggle|Space d t
 true|select|toggle-fullscreen|Space w f
 true|select|toggle-soft-wrap|Space p s
-true|select|toggle-syntax-fold|Space x x
+true|select|syntax-toggle-fold|Space x x
 true|select|toggle-whitespace|Space p .
 true|select|toggle-zen|Space w z
 true|select|trigger-completion|Space l c
 true|select|trim-selections|Alt-_
 true|select|trim-trailing-whitespace|_
 true|select|undo|u
-true|select|unfold-all-syntax|Space x u
+true|select|syntax-unfold-all|Space x u
 true|select|unindent|<
 true|select|workspace-symbols|Space l S

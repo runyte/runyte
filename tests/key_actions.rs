@@ -150,7 +150,7 @@ fn action_binding_hints_keep_sequences_and_teaching_tracks_each_mode() {
     use runyte::key_hints::{KeyHintState, key_hint_description};
     use runyte::keymap::Key;
     let compiled = compile(
-        "bind:\n  normal:\n    F1 a: [select-all, yank]\n    Space e: yank\n    F2: open-explorer\n",
+        "bind:\n  normal:\n    F1 a: [select-all, yank]\n    Space e: yank\n    F2: directory-open\n",
     );
     assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
     let mut hints = KeyHintState::default();
@@ -162,7 +162,7 @@ fn action_binding_hints_keep_sequences_and_teaching_tracks_each_mode() {
     assert_eq!(prose.text, "F2");
     let unbound = compile("bind:\n  normal:\n    Space e: null\n  select:\n    Space e: null\n");
     let prose = runyte::key_spelling::resolve("{binding:Space e}", &unbound.keymap).unwrap();
-    assert_eq!(prose.text, "[unbound: open-explorer]");
+    assert_eq!(prose.text, "[unbound: directory-open]");
 }
 
 #[test]
@@ -218,7 +218,7 @@ fn configured_continuation_uses_effects_and_actual_prompt_arguments() {
         "focus-window-right, move-left",
         "show-help, move-file-end",
         "match-bracket, yank",
-        "{command: rename-terminal, argument: build}, move-left",
+        "{command: terminal-rename, argument: build}, move-left",
         "{command: path}, move-file-end",
     ] {
         let compiled = compile(&format!("bind: {{normal: {{F8: [{steps}]}}}}"));
@@ -227,12 +227,12 @@ fn configured_continuation_uses_effects_and_actual_prompt_arguments() {
     for steps in [
         "search, yank",
         "goto-word, delete-selection",
-        "rename-terminal, move-left",
-        "{command: rename-terminal, argument: ''}, move-left",
+        "terminal-rename, move-left",
+        "{command: terminal-rename, argument: ''}, move-left",
         "{command: file-picker-path, argument: .}, move-left",
         "{command: pipe, argument: sort}, move-left",
-        "replay-default-macro, move-left",
-        "replay-macro, move-left",
+        "macro-replay-default, move-left",
+        "macro-replay, move-left",
     ] {
         let compiled = compile(&format!("bind: {{normal: {{F8: [{steps}]}}}}"));
         assert!(!compiled.errors.is_empty(), "unexpected admission: {steps}");

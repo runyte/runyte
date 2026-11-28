@@ -5,7 +5,7 @@
 //! Symbols, references, diagnostics, and code actions are all the same
 //! interaction: a list, a substring filter, a selection, and an Enter. This is
 //! that interaction once, holding presentation-neutral state the way
-//! other editor result surfaces do. The buffer and global-search
+//! other editor result surfaces do. The buffer and workspace search
 //! pickers reuse it instead of copying that interaction. [`ListPurpose`]
 //! keeps reports, finite choices, and buffer management from acquiring picker
 //! behavior merely because they share the same rows.

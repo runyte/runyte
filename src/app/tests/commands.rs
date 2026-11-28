@@ -489,7 +489,7 @@ fn document_outline_direct_colon_and_key_paths_share_identity_and_jump_unicode()
 
     app.list = None;
     app.list_actions.clear();
-    for spelling in ["outline", "document-outline"] {
+    for spelling in ["outline", "syntax-document-outline"] {
         let parsed = parse_colon_command(spelling).unwrap();
         assert_eq!(
             parsed.id(),

@@ -480,13 +480,13 @@ keys:
       Z Ctrl-d: half-page-down
       Space e:
         steps:
-          - open-explorer
+          - directory-open
         role: fast
-      Space d t: toggle-directory-tree
-      Space d d: focus-directory-tree
+      Space d t: directory-tree-toggle
+      Space d d: directory-tree-focus
       Space E:
         steps:
-          - open-working-directory-explorer
+          - directory-open-working-directory
         role: fast
       Space Space: session-list
       Space 1: session-1
@@ -509,10 +509,10 @@ keys:
         role: compatibility
       Ctrl-w a:
         steps:
-          - previous-session
+          - session-previous
         role: compatibility
-      Shift-Left: previous-running-session
-      Shift-Right: next-running-session
+      Shift-Left: session-previous-running
+      Shift-Right: session-next-running
       Space ?: show-help
       Space h k: describe-key
       Space h a: browse-actions
@@ -520,14 +520,14 @@ keys:
       Space b c: close
       Space b d: diff-disk
       Space b n: new-buffer
-      Space t t: open-terminal-list
-      Space t n: open-terminal
-      Space t q: leave-terminal
-      Space t r: rename-terminal
-      Space t y: copy-terminal-output
-      Space t s: send-to-terminal
-      Space / s: global-search
-      Space / /: global-search-regex
+      Space t t: terminal-open-list
+      Space t n: terminal-open
+      Space t q: terminal-leave
+      Space t r: terminal-rename
+      Space t y: terminal-copy-output
+      Space t s: terminal-send
+      Space / s: search-workspace
+      Space / /: search-workspace-regex
       Space / f:
         steps:
           - open-file-picker
@@ -596,10 +596,10 @@ keys:
       Space l g r: goto-references
       Space l g i: goto-implementation
       Space x e:
-        - expand-syntax-selection
+        - syntax-expand-selection
         - action: mode-enter
           arg: select
-      Space x s: shrink-syntax-selection
+      Space x s: syntax-shrink-selection
       Space x p:
         - select-syntax-parent
         - action: mode-enter
@@ -616,10 +616,10 @@ keys:
         - select-next-syntax-sibling
         - action: mode-enter
           arg: select
-      Space x o: document-outline
-      Space x f: fold-all-syntax
-      Space x x: toggle-syntax-fold
-      Space x u: unfold-all-syntax
+      Space x o: syntax-document-outline
+      Space x f: syntax-fold-all
+      Space x x: syntax-toggle-fold
+      Space x u: syntax-unfold-all
       Space x [ f: goto-previous-syntax-function
       Space x [ c: goto-previous-syntax-class
       Space x [ p: goto-previous-syntax-parameter
@@ -692,7 +692,7 @@ keys:
         role: compatibility
       Ctrl-w t:
         steps:
-          - open-terminal
+          - terminal-open
         role: compatibility
       Ctrl-w h:
         steps:
@@ -743,20 +743,20 @@ keys:
       Space w J: move-window-down
       Space w K: move-window-up
       Space w L: move-window-right
-      '"': select-register
+      '"': register-select
       Space m m:
         steps:
           - if: recording-macro
             then:
-              - stop-macro-recording
+              - macro-stop-recording
             else:
-              - record-default-macro
+              - macro-record-default
         description: Record the default macro, or stop recording
-        target: record-default-macro
-      Space m M: record-macro
-      Space m r: replay-default-macro
-      Space m R: replay-macro
-      Space m l: list-macros
+        target: macro-record-default
+      Space m M: macro-record
+      Space m r: macro-replay-default
+      Space m R: macro-replay
+      Space m l: macro-list
       Space g c: git-conflicts
       '|':
         steps:
@@ -940,10 +940,10 @@ keys:
         role: compatibility
       Ctrl-w a:
         steps:
-          - previous-session
+          - session-previous
         role: compatibility
-      Shift-Left: previous-running-session
-      Shift-Right: next-running-session
+      Shift-Left: session-previous-running
+      Shift-Right: session-next-running
       Ctrl-w w:
         steps:
           - next-window
@@ -1080,11 +1080,11 @@ keys:
       q: media-back
       Enter: media-show-page
     directory:
-      Enter: open-directory-entry
-      Backspace: open-parent-directory
-      '-': open-parent-directory
-      .: toggle-hidden-files
-      '?': toggle-directory-details
+      Enter: directory-open-entry
+      Backspace: directory-open-parent
+      '-': directory-open-parent
+      .: directory-toggle-hidden-files
+      '?': directory-toggle-details
       p: [directory-paste, {action: mode-enter, arg: normal}]
     directory-tree:
       g g: directory-tree-first
@@ -1101,7 +1101,7 @@ keys:
       H: goto-window-top
       M: goto-window-center
       L: goto-window-bottom
-      .: toggle-hidden-files
+      .: directory-toggle-hidden-files
       /: directory-tree-search
       N: directory-tree-search-previous
       Ctrl-n: directory-tree-search-next
@@ -1224,9 +1224,9 @@ keys:
     git-status:
       Enter: git-diff
     git-branches:
-      Enter: checkout-branch
+      Enter: git-checkout-branch
     git-conflicts:
-      Enter: open-git-conflict
+      Enter: git-open-conflict
     git-merge-review:
       Esc: git-review-cancel
       Down: git-review-next
@@ -1307,21 +1307,21 @@ keys:
         role: compatibility
     terminal-replace: *id001
     git-worktrees:
-      Enter: open-worktree
+      Enter: git-open-worktree
     git-comparison:
       Enter: git-diff
     git-log:
-      Enter: open-git-commit
-      Ctrl-n: next-git-log-page
-      Ctrl-p: previous-git-log-page
+      Enter: git-open-commit
+      Ctrl-n: git-log-next-page
+      Ctrl-p: git-log-previous-page
     git-network:
-      Enter: open-git-commit
-      Ctrl-n: next-git-network-page
-      Ctrl-p: previous-git-network-page
+      Enter: git-open-commit
+      Ctrl-n: git-network-next-page
+      Ctrl-p: git-network-previous-page
     git-blame:
-      Enter: open-git-commit
+      Enter: git-open-commit
     workspace-search:
-      Enter: open-workspace-search-result
+      Enter: search-open-workspace-result
     help:
       q: close
     markdown:
@@ -2120,8 +2120,8 @@ keys:
           - list-backspace
         role: compatibility
     session-manager:
-      Ctrl-o: open-session-directory
-      Ctrl-e: open-session-destinations
+      Ctrl-o: session-open-directory
+      Ctrl-e: session-open-destinations
       Ctrl-g: git-worktrees
 namespaces:
   - scope: global
@@ -2476,13 +2476,13 @@ context-actions:
   - scope: git-status
     key: o
     name: open
-    target: open-changed-file
+    target: git-open-changed-file
     description: Open the file on this line
     context: row
   - scope: git-status
     key: S
     name: stage
-    target: stage-all-changed-files
+    target: git-stage-all-changed-files
     description: Stage every changed file
     context: buffer
   - scope: git-status
@@ -2500,55 +2500,55 @@ context-actions:
   - scope: git-status
     key: p
     name: pull
-    target: pull-branch
+    target: git-pull-branch
     description: Fast-forward the current branch onto what it tracks
     context: buffer
   - scope: git-status
     key: P
     name: push
-    target: push-branch
+    target: git-push-branch
     description: Publish this branch to what it tracks
     context: buffer
   - scope: git-branches
     key: n
     name: create
-    target: create-branch
+    target: git-create-branch
     description: Create a branch at the one on this line and switch to it
     context: row
   - scope: git-branches
     key: w
     name: worktree
-    target: create-worktree
+    target: git-create-worktree
     description: Create a worktree for this branch; attach in persistent mode
     context: row
   - scope: git-branches
     key: D
     name: delete
-    target: delete-branch
+    target: git-delete-branch
     description: Delete the branch on this line, after a confirmation
     context: row
   - scope: git-branches
     key: p
     name: pull
-    target: pull-branch
+    target: git-pull-branch
     description: Fast-forward the current branch onto what it tracks
     context: buffer
   - scope: git-branches
     key: P
     name: push
-    target: push-branch
+    target: git-push-branch
     description: Publish this branch to what it tracks
     context: row
   - scope: git-worktrees
     key: n
     name: branch
-    target: create-new-worktree
+    target: git-create-new-worktree
     description: Create a new branch and worktree from this checkout; attach in persistent mode
     context: row
   - scope: git-worktrees
     key: D
     name: remove
-    target: remove-worktree
+    target: git-remove-worktree
     description: Remove the worktree on this row, leaving its branch
     context: row
   - scope: git-stash
@@ -2578,43 +2578,43 @@ context-actions:
   - scope: directory
     key: s
     name: session
-    target: open-explorer-session
+    target: session-open-explorer
     description: Open persistent session here
     context: buffer
   - scope: directory
     key: c
     name: cd
-    target: open-explorer-workspace
+    target: directory-open-workspace
     description: Change to this directory's workspace, making one if needed
     context: buffer
   - scope: directory
     key: t
     name: terminal
-    target: open-terminal-directory-root
+    target: terminal-open-directory-root
     description: Open a terminal in the directory the explorer shows
     context: buffer
   - scope: directory
     key: f
     name: finder
-    target: open-explorer-finder
+    target: directory-open-finder
     description: Open finder in the current directory
     context: buffer
   - scope: directory
     key: e
     name: external
-    target: open-explorer-system
+    target: directory-open-system
     description: Open in system file manager
     context: buffer
   - scope: directory
     key: h
     name: hidden
-    target: toggle-hidden-files
+    target: directory-toggle-hidden-files
     description: Show or hide dotfiles
     context: buffer
   - scope: directory
     key: d
     name: details
-    target: toggle-directory-details
+    target: directory-toggle-details
     description: Show or hide file details in the explorer
     context: buffer
   - scope: settings
@@ -2638,7 +2638,7 @@ context-actions:
   - scope: directory
     key: o
     name: order
-    target: choose-explorer-order
+    target: directory-choose-order
     description: Choose the order the explorer lists entries in
     context: buffer
 fast-pane:

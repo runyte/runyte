@@ -1975,16 +1975,16 @@ mod tests {
                 ("s".to_owned(), "git-stage", ActionContext::Row),
                 ("u".to_owned(), "git-unstage", ActionContext::Row),
                 ("D".to_owned(), "git-discard", ActionContext::Row),
-                ("o".to_owned(), "open-changed-file", ActionContext::Row),
+                ("o".to_owned(), "git-open-changed-file", ActionContext::Row),
                 (
                     "S".to_owned(),
-                    "stage-all-changed-files",
+                    "git-stage-all-changed-files",
                     ActionContext::Buffer,
                 ),
                 ("c".to_owned(), "git-commit", ActionContext::Buffer),
                 ("i".to_owned(), "git-index", ActionContext::Buffer),
-                ("p".to_owned(), "pull-branch", ActionContext::Buffer),
-                ("P".to_owned(), "push-branch", ActionContext::Buffer),
+                ("p".to_owned(), "git-pull-branch", ActionContext::Buffer),
+                ("P".to_owned(), "git-push-branch", ActionContext::Buffer),
             ]
         );
         let branch_pull = default_keymap()

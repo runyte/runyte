@@ -260,6 +260,88 @@ longer overlays every special view. Move bindings intended for every view to
 Normal and Select tables. `copy-key-binding` emits the named table that supplies
 the inspected key. Full preset export follows the public program syntax work.
 
+### Action name migration
+
+In 0.5, actions belonging to a subject family use subject-first names.
+Replace old names in key bindings, sequences and `{ command: ... }` entries
+using this table. Old names report their replacement; they are not aliases.
+The same change applies to colon commands whose spelling matches a row.
+Other colon spellings, such as `:terminal` and `:terminal-file-directory`,
+remain available. Default keys and action behavior do not change.
+
+Core text and selection operations, including syntax text objects and
+motions, keep their names. The four `enter-*-mode` actions also retain their
+current names pending the mode-argument migration.
+
+| Old action | Replacement |
+| --- | --- |
+| `select-register` | `register-select` |
+| `record-macro` | `macro-record` |
+| `record-default-macro` | `macro-record-default` |
+| `stop-macro-recording` | `macro-stop-recording` |
+| `replay-macro` | `macro-replay` |
+| `replay-default-macro` | `macro-replay-default` |
+| `list-macros` | `macro-list` |
+| `global-search` | `search-workspace` |
+| `global-search-regex` | `search-workspace-regex` |
+| `open-workspace-search-result` | `search-open-workspace-result` |
+| `open-fuzzy-grep` | `search-open-fuzzy-grep` |
+| `expand-syntax-selection` | `syntax-expand-selection` |
+| `shrink-syntax-selection` | `syntax-shrink-selection` |
+| `document-outline` | `syntax-document-outline` |
+| `toggle-syntax-fold` | `syntax-toggle-fold` |
+| `fold-all-syntax` | `syntax-fold-all` |
+| `unfold-all-syntax` | `syntax-unfold-all` |
+| `open-explorer` | `directory-open` |
+| `open-working-directory-explorer` | `directory-open-working-directory` |
+| `open-directory-file-picker` | `directory-open-file-picker` |
+| `open-directory-fuzzy-grep` | `directory-open-fuzzy-grep` |
+| `open-directory-entry` | `directory-open-entry` |
+| `open-parent-directory` | `directory-open-parent` |
+| `refresh-directory` | `directory-refresh` |
+| `toggle-hidden-files` | `directory-toggle-hidden-files` |
+| `toggle-directory-details` | `directory-toggle-details` |
+| `choose-explorer-order` | `directory-choose-order` |
+| `open-explorer-system` | `directory-open-system` |
+| `open-explorer-finder` | `directory-open-finder` |
+| `open-explorer-workspace` | `directory-open-workspace` |
+| `toggle-directory-tree` | `directory-tree-toggle` |
+| `focus-directory-tree` | `directory-tree-focus` |
+| `open-changed-file` | `git-open-changed-file` |
+| `stage-all-changed-files` | `git-stage-all-changed-files` |
+| `checkout-branch` | `git-checkout-branch` |
+| `create-branch` | `git-create-branch` |
+| `delete-branch` | `git-delete-branch` |
+| `open-git-conflict` | `git-open-conflict` |
+| `pull-branch` | `git-pull-branch` |
+| `push-branch` | `git-push-branch` |
+| `open-worktree` | `git-open-worktree` |
+| `create-worktree` | `git-create-worktree` |
+| `create-new-worktree` | `git-create-new-worktree` |
+| `remove-worktree` | `git-remove-worktree` |
+| `next-git-network-page` | `git-network-next-page` |
+| `previous-git-network-page` | `git-network-previous-page` |
+| `next-git-log-page` | `git-log-next-page` |
+| `previous-git-log-page` | `git-log-previous-page` |
+| `open-git-commit` | `git-open-commit` |
+| `open-terminal` | `terminal-open` |
+| `open-terminal-file-directory` | `terminal-open-file-directory` |
+| `open-terminal-directory-root` | `terminal-open-directory-root` |
+| `open-terminal-selected-directory` | `terminal-open-selected-directory` |
+| `open-terminal-session-directory` | `terminal-open-session-directory` |
+| `open-terminal-list` | `terminal-open-list` |
+| `show-terminal` | `terminal-show` |
+| `rename-terminal` | `terminal-rename` |
+| `leave-terminal` | `terminal-leave` |
+| `copy-terminal-output` | `terminal-copy-output` |
+| `send-to-terminal` | `terminal-send` |
+| `previous-session` | `session-previous` |
+| `next-running-session` | `session-next-running` |
+| `previous-running-session` | `session-previous-running` |
+| `open-session-directory` | `session-open-directory` |
+| `open-explorer-session` | `session-open-explorer` |
+| `open-session-destinations` | `session-open-destinations` |
+
 ### Binding actions
 
 Completion popup actions can be assigned separately from Insert/Replace editing:
@@ -853,7 +935,7 @@ character before the old endpoint. On native media, leaving Select retains the
 media selection for copying and does not move the hidden document caret.
 
 The default macro-recording key also uses an internal conditional.
-`record-default-macro` starts recording and refuses an existing recording;
+`macro-record-default` starts recording and refuses an existing recording;
 `Space m m` stops any active recording, or starts the default one.
 Directory-tree `h`/Left, `l`/Right, Enter, `v` and `s` use tree conditions with
 `directory-tree-collapse`, `directory-tree-select-parent`,
@@ -873,7 +955,7 @@ the next step runs. Escape cancels the remaining steps.
 
 Prompt and background effects must end the list. A supplied argument that
 replaces a prompt removes that prompt requirement, but does not remove background
-work. For example, `{ command: rename-terminal, argument: build }` can continue;
+work. For example, `{ command: terminal-rename, argument: build }` can continue;
 `file-picker-path` still starts a scan and `pipe` still starts a worker, even
 with arguments. Plugin commands and queued macro replay must be last. The `goto-word` label
 chooser also owns input and remains last-only.
@@ -1189,8 +1271,8 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `expand-syntax-selection` | normal, select | can be followed by another action | Expand to the enclosing syntax node |
-| `shrink-syntax-selection` | normal, select | can be followed by another action | Shrink the syntax selection |
+| `syntax-expand-selection` | normal, select | can be followed by another action | Expand to the enclosing syntax node |
+| `syntax-shrink-selection` | normal, select | can be followed by another action | Shrink the syntax selection |
 | `select-syntax-parent` | normal, select | can be followed by another action | Select the enclosing syntax node |
 | `select-syntax-child` | normal, select | can be followed by another action | Select the first child syntax node |
 | `select-previous-syntax-sibling` | normal, select | can be followed by another action | Select the previous sibling syntax node |
@@ -1207,10 +1289,10 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `goto-next-syntax-class` | normal, select | can be followed by another action | Go to the next class-like item |
 | `goto-previous-syntax-parameter` | normal, select | can be followed by another action | Go to the previous parameter |
 | `goto-next-syntax-parameter` | normal, select | can be followed by another action | Go to the next parameter |
-| `document-outline` | normal, select | can be followed by another action | Open the document outline |
-| `toggle-syntax-fold` | normal, select | can be followed by another action | Toggle the syntax fold at the cursor |
-| `fold-all-syntax` | normal, select | can be followed by another action | Fold every syntax region |
-| `unfold-all-syntax` | normal, select | can be followed by another action | Unfold every syntax region |
+| `syntax-document-outline` | normal, select | can be followed by another action | Open the document outline |
+| `syntax-toggle-fold` | normal, select | can be followed by another action | Toggle the syntax fold at the cursor |
+| `syntax-fold-all` | normal, select | can be followed by another action | Fold every syntax region |
+| `syntax-unfold-all` | normal, select | can be followed by another action | Unfold every syntax region |
 
 #### Search actions
 
@@ -1224,8 +1306,8 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `search-extend-previous` | normal, select | can be followed by another action | Add the previous search match as the primary selection |
 | `search-select-all-matches` | normal, select | can be followed by another action | Select every match of the current search |
 | `search-set-from-selection` | normal, select | can be followed by another action | Use the selection or word as the search |
-| `global-search` | normal, select | must be the last action | Search the workspace, ignoring case |
-| `global-search-regex` | normal, select | must be the last action | Search the workspace with a regular expression |
+| `search-workspace` | normal, select | must be the last action | Search the workspace, ignoring case |
+| `search-workspace-regex` | normal, select | must be the last action | Search the workspace with a regular expression |
 
 #### View actions
 
@@ -1246,10 +1328,10 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `open-explorer` | normal, select | must be the last action | Open file explorer in the active buffer's directory |
-| `toggle-directory-tree` | normal, select | can be followed by another action | Show or hide the directory tree |
-| `focus-directory-tree` | normal, select | can be followed by another action | Reveal the active file in the directory tree |
-| `open-working-directory-explorer` | normal, select | must be the last action | Open file explorer in the working directory |
+| `directory-open` | normal, select | must be the last action | Open file explorer in the active buffer's directory |
+| `directory-tree-toggle` | normal, select | can be followed by another action | Show or hide the directory tree |
+| `directory-tree-focus` | normal, select | can be followed by another action | Reveal the active file in the directory tree |
+| `directory-open-working-directory` | normal, select | must be the last action | Open file explorer in the working directory |
 | `open-file-picker` | normal, select | must be the last action | Open the finder over the project's files, buffers, and terminals |
 | `open-all-files-picker` | normal, select | must be the last action | Open the finder over the project, including files Git ignores |
 | `open-path-file-picker` | normal, select | must be the last action | Open the finder in a chosen path, including files Git ignores |
@@ -1257,7 +1339,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `new-buffer` | normal, select | can be followed by another action | Open a new scratch buffer |
 | `open-navigator` | normal, select, insert, replace | can be followed by another action | Navigate open buffers and terminals |
 | `previous-destination` | normal, select, insert, replace | can be followed by another action | Return to the previous destination in this pane |
-| `previous-session` | normal, select, insert, replace | must be the last action | Return to the previously visited persistent session |
+| `session-previous` | normal, select, insert, replace | must be the last action | Return to the previously visited persistent session |
 | `session-1` | normal, select | must be the last action | Attach to persistent session 1 |
 | `session-2` | normal, select | must be the last action | Attach to persistent session 2 |
 | `session-3` | normal, select | must be the last action | Attach to persistent session 3 |
@@ -1267,8 +1349,8 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `session-7` | normal, select | must be the last action | Attach to persistent session 7 |
 | `session-8` | normal, select | must be the last action | Attach to persistent session 8 |
 | `session-9` | normal, select | must be the last action | Attach to persistent session 9 |
-| `next-running-session` | normal, select, insert, replace | must be the last action | Visit the next running persistent session |
-| `previous-running-session` | normal, select, insert, replace | must be the last action | Visit the previous running persistent session |
+| `session-next-running` | normal, select, insert, replace | must be the last action | Visit the next running persistent session |
+| `session-previous-running` | normal, select, insert, replace | must be the last action | Visit the previous running persistent session |
 | `open-buffer-picker` | normal, select | can be followed by another action | Open the buffer picker |
 
 #### Git actions
@@ -1328,12 +1410,12 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `select-register` | normal, select | can be followed by another action | Select a register |
-| `record-macro` | normal, select | can be followed by another action | Record a macro named by the next key |
-| `record-default-macro` | normal, select | can be followed by another action | Start recording the default macro |
-| `replay-macro` | normal, select | must be the last action | Replay the macro named by the next key |
-| `replay-default-macro` | normal, select | must be the last action | Replay the default macro |
-| `list-macros` | normal, select | can be followed by another action | List the recorded macros |
+| `register-select` | normal, select | can be followed by another action | Select a register |
+| `macro-record` | normal, select | can be followed by another action | Record a macro named by the next key |
+| `macro-record-default` | normal, select | can be followed by another action | Start recording the default macro |
+| `macro-replay` | normal, select | must be the last action | Replay the macro named by the next key |
+| `macro-replay-default` | normal, select | must be the last action | Replay the default macro |
+| `macro-list` | normal, select | can be followed by another action | List the recorded macros |
 
 #### Configuration actions
 
@@ -1346,12 +1428,12 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
-| `open-terminal` | normal, select | must be the last action | Start a terminal in this pane |
-| `open-terminal-list` | normal, select | can be followed by another action | Show the running terminals |
-| `rename-terminal` | normal, select | last unless an argument supplies the prompt input | Name the active terminal session |
-| `leave-terminal` | normal, select | can be followed by another action | Show this pane's buffer again |
-| `copy-terminal-output` | normal, select | can be followed by another action | Open this terminal's output as a buffer |
-| `send-to-terminal` | normal, select | can be followed by another action | Send the selection to a terminal |
+| `terminal-open` | normal, select | must be the last action | Start a terminal in this pane |
+| `terminal-open-list` | normal, select | can be followed by another action | Show the running terminals |
+| `terminal-rename` | normal, select | last unless an argument supplies the prompt input | Name the active terminal session |
+| `terminal-leave` | normal, select | can be followed by another action | Show this pane's buffer again |
+| `terminal-copy-output` | normal, select | can be followed by another action | Open this terminal's output as a buffer |
+| `terminal-send` | normal, select | can be followed by another action | Send the selection to a terminal |
 
 #### Help actions
 
@@ -1490,20 +1572,21 @@ indicated buffer owner; raw UI input remains under `keys.ui`.
 
 ##### directory
 
-- `choose-explorer-order`: normal, select
+- `directory-choose-order`: normal, select
+- `directory-open-entry`: normal, select
+- `directory-open-finder`: normal, select
+- `directory-open-parent`: normal, select
+- `directory-open-system`: normal, select
+- `directory-open-workspace`: normal, select
 - `directory-paste`: normal, select
-- `open-directory-entry`: normal, select
-- `open-explorer-finder`: normal, select
-- `open-explorer-session`: normal, select
-- `open-explorer-system`: normal, select
-- `open-explorer-workspace`: normal, select
-- `open-parent-directory`: normal, select
-- `open-terminal-directory-root`: normal, select
-- `toggle-directory-details`: normal, select
-- `toggle-hidden-files`: normal, select
+- `directory-toggle-details`: normal, select
+- `directory-toggle-hidden-files`: normal, select
+- `session-open-explorer`: normal, select
+- `terminal-open-directory-root`: normal, select
 
 ##### directory-tree
 
+- `directory-toggle-hidden-files`: normal, select
 - `directory-tree-close`: normal, select
 - `directory-tree-collapse`: normal, select
 - `directory-tree-delete`: normal, select
@@ -1536,7 +1619,6 @@ indicated buffer owner; raw UI input remains under `keys.ui`.
 - `directory-tree-select-first-child`: normal, select
 - `directory-tree-select-parent`: normal, select
 - `directory-tree-up`: normal, select
-- `toggle-hidden-files`: normal, select
 
 ##### settings
 
@@ -1549,21 +1631,21 @@ indicated buffer owner; raw UI input remains under `keys.ui`.
 
 - `git-merge-abort`: normal, select
 - `git-merge-continue`: normal, select
-- `open-changed-file`: normal, select
-- `pull-branch`: normal, select
-- `push-branch`: normal, select
-- `stage-all-changed-files`: normal, select
+- `git-open-changed-file`: normal, select
+- `git-pull-branch`: normal, select
+- `git-push-branch`: normal, select
+- `git-stage-all-changed-files`: normal, select
 
 ##### git-branches
 
-- `checkout-branch`: normal, select
-- `create-branch`: normal, select
-- `create-worktree`: normal, select
-- `delete-branch`: normal, select
+- `git-checkout-branch`: normal, select
+- `git-create-branch`: normal, select
+- `git-create-worktree`: normal, select
+- `git-delete-branch`: normal, select
 - `git-fetch-branch`: normal, select
 - `git-merge-branch`: normal, select
-- `pull-branch`: normal, select
-- `push-branch`: normal, select
+- `git-pull-branch`: normal, select
+- `git-push-branch`: normal, select
 
 ##### git-conflicts
 
@@ -1574,7 +1656,7 @@ indicated buffer owner; raw UI input remains under `keys.ui`.
 - `git-conflict-sides`: normal, select
 - `git-merge-abort`: normal, select
 - `git-merge-continue`: normal, select
-- `open-git-conflict`: normal, select
+- `git-open-conflict`: normal, select
 
 ##### git-conflict-file
 
@@ -1649,29 +1731,29 @@ indicated buffer owner; raw UI input remains under `keys.ui`.
 
 ##### git-worktrees
 
-- `create-new-worktree`: normal, select
-- `open-worktree`: normal, select
-- `remove-worktree`: normal, select
+- `git-create-new-worktree`: normal, select
+- `git-open-worktree`: normal, select
+- `git-remove-worktree`: normal, select
 
 ##### git-log
 
-- `next-git-log-page`: normal, select
-- `open-git-commit`: normal, select
-- `previous-git-log-page`: normal, select
+- `git-log-next-page`: normal, select
+- `git-log-previous-page`: normal, select
+- `git-open-commit`: normal, select
 
 ##### git-network
 
-- `next-git-network-page`: normal, select
-- `open-git-commit`: normal, select
-- `previous-git-network-page`: normal, select
+- `git-network-next-page`: normal, select
+- `git-network-previous-page`: normal, select
+- `git-open-commit`: normal, select
 
 ##### git-blame
 
-- `open-git-commit`: normal, select
+- `git-open-commit`: normal, select
 
 ##### workspace-search
 
-- `open-workspace-search-result`: normal, select
+- `search-open-workspace-result`: normal, select
 
 ##### markdown
 
@@ -1692,8 +1774,8 @@ indicated buffer owner; raw UI input remains under `keys.ui`.
 - `list-page-up`: list
 - `list-previous`: list
 - `list-toggle-preview`: list
-- `open-session-destinations`: list
-- `open-session-directory`: list
+- `session-open-destinations`: list
+- `session-open-directory`: list
 
 
 #### Action contracts
@@ -1768,8 +1850,8 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `select-all` | selection | not accepted | none | none | terminal: Select all captured terminal output | atomic operation |
 | `collapse-selection` | selection | not accepted | none | none | terminal: Collapse the review selection; media: Retain the native media selection; this surface has no document caret to collapse | atomic operation |
 | `flip-selection` | selection | not accepted | none | none |  | atomic operation |
-| `expand-syntax-selection` | selection | repeats | none | none |  | atomic operation |
-| `shrink-syntax-selection` | selection, mode | repeats | none | none |  | decision: Restores selection and mode from expansion history that is not visible between program steps. |
+| `syntax-expand-selection` | selection | repeats | none | none |  | atomic operation |
+| `syntax-shrink-selection` | selection, mode | repeats | none | none |  | decision: Restores selection and mode from expansion history that is not visible between program steps. |
 | `select-syntax-parent` | selection | repeats | none | none |  | atomic operation |
 | `select-syntax-child` | selection | repeats | none | none |  | atomic operation |
 | `select-previous-syntax-sibling` | selection | repeats | none | none |  | atomic operation |
@@ -1808,10 +1890,10 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `goto-next-syntax-class` | selection | repeats | none | none |  | atomic operation |
 | `goto-previous-syntax-parameter` | selection | repeats | none | none |  | atomic operation |
 | `goto-next-syntax-parameter` | selection | repeats | none | none |  | atomic operation |
-| `document-outline` | view | not accepted | none | none |  | atomic operation |
-| `toggle-syntax-fold` | view | not accepted | none | none |  | atomic operation |
-| `fold-all-syntax` | view | not accepted | none | none |  | atomic operation |
-| `unfold-all-syntax` | view | not accepted | none | none |  | atomic operation |
+| `syntax-document-outline` | view | not accepted | none | none |  | atomic operation |
+| `syntax-toggle-fold` | view | not accepted | none | none |  | atomic operation |
+| `syntax-fold-all` | view | not accepted | none | none |  | atomic operation |
+| `syntax-unfold-all` | view | not accepted | none | none |  | atomic operation |
 | `split-selection-at-line-ends` | selection | not accepted | none | none |  | atomic operation |
 | `split-selection-at-line-starts` | selection | not accepted | none | none |  | atomic operation |
 | `keep-primary-selection` | selection | not accepted | none | none | terminal: Keep only the primary review selection | atomic operation |
@@ -1872,9 +1954,9 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `toggle-focus` | view, configuration | not accepted | none | none |  | atomic operation |
 | `toggle-zen` | view, mode | not accepted | none | none |  | decision: Restores the previous editor mode when leaving directory-tree focus before changing the window presentation. |
 | `toggle-fullscreen` | view, mode | not accepted | none | none |  | decision: Restores the previous editor mode when leaving directory-tree focus before changing the window presentation. |
-| `open-explorer` | file, view, prompt | not accepted | none | none |  | atomic operation |
-| `toggle-directory-tree` | pane, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `focus-directory-tree` | pane, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-open` | file, view, prompt | not accepted | none | none |  | atomic operation |
+| `directory-tree-toggle` | pane, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-tree-focus` | pane, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
 | `directory-tree-up` | selection | not accepted | none | none |  | atomic operation |
 | `directory-tree-down` | selection | not accepted | none | none |  | atomic operation |
 | `directory-tree-collapse` | view, selection | not accepted | none | none |  | atomic operation |
@@ -1908,29 +1990,29 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `directory-tree-rename` | prompt, file | not accepted | none | none |  | atomic operation |
 | `directory-tree-delete` | prompt, file | not accepted | none | none |  | atomic operation |
 | `directory-tree-move` | prompt, file | not accepted | none | none |  | atomic operation |
-| `open-working-directory-explorer` | file, view, prompt | not accepted | none | explorer [path] |  | atomic operation |
+| `directory-open-working-directory` | file, view, prompt | not accepted | none | explorer [path] |  | atomic operation |
 | `open-file-picker` | view, background work | not accepted | none | none |  | atomic operation |
 | `open-all-files-picker` | view, background work | not accepted | none | none |  | atomic operation |
 | `open-path-file-picker` | prompt, view, background work | not accepted | none | file-picker-path [path] |  | atomic operation |
-| `open-directory-file-picker` | view, background work | not accepted | none | none |  | atomic operation |
-| `open-fuzzy-grep` | view, background work | not accepted | none | none |  | atomic operation |
-| `open-directory-fuzzy-grep` | view, background work | not accepted | none | none |  | atomic operation |
-| `open-directory-entry` | file, view, mode, selection, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `open-parent-directory` | file, view, mode, selection, prompt | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `refresh-directory` | file, view, prompt | not accepted | none | none |  | atomic operation |
-| `toggle-hidden-files` | view, configuration | not accepted | none | none | directory-tree: Show or hide hidden tree entries | atomic operation |
-| `toggle-directory-details` | view, configuration | not accepted | none | none |  | atomic operation |
-| `choose-explorer-order` | prompt, view, configuration | not accepted | none | none |  | atomic operation |
-| `open-explorer-system` | file, view, background work | not accepted | none | none |  | atomic operation |
-| `open-explorer-finder` | file, view, background work | not accepted | none | none |  | atomic operation |
-| `open-changed-file` | background work, file, view, prompt | not accepted | none | none |  | atomic operation |
-| `stage-all-changed-files` | background work, file, view | not accepted | none | none |  | atomic operation |
-| `checkout-branch` | background work, file, view, prompt | not accepted | none | none |  | atomic operation |
-| `create-branch` | prompt, background work, file | not accepted | none | none |  | atomic operation |
-| `delete-branch` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `directory-open-file-picker` | view, background work | not accepted | none | none |  | atomic operation |
+| `search-open-fuzzy-grep` | view, background work | not accepted | none | none |  | atomic operation |
+| `directory-open-fuzzy-grep` | view, background work | not accepted | none | none |  | atomic operation |
+| `directory-open-entry` | file, view, mode, selection, prompt, background work | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-open-parent` | file, view, mode, selection, prompt | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `directory-refresh` | file, view, prompt | not accepted | none | none |  | atomic operation |
+| `directory-toggle-hidden-files` | view, configuration | not accepted | none | none | directory-tree: Show or hide hidden tree entries | atomic operation |
+| `directory-toggle-details` | view, configuration | not accepted | none | none |  | atomic operation |
+| `directory-choose-order` | prompt, view, configuration | not accepted | none | none |  | atomic operation |
+| `directory-open-system` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `directory-open-finder` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `git-open-changed-file` | background work, file, view, prompt | not accepted | none | none |  | atomic operation |
+| `git-stage-all-changed-files` | background work, file, view | not accepted | none | none |  | atomic operation |
+| `git-checkout-branch` | background work, file, view, prompt | not accepted | none | none |  | atomic operation |
+| `git-create-branch` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `git-delete-branch` | prompt, background work, file | not accepted | none | none |  | atomic operation |
 | `git-merge-branch` | background work, file, view, prompt, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
 | `git-conflicts` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `open-git-conflict` | background work, file, view | not accepted | none | none |  | atomic operation |
+| `git-open-conflict` | background work, file, view | not accepted | none | none |  | atomic operation |
 | `git-merge-continue` | background work, file, view, prompt, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
 | `git-merge-abort` | prompt, background work, file, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
 | `git-conflict-next` | selection, view | not accepted | none | none |  | atomic operation |
@@ -1952,18 +2034,18 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `git-review-right` | selection | not accepted | none | none |  | atomic operation |
 | `git-review-enter` | view, background work, file, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
 | `git-fetch-branch` | background work, file, view | not accepted | none | none |  | atomic operation |
-| `pull-branch` | background work, file, view, prompt | not accepted | none | none |  | atomic operation |
-| `push-branch` | background work, file, view | not accepted | none | none |  | atomic operation |
-| `open-worktree` | background work, file, view | not accepted | none | none |  | atomic operation |
-| `create-worktree` | prompt, background work, file | not accepted | none | none |  | atomic operation |
-| `create-new-worktree` | prompt, background work, file | not accepted | none | none |  | atomic operation |
-| `remove-worktree` | prompt, background work, file | not accepted | none | none |  | atomic operation |
-| `next-git-network-page` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `previous-git-network-page` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `next-git-log-page` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `previous-git-log-page` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `open-git-commit` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `open-workspace-search-result` | view, file, selection | not accepted | none | none |  | atomic operation |
+| `git-pull-branch` | background work, file, view, prompt | not accepted | none | none |  | atomic operation |
+| `git-push-branch` | background work, file, view | not accepted | none | none |  | atomic operation |
+| `git-open-worktree` | background work, file, view | not accepted | none | none |  | atomic operation |
+| `git-create-worktree` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `git-create-new-worktree` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `git-remove-worktree` | prompt, background work, file | not accepted | none | none |  | atomic operation |
+| `git-network-next-page` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-network-previous-page` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-log-next-page` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-log-previous-page` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `git-open-commit` | background work, file, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `search-open-workspace-result` | view, file, selection | not accepted | none | none |  | atomic operation |
 | `override-setting-language` | prompt, configuration | not accepted | none | none |  | atomic operation |
 | `override-setting-pattern` | prompt, configuration | not accepted | none | none |  | atomic operation |
 | `remove-setting-override` | configuration, view | not accepted | none | none |  | atomic operation |
@@ -1998,17 +2080,17 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `terminal-search-regex` | prompt, search state, selection, view | not accepted | none | none | terminal: Prompt for a regular-expression search of captured output | atomic operation |
 | `terminal-search-next` | selection, view | not accepted | none | none | terminal: Select the next or previous terminal review search match | atomic operation |
 | `terminal-search-previous` | selection, view | not accepted | none | none | terminal: Select the next or previous terminal review search match | atomic operation |
-| `open-terminal` | background work, view, mode | not accepted | none | terminal [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `open-terminal-file-directory` | background work, view, mode | not accepted | none | terminal-file-directory [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `open-terminal-directory-root` | background work, view, mode | not accepted | none | terminal-directory-root [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `open-terminal-selected-directory` | background work, view, mode | not accepted | none | terminal-selected-directory [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `open-terminal-session-directory` | background work, view, mode | not accepted | none | terminal-session-directory <number&#124;name> |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `open-terminal-list` | view | not accepted | none | none |  | atomic operation |
-| `show-terminal` | view, mode | not accepted | none | terminal-show <number&#124;name> |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `rename-terminal` | prompt, configuration | not accepted | none | terminal-rename <name> |  | atomic operation |
-| `leave-terminal` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `copy-terminal-output` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `send-to-terminal` | terminal input | not accepted | none | terminal-send [number&#124;name] |  | atomic operation |
+| `terminal-open` | background work, view, mode | not accepted | none | terminal [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `terminal-open-file-directory` | background work, view, mode | not accepted | none | terminal-file-directory [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `terminal-open-directory-root` | background work, view, mode | not accepted | none | terminal-directory-root [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `terminal-open-selected-directory` | background work, view, mode | not accepted | none | terminal-selected-directory [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `terminal-open-session-directory` | background work, view, mode | not accepted | none | terminal-session-directory <number&#124;name> |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `terminal-open-list` | view | not accepted | none | none |  | atomic operation |
+| `terminal-show` | view, mode | not accepted | none | terminal-show <number&#124;name> |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `terminal-rename` | prompt, configuration | not accepted | none | terminal-rename <name> |  | atomic operation |
+| `terminal-leave` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `terminal-copy-output` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `terminal-send` | terminal input | not accepted | none | terminal-send [number&#124;name] |  | atomic operation |
 | `delete-word-backward` | text | not accepted | none | none |  | atomic operation |
 | `delete-word-forward` | text | not accepted | none | none |  | atomic operation |
 | `delete-to-line-start` | text | not accepted | none | none |  | atomic operation |
@@ -2027,7 +2109,7 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `new-buffer` | view | not accepted | none | none |  | atomic operation |
 | `open-navigator` | view | not accepted | none | none |  | atomic operation |
 | `previous-destination` | view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `previous-session` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-previous` | file, view, background work | not accepted | none | none |  | atomic operation |
 | `session-1` | file, view, background work | not accepted | none | none |  | atomic operation |
 | `session-2` | file, view, background work | not accepted | none | none |  | atomic operation |
 | `session-3` | file, view, background work | not accepted | none | none |  | atomic operation |
@@ -2037,11 +2119,11 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `session-7` | file, view, background work | not accepted | none | none |  | atomic operation |
 | `session-8` | file, view, background work | not accepted | none | none |  | atomic operation |
 | `session-9` | file, view, background work | not accepted | none | none |  | atomic operation |
-| `next-running-session` | file, view, background work | not accepted | none | none |  | atomic operation |
-| `previous-running-session` | file, view, background work | not accepted | none | none |  | atomic operation |
-| `open-session-directory` | file, view, background work | not accepted | none | none |  | atomic operation |
-| `open-explorer-session` | file, view, background work | not accepted | none | none |  | atomic operation |
-| `open-explorer-workspace` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-next-running` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-previous-running` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-open-directory` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `session-open-explorer` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `directory-open-workspace` | file, view, background work | not accepted | none | none |  | atomic operation |
 | `open-buffer-picker` | view | not accepted | none | none |  | atomic operation |
 | `list-accept` | view, prompt | not accepted | none | none |  | atomic operation |
 | `list-open-actions` | view, prompt | not accepted | none | none |  | atomic operation |
@@ -2056,9 +2138,9 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `list-close-target` | view, prompt, background work, text, file, mode | not accepted | none | none |  | decision: Closes the captured target only after its guards or confirmation succeed and reconciles the surviving destination mode. |
 | `list-clear-filter` | view | not accepted | none | none |  | atomic operation |
 | `list-close` | view | not accepted | none | none |  | atomic operation |
-| `open-session-destinations` | file, view, background work | not accepted | none | none |  | atomic operation |
-| `global-search` | prompt, background work, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `global-search-regex` | prompt, background work, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `session-open-destinations` | file, view, background work | not accepted | none | none |  | atomic operation |
+| `search-workspace` | prompt, background work, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `search-workspace-regex` | prompt, background work, view, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
 | `show-documentation` | background work, view | not accepted | none | none |  | atomic operation |
 | `document-symbols` | background work, view | not accepted | none | none |  | atomic operation |
 | `workspace-symbols` | prompt, background work, view | not accepted | none | none |  | atomic operation |
@@ -2074,13 +2156,13 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `clipboard-paste-before` | text, selection | interpreted as an address or extent | none | none |  | atomic operation |
 | `clipboard-yank` | register | not accepted | none | none | terminal: Copy the captured review selection to the system clipboard; media: Copy selected PDF text or an image region | atomic operation |
 | `clipboard-paste` | text, selection | not accepted | none | none |  | decision: Chooses image insertion or text paste from clipboard content. |
-| `select-register` | character input, register | not accepted | one character | none |  | atomic operation |
-| `record-macro` | character input, macro | not accepted | one character | none |  | atomic operation |
-| `record-default-macro` | macro | not accepted | none | none |  | atomic operation |
-| `stop-macro-recording` | macro | not accepted | none | none |  | atomic operation |
-| `replay-macro` | character input, macro, text, background work | repeats | one character | none |  | atomic operation |
-| `replay-default-macro` | macro, text, background work | repeats | none | none |  | atomic operation |
-| `list-macros` | view | not accepted | none | none |  | atomic operation |
+| `register-select` | character input, register | not accepted | one character | none |  | atomic operation |
+| `macro-record` | character input, macro | not accepted | one character | none |  | atomic operation |
+| `macro-record-default` | macro | not accepted | none | none |  | atomic operation |
+| `macro-stop-recording` | macro | not accepted | none | none |  | atomic operation |
+| `macro-replay` | character input, macro, text, background work | repeats | one character | none |  | atomic operation |
+| `macro-replay-default` | macro, text, background work | repeats | none | none |  | atomic operation |
+| `macro-list` | view | not accepted | none | none |  | atomic operation |
 | `shell-pipe` | prompt, background work, text | not accepted | none | none |  | atomic operation |
 | `match-bracket` | selection | not accepted | none | none |  | atomic operation |
 | `cd` | file, configuration, prompt, background work, view, application | not accepted | none | cd [path] |  | atomic operation |

@@ -114,8 +114,8 @@ fn an_ordinary_file_offers_its_own_actions_and_not_other_views_targets() {
         &[
             "terminal-directory-root",
             "terminal-selected-directory",
-            "open-explorer-system",
-            "open-explorer-finder",
+            "directory-open-system",
+            "directory-open-finder",
             "terminals",
             "terminal-show",
             "terminal-session-directory",
@@ -127,8 +127,8 @@ fn an_ordinary_file_offers_its_own_actions_and_not_other_views_targets() {
             "render",
             "preview",
             "pipe-cancel",
-            "next-git-network-page",
-            "previous-git-network-page",
+            "git-network-next-page",
+            "git-network-previous-page",
             "git-network-choose-ref",
             "window-close",
             "fullscreen",
@@ -140,7 +140,7 @@ fn an_ordinary_file_offers_its_own_actions_and_not_other_views_targets() {
         ],
     );
     assert_eq!(
-        reason(&app, "open-explorer-system"),
+        reason(&app, "directory-open-system"),
         "the active view is not a directory buffer"
     );
 
@@ -217,8 +217,8 @@ fn explorer_rows_decide_where_a_selected_directory_terminal_starts() {
         &mut app,
         &[
             "terminal-directory-root",
-            "open-explorer-system",
-            "open-explorer-finder",
+            "directory-open-system",
+            "directory-open-finder",
             "explorer",
             "file-picker-directory",
             "fuzzy-grep-directory",
@@ -490,7 +490,7 @@ fn git_commands_need_their_file_row_or_view_but_entry_points_stay() {
             "git-stage-hunk",
             "git-unstage-hunk",
             "git-network-choose-ref",
-            "next-git-network-page",
+            "git-network-next-page",
             "git-cancel",
         ],
     );
