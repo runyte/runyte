@@ -106,6 +106,8 @@ fn shared_colon_migrations_preserve_identity_and_existing_terminal_spellings() {
         ("git-network-previous-page", C::PreviousGitNetworkPage, None),
         ("session-open-directory", C::OpenSessionDirectory, None),
         ("session-open-explorer", C::OpenExplorerSession, None),
+        ("outline", C::DocumentOutline, None),
+        ("syntax-document-outline", C::DocumentOutline, None),
         ("terminal", C::OpenTerminal, None),
         (
             "terminal-file-directory",

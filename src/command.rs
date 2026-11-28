@@ -4342,9 +4342,10 @@ mod tests {
         assert!(
             COMMANDS
                 .iter()
+                .filter(|spec| spec.id != CommandId::Editor(EditorCommand::DocumentOutline))
                 .flat_map(CommandSpec::names)
                 .all(|name| !name.starts_with("syntax-")),
-            "structural commands must only be exposed through editor bindings"
+            "structural editing commands must only be exposed through editor bindings"
         );
         assert!(matches!(
             parse_colon_command("syntax-expand"),
