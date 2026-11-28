@@ -49,6 +49,17 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
             };
             let expected = match command {
                 C::EnterNormalMode => vec![C::FitSelectionForNormalMode, C::ModeEnter],
+                C::Yank if binding.binding_mode.as_deref() == Some("terminal") => {
+                    vec![command, C::ModeEnter]
+                }
+                C::Yank | C::YankLine => vec![command, C::CollapseSelection, C::ModeEnter],
+                C::PasteAfterOrReplace
+                | C::PasteBefore
+                | C::ClipboardPasteAfter
+                | C::ClipboardPasteBefore
+                | C::TerminalPaste
+                | C::SearchNext
+                | C::SearchPrevious => vec![command, C::ModeEnter],
                 C::SearchSetFromSelection => vec![command, C::SearchSelectAllMatches, C::ModeEnter],
                 C::SurroundAdd
                 | C::SurroundReplace
@@ -155,7 +166,7 @@ fn programs_are_nonempty_bounded_and_migrated_defaults_have_explicit_modes() {
                 | C::ExtendLineAbove
                 | C::SelectInsideParagraph
                 | C::SelectAroundParagraph => "select",
-                C::CutSelectionForChange => "insert",
+                C::CutSelectionForChange | C::TerminalPaste => "insert",
                 _ => "normal",
             };
             let expected_parameters = if matches!(
