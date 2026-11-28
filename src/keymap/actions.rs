@@ -231,7 +231,13 @@ pub(super) fn resolve_action(
         Action::Invocation(invocation)
     };
     let label = match argument {
-        Some(argument) => format!("{name} {argument}"),
+        Some(argument) => format!(
+            "{name} {}",
+            argument
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\t', "\\t")
+        ),
         None => name.to_owned(),
     };
     Ok((action, label))
