@@ -706,8 +706,14 @@ struct Reachability {
 // Reuse its fixed point only while every effective preset program remains
 // available in each mode. Removed transitions require a fresh analysis: a
 // superset of reachable states could incorrectly reject a now-valid program.
-fn preset_reachability(map: &Keymap) -> Option<Reachability> {
-    let preset = super::default_keymap();
+fn preset_reachability(map: &Keymap, preset: &Keymap) -> Option<Reachability> {
+    let fast = if std::ptr::eq(preset, super::default_keymap()) {
+        false
+    } else if std::ptr::eq(preset, super::keymap_for(true).as_ref()) {
+        true
+    } else {
+        return None;
+    };
     if !map.mode_graph()?.same_structure(preset.mode_graph()?)
         || map
             .bindings
@@ -724,9 +730,9 @@ fn preset_reachability(map: &Keymap) -> Option<Reachability> {
     // Only known preset programs may be skipped. Index by semantic identity,
     // not key spelling: prefix remapping and fast-pane aliases change keys.
     type Identity = (BindingScope, Option<String>, BindingTarget);
-    static PROGRAMS: std::sync::OnceLock<HashMap<Identity, Vec<usize>>> =
-        std::sync::OnceLock::new();
-    let programs = PROGRAMS.get_or_init(|| {
+    static PROGRAMS: [std::sync::OnceLock<HashMap<Identity, Vec<usize>>>; 2] =
+        [const { std::sync::OnceLock::new() }; 2];
+    let programs = PROGRAMS[usize::from(fast)].get_or_init(|| {
         let mut result: HashMap<Identity, Vec<usize>> = HashMap::new();
         for (index, binding) in preset.bindings.iter().enumerate() {
             result
@@ -783,8 +789,9 @@ fn preset_reachability(map: &Keymap) -> Option<Reachability> {
             return None;
         }
     }
-    static PRESET: std::sync::OnceLock<Option<Reachability>> = std::sync::OnceLock::new();
-    let seed = PRESET
+    static PRESET: [std::sync::OnceLock<Option<Reachability>>; 2] =
+        [const { std::sync::OnceLock::new() }; 2];
+    let seed = PRESET[usize::from(fast)]
         .get_or_init(|| {
             let (failures, reachability) = analyze(preset, preset, MAX_WORK, None);
             failures.is_empty().then_some(reachability)
@@ -820,7 +827,7 @@ fn preset_reachability(map: &Keymap) -> Option<Reachability> {
 pub(super) fn failures(map: &Keymap, admission: &Keymap) -> Vec<Failure> {
     #[cfg(feature = "startup-timing")]
     let started = std::time::Instant::now();
-    let seed = preset_reachability(map);
+    let seed = preset_reachability(map, admission);
     let result = analyze(map, admission, MAX_WORK, seed.as_ref()).0;
     #[cfg(feature = "startup-timing")]
     super::configured::record_mode_flow_time_ns(started.elapsed().as_nanos());
@@ -1099,7 +1106,8 @@ mod tests {
             binding.configured_actions = true;
             map.bindings.push(binding);
             map.rebuild_lookup_index();
-            let seed = preset_reachability(&map).expect("non-expanding override is incremental");
+            let seed =
+                preset_reachability(&map, preset).expect("non-expanding override is incremental");
             let normalize = |failures: Vec<Failure>| {
                 let mut messages: Vec<_> = failures
                     .into_iter()
@@ -1139,7 +1147,7 @@ mod tests {
                 .retain(|binding| binding.sequence.to_string() != key);
             assert!(map.bindings.len() < before);
             map.rebuild_lookup_index();
-            assert!(preset_reachability(&map).is_none(), "removed {key}");
+            assert!(preset_reachability(&map, preset).is_none(), "removed {key}");
         }
     }
 
@@ -1149,9 +1157,15 @@ mod tests {
         let config = serde_yaml::from_str(
             "editor:\n  fast_pane_keys: true\nkeys:\n  bind:\n    normal:\n      Ctrl-Left: focus-window-left\n      Ctrl-Right: focus-window-right\n      Ctrl-Up: focus-window-up\n      Ctrl-Down: focus-window-down\n",
         ).unwrap();
-        let result = configured::compile_configuration(&config, super::super::default_keymap());
-        assert!(result.errors.is_empty(), "{:?}", result.errors);
-        assert!(preset_reachability(&result.keymap).is_some());
+        for fast in [false, true] {
+            let preset = super::super::keymap_for(fast);
+            let result = configured::compile_configuration(&config, &preset);
+            assert!(result.errors.is_empty(), "{:?}", result.errors);
+            assert!(
+                preset_reachability(&result.keymap, &preset).is_some(),
+                "fast={fast}"
+            );
+        }
     }
 
     #[test]

@@ -559,7 +559,7 @@ fn apply_candidate(
     let flow = if applied.is_empty() {
         Vec::new()
     } else {
-        super::flow::failures(&candidate, super::default_keymap())
+        super::flow::failures(&candidate, &super::keymap_for(candidate.fast_pane_keys()))
     }
     .into_iter()
     .filter(|failure| {
