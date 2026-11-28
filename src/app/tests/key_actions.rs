@@ -340,7 +340,7 @@ fn yank_and_yank_line_keep_the_selection_and_mode_while_y_and_y_line_collapse() 
         configured("bind:\n  select:\n    F5: yank\n    F6: yank-line\n    F7: [yank, indent]\n");
     seed(&mut app, "abc def\nghi");
     app.mode = Mode::Select;
-    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 2));
+    app.panes.get_mut(&0).unwrap().selection = Selection::new(vec![Range::new(0, 2)], 0);
     key(&mut app, KeyCode::Function(5), Modifiers::NONE);
     assert_eq!(app.registers[&'"'].text, "abc");
     assert!(!app.registers[&'"'].linewise);
@@ -372,14 +372,14 @@ fn yank_and_yank_line_keep_the_selection_and_mode_while_y_and_y_line_collapse() 
     // `y` and `Y` still end the gesture on a caret in Normal mode.
     seed(&mut app, "abc def\nghi");
     app.mode = Mode::Select;
-    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 2));
+    app.panes.get_mut(&0).unwrap().selection = Selection::new(vec![Range::new(0, 2)], 0);
     press(&mut app, 'y');
     assert_eq!(app.registers[&'"'].text, "abc");
     assert_eq!(app.mode, Mode::Normal);
     assert!(app.active().selection.primary().is_empty());
 
     app.mode = Mode::Select;
-    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 2));
+    app.panes.get_mut(&0).unwrap().selection = Selection::new(vec![Range::new(0, 2)], 0);
     press(&mut app, 'Y');
     assert_eq!(app.registers[&'"'].text, "abc def\n");
     assert_eq!(app.mode, Mode::Normal);
@@ -392,7 +392,7 @@ fn delete_and_change_selection_leave_registers_alone_while_d_and_c_yank() {
         "bind:\n  normal:\n    F5: delete-selection\n    F6: [delete-selection-for-change, enter-insert-mode]\n    F7: [select-all, delete-selection]\n",
     );
     seed(&mut app, "abc def");
-    app.panes.get_mut(&0).unwrap().selection = Selection::single(Range::new(0, 2));
+    app.panes.get_mut(&0).unwrap().selection = Selection::new(vec![Range::new(0, 2)], 0);
     press(&mut app, 'd');
     assert_eq!(app.registers[&'"'].text, "abc");
     assert_eq!(app.active_buffer().text().to_string(), " def");
@@ -2636,19 +2636,14 @@ fn supplied_macro_operand_survives_a_pending_count() {
 
 #[test]
 fn supplied_search_ends_a_temporary_mode_before_its_tail() {
-    for starting in ["normal", "insert"] {
-        let mut app = configured(&format!(
-            "bind: {{{starting}: {{F6: [{{action: mode-enter, arg: select, temporary: true}}, {{action: search, arg: b}}, move-right]}}}}"
-        ));
-        seed(&mut app, "abcde");
-        if starting == "insert" {
-            press(&mut app, 'i');
-        }
-        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
-        assert_eq!(app.mode, Mode::Select);
-        assert!(app.line_select.is_none());
-        assert_eq!(app.active().selection.primary(), Range::new(1, 2));
-    }
+    let mut app = configured(
+        "bind: {normal: {F6: [{action: mode-enter, arg: select, temporary: true}, {action: search, arg: b}, move-right]}}",
+    );
+    seed(&mut app, "abcde");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Select);
+    assert!(app.line_select.is_none());
+    assert_eq!(app.active().selection.primary(), Range::new(1, 2));
 }
 
 #[test]
@@ -2666,4 +2661,106 @@ fn supplied_edit_on_read_only_view_stops_before_the_tail() {
         assert_eq!(app.active().buffer, buffer);
         assert_eq!(app.active_buffer().text().to_string(), text);
     }
+}
+
+#[test]
+fn supplied_literal_inserts_at_heads_in_every_role_without_replacing() {
+    for (name, role) in [
+        ("normal", Mode::Normal),
+        ("select", Mode::Select),
+        ("insert", Mode::Insert),
+        ("replace", Mode::Replace),
+    ] {
+        let mut app = configured(&format!(
+            "bind: {{{name}: {{F6: {{action: insert-text, arg: \"λ\\n\\t(\"}}}}}}"
+        ));
+        seed(&mut app, "abcdef");
+        app.set_editing_role(role);
+        app.active_mut()
+            .replace_selection(Selection::new(vec![Range::new(0, 1), Range::new(5, 4)], 1));
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert_eq!(
+            app.active_buffer().text().to_string(),
+            "aλ\n\t(bcdλ\n\t(ef",
+            "{name}: {}",
+            app.status
+        );
+        assert_eq!(app.mode, role);
+        assert_eq!(
+            app.active().selection.ranges(),
+            &[Range::point(5), Range::point(12)]
+        );
+        assert_eq!(app.active().selection.primary_index(), 1);
+    }
+}
+
+#[test]
+fn supplied_literal_program_is_one_undo_and_read_only_stops_tail() {
+    let mut app = configured(
+        "bind: {normal: {F6: [{action: insert-text, arg: X}, {action: insert-text, arg: Y}]}}",
+    );
+    seed(&mut app, "abc");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.active_buffer().text().to_string(), "XYabc");
+    press(&mut app, 'u');
+    assert_eq!(app.active_buffer().text().to_string(), "abc");
+
+    let mut app = configured("bind: {help: {F6: [{action: insert-text, arg: X}, new-buffer]}}");
+    app.execute_editor_command(EditorCommand::ShowHelp).unwrap();
+    let buffer = app.active().buffer;
+    let text = app.active_buffer().text().to_string();
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(app.status_error);
+    assert_eq!(app.active().buffer, buffer);
+    assert_eq!(app.active_buffer().text().to_string(), text);
+}
+
+#[test]
+fn supplied_literal_discards_stale_completion_before_tab() {
+    let mut app = configured(r#"bind: {insert: {F6: {action: insert-text, arg: "\nX"}}}"#);
+    seed(&mut app, "abc");
+    app.set_editing_role(Mode::Insert);
+    app.active_mut().replace_selection(Selection::point(3));
+    app.completion = Some(CompletionState {
+        items: vec![crate::lsp::Completion {
+            label: "abcdef".into(),
+            filter_text: None,
+            sort_text: None,
+            detail: String::new(),
+            kind: "word",
+            insert: "abcdef".into(),
+            edit: None,
+            additional: Vec::new(),
+        }],
+        selected: 0,
+        buffer: app.active().buffer,
+        anchor: 0,
+        filter: "abc".into(),
+        source: CompletionSource::Word,
+        explicit_session: None,
+    });
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert!(app.completion.is_none());
+    assert_eq!(text(&app), "abc\nX");
+    key(&mut app, KeyCode::Tab, Modifiers::NONE);
+    assert!(text(&app).starts_with("abc\nX"));
+    assert!(!text(&app).contains("abcdef"));
+}
+
+#[test]
+fn supplied_literal_turns_half_open_ranges_into_ordinary_carets() {
+    let mut app = configured("bind: {normal: {F6: [{action: insert-text, arg: X}, yank]}}");
+    seed(&mut app, "abcd");
+    app.active_mut()
+        .replace_selection(Selection::new(vec![Range::new(0, 2)], 0));
+    app.active_mut()
+        .mark_selection_semantics(SelectionSemantics::HalfOpen);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(text(&app), "abXcd");
+    assert_eq!(app.active().selection.primary(), Range::point(3));
+    assert_eq!(
+        app.active().selection_semantics(),
+        SelectionSemantics::Runyte
+    );
+    assert_eq!(app.registers[&'"'].text, "c");
 }

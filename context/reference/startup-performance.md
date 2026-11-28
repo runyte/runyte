@@ -18,6 +18,76 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — configured mode-flow reload regression
+
+PR [#161](https://github.com/runyte/runyte/pull/161) initially took 6.76 s to
+reload the native-preview fixture on ARM in debug, exceeding its 5 s window
+acceptance deadline. Repeating full mode-flow analysis accounted for 3.88 s.
+[The original comparison](https://github.com/runyte/runyte/actions/runs/46111889474)
+measured the failing production revision with timing instrumentation.
+
+The fix caches raw compiled keymaps across unchanged key/mode/buffer-type
+configuration, retains diagnostics, and still checks live plugin collisions.
+Changed bindings reuse immutable admission inventories and preset reachability
+only while every effective preset transition survives. Removed transitions
+fall back to full analysis; stable transfers are memoized within the existing
+work bound. Both pane-key variants have independent preset caches.
+
+Production revisions are dev `d564c471` and fixed `01e02205`. The
+`config_reload` probe uses ten alternating fresh-process samples after a
+discarded warm-up per binary/profile. It measures cold configured compilation,
+then starts the editor with the fixture, adds F6, reloads, and reloads unchanged.
+The empty-key case remains empty. Debug and release use the same profile on
+each side. Tables show median milliseconds;
+[raw samples](../../benchmarks/results/keymap-reload-2026-11-28.json) retain every
+sample. [ARM run](https://github.com/runyte/runyte/actions/runs/46114048517) pairs
+both revisions on one `ubuntu-24.04-arm` runner.
+
+| Platform/profile | Case | Dev reload | Fixed reload | Dev unchanged | Fixed unchanged |
+| --- | --- | ---: | ---: | ---: | ---: |
+| x86_64 debug | empty | 290.974 | 290.869 | 265.525 | 265.128 |
+| x86_64 debug | preview | 986.374 | 1013.589 | 989.842 | 269.106 |
+| x86_64 release | empty | 26.573 | 28.182 | 24.875 | 25.942 |
+| x86_64 release | preview | 91.822 | 96.060 | 91.216 | 26.247 |
+| aarch64 debug | empty | 836.616 | 836.282 | 756.838 | 756.307 |
+| aarch64 debug | preview | 2860.926 | 2901.426 | 2859.351 | 771.397 |
+| aarch64 release | empty | 44.174 | 45.367 | 40.680 | 40.910 |
+| aarch64 release | preview | 150.266 | 154.027 | 148.538 | 40.840 |
+
+| Platform/profile | Case | Dev compile | Fixed compile | Fixed flow | Fixed other work |
+| --- | --- | ---: | ---: | ---: | ---: |
+| x86_64 debug | empty | 201.111 | 160.744 | 0.000 | 160.744 |
+| x86_64 debug | preview | 358.076 | 722.070 | 404.117 | 317.145 |
+| x86_64 release | empty | 27.639 | 17.062 | 0.000 | 17.062 |
+| x86_64 release | preview | 32.010 | 65.338 | 35.959 | 29.333 |
+| aarch64 debug | empty | 575.660 | 455.422 | 0.000 | 455.422 |
+| aarch64 debug | preview | 1037.717 | 2054.777 | 1138.334 | 916.891 |
+| aarch64 release | empty | 32.738 | 25.336 | 0.000 | 25.336 |
+| aarch64 release | preview | 53.141 | 112.722 | 65.832 | 46.890 |
+
+Cold configured compilation remains more expensive than dev because it
+initializes the new flow analysis. The release reload gate is separate:
+changed and unchanged preview reloads must remain within 25% or 20 ms of dev,
+whichever allowance is larger. Both pass. Every fixed unchanged-reload sample
+performs zero mode-flow analysis. The release regression guard also verifies
+installed binding changes and holds changed/unchanged reloads to 350/100 ms.
+
+Stock release editing readiness uses the existing 120×40 PTY harness,
+isolated home/XDG paths, and plain-text/Lua fixtures. Both revisions alternate.
+An initial ten-pair x86 Lua result was +5.94% amid broad variation, so both
+x86 fixtures received forty additional pairs; all fifty pairs are retained.
+ARM uses ten pairs per fixture. Both platforms remain within the 5% readiness
+gate. These are terminal-edition readiness measurements; native repaint is
+covered separately by the passing
+[ARM window acceptance](https://github.com/runyte/runyte/actions/runs/46112216358).
+
+| Platform | Fixture | Dev readiness | Fixed readiness | Change |
+| --- | --- | ---: | ---: | ---: |
+| x86_64 | short.txt | 32.548 | 33.043 | +1.52% |
+| x86_64 | short.lua | 32.486 | 32.311 | -0.54% |
+| aarch64 | short.txt | 41.974 | 41.718 | -0.61% |
+| aarch64 | short.lua | 43.181 | 42.608 | -1.33% |
+
 ## 2026-11-28 — Configured reload guard calibration
 
 The release reload guard in [#161](https://github.com/runyte/runyte/pull/161)
@@ -43,7 +113,7 @@ missing, so that run supplies no readiness result.
 The local release readiness comparison retained all 50 alternating pairs for
 each fixture: plain text changed from 32.548 to 33.043 ms (+1.52%), and Lua
 from 32.486 to 32.311 ms (−0.54%). Both meet the 5% startup acceptance gate.
-ARM readiness is being measured separately.
+The completed ARM readiness results are recorded in the preceding comparison.
 
 ## 2026-11-28 — ARM debug public mode-flow validation
 

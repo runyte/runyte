@@ -1165,3 +1165,21 @@ restoration remains unchanged. This extends the focus ownership rule for
 pending programs from #141 and fixes a stage 4 regression where a directory
 return mode could replace Help's key table. Scope-specific commands exposed
 through stale return identities are bugs, not runtime capability exceptions.
+
+
+### Decision 51 — Supplied argument inventory and literal insertion
+
+Stage 5c accepts one Unicode scalar for find-next/previous/till-char,
+replace-char, surround-add/delete, register-select and macro-record/replay;
+surround-replace accepts the old and new scalars. Search/search-regex,
+terminal search, directory-tree search, keep/remove-matching-selections,
+join-selections and workspace search accept their prompt text. Workspace search
+remains asynchronous and last-only. Existing palette arguments remain supported.
+Captured or multi-step Git, native confirmation, settings, LSP rename and tree
+filesystem prompts have no generic bypass.
+
+`insert-text` inserts a nonempty literal (at most 4096 bytes, allowing newline
+and tab) at every range head without deleting the selection. Every resulting
+caret is after its insertion. It is one transaction under program undo, valid
+in all four editing roles, with read-only refusal and no automatic indentation,
+pairing or mode change. Replacement composes an explicit deletion with insertion.

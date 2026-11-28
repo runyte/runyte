@@ -2039,7 +2039,7 @@ fn supplied_tree_search_uses_visible_entries_and_continues_without_a_prompt() {
         crate::keymap::default_keymap(),
     );
     assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
-    app.set_keymap(Arc::new(compiled.keymap));
+    app.set_keymap(compiled.keymap);
     app.open_file(root.join("alpha.txt")).unwrap();
     chord(&mut app, 'd');
     wait_tree(&mut app);

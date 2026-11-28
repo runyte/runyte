@@ -207,6 +207,8 @@ pub(super) fn resolve_action(
                 command::parse_named_command(spec.name, Some(argument))
                     .map_err(|error| error.to_string())?,
             )
+        } else if command == EditorCommand::InsertText {
+            return Err("insert-text requires action/arg".into());
         } else {
             Action::Editor(command)
         }

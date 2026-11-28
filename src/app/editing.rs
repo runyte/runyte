@@ -1233,6 +1233,28 @@ impl App {
         }
     }
 
+    pub(super) fn insert_literal_at_carets(&mut self, text: &str) {
+        let selection = self.active().selection.clone();
+        let transaction = Transaction::new(
+            selection
+                .ranges()
+                .iter()
+                .map(|range| Change::new(range.head, range.head, text.to_owned()))
+                .collect(),
+        );
+        let ranges = selection
+            .ranges()
+            .iter()
+            .map(|range| Range::point(transaction.map_offset(range.head, Assoc::After)))
+            .collect();
+        if self.edit(transaction) {
+            self.active_mut()
+                .replace_selection(Selection::new(ranges, selection.primary_index()));
+            self.active_mut()
+                .mark_selection_semantics(SelectionSemantics::Runyte);
+        }
+    }
+
     pub(super) fn insert_text(&mut self, text: &str) {
         let selection = self.active().selection.clone();
         let transaction = selection.change_by(|_| Some(text.to_owned()));

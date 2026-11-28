@@ -4,6 +4,7 @@ use super::{EditorCommand as C, descriptor::OperandArity};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SuppliedArgument {
+    Literal,
     Character,
     CharacterPair,
     Pattern,
@@ -13,6 +14,7 @@ pub enum SuppliedArgument {
 impl SuppliedArgument {
     pub const fn description(self) -> &'static str {
         match self {
+            Self::Literal => "nonempty literal text (up to 4096 bytes); inserts at each caret",
             Self::Character => "one Unicode scalar; replaces the character operand",
             Self::CharacterPair => "two Unicode scalars (old, new); replaces both operands",
             Self::Pattern => "nonempty pattern; replaces the prompt",
@@ -20,7 +22,11 @@ impl SuppliedArgument {
         }
     }
     pub fn validate(self, text: &str) -> Result<(), &'static str> {
-        if text.len() > 4096 || text.chars().any(char::is_control) {
+        if text.len() > 4096
+            || text.chars().any(|c| {
+                c.is_control() && !(self == Self::Literal && matches!(c, '\n' | '\r' | '\t'))
+            })
+        {
             return Err("argument exceeds 4096 bytes or contains control characters");
         }
         match self {
@@ -30,6 +36,7 @@ impl SuppliedArgument {
             Self::CharacterPair if text.chars().count() != 2 => {
                 Err("argument requires exactly two Unicode scalars (old, new)")
             }
+            Self::Literal if text.is_empty() => Err("literal text must not be empty"),
             Self::Pattern if text.is_empty() => Err("pattern must not be empty"),
             _ => Ok(()),
         }
@@ -57,6 +64,7 @@ impl C {
             | C::GlobalSearchRegex
             | C::KeepMatchingSelections
             | C::RemoveMatchingSelections => Some(SuppliedArgument::Pattern),
+            C::InsertText => Some(SuppliedArgument::Literal),
             C::JoinSelections => Some(SuppliedArgument::Delimiter),
             _ => None,
         }

@@ -1111,7 +1111,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .iter()
             .filter(|exposure| **exposure == CommandExposure::ConfigurableOnly)
             .count(),
-        12
+        13
     );
     assert_eq!(
         exposures

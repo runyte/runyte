@@ -837,6 +837,7 @@ editor_commands! {
     ),
     HardWrap => ("hard-wrap", "Hard-wrap the selection"),
     Reflow => ("reflow", "Reflow paragraphs in the selection"),
+    InsertText => ("insert-text", "Insert literal text at each caret"),
     JoinSelections => ("join-selections", "Join the selected lines with a typed delimiter"),
     JoinLines => ("join-lines", "Join the selected lines, or the line below, with a space"),
     FormatTable => ("format-table", "Align the columns of the selected table"),
@@ -1398,6 +1399,7 @@ impl EditorCommand {
             | Self::SelectAroundParagraph => CommandCategory::Selection,
             Self::HardWrap
             | Self::Reflow
+            | Self::InsertText
             | Self::JoinSelections
             | Self::JoinLines
             | Self::FormatTable
@@ -3210,6 +3212,11 @@ impl CommandInvocation {
                 } else {
                     false
                 }
+            }
+            CommandId::Editor(EditorCommand::InsertText) => {
+                validate_editor_execution(EditorCommand::InsertText, execution)?;
+                matches!(&parameters, InvocationParameters::OptionalText(Some(text))
+                    if supplied::SuppliedArgument::Literal.validate(text).is_ok())
             }
             CommandId::Editor(command)
                 if command

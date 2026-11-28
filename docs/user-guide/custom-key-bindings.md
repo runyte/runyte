@@ -1043,7 +1043,15 @@ The supported key-program arguments are:
 | `directory-tree-search` | Nonempty regular expression over visible tree entries |
 | `keep-matching-selections`, `remove-matching-selections` | Nonempty regular expression |
 | `join-selections` | Literal delimiter; an empty string joins directly |
+| `insert-text` | Nonempty literal text at every caret, including newlines and tabs |
 | `search-workspace`, `search-workspace-regex` | Nonempty pattern; remains last-only because the search runs in the background |
+
+`insert-text` preserves the document's selected text: it inserts at each range's
+head, then leaves a caret after the insertion. It works in every editing role
+without changing modes, automatic indentation or pairing. Use an explicit
+`delete-selection` or `delete-selection-for-change` step first for replacement.
+All insertions form one transaction under the program's undo checkpoint;
+read-only buffers refuse the edit. Empty strings are rejected at load.
 
 Existing palette arguments remain available. Omitting an optional argument keeps
 the interactive operand or prompt. Supplied arguments do not answer confirmations
@@ -1273,6 +1281,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `trim-trailing-whitespace` | normal, select | can be followed by another action | Delete trailing whitespace from every selected line |
 | `hard-wrap` | normal, select | can be followed by another action | Hard-wrap the selection |
 | `reflow` | normal, select | can be followed by another action | Reflow paragraphs in the selection |
+| `insert-text` | normal, select, insert, replace | can be followed by another action | Insert literal text at each caret |
 | `join-selections` | normal, select | must be the last action | Join the selected lines with a typed delimiter |
 | `join-lines` | normal, select | can be followed by another action | Join the selected lines, or the line below, with a space |
 | `format-table` | normal, select | can be followed by another action | Align the columns of the selected table |
@@ -2026,6 +2035,7 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `trim-trailing-whitespace` | text, selection | not accepted | none | none | palette argument, if any |  | atomic operation |
 | `hard-wrap` | text | not accepted | none | none | palette argument, if any |  | atomic operation |
 | `reflow` | text | not accepted | none | none | palette argument, if any |  | atomic operation |
+| `insert-text` | text, selection | not accepted | none | none | nonempty literal text (up to 4096 bytes); inserts at each caret |  | atomic operation |
 | `join-selections` | prompt, text | not accepted | none | none | literal delimiter (may be empty); replaces the prompt |  | atomic operation |
 | `join-lines` | text | not accepted | none | none | palette argument, if any |  | atomic operation |
 | `format-table` | text | not accepted | none | none | palette argument, if any |  | atomic operation |
