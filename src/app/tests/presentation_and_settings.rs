@@ -3061,9 +3061,12 @@ fn terminal_paste_missing_insert_role_is_rejected_at_load() {
 #[test]
 fn standalone_terminal_paste_does_not_require_insert_role() {
     let config: Config = serde_yaml::from_str(
-        "buffer-types:\n  terminal: {normal: terminal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F6: open-command-palette}\n    select: {Esc: enter-normal-mode}\n    insert: {Esc: enter-normal-mode}\n    replace: {Esc: enter-normal-mode}\n    terminal: {F5: terminal-paste}\n",
+        "buffer-types:\n  terminal: {normal: terminal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F6: open-command-palette}\n    select: {Esc: enter-normal-mode}\n    insert: {Esc: enter-normal-mode}\n    replace: {Esc: enter-normal-mode}\n    terminal: {F5: terminal-paste, p: null, P: null}\n",
     )
     .unwrap();
+    let compiled =
+        crate::keymap::configured::compile_configuration(&config, crate::keymap::default_keymap());
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
     let mut app = App::new(config, None).unwrap();
     app.open_terminal(Some("/bin/cat".to_owned()));
     let terminal = app.active_terminal().unwrap();
