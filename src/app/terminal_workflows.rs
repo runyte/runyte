@@ -1066,10 +1066,10 @@ impl App {
         }
     }
 
-    pub(super) fn search_terminal_review(&mut self, pattern: &str, mode: SearchMode) {
+    pub(super) fn search_terminal_review(&mut self, pattern: &str, mode: SearchMode) -> bool {
         let Some(id) = self.active_terminal() else {
             self.action_failed("this pane is not showing a terminal");
-            return;
+            return false;
         };
         let (_, rows) = self.pane_cells(self.active_pane);
         let scroll_offset = self.config.editor.scroll_offset;
@@ -1078,6 +1078,7 @@ impl App {
         if result.as_ref().is_ok_and(|count| *count > 0) {
             session.focus_review_selection(rows.max(1), scroll_offset);
         }
+        let found = result.as_ref().is_ok_and(|count| *count > 0);
         match result {
             Ok(0) => self.status("no terminal review matches"),
             Ok(count) => self.status(format!(
@@ -1086,5 +1087,6 @@ impl App {
             )),
             Err(error) => self.action_failed(format!("invalid terminal search: {error}")),
         }
+        found
     }
 }

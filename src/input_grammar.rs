@@ -635,10 +635,9 @@ impl RunyteGrammar {
                     CommandInvocation::from_parts(
                         invocation.id(),
                         invocation.parameters().clone(),
-                        CommandExecutionContext::resolved(
-                            NonZeroUsize::new(count).expect("positive count"),
-                            None,
-                        ),
+                        invocation
+                            .execution()
+                            .with_count(NonZeroUsize::new(count).expect("positive count")),
                     )?
                 } else {
                     invocation

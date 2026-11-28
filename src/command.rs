@@ -2,6 +2,7 @@
 
 pub mod descriptor;
 pub mod discovery;
+pub mod supplied;
 
 use std::{fmt, path::PathBuf};
 
@@ -3010,6 +3011,21 @@ impl CommandExecutionContext {
         }
     }
 
+    /// Supply a literal operand without manufacturing a count prefix.
+    pub const fn with_character(self, character: char) -> Self {
+        Self {
+            character: Some(character),
+            ..self
+        }
+    }
+
+    pub const fn with_count(self, count: std::num::NonZeroUsize) -> Self {
+        Self {
+            count: Some(count),
+            ..self
+        }
+    }
+
     /// The same context carrying the operand that followed the first, for a
     /// command whose `takes_second_character` is true.
     pub const fn with_second_character(self, character: char) -> Self {
@@ -3193,6 +3209,20 @@ impl CommandInvocation {
                     true
                 } else {
                     false
+                }
+            }
+            CommandId::Editor(command)
+                if command
+                    .supplied_argument()
+                    .is_some_and(|arg| arg.replaces_prompt()) =>
+            {
+                validate_editor_execution(command, execution)?;
+                match &parameters {
+                    InvocationParameters::None => true,
+                    InvocationParameters::OptionalText(Some(text)) => {
+                        command.supplied_argument().unwrap().validate(text).is_ok()
+                    }
+                    _ => false,
                 }
             }
             CommandId::Editor(command) => {

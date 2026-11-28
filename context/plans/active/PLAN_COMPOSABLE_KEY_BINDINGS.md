@@ -403,7 +403,10 @@ decision revises an earlier one, the earlier entry says so.
     Reject identifiable removed constructs, including `keys.scopes`, with
     migration diagnostics. The guide and 0.5 migration notes explain that
     `bind.normal` applies to normal and modes inheriting it; bindings intended
-    across views belong in `bind.common`.
+    across modal views belong in `bind.modal-keys`. `bind.common` also reaches
+    Insert and Replace, so only actions valid in every inheriting mode belong
+    there (clarified after decision 49). `common`, `modal-keys` and `insert-keys`
+    are public, stable shared-mode names in the Runyte preset.
 41. **Stage 4 mode boundary.** Stage 4 introduces named binding-mode identity,
     the mode graph, buffer-type starting modes, `inherits` and `unbound-keys`.
     Property-driven editing, the remaining mode schema, `describe-mode` and

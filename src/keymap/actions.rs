@@ -161,7 +161,44 @@ pub(super) fn resolve_action(
                 mode_name(mode)
             ));
         }
-        if let Some(argument) = argument {
+        if let Some(argument) = argument.filter(|_| command.takes_character()) {
+            let mut characters = argument.chars();
+            let first = characters.next().ok_or("argument requires a character")?;
+            let second = command
+                .takes_second_character()
+                .then(|| characters.next())
+                .flatten();
+            if characters.next().is_some() || (command.takes_second_character() && second.is_none())
+            {
+                return Err(if command.takes_second_character() {
+                    "argument requires exactly two Unicode scalars (old, new)"
+                } else {
+                    "argument requires exactly one Unicode scalar"
+                }
+                .into());
+            }
+            let mut execution = command::CommandExecutionContext::default().with_character(first);
+            if let Some(second) = second {
+                execution = execution.with_second_character(second);
+            }
+            Action::Invocation(
+                CommandInvocation::editor(command, execution).map_err(|e| e.to_string())?,
+            )
+        } else if let Some(argument) = argument.filter(|_| command.supplied_argument().is_some()) {
+            command
+                .supplied_argument()
+                .unwrap()
+                .validate(argument)
+                .map_err(str::to_owned)?;
+            Action::Invocation(
+                CommandInvocation::from_parts(
+                    CommandId::Editor(command),
+                    command::InvocationParameters::OptionalText(Some(argument.into())),
+                    command::CommandExecutionContext::default(),
+                )
+                .map_err(|error| error.to_string())?,
+            )
+        } else if let Some(argument) = argument {
             let spec = command::COMMANDS
                 .iter()
                 .find(|spec| spec.id == CommandId::Editor(command))

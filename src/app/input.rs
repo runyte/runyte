@@ -6034,6 +6034,14 @@ impl App {
             self.enter_named_binding_mode(name);
             return Ok(());
         }
+        if command
+            .supplied_argument()
+            .is_some_and(|arg| arg.replaces_prompt())
+            && let InvocationParameters::OptionalText(Some(value)) = &parameters
+        {
+            self.execute_supplied_prompt(command, value);
+            return Ok(());
+        }
         if command == EditorCommand::ShowHelp && self.directory_tree.focused {
             match &parameters {
                 InvocationParameters::Help(HelpInvocation::ActiveView) => {
@@ -6169,6 +6177,13 @@ impl App {
         }
 
         if let Some(character) = execution.character() {
+            if self.active_terminal().is_none()
+                && command.is_mutating()
+                && let Some(reason) = self.active_buffer().read_only_reason()
+            {
+                self.action_failed(reason);
+                return Ok(());
+            }
             let repeated_character_command = matches!(
                 command,
                 EditorCommand::FindNextChar

@@ -2556,3 +2556,114 @@ fn paragraph_default_stops_before_temporary_mode_when_empty_and_yanks_rows_when_
     assert_eq!(app.registers[&'"'].text, "ab\ncd\n");
     assert!(!app.active().selection.is_linewise());
 }
+
+#[test]
+fn supplied_operands_execute_without_waiting_and_share_undo() {
+    let mut app = configured(
+        "bind: {normal: {F6: [{action: find-next-char, arg: x}, {action: replace-char, arg: Z}]}}",
+    );
+    seed(&mut app, "abxcd");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.awaiting_character_command(), None);
+    assert_eq!(app.active_buffer().text().to_string(), "ZZZcd");
+    press(&mut app, 'u');
+    assert_eq!(app.active_buffer().text().to_string(), "abxcd");
+}
+
+#[test]
+fn supplied_surround_pair_and_register_reach_the_existing_handlers() {
+    let mut app = configured(
+        "bind: {normal: {F6: [{action: surround-replace, arg: '(]'}, {action: register-select, arg: a}, yank]}}",
+    );
+    seed(&mut app, "(abc)");
+    set_cursor(&mut app, 0, 2);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.active_buffer().text().to_string(), "[abc]");
+    assert_eq!(app.registers[&'a'].text, "b");
+    assert_eq!(app.awaiting_character_command(), None);
+}
+
+#[test]
+fn supplied_search_selects_then_runs_tail_and_failure_stops_it() {
+    for (pattern, success) in [("abc", true), ("missing", false), ("[", false)] {
+        let mut app = configured(&format!(
+            "bind: {{normal: {{F6: [{{action: search-regex, arg: '{pattern}'}}, yank]}}}}"
+        ));
+        seed(&mut app, "abc def abc");
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert_ne!(app.mode, Mode::Command);
+        assert_eq!(app.registers.contains_key(&'"'), success);
+        assert_eq!(app.mode, if success { Mode::Select } else { Mode::Normal });
+        if success {
+            assert_eq!(app.active().selection.ranges().len(), 2);
+        }
+    }
+}
+
+#[test]
+fn supplied_filter_and_empty_join_delimiter_continue_synchronously() {
+    let mut app =
+        configured("bind: {normal: {F6: [select-all, {action: join-selections, arg: ''}, yank]}}");
+    seed(&mut app, "ab\ncd");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.active_buffer().text().to_string(), "abcd");
+    assert_ne!(app.mode, Mode::Command);
+    assert_eq!(app.registers[&'"'].text, "abcd");
+    let mut app = configured(
+        "bind: {normal: {F6: [{action: search, arg: a}, {action: keep-matching-selections, arg: a}, yank]}}",
+    );
+    seed(&mut app, "a b a");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_ne!(app.mode, Mode::Command);
+    assert_eq!(app.active().selection.ranges().len(), 2);
+    assert!(app.registers.contains_key(&'"'));
+}
+
+#[test]
+fn supplied_macro_operand_survives_a_pending_count() {
+    let mut app = configured("bind: {normal: {F6: {action: macro-replay, arg: a}}}");
+    seed(&mut app, "abcdef");
+    app.macros.insert(
+        'a',
+        vec![InputEvent::Key(KeyStroke::plain(KeyCode::Char('l')))],
+    );
+    press(&mut app, '3');
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    finish_macro_replay(&mut app);
+    assert_eq!(cursor(&app).col, 3);
+    assert_eq!(app.awaiting_character_command(), None);
+}
+
+#[test]
+fn supplied_search_ends_a_temporary_mode_before_its_tail() {
+    for starting in ["normal", "insert"] {
+        let mut app = configured(&format!(
+            "bind: {{{starting}: {{F6: [{{action: mode-enter, arg: select, temporary: true}}, {{action: search, arg: b}}, move-right]}}}}"
+        ));
+        seed(&mut app, "abcde");
+        if starting == "insert" {
+            press(&mut app, 'i');
+        }
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert_eq!(app.mode, Mode::Select);
+        assert!(app.line_select.is_none());
+        assert_eq!(app.active().selection.primary(), Range::new(1, 2));
+    }
+}
+
+#[test]
+fn supplied_edit_on_read_only_view_stops_before_the_tail() {
+    for step in [
+        "{action: replace-char, arg: X}",
+        "{action: join-selections, arg: ''}",
+    ] {
+        let mut app = configured(&format!("bind: {{help: {{F6: [{step}, new-buffer]}}}}"));
+        app.execute_editor_command(EditorCommand::ShowHelp).unwrap();
+        let buffer = app.active().buffer;
+        let text = app.active_buffer().text().to_string();
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert!(app.status_error, "{step}: {}", app.status);
+        assert_eq!(app.active().buffer, buffer);
+        assert_eq!(app.active_buffer().text().to_string(), text);
+    }
+}
