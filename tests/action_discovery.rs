@@ -11,7 +11,7 @@ use std::fs;
 fn provenance_tracks_flow_quoted_keys_fragments_aliases_and_rollback() {
     let root = TestRuntimeRoot::new("discovery-sources").unwrap();
     let main = root.path().join("config.yaml");
-    fs::write(&main, "keys:\n  leader: Ctrl-x\n  bind:\n    normal: {F6: yank, F7: select-all}\n    directory: {F6: open-parent-directory}\n").unwrap();
+    fs::write(&main, "keys:\n  leader: Ctrl-x\n  bind:\n    normal: {F6: yank, F7: select-all}\n    directory: {F6: directory-open-parent}\n").unwrap();
     fs::create_dir(root.path().join("keybinds.d")).unwrap();
     let fragment = root.path().join("keybinds.d/last.yaml");
     fs::write(&fragment, "# later\nbind:\n  normal:\n    'F6': [select-all, yank]\n    F8: &action yank\n    F9: *action\n    F10: not-an-action\n").unwrap();
@@ -65,7 +65,7 @@ fn copied_yaml_preserves_order_arguments_descriptions_and_scope() {
             "F6",
         ),
         (
-            "bind:\n  directory:\n    F6: open-parent-directory\n",
+            "bind:\n  directory:\n    F6: directory-open-parent\n",
             BindingScope::Directory,
             "F6",
         ),

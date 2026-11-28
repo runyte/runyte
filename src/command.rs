@@ -709,8 +709,8 @@ editor_commands! {
     SelectAll => ("select-all", "Select all text"),
     CollapseSelection => ("collapse-selection", "Collapse selection to the cursor"),
     FlipSelection => ("flip-selection", "Flip the selection anchor and cursor"),
-    ExpandSyntaxSelection => ("expand-syntax-selection", "Expand to the enclosing syntax node"),
-    ShrinkSyntaxSelection => ("shrink-syntax-selection", "Shrink the syntax selection"),
+    ExpandSyntaxSelection => ("syntax-expand-selection", "Expand to the enclosing syntax node"),
+    ShrinkSyntaxSelection => ("syntax-shrink-selection", "Shrink the syntax selection"),
     SelectSyntaxParent => ("select-syntax-parent", "Select the enclosing syntax node"),
     SelectSyntaxChild => ("select-syntax-child", "Select the first child syntax node"),
     SelectPreviousSyntaxSibling => (
@@ -788,10 +788,10 @@ editor_commands! {
         "Go to the previous parameter"
     ),
     GotoNextSyntaxParameter => ("goto-next-syntax-parameter", "Go to the next parameter"),
-    DocumentOutline => ("document-outline", "Open the document outline"),
-    ToggleSyntaxFold => ("toggle-syntax-fold", "Toggle the syntax fold at the cursor"),
-    FoldAllSyntax => ("fold-all-syntax", "Fold every syntax region"),
-    UnfoldAllSyntax => ("unfold-all-syntax", "Unfold every syntax region"),
+    DocumentOutline => ("syntax-document-outline", "Open the document outline"),
+    ToggleSyntaxFold => ("syntax-toggle-fold", "Toggle the syntax fold at the cursor"),
+    FoldAllSyntax => ("syntax-fold-all", "Fold every syntax region"),
+    UnfoldAllSyntax => ("syntax-unfold-all", "Unfold every syntax region"),
 
     SplitSelectionAtLineEnds => (
         "split-selection-at-line-ends",
@@ -891,11 +891,11 @@ editor_commands! {
     ),
 
     OpenExplorer => (
-        "open-explorer",
+        "directory-open",
         "Open file explorer in the active buffer's directory"
     ),
-    ToggleDirectoryTree => ("toggle-directory-tree", "Show or hide the directory tree"),
-    FocusDirectoryTree => ("focus-directory-tree", "Reveal the active file in the directory tree"),
+    ToggleDirectoryTree => ("directory-tree-toggle", "Show or hide the directory tree"),
+    FocusDirectoryTree => ("directory-tree-focus", "Reveal the active file in the directory tree"),
     DirectoryTreeUp => ("directory-tree-up", "Select the previous tree entry"),
     DirectoryTreeDown => ("directory-tree-down", "Select the next tree entry"),
     DirectoryTreeCollapse => ("directory-tree-collapse", "Collapse the selected directory"),
@@ -930,7 +930,7 @@ editor_commands! {
     DirectoryTreeDelete => ("directory-tree-delete", "Delete the selected entry"),
     DirectoryTreeMove => ("directory-tree-move", "Move the selected entry"),
     OpenWorkingDirectoryExplorer => (
-        "open-working-directory-explorer",
+        "directory-open-working-directory",
         "Open file explorer in the working directory"
     ),
     OpenFilePicker => (
@@ -946,33 +946,33 @@ editor_commands! {
         "Open the finder in a chosen path, including files Git ignores"
     ),
     OpenDirectoryFilePicker => (
-        "open-directory-file-picker",
+        "directory-open-file-picker",
         "Fuzzy-find a file or directory below the active directory"
     ),
     OpenFuzzyGrep => (
-        "open-fuzzy-grep",
+        "search-open-fuzzy-grep",
         "Open the finder in content mode over files, buffers, and terminals"
     ),
     OpenDirectoryFuzzyGrep => (
-        "open-directory-fuzzy-grep",
+        "directory-open-fuzzy-grep",
         "Fuzzy-search file contents below the active directory"
     ),
-    OpenDirectoryEntry => ("open-directory-entry", "Open the selected directory entry"),
-    OpenParentDirectory => ("open-parent-directory", "Open the parent directory"),
-    RefreshDirectory => ("refresh-directory", "Reload the directory from disk"),
-    ToggleHiddenFiles => ("toggle-hidden-files", "Show or hide dotfiles"),
-    ToggleDirectoryDetails => ("toggle-directory-details", "Show or hide file details in the explorer"),
-    ChooseExplorerOrder => ("choose-explorer-order", "Choose the order the explorer lists entries in"),
-    OpenExplorerSystem => ("open-explorer-system", "Open in system file manager"),
-    OpenExplorerFinder => ("open-explorer-finder", "Open finder in the current directory"),
-    OpenChangedFile => ("open-changed-file", "Open the file on this line"),
-    StageAllChangedFiles => ("stage-all-changed-files", "Stage every changed file"),
-    CheckoutBranch => ("checkout-branch", "Check out this branch locally"),
-    CreateBranch => ("create-branch", "Create a branch at the one on this line and switch to it"),
-    DeleteBranch => ("delete-branch", "Delete the branch on this line, after a confirmation"),
+    OpenDirectoryEntry => ("directory-open-entry", "Open the selected directory entry"),
+    OpenParentDirectory => ("directory-open-parent", "Open the parent directory"),
+    RefreshDirectory => ("directory-refresh", "Reload the directory from disk"),
+    ToggleHiddenFiles => ("directory-toggle-hidden-files", "Show or hide dotfiles"),
+    ToggleDirectoryDetails => ("directory-toggle-details", "Show or hide file details in the explorer"),
+    ChooseExplorerOrder => ("directory-choose-order", "Choose the order the explorer lists entries in"),
+    OpenExplorerSystem => ("directory-open-system", "Open in system file manager"),
+    OpenExplorerFinder => ("directory-open-finder", "Open finder in the current directory"),
+    OpenChangedFile => ("git-open-changed-file", "Open the file on this line"),
+    StageAllChangedFiles => ("git-stage-all-changed-files", "Stage every changed file"),
+    CheckoutBranch => ("git-checkout-branch", "Check out this branch locally"),
+    CreateBranch => ("git-create-branch", "Create a branch at the one on this line and switch to it"),
+    DeleteBranch => ("git-delete-branch", "Delete the branch on this line, after a confirmation"),
     MergeBranch => ("git-merge-branch", "Review merging this branch into the current branch"),
     OpenGitConflicts => ("git-conflicts", "Open unresolved Git conflicts"),
-    OpenGitConflict => ("open-git-conflict", "Open this conflict at its first unresolved region"),
+    OpenGitConflict => ("git-open-conflict", "Open this conflict at its first unresolved region"),
     ContinueMerge => ("git-merge-continue", "Review the resolved index and write a merge commit message"),
     AbortMerge => ("git-merge-abort", "Review and confirm aborting the active merge"),
     NextConflict => ("git-conflict-next", "Go to the next unresolved region or file"),
@@ -994,25 +994,25 @@ editor_commands! {
     MergeReviewRight => ("git-review-right", "Select Cancel in the review footer"),
     MergeReviewEnter => ("git-review-enter", "Inspect a change or activate the selected review action"),
     FetchBranch => ("git-fetch-branch", "Fetch this remote branch or local branch upstream"),
-    PullBranch => ("pull-branch", "Fast-forward the current branch onto what it tracks"),
-    PushBranch => ("push-branch", "Publish this branch to what it tracks"),
-    OpenWorktree => ("open-worktree", "Attach to the worktree on this line"),
+    PullBranch => ("git-pull-branch", "Fast-forward the current branch onto what it tracks"),
+    PushBranch => ("git-push-branch", "Publish this branch to what it tracks"),
+    OpenWorktree => ("git-open-worktree", "Attach to the worktree on this line"),
     CreateWorktree => (
-        "create-worktree",
+        "git-create-worktree",
         "Create a worktree for this branch; attach in persistent mode"
     ),
     CreateNewWorktree => (
-        "create-new-worktree",
+        "git-create-new-worktree",
         "Create a new branch and worktree from this checkout; attach in persistent mode"
     ),
-    RemoveWorktree => ("remove-worktree", "Remove the worktree on this row, leaving its branch"),
-    NextGitNetworkPage => ("next-git-network-page", "Show the next commit network page"),
-    PreviousGitNetworkPage => ("previous-git-network-page", "Show the previous commit network page"),
-    NextGitLogPage => ("next-git-log-page", "Show the next page of the Git log"),
-    PreviousGitLogPage => ("previous-git-log-page", "Show the previous page of the Git log"),
-    OpenGitCommit => ("open-git-commit", "Open the commit on this log, network or blame row"),
+    RemoveWorktree => ("git-remove-worktree", "Remove the worktree on this row, leaving its branch"),
+    NextGitNetworkPage => ("git-network-next-page", "Show the next commit network page"),
+    PreviousGitNetworkPage => ("git-network-previous-page", "Show the previous commit network page"),
+    NextGitLogPage => ("git-log-next-page", "Show the next page of the Git log"),
+    PreviousGitLogPage => ("git-log-previous-page", "Show the previous page of the Git log"),
+    OpenGitCommit => ("git-open-commit", "Open the commit on this log, network or blame row"),
     OpenWorkspaceSearchResult => (
-        "open-workspace-search-result",
+        "search-open-workspace-result",
         "Open the workspace-search result on this line"
     ),
     OverrideSettingLanguage => ("override-setting-language", "Override indentation for a language"),
@@ -1067,32 +1067,32 @@ editor_commands! {
     TerminalSearchRegex => ("terminal-search-regex", "Search terminal output with a regex"),
     TerminalSearchNext => ("terminal-search-next", "Select the next terminal review match"),
     TerminalSearchPrevious => ("terminal-search-previous", "Select the previous terminal review match"),
-    OpenTerminal => ("open-terminal", "Start a terminal in this pane"),
+    OpenTerminal => ("terminal-open", "Start a terminal in this pane"),
     OpenTerminalFileDirectory => (
-        "open-terminal-file-directory",
+        "terminal-open-file-directory",
         "Run a terminal in the active file's directory"
     ),
     OpenTerminalDirectoryRoot => (
-        "open-terminal-directory-root",
+        "terminal-open-directory-root",
         "Open a terminal in the directory the explorer shows"
     ),
     OpenTerminalSelectedDirectory => (
-        "open-terminal-selected-directory",
+        "terminal-open-selected-directory",
         "Run a terminal at the selected directory"
     ),
     OpenTerminalSessionDirectory => (
-        "open-terminal-session-directory",
+        "terminal-open-session-directory",
         "Run a terminal at another terminal's last safe directory"
     ),
-    OpenTerminalList => ("open-terminal-list", "Show the running terminals"),
-    ShowTerminal => ("show-terminal", "Show a terminal by number or name"),
-    RenameTerminal => ("rename-terminal", "Name the active terminal session"),
-    LeaveTerminal => ("leave-terminal", "Show this pane's buffer again"),
+    OpenTerminalList => ("terminal-open-list", "Show the running terminals"),
+    ShowTerminal => ("terminal-show", "Show a terminal by number or name"),
+    RenameTerminal => ("terminal-rename", "Name the active terminal session"),
+    LeaveTerminal => ("terminal-leave", "Show this pane's buffer again"),
     CopyTerminalOutput => (
-        "copy-terminal-output",
+        "terminal-copy-output",
         "Open this terminal's output as a buffer"
     ),
-    SendToTerminal => ("send-to-terminal", "Send the selection to a terminal"),
+    SendToTerminal => ("terminal-send", "Send the selection to a terminal"),
 
     DeleteWordBackward => ("delete-word-backward", "Delete the previous word"),
     DeleteWordForward => ("delete-word-forward", "Delete the next word"),
@@ -1113,7 +1113,7 @@ editor_commands! {
     NewBuffer => ("new-buffer", "Open a new scratch buffer"),
     OpenNavigator => ("open-navigator", "Navigate open buffers and terminals"),
     PreviousDestination => ("previous-destination", "Return to the previous destination in this pane"),
-    PreviousSession => ("previous-session", "Return to the previously visited persistent session"),
+    PreviousSession => ("session-previous", "Return to the previously visited persistent session"),
     Session1 => ("session-1", "Attach to persistent session 1"),
     Session2 => ("session-2", "Attach to persistent session 2"),
     Session3 => ("session-3", "Attach to persistent session 3"),
@@ -1123,11 +1123,11 @@ editor_commands! {
     Session7 => ("session-7", "Attach to persistent session 7"),
     Session8 => ("session-8", "Attach to persistent session 8"),
     Session9 => ("session-9", "Attach to persistent session 9"),
-    NextRunningSession => ("next-running-session", "Visit the next running persistent session"),
-    PreviousRunningSession => ("previous-running-session", "Visit the previous running persistent session"),
-    OpenSessionDirectory => ("open-session-directory", "Open a directory as a persistent session"),
-    OpenExplorerSession => ("open-explorer-session", "Open persistent session here"),
-    OpenExplorerWorkspace => ("open-explorer-workspace", "Change to this directory's workspace, making one if needed"),
+    NextRunningSession => ("session-next-running", "Visit the next running persistent session"),
+    PreviousRunningSession => ("session-previous-running", "Visit the previous running persistent session"),
+    OpenSessionDirectory => ("session-open-directory", "Open a directory as a persistent session"),
+    OpenExplorerSession => ("session-open-explorer", "Open persistent session here"),
+    OpenExplorerWorkspace => ("directory-open-workspace", "Change to this directory's workspace, making one if needed"),
     OpenBufferPicker => ("open-buffer-picker", "Open the buffer picker"),
     ListAccept => ("list-accept", "Activate the selected row"),
     ListOpenActions => ("list-open-actions", "Open actions or cycle the list"),
@@ -1143,12 +1143,12 @@ editor_commands! {
     ListClearFilter => ("list-clear-filter", "Clear the filter"),
     ListClose => ("list-close", "Close the list"),
     OpenSessionDestinations => (
-        "open-session-destinations",
+        "session-open-destinations",
         "Open the selected running session's destinations"
     ),
-    GlobalSearch => ("global-search", "Search the workspace, ignoring case"),
+    GlobalSearch => ("search-workspace", "Search the workspace, ignoring case"),
     GlobalSearchRegex => (
-        "global-search-regex",
+        "search-workspace-regex",
         "Search the workspace with a regular expression"
     ),
     ShowDocumentation => ("show-documentation", "Show documentation"),
@@ -1172,13 +1172,13 @@ editor_commands! {
     ClipboardPasteBefore => ("clipboard-paste-before", "Paste before from the system clipboard"),
     ClipboardYank => ("clipboard-yank", "Yank to the system clipboard"),
     ClipboardPaste => ("clipboard-paste", "Paste an image or text from the clipboard"),
-    SelectRegister => ("select-register", "Select a register"),
-    RecordMacro => ("record-macro", "Record a macro named by the next key"),
-    RecordDefaultMacro => ("record-default-macro", "Start recording the default macro"),
-    StopMacroRecording => ("stop-macro-recording", "Stop recording the current macro"),
-    ReplayMacro => ("replay-macro", "Replay the macro named by the next key"),
-    ReplayDefaultMacro => ("replay-default-macro", "Replay the default macro"),
-    ListMacros => ("list-macros", "List the recorded macros"),
+    SelectRegister => ("register-select", "Select a register"),
+    RecordMacro => ("macro-record", "Record a macro named by the next key"),
+    RecordDefaultMacro => ("macro-record-default", "Start recording the default macro"),
+    StopMacroRecording => ("macro-stop-recording", "Stop recording the current macro"),
+    ReplayMacro => ("macro-replay", "Replay the macro named by the next key"),
+    ReplayDefaultMacro => ("macro-replay-default", "Replay the default macro"),
+    ListMacros => ("macro-list", "List the recorded macros"),
     ShellPipe => ("shell-pipe", "Pipe the selection through a shell command"),
     MatchBracket => ("match-bracket", "Go to the matching syntax bracket"),
 }
@@ -1967,37 +1967,37 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
     editor_spec!(
         Editor::OpenSessionDirectory,
-        "open-session-directory",
+        "session-open-directory",
         [],
-        "open-session-directory",
+        "session-open-directory",
         NoArguments
     ),
     editor_spec!(
         Editor::OpenExplorerSession,
-        "open-explorer-session",
+        "session-open-explorer",
         [],
-        "open-explorer-session",
+        "session-open-explorer",
         NoArguments
     ),
     editor_spec!(
         Editor::OpenExplorerWorkspace,
-        "open-explorer-workspace",
+        "directory-open-workspace",
         [],
-        "open-explorer-workspace",
+        "directory-open-workspace",
         NoArguments
     ),
     editor_spec!(
         Editor::OpenExplorerSystem,
-        "open-explorer-system",
+        "directory-open-system",
         [],
-        "open-explorer-system",
+        "directory-open-system",
         NoArguments
     ),
     editor_spec!(
         Editor::OpenExplorerFinder,
-        "open-explorer-finder",
+        "directory-open-finder",
         [],
-        "open-explorer-finder",
+        "directory-open-finder",
         NoArguments
     ),
     spec!(
@@ -2571,16 +2571,16 @@ pub const COMMANDS: &[CommandSpec] = &[
     ),
     editor_spec!(
         Editor::NextGitNetworkPage,
-        "next-git-network-page",
+        "git-network-next-page",
         [],
-        "next-git-network-page",
+        "git-network-next-page",
         NoArguments
     ),
     editor_spec!(
         Editor::PreviousGitNetworkPage,
-        "previous-git-network-page",
+        "git-network-previous-page",
         [],
-        "previous-git-network-page",
+        "git-network-previous-page",
         NoArguments
     ),
     spec!(
@@ -2906,7 +2906,7 @@ pub const COMMANDS: &[CommandSpec] = &[
     editor_spec!(
         Editor::DocumentOutline,
         "outline",
-        ["document-outline"],
+        ["syntax-document-outline"],
         "outline",
         NoArguments
     ),
@@ -3589,6 +3589,72 @@ pub fn parse_colon_command(input: &str) -> Result<CommandInvocation, CommandPars
 /// Migration advice shared by the palette and both key configuration forms.
 pub fn removed_action_replacement(name: &str) -> Option<&'static str> {
     match name {
+        "select-register" => Some("use register-select"),
+        "record-macro" => Some("use macro-record"),
+        "record-default-macro" => Some("use macro-record-default"),
+        "stop-macro-recording" => Some("use macro-stop-recording"),
+        "replay-macro" => Some("use macro-replay"),
+        "replay-default-macro" => Some("use macro-replay-default"),
+        "list-macros" => Some("use macro-list"),
+        "global-search" => Some("use search-workspace"),
+        "global-search-regex" => Some("use search-workspace-regex"),
+        "open-workspace-search-result" => Some("use search-open-workspace-result"),
+        "open-fuzzy-grep" => Some("use search-open-fuzzy-grep"),
+        "expand-syntax-selection" => Some("use syntax-expand-selection"),
+        "shrink-syntax-selection" => Some("use syntax-shrink-selection"),
+        "document-outline" => Some("use syntax-document-outline"),
+        "toggle-syntax-fold" => Some("use syntax-toggle-fold"),
+        "fold-all-syntax" => Some("use syntax-fold-all"),
+        "unfold-all-syntax" => Some("use syntax-unfold-all"),
+        "open-explorer" => Some("use directory-open"),
+        "open-working-directory-explorer" => Some("use directory-open-working-directory"),
+        "open-directory-file-picker" => Some("use directory-open-file-picker"),
+        "open-directory-fuzzy-grep" => Some("use directory-open-fuzzy-grep"),
+        "open-directory-entry" => Some("use directory-open-entry"),
+        "open-parent-directory" => Some("use directory-open-parent"),
+        "refresh-directory" => Some("use directory-refresh"),
+        "toggle-hidden-files" => Some("use directory-toggle-hidden-files"),
+        "toggle-directory-details" => Some("use directory-toggle-details"),
+        "choose-explorer-order" => Some("use directory-choose-order"),
+        "open-explorer-system" => Some("use directory-open-system"),
+        "open-explorer-finder" => Some("use directory-open-finder"),
+        "open-explorer-workspace" => Some("use directory-open-workspace"),
+        "toggle-directory-tree" => Some("use directory-tree-toggle"),
+        "focus-directory-tree" => Some("use directory-tree-focus"),
+        "open-changed-file" => Some("use git-open-changed-file"),
+        "stage-all-changed-files" => Some("use git-stage-all-changed-files"),
+        "checkout-branch" => Some("use git-checkout-branch"),
+        "create-branch" => Some("use git-create-branch"),
+        "delete-branch" => Some("use git-delete-branch"),
+        "open-git-conflict" => Some("use git-open-conflict"),
+        "pull-branch" => Some("use git-pull-branch"),
+        "push-branch" => Some("use git-push-branch"),
+        "open-worktree" => Some("use git-open-worktree"),
+        "create-worktree" => Some("use git-create-worktree"),
+        "create-new-worktree" => Some("use git-create-new-worktree"),
+        "remove-worktree" => Some("use git-remove-worktree"),
+        "next-git-network-page" => Some("use git-network-next-page"),
+        "previous-git-network-page" => Some("use git-network-previous-page"),
+        "next-git-log-page" => Some("use git-log-next-page"),
+        "previous-git-log-page" => Some("use git-log-previous-page"),
+        "open-git-commit" => Some("use git-open-commit"),
+        "open-terminal" => Some("use terminal-open"),
+        "open-terminal-file-directory" => Some("use terminal-open-file-directory"),
+        "open-terminal-directory-root" => Some("use terminal-open-directory-root"),
+        "open-terminal-selected-directory" => Some("use terminal-open-selected-directory"),
+        "open-terminal-session-directory" => Some("use terminal-open-session-directory"),
+        "open-terminal-list" => Some("use terminal-open-list"),
+        "show-terminal" => Some("use terminal-show"),
+        "rename-terminal" => Some("use terminal-rename"),
+        "leave-terminal" => Some("use terminal-leave"),
+        "copy-terminal-output" => Some("use terminal-copy-output"),
+        "send-to-terminal" => Some("use terminal-send"),
+        "previous-session" => Some("use session-previous"),
+        "next-running-session" => Some("use session-next-running"),
+        "previous-running-session" => Some("use session-previous-running"),
+        "open-session-directory" => Some("use session-open-directory"),
+        "open-explorer-session" => Some("use session-open-explorer"),
+        "open-session-destinations" => Some("use session-open-destinations"),
         "yank-collapse-normal-mode" => Some(
             "use [yank, collapse-selection, mode-enter normal]; terminal y omits collapse-selection; mode-entry steps remain preset-only until the stage 5 binding format",
         ),
@@ -4276,9 +4342,10 @@ mod tests {
         assert!(
             COMMANDS
                 .iter()
+                .filter(|spec| spec.id != CommandId::Editor(EditorCommand::DocumentOutline))
                 .flat_map(CommandSpec::names)
                 .all(|name| !name.starts_with("syntax-")),
-            "structural commands must only be exposed through editor bindings"
+            "structural editing commands must only be exposed through editor bindings"
         );
         assert!(matches!(
             parse_colon_command("syntax-expand"),

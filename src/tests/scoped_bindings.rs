@@ -315,7 +315,7 @@ fn terminal_insert_actions_claim_only_effective_scoped_keys_and_prefixes() {
         rebuilt.terminal_input_route(Key::ctrl('4'), false, false),
         Child
     );
-    let map = configured("bind:\n  terminal-insert:\n    F8: next-running-session\n");
+    let map = configured("bind:\n  terminal-insert:\n    F8: session-next-running\n");
     assert_eq!(
         map.terminal_input_route(Key::parse("F8").unwrap(), false, false),
         EditorGrammar

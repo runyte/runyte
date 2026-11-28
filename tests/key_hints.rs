@@ -559,7 +559,7 @@ fn the_search_namespaces_and_their_prompts_are_discoverable_on_screen() {
     );
     let project = render(100, 40, &mut app, &hints);
     for entry in [
-        "global search regex",
+        "search workspace regex",
         "Search the workspace, ignoring case",
         "open finder",
         "open all files picker",
@@ -614,7 +614,7 @@ fn a_key_column_separates_the_sequence_from_its_description() {
     );
 
     let screen = render(160, 50, &mut app, &hints);
-    assert!(screen.contains("Space e      open explorer"));
+    assert!(screen.contains("Space e      directory open"));
     assert!(!screen.contains("Space eOpen"));
 }
 

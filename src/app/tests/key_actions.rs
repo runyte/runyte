@@ -85,7 +85,7 @@ fn action_bindings_preserve_insert_replace_modes_and_render_full_help() {
 #[test]
 fn action_binding_overwrites_do_not_advertise_old_keys_in_teaching_text() {
     let mut app = configured(
-        "bind:\n  normal:\n    Space e: yank\n    F1: open-explorer\n  select:\n    Space e: yank\n    F1: open-explorer\n",
+        "bind:\n  normal:\n    Space e: yank\n    F1: directory-open\n  select:\n    Space e: yank\n    F1: directory-open\n",
     );
     app.execute_command("about").unwrap();
     let body = app.active_buffer().text().to_string();
@@ -1110,7 +1110,7 @@ fn internal_programs_cannot_continue_after_deferred_macro_replay() {
 #[test]
 fn configured_grammar_and_tree_mode_changes_preserve_the_tail() {
     let mut app = configured(
-        "bind: {normal: {F6: [{command: grammar, argument: runyte}, move-right], F7: [focus-directory-tree, close-window]}}",
+        "bind: {normal: {F6: [{command: grammar, argument: runyte}, move-right], F7: [directory-tree-focus, close-window]}}",
     );
     seed(&mut app, "abc");
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
@@ -1123,7 +1123,7 @@ fn configured_grammar_and_tree_mode_changes_preserve_the_tail() {
 #[test]
 fn terminal_mode_changes_and_supplied_name_continue_the_program() {
     let mut app = configured(
-        "bind: {terminal: {F6: [terminal-enter-input, enter-normal-mode, leave-terminal], F7: [{command: rename-terminal, argument: build}, leave-terminal]}}",
+        "bind: {terminal: {F6: [terminal-enter-input, enter-normal-mode, terminal-leave], F7: [{command: terminal-rename, argument: build}, terminal-leave]}}",
     );
     let terminal = app.terminals.insert_test_session(80, 24);
     app.active_mut().terminal = Some(terminal);
@@ -2397,7 +2397,7 @@ fn failed_syntax_shrink_stops_configured_editing_tails() {
         let config = Config {
             keys: Some(
                 serde_yaml::from_str(
-                    "bind: {normal: {F6: [shrink-syntax-selection, delete-selection]}}",
+                    "bind: {normal: {F6: [syntax-shrink-selection, delete-selection]}}",
                 )
                 .unwrap(),
             ),

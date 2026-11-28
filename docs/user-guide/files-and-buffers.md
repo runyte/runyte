@@ -7,7 +7,7 @@
 | `Space f` or `Space / f` | Open the Finder over files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space / a` | The same Finder over every file, ignore files not consulted |
 | `Space / p` | The same unfiltered Finder rooted at a typed path, inside the workspace or outside it |
-| `Tab f` in a directory | The same Finder rooted at the directory the explorer shows (`:open-explorer-finder`) |
+| `Tab f` in a directory | The same Finder rooted at the directory the explorer shows (`:directory-open-finder`) |
 | `:file-picker-directory` | Fuzzy-find a file or directory below the active file/explorer directory |
 | `:fuzzy-grep-directory` | Fuzzy-search contents below the active file/explorer directory |
 | `Space / /` | Search the workspace with a regular expression; see [Search](key-bindings.md#search) |
@@ -675,8 +675,8 @@ are kept.
 | `:w` or `:write` | Review a filesystem plan before applying edits |
 | `Tab` | Actions, including the ones below and the three display settings |
 | `Tab t` | Open a terminal in this pane, starting in the shown directory |
-| `Tab f` | Open the Finder rooted at the shown directory (`:open-explorer-finder`) |
-| `Tab e` | Open the shown directory in the system file manager (`:open-explorer-system`) |
+| `Tab f` | Open the Finder rooted at the shown directory (`:directory-open-finder`) |
+| `Tab e` | Open the shown directory in the system file manager (`:directory-open-system`) |
 | `Tab c` | Change to this directory's workspace, making one if there is none (see [Changing workspace](workspaces-and-persistent-sessions.md#changing-workspace)) |
 | `Tab s` | Open a persistent session here (see [Session and destination navigation](workspaces-and-persistent-sessions.md#session-and-destination-navigation)) |
 

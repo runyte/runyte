@@ -546,7 +546,7 @@ commits. `Space / a` and `Space / p` open that Finder over a wider scope.
 | `Space f` or `Space / f` | Open the Finder over files, buffers, and terminals by name or content; `Tab` switches modes and `Ctrl-t` toggles preview |
 | `Space / a` | The same Finder over every file, ignore files not consulted |
 | `Space / p` | The same unfiltered Finder rooted at a typed path, inside the workspace or outside it |
-| `Tab f` in a directory | The same Finder rooted at the directory the explorer shows (`:open-explorer-finder`) |
+| `Tab f` in a directory | The same Finder rooted at the directory the explorer shows (`:directory-open-finder`) |
 | `Space s c` | Keep only the primary selection in any multi-selection |
 | `Space s e` / `Space s b` | Put a cursor at the end / start of every selected line |
 | `Space s a` or `&` | Pad with spaces until every cursor shares the rightmost display column |

@@ -2495,7 +2495,7 @@ fn pushing_refuses_rather_than_overwriting_the_remote() {
 /// on the new branch, holding what the branch it started from held.
 #[test]
 fn creating_a_branch_starts_it_where_asked_and_switches_to_it() {
-    let repository = TempRepository::new("create-branch");
+    let repository = TempRepository::new("git-create-branch");
     repository.write("source.rs", "base\n");
     repository.commit("base");
     repository.git(&["branch", "feature"]);
@@ -2583,7 +2583,7 @@ fn creating_a_branch_refuses_uncommitted_changes_before_making_a_ref() {
 
 #[test]
 fn deleting_a_branch_needs_force_only_when_its_commits_are_not_merged() {
-    let repository = TempRepository::new("delete-branch");
+    let repository = TempRepository::new("git-delete-branch");
     repository.write("source.rs", "base\n");
     repository.commit("base");
     let provider = provider();

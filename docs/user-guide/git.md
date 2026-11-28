@@ -546,8 +546,8 @@ page, continuation, and any limit. Tab opens these registered actions:
 | All cached refs and HEAD | `Tab a` | `:git-network-all` |
 | Current HEAD only | `Tab h` | `:git-network-head` |
 | Choose an exact captured ref | `Tab r` | `:git-network-choose-ref` |
-| Next graph page | `Ctrl-n` | `:next-git-network-page` |
-| Previous graph page | `Ctrl-p` | `:previous-git-network-page` |
+| Next graph page | `Ctrl-n` | `:git-network-next-page` |
+| Previous graph page | `Ctrl-p` | `:git-network-previous-page` |
 
 `:git-network-ref refs/heads/main` selects an exact full ref directly.
 `:git-network` or `Space r` captures new roots. Refreshing keeps the selected

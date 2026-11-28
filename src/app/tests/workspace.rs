@@ -4927,7 +4927,7 @@ fn explorer_key_goes_where_cd_would() {
     let other = test.other.clone();
     test.open_explorer(&other);
 
-    test.run("open-explorer-workspace", None);
+    test.run("directory-open-workspace", None);
 
     test.expect_relaunch(&other, &other);
 }
@@ -4938,7 +4938,7 @@ fn explorer_key_inside_the_workspace_moves_only_the_working_directory() {
     let source = test.current.join("src");
     test.open_explorer(&source);
 
-    test.run("open-explorer-workspace", None);
+    test.run("directory-open-workspace", None);
 
     test.expect_stayed();
     assert_eq!(test.app.working_directory, source);
@@ -4951,7 +4951,7 @@ fn explorer_key_makes_a_workspace_where_discovery_finds_none() {
     fs::create_dir(&plain).unwrap();
     test.open_explorer(&plain);
 
-    test.run("open-explorer-workspace", None);
+    test.run("directory-open-workspace", None);
 
     assert!(plain.join(".runyte").is_dir());
     test.expect_relaunch(&plain, &plain);
@@ -4968,7 +4968,7 @@ fn explorer_key_refuses_a_directory_other_accounts_can_write() {
     fs::set_permissions(&shared, fs::Permissions::from_mode(0o777)).unwrap();
     test.open_explorer(&shared);
 
-    test.run("open-explorer-workspace", None);
+    test.run("directory-open-workspace", None);
 
     test.expect_stayed();
     assert!(!shared.join(".runyte").exists());
@@ -4983,7 +4983,7 @@ fn explorer_key_refuses_a_directory_other_accounts_can_write() {
 fn explorer_key_is_refused_outside_an_explorer() {
     let mut test = WorkspaceChange::new("tab-c-file");
 
-    test.run("open-explorer-workspace", None);
+    test.run("directory-open-workspace", None);
 
     test.expect_stayed();
 }
@@ -5131,7 +5131,7 @@ fn explorer_key_does_not_create_state_when_discovery_fails() {
     }
     test.open_explorer(&broken);
 
-    test.run("open-explorer-workspace", None);
+    test.run("directory-open-workspace", None);
 
     test.expect_stayed();
     assert!(!broken.join(".runyte").exists());

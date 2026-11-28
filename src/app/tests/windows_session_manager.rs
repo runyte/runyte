@@ -258,7 +258,7 @@ fn native_directory_chooser_accepts_windows_paths_and_queues_exact_directory() {
 
     app.mode = Mode::Normal;
     key(&mut app, KeyCode::Char(':'), Modifiers::NONE);
-    for character in "open-session-directory".chars() {
+    for character in "session-open-directory".chars() {
         key(&mut app, KeyCode::Char(character), Modifiers::NONE);
     }
     key(&mut app, KeyCode::Enter, Modifiers::NONE);

@@ -987,3 +987,87 @@ Native clipboard input uses the same explicit role policy independently of key
 remapping. This deliberately changes Insert/Replace text fallback, which formerly
 returned to Normal. Format selection remains one image-first clipboard decision;
 empty, failed and refused pastes do not run a mode tail.
+
+### Decision 47 — Subject-first family names
+
+Stage 4e migrates the following 66 action spellings. Old names are refused
+with replacement diagnostics in bindings, sequences and named commands.
+Seven matching colon spellings migrate with the actions; other colon
+spellings remain unchanged. The preset, discovery and current documentation
+use the replacements. Internal command identities retain their behavior.
+
+Core text and selection verbs, including syntax text objects and motions,
+`match-bracket`, `fit-selection-for-normal-mode` and `replace-with-register`,
+keep their names. Bare `search` and already subject-first families also stay.
+The four `enter-*-mode` actions remain PendingSplit(5): stage 5 replaces them
+with argument-bearing `mode-enter` steps rather than introducing temporary
+names in this slice.
+
+| Old action | Replacement |
+| --- | --- |
+| `select-register` | `register-select` |
+| `record-macro` | `macro-record` |
+| `record-default-macro` | `macro-record-default` |
+| `stop-macro-recording` | `macro-stop-recording` |
+| `replay-macro` | `macro-replay` |
+| `replay-default-macro` | `macro-replay-default` |
+| `list-macros` | `macro-list` |
+| `global-search` | `search-workspace` |
+| `global-search-regex` | `search-workspace-regex` |
+| `open-workspace-search-result` | `search-open-workspace-result` |
+| `open-fuzzy-grep` | `search-open-fuzzy-grep` |
+| `expand-syntax-selection` | `syntax-expand-selection` |
+| `shrink-syntax-selection` | `syntax-shrink-selection` |
+| `document-outline` | `syntax-document-outline` |
+| `toggle-syntax-fold` | `syntax-toggle-fold` |
+| `fold-all-syntax` | `syntax-fold-all` |
+| `unfold-all-syntax` | `syntax-unfold-all` |
+| `open-explorer` | `directory-open` |
+| `open-working-directory-explorer` | `directory-open-working-directory` |
+| `open-directory-file-picker` | `directory-open-file-picker` |
+| `open-directory-fuzzy-grep` | `directory-open-fuzzy-grep` |
+| `open-directory-entry` | `directory-open-entry` |
+| `open-parent-directory` | `directory-open-parent` |
+| `refresh-directory` | `directory-refresh` |
+| `toggle-hidden-files` | `directory-toggle-hidden-files` |
+| `toggle-directory-details` | `directory-toggle-details` |
+| `choose-explorer-order` | `directory-choose-order` |
+| `open-explorer-system` | `directory-open-system` |
+| `open-explorer-finder` | `directory-open-finder` |
+| `open-explorer-workspace` | `directory-open-workspace` |
+| `toggle-directory-tree` | `directory-tree-toggle` |
+| `focus-directory-tree` | `directory-tree-focus` |
+| `open-changed-file` | `git-open-changed-file` |
+| `stage-all-changed-files` | `git-stage-all-changed-files` |
+| `checkout-branch` | `git-checkout-branch` |
+| `create-branch` | `git-create-branch` |
+| `delete-branch` | `git-delete-branch` |
+| `open-git-conflict` | `git-open-conflict` |
+| `pull-branch` | `git-pull-branch` |
+| `push-branch` | `git-push-branch` |
+| `open-worktree` | `git-open-worktree` |
+| `create-worktree` | `git-create-worktree` |
+| `create-new-worktree` | `git-create-new-worktree` |
+| `remove-worktree` | `git-remove-worktree` |
+| `next-git-network-page` | `git-network-next-page` |
+| `previous-git-network-page` | `git-network-previous-page` |
+| `next-git-log-page` | `git-log-next-page` |
+| `previous-git-log-page` | `git-log-previous-page` |
+| `open-git-commit` | `git-open-commit` |
+| `open-terminal` | `terminal-open` |
+| `open-terminal-file-directory` | `terminal-open-file-directory` |
+| `open-terminal-directory-root` | `terminal-open-directory-root` |
+| `open-terminal-selected-directory` | `terminal-open-selected-directory` |
+| `open-terminal-session-directory` | `terminal-open-session-directory` |
+| `open-terminal-list` | `terminal-open-list` |
+| `show-terminal` | `terminal-show` |
+| `rename-terminal` | `terminal-rename` |
+| `leave-terminal` | `terminal-leave` |
+| `copy-terminal-output` | `terminal-copy-output` |
+| `send-to-terminal` | `terminal-send` |
+| `previous-session` | `session-previous` |
+| `next-running-session` | `session-next-running` |
+| `previous-running-session` | `session-previous-running` |
+| `open-session-directory` | `session-open-directory` |
+| `open-explorer-session` | `session-open-explorer` |
+| `open-session-destinations` | `session-open-destinations` |

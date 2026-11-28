@@ -558,7 +558,7 @@ fn handoff_console_fixture() {
         editor.until("NOR");
     }
     if operation == "persistent-quit-here" {
-        editor.send(":open-session-directory\r");
+        editor.send(":session-open-directory\r");
         editor.until("Open this directory");
         let directory = root.join("project/literal [brackets] café ' $tick`");
         editor.send(&format!("{}\\", directory.display()));

@@ -1055,7 +1055,7 @@ fn pasted_text_reaches_an_open_picker_and_list_rather_than_the_buffer() {
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
     assert!(app.picker.is_none(), "the picker stayed open");
 
-    app.execute_command("document-outline").unwrap();
+    app.execute_command("syntax-document-outline").unwrap();
     app.handle_input(InputEvent::Text("bet".to_owned()))
         .unwrap();
     assert_eq!(app.list.as_ref().unwrap().filter, "bet");

@@ -3745,7 +3745,7 @@ fn explorer_system_opens_listed_directory_and_preserves_unapplied_edits() {
 
     key(&mut app, KeyCode::Tab, Modifiers::NONE);
     press(&mut app, 'e');
-    app.execute_command("open-explorer-system").unwrap();
+    app.execute_command("directory-open-system").unwrap();
 
     assert_eq!(
         *opened.lock().unwrap(),
@@ -3775,7 +3775,7 @@ fn explorer_system_reports_launch_errors_and_refuses_other_buffers() {
     let mut app = App::new_in_isolated_project(&root, ports).unwrap();
     app.open_explorer(Some(root.clone())).unwrap();
     app.ports.directory_opener = Box::new(|_| bail!("test opener unavailable"));
-    app.execute_command("open-explorer-system").unwrap();
+    app.execute_command("directory-open-system").unwrap();
     assert_eq!(app.unread_notification_counts().errors, 1);
     assert!(
         app.status.contains("test opener unavailable"),
@@ -3784,7 +3784,7 @@ fn explorer_system_reports_launch_errors_and_refuses_other_buffers() {
     );
     app.open_file(file).unwrap();
     app.ports.directory_opener = Box::new(|_| panic!("must not open a file buffer"));
-    app.execute_command("open-explorer-system").unwrap();
+    app.execute_command("directory-open-system").unwrap();
     assert!(app.status.contains("not a directory buffer"));
     fs::remove_dir_all(root).unwrap();
 }
