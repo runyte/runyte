@@ -1196,3 +1196,31 @@ The captured and pending values survive character-operand waits independently.
 A future explicit count-setting action would update only the pending count in
 the same way. Stage 5d tests cover entry prefixes, explicit selection, inheritance,
 and operand waits together.
+
+### Decision 53 — Condition shape and applicability
+
+`selection-has-text` tests whether any selection range has different anchor
+and head offsets. A collapsed caret is false even when yank would copy its
+grapheme. `multiple-selections` tests for at least two ranges. These conditions
+apply to ordinary text selections, including generated text views and terminal
+review, but are rejected for media, directory-tree, session-manager and list
+owners. Live terminal output has no review selection, so both are false.
+
+`read-only`, `register-empty`, mode, buffer-type and recording-macro conditions
+apply everywhere programs execute, excluding list owners. Read-only reflects effective text-editing protection,
+including terminal and media surfaces. Buffer-type matches exact configured
+buffer-type keys; unknown names are rejected. The generated condition contract
+table documents applicability alongside the action contracts.
+
+### Decision 54 — List bindings remain single actions in 0.5
+
+List-dispatched owners, including `list` and `session-manager`, accept one
+plain action only. Step lists (even singleton lists), conditionals, arguments
+and step options are rejected at load with `list bindings take a single action
+in 0.5`. This prevents programs from being accepted while dispatch silently
+executes only the representative target. Decision 53's universal conditions
+apply everywhere programs execute, not to list owners. This preserves decision
+10's separation of UI and list owners from editor programs.
+
+Post-0.5: decide a general list program executor together with the `keys.ui`
+revisit; do not introduce a partial conditional resolver in 0.5.

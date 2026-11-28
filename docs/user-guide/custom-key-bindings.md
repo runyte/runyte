@@ -789,6 +789,11 @@ that policy is overridden for this step, including in a preset without Select.
 The action browser and generated reference list count, register, and extension
 support; describe-key and copy-key-binding retain the authored options.
 
+List owners (`list` and `session-manager`) accept a single plain action in 0.5,
+as a name or `{action: <name>}`. They reject step lists, conditionals, arguments
+and step options; `null` still removes a binding. Conditions below apply only
+where editor programs execute.
+
 ### Mode entry and conditional programs
 
 `mode-enter` preserves the selection and changes the active named mode. Its
@@ -814,9 +819,12 @@ keys:
 
 Both `then` and `else` must be lists; either may be empty. A mode condition
 using a role name tests editing-role membership, including inherited submodes.
-Other names test the exact active named mode. Other supported conditions are
-`recording-macro`, `tree-entry-expanded`, `tree-entry-is-directory`, and
-`tree-entry-is-root`; a tree condition must only be reached in the directory tree.
+Other names test the exact active named mode. The [condition contracts](#condition-contracts) list every predicate and its
+applicable buffer types. `selection-has-text` tests for a nonempty range, not
+the grapheme a caret would yank. `register-empty` tests the pending register
+until consumed, then the unnamed register. `{buffer-type: text}` tests an exact
+buffer-type key; like mode guards, it narrows reachable branches during load
+validation. A tree condition must only be reached in the directory tree.
 Programs contain at most 16 steps in total and four levels of conditional
 nesting. A program must contain an action, even when some branches are empty.
 
@@ -2397,6 +2405,21 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `session-stop` | background work | not accepted | false | false | none | session-stop [workspace] | palette argument, if any |  | atomic operation |
 | `session-rename` | background work, configuration | not accepted | false | false | none | session-rename <workspace> <name> | palette argument, if any |  | atomic operation |
 | `session-clean` | background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
+
+#### Condition contracts
+
+| Condition | Meaning | Applicable buffer types |
+| --- | --- | --- |
+| `selection-has-text` | At least one range has different anchor and head offsets; a caret is false | Ordinary text selections, including generated text views and terminal review; excludes media, directory-tree, session-manager and list owners |
+| `multiple-selections` | Two or more selection ranges | Ordinary text selections, including generated text views and terminal review; excludes media, directory-tree, session-manager and list owners |
+| `register-empty` | Pending selected register has no text or directory entries; after consumption, tests the unnamed register | Everywhere programs execute; excludes list owners |
+| `read-only` | The active view's text cannot be edited, including terminal and media surfaces | Everywhere programs execute; excludes list owners |
+| `{mode: <name>}` | Role membership for normal/select/insert/replace; exact named mode otherwise | Everywhere programs execute; excludes list owners |
+| `{buffer-type: <type>}` | Exact buffer-types key; unknown names are rejected | Everywhere programs execute; excludes list owners |
+| `recording-macro` | A macro is currently being recorded | Everywhere programs execute; excludes list owners |
+| `tree-entry-expanded` | The selected tree entry is expanded | directory-tree |
+| `tree-entry-is-directory` | The selected tree entry is a directory | directory-tree |
+| `tree-entry-is-root` | The selected tree entry is the tree root | directory-tree |
 <!-- action-reference:end -->
 
 <!-- navigation -->

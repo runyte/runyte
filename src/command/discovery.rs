@@ -418,6 +418,18 @@ pub fn descriptor_reference() -> String {
             d.classification.description().replace('|', "&#124;")
         );
     }
+    out.push_str(&condition_reference());
+    out
+}
+
+pub fn condition_reference() -> String {
+    use std::fmt::Write;
+    let mut out = String::from(
+        "\n## Condition contracts\n\n| Condition | Meaning | Applicable buffer types |\n| --- | --- | --- |\n",
+    );
+    for (name, meaning, applicability) in crate::keymap::program::CONDITION_DESCRIPTORS {
+        let _ = writeln!(out, "| `{name}` | {meaning} | {applicability} |");
+    }
     out
 }
 

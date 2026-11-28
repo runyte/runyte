@@ -445,6 +445,12 @@ fn apply_candidate(
                 ));
                 continue;
             };
+            if contexts.iter().any(|(mode, _)| *mode == Mode::List)
+                && let Err(reason) = actions::validate_list_binding(value)
+            {
+                errors.push(format!("bind.{name}.{source}: {reason}"));
+                continue;
+            }
             // Parse without assuming the entry mode remains active. Completed
             // effective tables supply every starting context to flow analysis.
             let mut parsed = contexts.iter().map(|&(mode, _)| {

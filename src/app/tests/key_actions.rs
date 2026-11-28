@@ -2955,3 +2955,83 @@ fn unused_count_ends_with_its_binding() {
         assert_eq!(app.active().selection.primary().head, before + 1, "{steps}");
     }
 }
+
+#[test]
+fn register_empty_observes_pending_prefix_then_unnamed_after_consumption() {
+    let mut app = configured(
+        "bind: {normal: {F6: [{if: register-empty, then: [move-right], else: []}, yank, {if: register-empty, then: [move-right], else: []}]}}",
+    );
+    seed(&mut app, "abc");
+    app.selected_register = 'a';
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, 1);
+    assert_eq!(app.registers[&'a'].text, "b");
+    assert_eq!(app.registers[&'"'].text, "b");
+
+    let mut app = configured(
+        "bind: {normal: {F6: [{action: yank, register: b}, {if: register-empty, then: [move-right], else: []}, {action: register-select, arg: b}, {if: register-empty, then: [move-right], else: []}]}}",
+    );
+    seed(&mut app, "abc");
+    app.selected_register = 'a';
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, 1);
+}
+
+#[test]
+fn selection_conditions_test_shape_instead_of_operative_caret_text() {
+    for (condition, ranges, expected) in [
+        ("selection-has-text", vec![Range::point(0)], false),
+        ("selection-has-text", vec![Range::new(0, 2)], true),
+        ("multiple-selections", vec![Range::new(0, 2)], false),
+        (
+            "multiple-selections",
+            vec![Range::point(0), Range::point(3)],
+            true,
+        ),
+    ] {
+        let mut app = configured(&format!(
+            "bind: {{normal: {{F6: {{if: {condition}, then: [yank], else: []}}}}}}"
+        ));
+        seed(&mut app, "abcdef");
+        app.active_mut()
+            .replace_selection(Selection::new(ranges, 0));
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert_eq!(app.registers.contains_key(&'"'), expected, "{condition}");
+    }
+}
+
+#[test]
+fn read_only_condition_uses_active_generated_view_protection() {
+    for (owner, read_only) in [("normal", false), ("help", true)] {
+        let mut app = configured(&format!(
+            "bind: {{{owner}: {{F6: {{if: read-only, then: [yank], else: []}}}}}}"
+        ));
+        seed(&mut app, "abc");
+        if read_only {
+            app.execute_editor_command(EditorCommand::ShowHelp).unwrap();
+        }
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert_eq!(app.registers.contains_key(&'"'), read_only);
+    }
+}
+
+#[test]
+fn register_empty_accepts_an_empty_directory_payload() {
+    let mut app =
+        configured("bind: {normal: {F6: {if: register-empty, then: [move-right], else: []}}}");
+    seed(&mut app, "abc");
+    app.selected_register = 'a';
+    app.registers.insert(
+        'a',
+        Register {
+            text: String::new(),
+            linewise: false,
+            directory: Some(DirectoryRegister {
+                entries: Vec::new(),
+                mode: TransferMode::Copy,
+            }),
+        },
+    );
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.active().selection.primary().head, 1);
+}

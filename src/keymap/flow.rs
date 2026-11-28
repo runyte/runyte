@@ -697,13 +697,14 @@ impl Analysis<'_> {
                         if first && index == 0 {
                             state = self.restore_temporary(state);
                         }
-                        if !condition.applicable_in(self.scope(state)) {
+                        if !condition.applicable_to(self.scope(state), self.role(state)) {
                             return Err(format!(
                                 "step {path}: condition is unavailable in {}",
                                 self.kinds[state.kind]
                             ));
                         }
                         let matches = match condition {
+                            Condition::BufferType(kind) => Some(self.kinds[state.kind] == kind),
                             Condition::Mode(mode) => Some(self.role(state) == *mode),
                             Condition::NamedMode(name) => {
                                 Some(self.graph().id(name) == Some(state.mode))

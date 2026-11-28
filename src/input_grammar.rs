@@ -300,6 +300,14 @@ impl ActiveGrammar {
         }
     }
 
+    pub(crate) fn pending_register(&self) -> char {
+        let Self::Runyte(grammar) = self;
+        grammar
+            .program
+            .as_ref()
+            .map_or('"', |program| program.pending_register)
+    }
+
     pub(crate) fn set_pending_register(&mut self, register: char) {
         let Self::Runyte(grammar) = self;
         if let Some(program) = grammar.program.as_mut() {

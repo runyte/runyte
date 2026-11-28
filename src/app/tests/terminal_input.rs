@@ -1039,3 +1039,38 @@ fn step_extension_and_register_overrides_apply_to_terminal_review() {
     assert!(selection.primary().is_empty());
     assert_eq!(app.mode, Mode::Normal);
 }
+
+#[test]
+fn conditions_read_terminal_review_instead_of_the_backing_buffer() {
+    for (condition, ranges, expected) in [
+        ("selection-has-text", vec![Range::point(0)], false),
+        ("selection-has-text", vec![Range::new(0, 2)], true),
+        (
+            "multiple-selections",
+            vec![Range::point(0), Range::point(4)],
+            true,
+        ),
+        ("read-only", vec![Range::point(0)], true),
+        ("{buffer-type: terminal}", vec![Range::point(0)], true),
+    ] {
+        let (mut app, terminal) = terminal_app(&format!(
+            "bind: {{terminal: {{F6: {{if: {condition}, then: [yank], else: []}}}}}}"
+        ));
+        app.apply_terminal_output(TerminalOutput::Bytes {
+            id: terminal,
+            bytes: b"abcdef".to_vec(),
+        });
+        app.set_editing_role(Mode::Normal);
+        let session = app.terminals.get_mut(terminal).unwrap();
+        session.begin_review();
+        let generation = session.review_selection_state().unwrap().0;
+        assert!(session.restore_review_selection(generation, Selection::new(ranges, 0)));
+        send(&mut app, "F6");
+        assert_eq!(
+            app.registers.contains_key(&'"'),
+            expected,
+            "{condition}: {}",
+            app.status
+        );
+    }
+}

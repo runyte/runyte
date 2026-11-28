@@ -589,6 +589,22 @@ fn parse_rule(mode: Mode, source: &str, value: &Value, base: &Keymap) -> Result<
     parse_rule_in(mode, source, value, base, None)
 }
 
+pub(super) fn validate_list_binding(value: &Value) -> Result<(), String> {
+    if !value.is_null() {
+        let plain = value.is_string()
+            || value.as_mapping().is_some_and(|fields| {
+                fields.len() == 1
+                    && fields
+                        .get(Value::String("action".into()))
+                        .is_some_and(Value::is_string)
+            });
+        if !plain {
+            return Err("list bindings take a single action in 0.5".into());
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn parse_rule_in(
     mode: Mode,
     source: &str,
@@ -596,6 +612,9 @@ pub(super) fn parse_rule_in(
     base: &Keymap,
     scope: Option<BindingScope>,
 ) -> Result<Rule, String> {
+    if mode == Mode::List {
+        validate_list_binding(value)?;
+    }
     let tokens: Vec<_> = source.split_whitespace().collect();
     if tokens.is_empty() || tokens.len() > 8 {
         return Err("expected 1 through 8 keys".into());
