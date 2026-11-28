@@ -649,33 +649,37 @@ fn every_terminal_dispatch_branch_has_a_reviewed_meaning() {
         .chain(&pending_4c2)
         .map(|command| format!("{command:?}"))
         .collect::<BTreeSet<_>>();
-    let source = include_str!("../terminal_workflows.rs")
-        .split_once("pub(super) fn execute_terminal_command_count(")
-        .unwrap()
-        .1
-        .split_once("\n    }\n")
-        .unwrap()
-        .0;
-    let actual = source
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim().strip_prefix("| ").unwrap_or(line.trim());
-            line.starts_with("Command::")
-                .then_some(line.split("=>").next().unwrap())
-        })
-        .flat_map(|pattern| {
-            pattern.split("Command::").skip(1).map(|command| {
-                command
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect::<String>()
+    let source = include_str!("../terminal_workflows.rs").replace("\r\n", "\n");
+    for source in [source.clone(), source.replace("\n", "\r\n")] {
+        let source = source.replace("\r\n", "\n");
+        let source = source
+            .split_once("pub(super) fn execute_terminal_command_count(")
+            .expect("terminal workflow source must contain the counted command dispatcher")
+            .1
+            .split_once("\n    }\n")
+            .expect("terminal command dispatcher must end with an indented closing brace")
+            .0;
+        let actual = source
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim().strip_prefix("| ").unwrap_or(line.trim());
+                line.starts_with("Command::")
+                    .then_some(line.split("=>").next().unwrap())
             })
-        })
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        actual, expected,
-        "audit new terminal meanings before adding dispatch branches"
-    );
+            .flat_map(|pattern| {
+                pattern.split("Command::").skip(1).map(|command| {
+                    command
+                        .chars()
+                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                        .collect::<String>()
+                })
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            actual, expected,
+            "audit new terminal meanings before adding dispatch branches"
+        );
+    }
     for command in shared {
         assert!(
             command
