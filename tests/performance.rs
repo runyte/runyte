@@ -1209,3 +1209,51 @@ fn embedded_preset_phase_fixture() {
     assert!(yaml > 0 && programs > 0);
     println!("\npreset_ns={}", yaml + programs);
 }
+
+#[test]
+#[ignore = "run serially in the release performance job"]
+fn configured_reload_stays_responsive() {
+    let root = runyte::test_support::OwnedTempDir::new().unwrap();
+    let path = root.path().join("config.yaml");
+    let keys = "keys:\n  bind:\n    normal:\n      Ctrl-Left: focus-window-left\n      Ctrl-Right: focus-window-right\n      Ctrl-Up: focus-window-up\n      Ctrl-Down: focus-window-down\n";
+    let mut app = App::new(isolated_startup_config(Config::default()), None).unwrap();
+    app.note_loaded_config(&path);
+    let mut sample = 0;
+    let elapsed = median_of("changed configured reload", 5, || {
+        sample += 1;
+        // Change an actual binding each time; the guard must cover compilation,
+        // not just the unchanged-source cache hit used by palette-only reloads.
+        fs::write(
+            &path,
+            format!(
+                "{keys}      F6: {}\n",
+                if sample % 2 == 0 {
+                    "move-left"
+                } else {
+                    "move-right"
+                }
+            ),
+        )
+        .unwrap();
+        let start = Instant::now();
+        app.execute(parse_colon_command("config-reload").unwrap())
+            .unwrap();
+        start.elapsed()
+    });
+    within(
+        "changed configured reload",
+        elapsed,
+        budget(Duration::from_millis(100)),
+    );
+    let elapsed = median_of("unchanged configured reload", 5, || {
+        let start = Instant::now();
+        app.execute(parse_colon_command("config-reload").unwrap())
+            .unwrap();
+        start.elapsed()
+    });
+    within(
+        "unchanged configured reload",
+        elapsed,
+        budget(Duration::from_millis(50)),
+    );
+}

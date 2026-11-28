@@ -20,6 +20,7 @@ struct State {
     tree_return: Option<(usize, ModeId)>,
 }
 
+#[derive(Clone)]
 pub(super) struct Failure {
     pub binding: usize,
     pub start: ModeId,
@@ -54,7 +55,7 @@ impl Failure {
 }
 struct Analysis<'a> {
     map: &'a Keymap,
-    admitted: HashMap<(BindingScope, Mode), HashSet<BindingTarget>>,
+    admitted: std::sync::Arc<AdmissionInventory>,
     kinds: Vec<&'a str>,
     destinations: Vec<Vec<ModeId>>,
     work: usize,
@@ -648,18 +649,197 @@ impl Analysis<'_> {
     }
 }
 
+type AdmissionInventory = HashMap<(BindingScope, Mode), HashSet<BindingTarget>>;
+
+fn admission_inventory(admission: &Keymap) -> std::sync::Arc<AdmissionInventory> {
+    static DEFAULT: std::sync::OnceLock<std::sync::Arc<AdmissionInventory>> =
+        std::sync::OnceLock::new();
+    static FAST: std::sync::OnceLock<std::sync::Arc<AdmissionInventory>> =
+        std::sync::OnceLock::new();
+    if std::ptr::eq(admission, super::default_keymap()) {
+        return DEFAULT
+            .get_or_init(|| std::sync::Arc::new(build_admission_inventory(admission)))
+            .clone();
+    }
+    if std::ptr::eq(admission, super::keymap_for(true).as_ref()) {
+        return FAST
+            .get_or_init(|| std::sync::Arc::new(build_admission_inventory(admission)))
+            .clone();
+    }
+    std::sync::Arc::new(build_admission_inventory(admission))
+}
+fn build_admission_inventory(admission: &Keymap) -> AdmissionInventory {
+    let mut admitted = HashMap::new();
+    for &scope in BindingScope::ALL {
+        for mode in [
+            Mode::Normal,
+            Mode::Select,
+            Mode::Insert,
+            Mode::Replace,
+            Mode::List,
+        ] {
+            let mut targets: HashSet<_> = admission
+                .bindings_for_scope(mode, scope)
+                .filter(|b| b.availability == BindingAvailability::Implemented)
+                .flat_map(|b| std::iter::once(b.target).chain(b.program.iter().map(Action::target)))
+                .collect();
+            if matches!(mode, Mode::Normal | Mode::Select) {
+                targets.extend(admission.context_actions(scope).map(|a| a.target));
+            }
+            if mode == Mode::List {
+                targets.insert(C::ListClearFilter.into());
+            }
+            admitted.insert((scope, mode), targets);
+        }
+    }
+    admitted
+}
+
+#[derive(Clone, Default)]
+struct Reachability {
+    states: HashSet<State>,
+    history: HashSet<State>,
+    destinations: Vec<Vec<ModeId>>,
+}
+
+// Bindings without mode-enter cannot create a new named/temporary mode origin.
+// Reuse its fixed point only while every effective preset program remains
+// available in each mode. Removed transitions require a fresh analysis: a
+// superset of reachable states could incorrectly reject a now-valid program.
+fn preset_reachability(map: &Keymap) -> Option<Reachability> {
+    let preset = super::default_keymap();
+    if !map.mode_graph()?.same_structure(preset.mode_graph()?)
+        || map
+            .bindings
+            .iter()
+            .filter(|b| b.configured_actions)
+            .any(|b| {
+                b.program
+                    .iter()
+                    .any(|a| a.target().id() == CommandId::Editor(C::ModeEnter))
+            })
+    {
+        return None;
+    }
+    // Only known preset programs may be skipped. Index by semantic identity,
+    // not key spelling: prefix remapping and fast-pane aliases change keys.
+    type Identity = (BindingScope, Option<String>, BindingTarget);
+    static PROGRAMS: std::sync::OnceLock<HashMap<Identity, Vec<usize>>> =
+        std::sync::OnceLock::new();
+    let programs = PROGRAMS.get_or_init(|| {
+        let mut result: HashMap<Identity, Vec<usize>> = HashMap::new();
+        for (index, binding) in preset.bindings.iter().enumerate() {
+            result
+                .entry((
+                    binding.scope,
+                    binding.binding_mode.as_deref().map(str::to_owned),
+                    binding.target,
+                ))
+                .or_default()
+                .push(index);
+        }
+        result
+    });
+    let identity = |b: &Binding| {
+        programs
+            .get(&(
+                b.scope,
+                b.binding_mode.as_deref().map(str::to_owned),
+                b.target,
+            ))
+            .and_then(|indices| {
+                indices.iter().copied().find(|&index| {
+                    let p = &preset.bindings[index];
+                    p.program == b.program && p.availability == b.availability
+                })
+            })
+    };
+    if map
+        .bindings
+        .iter()
+        .filter(|b| !b.configured_actions)
+        .any(|b| identity(b).is_none())
+    {
+        return None;
+    }
+    let effective = |keymap: &Keymap, mode| -> HashSet<usize> {
+        keymap
+            .lookup_index
+            .get(&LookupContext::Named(mode))
+            .and_then(|entries| entries.get(&KeySequence(Vec::new())))
+            .into_iter()
+            .flat_map(|entry| &entry.continuations)
+            .filter_map(|&index| {
+                let binding = &keymap.bindings[index];
+                (!binding.configured_actions)
+                    .then(|| identity(binding))
+                    .flatten()
+            })
+            .collect()
+    };
+    for (mode, definition) in preset.mode_graph()?.modes() {
+        let candidate = map.mode_graph()?.id(definition.name())?;
+        if !effective(preset, mode).is_subset(&effective(map, candidate)) {
+            return None;
+        }
+    }
+    static PRESET: std::sync::OnceLock<Option<Reachability>> = std::sync::OnceLock::new();
+    let seed = PRESET
+        .get_or_init(|| {
+            let (failures, reachability) = analyze(preset, preset, MAX_WORK, None);
+            failures.is_empty().then_some(reachability)
+        })
+        .as_ref()?;
+    let translate_mode = |id| {
+        map.mode_graph()
+            .unwrap()
+            .id(preset.mode_graph().unwrap().get(id).unwrap().name())
+            .unwrap()
+    };
+    let translate = |state: &State| State {
+        mode: translate_mode(state.mode),
+        temporary: state
+            .temporary
+            .map(|(role, mode)| (role, translate_mode(mode))),
+        tree_return: state
+            .tree_return
+            .map(|(kind, mode)| (kind, translate_mode(mode))),
+        ..*state
+    };
+    Some(Reachability {
+        states: seed.states.iter().map(translate).collect(),
+        history: seed.history.iter().map(translate).collect(),
+        destinations: seed
+            .destinations
+            .iter()
+            .map(|modes| modes.iter().copied().map(translate_mode).collect())
+            .collect(),
+    })
+}
+
 pub(super) fn failures(map: &Keymap, admission: &Keymap) -> Vec<Failure> {
     #[cfg(feature = "startup-timing")]
     let started = std::time::Instant::now();
-    let result = failures_with_limit(map, admission, MAX_WORK);
+    let seed = preset_reachability(map);
+    let result = analyze(map, admission, MAX_WORK, seed.as_ref()).0;
     #[cfg(feature = "startup-timing")]
     super::configured::record_mode_flow_time_ns(started.elapsed().as_nanos());
     result
 }
 
+#[cfg(test)]
 fn failures_with_limit(map: &Keymap, admission: &Keymap, work_limit: usize) -> Vec<Failure> {
+    analyze(map, admission, work_limit, None).0
+}
+
+fn analyze(
+    map: &Keymap,
+    admission: &Keymap,
+    work_limit: usize,
+    seed: Option<&Reachability>,
+) -> (Vec<Failure>, Reachability) {
     let Some(tables) = &map.overrides.1 else {
-        return Vec::new();
+        return (Vec::new(), Reachability::default());
     };
     let kinds: Vec<_> = tables.buffer_types.keys().map(String::as_str).collect();
     // Every role is a possible initial state. Named entry expands reachability;
@@ -685,29 +865,7 @@ fn failures_with_limit(map: &Keymap, admission: &Keymap, work_limit: usize) -> V
                 .collect(),
         );
     }
-    let mut admitted = HashMap::new();
-    for &scope in BindingScope::ALL {
-        for mode in [
-            Mode::Normal,
-            Mode::Select,
-            Mode::Insert,
-            Mode::Replace,
-            Mode::List,
-        ] {
-            let mut targets: HashSet<_> = admission
-                .bindings_for_scope(mode, scope)
-                .filter(|b| b.availability == BindingAvailability::Implemented)
-                .flat_map(|b| std::iter::once(b.target).chain(b.program.iter().map(Action::target)))
-                .collect();
-            if matches!(mode, Mode::Normal | Mode::Select) {
-                targets.extend(admission.context_actions(scope).map(|a| a.target));
-            }
-            if mode == Mode::List {
-                targets.insert(C::ListClearFilter.into());
-            }
-            admitted.insert((scope, mode), targets);
-        }
-    }
+    let admitted = admission_inventory(admission);
     let mut analysis = Analysis {
         map,
         admitted,
@@ -747,7 +905,40 @@ fn failures_with_limit(map: &Keymap, admission: &Keymap, work_limit: usize) -> V
             }
         }
     }
+    if let Some(seed) = seed {
+        pending = seed.states.clone();
+        analysis.history = seed.history.clone();
+        analysis.destinations = seed.destinations.clone();
+    }
     let mut seen = HashSet::new();
+    // The same binding/state recurs when history grows. Programs without any
+    // mode effect have no dependency on that growing destination/history set.
+    let independent: Vec<_> = map
+        .bindings
+        .iter()
+        .map(|b| {
+            b.program.iter().all(|a| {
+                a.target().id().descriptor().is_some_and(|d| {
+                    !d.policy.effects.iter().any(|effect| {
+                        matches!(
+                            effect,
+                            ActionEffect::Mode
+                                | ActionEffect::View
+                                | ActionEffect::Pane
+                                | ActionEffect::Background
+                                | ActionEffect::Prompt
+                        )
+                    })
+                }) && !matches!(
+                    a.target().id(),
+                    CommandId::Editor(
+                        C::SelectionUndo | C::SelectionRedo | C::ShrinkSyntaxSelection
+                    )
+                )
+            })
+        })
+        .collect();
+    let mut memo: HashMap<(State, usize), Result<Vec<State>, String>> = HashMap::new();
     let mut errors = Vec::new();
     let mut failed = HashSet::new();
     while let Some(state) = pending.iter().next().copied() {
@@ -757,12 +948,23 @@ fn failures_with_limit(map: &Keymap, admission: &Keymap, work_limit: usize) -> V
         }
         for &index in &indices[&state.mode] {
             let binding = &map.bindings[index];
-            if binding.availability != BindingAvailability::Implemented {
+            if binding.availability != BindingAvailability::Implemented
+                || (seed.is_some() && !binding.configured_actions)
+            {
                 continue;
             }
             analysis.owner = binding.scope;
             analysis.configured = binding.configured_actions;
-            match analysis.walk(&binding.program, vec![state], "", true, false) {
+            let result = if let Some(cached) = memo.get(&(state, index)) {
+                cached.clone()
+            } else {
+                let result = analysis.walk(&binding.program, vec![state], "", true, false);
+                if independent[index] {
+                    memo.insert((state, index), result.clone());
+                }
+                result
+            };
+            match result {
                 Ok(outputs) => {
                     for &output in &outputs {
                         analysis.remember_history(output);
@@ -787,7 +989,7 @@ fn failures_with_limit(map: &Keymap, admission: &Keymap, work_limit: usize) -> V
                 Err(_) => {}
             }
             if analysis.work > analysis.work_limit {
-                return errors;
+                return (errors, Reachability::default());
             }
         }
         pending.extend(analysis.observed.drain(..));
@@ -807,7 +1009,14 @@ fn failures_with_limit(map: &Keymap, admission: &Keymap, work_limit: usize) -> V
             analysis.destinations_changed = false;
         }
     }
-    errors
+    (
+        errors,
+        Reachability {
+            states: seen,
+            history: analysis.history,
+            destinations: analysis.destinations,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -841,7 +1050,7 @@ mod tests {
         };
         let mut analysis = Analysis {
             map,
-            admitted: HashMap::new(),
+            admitted: std::sync::Arc::new(HashMap::new()),
             kinds: vec!["text"],
             destinations: vec![modes],
             work: 0,
@@ -862,6 +1071,87 @@ mod tests {
             analysis.work, 5,
             "one input plus four generated destinations"
         );
+    }
+
+    #[test]
+    fn incremental_admission_matches_full_analysis_for_changed_programs() {
+        use super::*;
+        let preset = super::super::default_keymap();
+        for source in [
+            "[move-right, yank]",
+            "[insert-newline]",
+            "[focus-window-right, yank]",
+            "[selection-undo, insert-newline]",
+            "[{if: {mode: select}, then: [yank], else: [insert-newline]}]",
+        ] {
+            let definitions: Vec<super::super::step::StepDef> =
+                serde_yaml::from_str(source).unwrap();
+            let program = super::super::step::compile(&definitions, 0, false).unwrap();
+            let mut map = preset.clone();
+            let mut binding = map
+                .bindings
+                .iter()
+                .find(|b| b.sequence.to_string() == "j" && b.scope == BindingScope::Global)
+                .unwrap()
+                .clone();
+            binding.sequence = KeySequence::parse("F6").unwrap();
+            binding.program = program;
+            binding.configured_actions = true;
+            map.bindings.push(binding);
+            map.rebuild_lookup_index();
+            let seed = preset_reachability(&map).expect("non-expanding override is incremental");
+            let normalize = |failures: Vec<Failure>| {
+                let mut messages: Vec<_> = failures
+                    .into_iter()
+                    .map(|failure| {
+                        (
+                            failure.binding,
+                            map.mode_graph()
+                                .unwrap()
+                                .get(failure.start)
+                                .unwrap()
+                                .name()
+                                .to_owned(),
+                            failure.kind,
+                        )
+                    })
+                    .collect();
+                messages.sort();
+                messages.dedup();
+                messages
+            };
+            assert_eq!(
+                normalize(analyze(&map, preset, MAX_WORK, Some(&seed)).0),
+                normalize(analyze(&map, preset, MAX_WORK, None).0),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn removed_preset_transitions_require_full_analysis() {
+        use super::*;
+        let preset = super::super::default_keymap();
+        for key in ["x", "X", "v"] {
+            let mut map = preset.clone();
+            let before = map.bindings.len();
+            map.bindings
+                .retain(|binding| binding.sequence.to_string() != key);
+            assert!(map.bindings.len() < before);
+            map.rebuild_lookup_index();
+            assert!(preset_reachability(&map).is_none(), "removed {key}");
+        }
+    }
+
+    #[test]
+    fn preview_fixture_preserves_preset_reachability() {
+        use super::*;
+        let config = serde_yaml::from_str(
+            "editor:\n  fast_pane_keys: true\nkeys:\n  bind:\n    normal:\n      Ctrl-Left: focus-window-left\n      Ctrl-Right: focus-window-right\n      Ctrl-Up: focus-window-up\n      Ctrl-Down: focus-window-down\n",
+        ).unwrap();
+        let result = configured::compile_configuration(&config, super::super::default_keymap());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert!(preset_reachability(&result.keymap).is_some());
     }
 
     #[test]

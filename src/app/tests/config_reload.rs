@@ -794,3 +794,53 @@ fn focus_reload_adopts_the_file_toggle_and_tuning_and_rejects_invalid_values() {
     }
     fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn unrelated_reload_reuses_compilation_and_key_edits_invalidate_it() {
+    let source = "keys:\n  bind:\n    normal:\n      F6: move-left\n";
+    let (mut app, path) = editor("cached-keymap.yaml", source);
+    let previous = app.keymap_compilation.1.keymaps.as_ref().unwrap()[0].clone();
+    fs::write(
+        &path,
+        format!("{source}editor:\n  preview_theme_colors: false\n"),
+    )
+    .unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert!(!app.config.editor.preview_theme_colors);
+    assert!(Arc::ptr_eq(
+        &previous,
+        &app.keymap_compilation.1.keymaps.as_ref().unwrap()[0]
+    ));
+    fs::write(&path, source.replace("move-left", "move-right")).unwrap();
+    app.execute_command("config-reload").unwrap();
+    assert!(!Arc::ptr_eq(
+        &previous,
+        &app.keymap_compilation.1.keymaps.as_ref().unwrap()[0]
+    ));
+    let Lookup::Exact(binding) = app
+        .keymap
+        .lookup(Mode::Normal, &KeySequence::parse("F6").unwrap())
+    else {
+        panic!("updated binding missing");
+    };
+    assert_eq!(binding.target, EditorCommand::MoveRight.into());
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn cached_rejected_entries_keep_reload_diagnostics() {
+    let source = "keys:\n  bind:\n    normal:\n      F6: no-such-action\n      F7: yank\n";
+    let (mut app, path) = editor("cached-rejection.yaml", source);
+    let errors = app.keymap_compilation.1.errors.clone();
+    assert!(!errors.is_empty());
+    for _ in 0..2 {
+        app.execute_command("config-reload").unwrap();
+        assert_eq!(app.keymap_compilation.1.errors, errors);
+        assert!(
+            app.status.contains("1 key binding entries rejected"),
+            "{}",
+            app.status
+        );
+    }
+    fs::remove_file(path).unwrap();
+}

@@ -39,8 +39,13 @@ fn main() {
             .unwrap();
         let reload_ns = start.elapsed().as_nanos();
         let reload_flow_ns = configured::take_mode_flow_time_ns();
+        let start = Instant::now();
+        app.execute(parse_colon_command("config-reload").unwrap())
+            .unwrap();
+        let unchanged_reload_ns = start.elapsed().as_nanos();
+        let unchanged_reload_flow_ns = configured::take_mode_flow_time_ns();
         println!(
-            "{{\"case\":\"{case}\",\"preset_ns\":{preset_ns},\"compile_ns\":{compile_ns},\"compile_flow_ns\":{compile_flow_ns},\"reload_ns\":{reload_ns},\"reload_flow_ns\":{reload_flow_ns}}}"
+            "{{\"case\":\"{case}\",\"preset_ns\":{preset_ns},\"compile_ns\":{compile_ns},\"compile_flow_ns\":{compile_flow_ns},\"reload_ns\":{reload_ns},\"reload_flow_ns\":{reload_flow_ns},\"unchanged_reload_ns\":{unchanged_reload_ns},\"unchanged_reload_flow_ns\":{unchanged_reload_flow_ns}}}"
         );
         std::hint::black_box(outcome);
     }

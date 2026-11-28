@@ -262,6 +262,12 @@ pub(super) fn configure_graph(
             }
         }
     }
+    if definitions == tables.definitions
+        && starts == tables.buffer_types
+        && names.len() == tables.graph.modes().count()
+    {
+        return Ok(base.clone());
+    }
     let graph = ModeGraph::compile(&definitions, &names, &[], &starts, &required_buffer_types())?;
     let mut candidate = base.clone();
     candidate.overrides.1 = Some(std::sync::Arc::new(Tables {

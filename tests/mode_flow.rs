@@ -299,3 +299,11 @@ fn legacy_maps_keep_starting_mode_admission_without_a_graph() {
         ));
     }
 }
+
+#[test]
+fn standalone_program_does_not_inherit_removed_temporary_origins() {
+    let result = compile(
+        "keys:\n  defaults: false\n  bind:\n    normal:\n      F5: open-command-palette\n    select:\n      F6: [move-right, {if: {mode: select}, then: [yank], else: [insert-newline]}]\n",
+    );
+    assert!(result.errors.is_empty(), "{:?}", result.errors);
+}

@@ -82,7 +82,7 @@ pub enum RoleNames {
 }
 pub type BufferTypes = BTreeMap<String, RoleNames>;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BindingMode {
     name: String,
     parent: Option<ModeId>,
@@ -124,6 +124,28 @@ pub(crate) fn valid_name(name: &str) -> Result<(), String> {
 }
 
 impl ModeGraph {
+    /// Identity generations differ between compilations; execution structure does not.
+    pub(crate) fn same_structure(&self, other: &Self) -> bool {
+        self.modes.len() == other.modes.len()
+            && self.modes.iter().zip(&other.modes).all(|(a, b)| {
+                a.name == b.name
+                    && a.unbound_keys == b.unbound_keys
+                    && a.parent.map(|id| id.index) == b.parent.map(|id| id.index)
+            })
+            && self.roles.len() == other.roles.len()
+            && self
+                .roles
+                .iter()
+                .zip(&other.roles)
+                .all(|((ak, a), (bk, b))| {
+                    ak == bk
+                        && a.len() == b.len()
+                        && a.iter()
+                            .zip(b)
+                            .all(|((ar, a), (br, b))| ar == br && a.index == b.index)
+                })
+    }
+
     /// Compile only after preset and user declarations have been layered.
     /// A binding table implicitly declares its mode, including an empty table.
     /// Entry targets alone do not make a misspelt mode valid (decision 22).
