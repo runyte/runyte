@@ -27,6 +27,7 @@ pub mod pointer_actions;
 pub mod presets;
 pub mod program;
 mod scopes;
+mod step;
 pub(crate) use scopes::admit as admits_scoped_action;
 pub mod terminal_input;
 pub mod ui;

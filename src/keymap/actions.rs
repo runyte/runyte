@@ -14,7 +14,6 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 /// Bound the work and storage of configured assignments across all mode files.
 pub const MAX_BINDINGS: usize = 65_536;
 const MAX_ACTIONS: usize = super::program::MAX_STEPS;
-const MAX_ARGUMENT_BYTES: usize = 4096;
 
 #[cfg(test)]
 thread_local! {
@@ -118,46 +117,47 @@ pub(super) fn mode_slice(mode: Mode) -> &'static [Mode] {
 pub(super) fn parse_action(
     value: &Value,
     mode: Mode,
-    preset: bool,
+    bypass_global_admission: bool,
 ) -> Result<(Action, String), String> {
-    if !preset && super::presets::has_stage5_steps(value) {
+    if value
+        .as_mapping()
+        .is_some_and(|m| m.contains_key("command") || m.contains_key("argument"))
+    {
+        return Err(super::step::SYNTAX_HINT.into());
+    }
+    // Scoped admission does not grant access to embedded-only step syntax.
+    if super::presets::has_stage5_steps(value) {
         return Err(super::presets::STAGE5_DIAGNOSTIC.into());
     }
-    let (name, argument) = match value {
-        Value::String(name) => (name.as_str(), None),
-        Value::Mapping(mapping)
-            if mapping.len() <= 2
-                && mapping
-                    .keys()
-                    .all(|key| matches!(key.as_str(), Some("command" | "argument"))) =>
-        {
-            let name = mapping
-                .get("command")
-                .and_then(Value::as_str)
-                .ok_or("command must be a string")?;
-            let argument = mapping
-                .get("argument")
-                .map(|value| value.as_str().ok_or("argument must be a string"))
-                .transpose()?;
-            (name, argument)
+    let step: super::step::StepDef = serde_yaml::from_value(value.clone())
+        .map_err(|error| format!("{error}; {}", super::step::SYNTAX_HINT))?;
+    match step {
+        super::step::StepDef::Name(name) => {
+            resolve_action(&name, None, mode, bypass_global_admission)
         }
-        _ => return Err("expected an action name or { command, argument }".into()),
-    };
-    if name.len() > 128
-        || argument.is_some_and(|argument| {
-            argument.len() > MAX_ARGUMENT_BYTES || argument.chars().any(char::is_control)
-        })
-    {
-        return Err(
-            "action name or argument exceeds its bound or contains control characters".into(),
-        );
+        super::step::StepDef::Action(step) => resolve_action(
+            &step.action,
+            step.arg.as_deref(),
+            mode,
+            bypass_global_admission,
+        ),
+        super::step::StepDef::Conditional(_) => Err(super::presets::STAGE5_DIAGNOSTIC.into()),
     }
+}
+
+pub(super) fn resolve_action(
+    name: &str,
+    argument: Option<&str>,
+    mode: Mode,
+    bypass_global_admission: bool,
+) -> Result<(Action, String), String> {
+    super::step::validate_action(name, argument).map_err(str::to_owned)?;
     let editor = EditorCommand::ALL
         .iter()
         .copied()
         .find(|command| command.metadata().name == name);
     let action = if let Some(command) = editor {
-        if !preset && !editor_modes(command).contains(&mode) {
+        if !bypass_global_admission && !editor_modes(command).contains(&mode) {
             return Err(format!(
                 "{name} is not a configurable {} action",
                 mode_name(mode)
@@ -179,14 +179,14 @@ pub(super) fn parse_action(
         let invocation =
             command::parse_named_command(name, argument).map_err(|error| error.to_string())?;
         if let CommandId::Editor(command) = invocation.id() {
-            if !preset && !editor_modes(command).contains(&mode) {
+            if !bypass_global_admission && !editor_modes(command).contains(&mode) {
                 return Err(format!(
                     "{name} is not a configurable {} action",
                     mode_name(mode)
                 ));
             }
         } else if let CommandId::Colon(command) = invocation.id()
-            && !preset
+            && !bypass_global_admission
             && !command.action_policy().global_binding_modes.contains(&mode)
         {
             return Err("colon-only commands require normal or select mode".into());
@@ -636,9 +636,6 @@ pub(super) fn parse_rule_in(
     let parsed = values
         .into_iter()
         .map(|value| {
-            if super::presets::has_stage5_steps(value) {
-                return Err(super::presets::STAGE5_DIAGNOSTIC.into());
-            }
             let scoped = scope.filter(|scope| *scope != BindingScope::Global || mode == Mode::List);
             let parsed = parse_action(value, mode, scoped.is_some())?;
             if let Some(scope) = scoped
@@ -967,7 +964,7 @@ pub fn reference() -> String {
             );
         }
     }
-    out.push_str("\n## Colon commands\n\nThese accept the same arguments as the command palette, supplied separately\nas `{ command: name, argument: text }`. They are available in Normal and\nSelect modes. Prompt and background effects must end a sequence; supplying prompt input removes only that prompt. Required arguments must be supplied.\n\n| Command | Usage | Description |\n| --- | --- | --- |\n");
+    out.push_str("\n## Colon commands\n\nThese accept the same arguments as the command palette, supplied separately\nas `{ action: name, arg: text }`. They are available in Normal and\nSelect modes. Prompt and background effects must end a sequence; supplying prompt input removes only that prompt. Required arguments must be supplied.\n\n| Command | Usage | Description |\n| --- | --- | --- |\n");
     for spec in command::COMMANDS {
         if matches!(spec.id, CommandId::Colon(_)) {
             let _ = writeln!(
@@ -1074,7 +1071,7 @@ mod tests {
         let sections = [
             None,
             Some(
-                "leader: Ctrl-x\nwindow: Ctrl-a\nrebind:\n  Space g: Leader G\nbind:\n  normal:\n    J: null\n    F6: [select-all, yank]\n    Leader q: { command: pipe, argument: sort }\n  insert:\n    Ctrl-s: save\n",
+                "leader: Ctrl-x\nwindow: Ctrl-a\nrebind:\n  Space g: Leader G\nbind:\n  normal:\n    J: null\n    F6: [select-all, yank]\n    Leader q: { action: pipe, arg: sort }\n  insert:\n    Ctrl-s: save\n",
             ),
             Some(
                 "defaults: false\nleader: Ctrl-x\nbind:\n  normal:\n    ':': open-command-palette\n    Leader h: move-down\n  select:\n    Esc: enter-normal-mode\n  insert:\n    Esc: enter-normal-mode\n  replace:\n    Esc: enter-normal-mode\n",

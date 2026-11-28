@@ -60,8 +60,8 @@ fn family_migrations_are_unique_documented_and_refused_in_every_binding_form() {
         for binding in [
             old.clone(),
             format!("[move-right, {old}]"),
-            format!("{{command: {old}}}"),
-            format!("{{command: {old}, argument: value}}"),
+            format!("{{action: {old}}}"),
+            format!("{{action: {old}, arg: value}}"),
         ] {
             let index = cases.len();
             let key = format!(

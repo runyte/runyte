@@ -56,7 +56,7 @@ fn action_binding_counts_character_arguments_and_runtime_errors() {
 #[test]
 fn action_bindings_preserve_insert_replace_modes_and_render_full_help() {
     let mut app = configured(
-        "bind:\n  common:\n    F1: [select-all, yank]\n  normal:\n    F2: {command: help, argument: key-actions}\n  insert:\n    F3: insert-newline\n  replace:\n    F3: enter-normal-mode\n",
+        "bind:\n  common:\n    F1: [select-all, yank]\n  normal:\n    F2: {action: help, arg: key-actions}\n  insert:\n    F3: insert-newline\n  replace:\n    F3: enter-normal-mode\n",
     );
     seed(&mut app, "abc");
     press(&mut app, 'i');
@@ -467,9 +467,8 @@ fn program_counts_skip_nonaccepting_steps_and_drop_unused_counts() {
 
 #[test]
 fn singleton_bindings_drop_unused_counts_for_operands_and_invocations() {
-    let mut app = configured(
-        "bind: {normal: {F1: find-next-char, F2: {command: help, argument: key-actions}}}",
-    );
+    let mut app =
+        configured("bind: {normal: {F1: find-next-char, F2: {action: help, arg: key-actions}}}");
     seed(&mut app, "axxb");
     press(&mut app, '2');
     key(&mut app, KeyCode::Function(1), Modifiers::NONE);
@@ -1110,7 +1109,7 @@ fn internal_programs_cannot_continue_after_deferred_macro_replay() {
 #[test]
 fn configured_grammar_and_tree_mode_changes_preserve_the_tail() {
     let mut app = configured(
-        "bind: {normal: {F6: [{command: grammar, argument: runyte}, move-right], F7: [directory-tree-focus, close-window]}}",
+        "bind: {normal: {F6: [{action: grammar, arg: runyte}, move-right], F7: [directory-tree-focus, close-window]}}",
     );
     seed(&mut app, "abc");
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
@@ -1123,7 +1122,7 @@ fn configured_grammar_and_tree_mode_changes_preserve_the_tail() {
 #[test]
 fn terminal_mode_changes_and_supplied_name_continue_the_program() {
     let mut app = configured(
-        "bind: {terminal: {F6: [terminal-enter-input, enter-normal-mode, terminal-leave], F7: [{command: terminal-rename, argument: build}, terminal-leave]}}",
+        "bind: {terminal: {F6: [terminal-enter-input, enter-normal-mode, terminal-leave], F7: [{action: terminal-rename, arg: build}, terminal-leave]}}",
     );
     let terminal = app.terminals.insert_test_session(80, 24);
     app.active_mut().terminal = Some(terminal);

@@ -1262,8 +1262,7 @@ mod tests {
     #[test]
     fn direct_configured_action_descriptions_remain_literal_prose() {
         let argument = "echo {key:nope} {binding:Space e} `literal`";
-        let source =
-            format!("bind: {{normal: {{F12: {{command: pipe, argument: '{argument}'}}}}}}");
+        let source = format!("bind: {{normal: {{F12: {{action: pipe, arg: '{argument}'}}}}}}");
         let compiled = crate::keymap::configured::compile(
             &serde_yaml::from_str(&source).unwrap(),
             default_keymap(),

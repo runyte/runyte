@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Embedded semantic presets. Parsing is independent of user override
 //! admission, whose inventory itself depends on this default registry.
+use super::step::{ActionDef, ConditionDef, ConditionName, StepDef, StepRecord};
 use super::*;
 use serde::{
     Deserialize, Deserializer,
@@ -136,55 +137,6 @@ impl<'de> Deserialize<'de> for Availability {
     }
 }
 
-#[derive(Debug, PartialEq)]
-enum StepDef {
-    Name(String),
-    Enter(Enter),
-    Conditional(Conditional),
-    Command(NamedCommand),
-}
-#[derive(Deserialize, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
-struct Enter {
-    action: String,
-    arg: String,
-    #[serde(default)]
-    temporary: bool,
-}
-#[derive(Deserialize, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
-struct NamedCommand {
-    command: String,
-    argument: Option<String>,
-}
-#[derive(Deserialize, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
-struct Conditional {
-    #[serde(rename = "if")]
-    condition: ConditionDef,
-    then: Vec<StepDef>,
-    #[serde(rename = "else")]
-    otherwise: Vec<StepDef>,
-}
-#[derive(Deserialize, Debug, PartialEq)]
-#[serde(untagged)]
-enum ConditionDef {
-    Mode(ModeCondition),
-    Name(ConditionName),
-}
-#[derive(Deserialize, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
-struct ModeCondition {
-    mode: Mode,
-}
-#[derive(Deserialize, Debug, PartialEq)]
-#[serde(rename_all = "kebab-case")]
-enum ConditionName {
-    RecordingMacro,
-    TreeEntryExpanded,
-    TreeEntryIsDirectory,
-    TreeEntryIsRoot,
-}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Namespace {
@@ -230,15 +182,21 @@ struct BindingMap {
     alias: Option<String>,
     alias_modes: Option<Vec<Mode>>,
     platforms: Option<Vec<Platform>>,
+    #[serde(default, deserialize_with = "super::step::present_string")]
     action: Option<String>,
+    #[serde(default, deserialize_with = "super::step::present_string")]
     arg: Option<String>,
+    #[serde(default, deserialize_with = "super::step::present")]
     temporary: Option<bool>,
-    command: Option<String>,
-    argument: Option<String>,
-    #[serde(rename = "if")]
+    #[serde(default, deserialize_with = "super::step::present")]
+    command: Option<Value>,
+    #[serde(default, deserialize_with = "super::step::present")]
+    argument: Option<Value>,
+    #[serde(rename = "if", default, deserialize_with = "super::step::present")]
     condition: Option<ConditionDef>,
+    #[serde(default, deserialize_with = "super::step::present")]
     then: Option<Vec<StepDef>>,
-    #[serde(rename = "else")]
+    #[serde(rename = "else", default, deserialize_with = "super::step::present")]
     otherwise: Option<Vec<StepDef>>,
 }
 impl BindingMap {
@@ -257,34 +215,18 @@ impl BindingMap {
         {
             return Err(E::custom("binding metadata requires steps"));
         }
-        match (
-            self.action,
-            self.arg,
-            self.command,
-            self.argument,
-            self.condition,
-            self.then,
-            self.otherwise,
-        ) {
-            (Some(action), Some(arg), None, None, None, None, None) => Ok(StepDef::Enter(Enter {
-                action,
-                arg,
-                temporary: self.temporary.unwrap_or(false),
-            })),
-            (None, None, Some(command), argument, None, None, None) => {
-                Ok(StepDef::Command(NamedCommand { command, argument }))
-            }
-            (None, None, None, None, Some(condition), Some(then), Some(otherwise)) => {
-                Ok(StepDef::Conditional(Conditional {
-                    condition,
-                    then,
-                    otherwise,
-                }))
-            }
-            _ => Err(E::custom(
-                "expected one complete action/arg, command/argument or if/then/else step",
-            )),
+        StepRecord {
+            action: self.action,
+            arg: self.arg,
+            temporary: self.temporary,
+            command: self.command,
+            argument: self.argument,
+            condition: self.condition,
+            then: self.then,
+            otherwise: self.otherwise,
+            ..StepRecord::default()
         }
+        .into_step()
     }
 }
 impl<'de> Deserialize<'de> for BindingDef {
@@ -349,29 +291,6 @@ impl<'de> Deserialize<'de> for BindingDef {
         d.deserialize_any(BindingVisitor)
     }
 }
-impl<'de> Deserialize<'de> for StepDef {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct StepVisitor;
-        impl<'de> Visitor<'de> for StepVisitor {
-            type Value = StepDef;
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("an action name or program step")
-            }
-            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<Self::Value, E> {
-                Ok(StepDef::Name(s.into()))
-            }
-            fn visit_string<E: serde::de::Error>(self, s: String) -> Result<Self::Value, E> {
-                Ok(StepDef::Name(s))
-            }
-            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
-                BindingMap::deserialize(serde::de::value::MapAccessDeserializer::new(map))?
-                    .into_step()
-            }
-        }
-        d.deserialize_any(StepVisitor)
-    }
-}
-
 pub(super) fn load(fast: bool) -> Keymap {
     #[cfg(feature = "startup-timing")]
     let timer = std::time::Instant::now();
@@ -390,7 +309,10 @@ pub(super) fn has_stage5_steps(value: &Value) -> bool {
         Value::Sequence(values) => values.iter().any(has_stage5_steps),
         Value::Mapping(map) => {
             map.contains_key("if")
-                || map.contains_key("action")
+                || map.contains_key("temporary")
+                || map
+                    .get("action")
+                    .is_some_and(|v| v.as_str() == Some("mode-enter"))
                 || map.get("steps").is_some_and(has_stage5_steps)
                 || map
                     .get("command")
@@ -452,42 +374,35 @@ fn program(steps: &[StepDef], depth: usize) -> Result<program::Program, String> 
                         t => actions::Action::Target(t),
                     })
                 }
-                StepDef::Enter(Enter {
+                StepDef::Action(ActionDef {
                     action,
                     arg,
                     temporary,
                 }) => {
-                    if action != "mode-enter" {
-                        return Err("invalid mode-enter action/arg".into());
-                    }
-                    mode_graph::valid_name(arg)?;
-                    S::Action(actions::Action::Invocation(
-                        CommandInvocation::from_parts(
-                            crate::command::CommandId::Editor(
-                                crate::command::EditorCommand::ModeEnter,
-                            ),
-                            if *temporary {
-                                crate::command::InvocationParameters::TemporaryMode(arg.clone())
-                            } else {
-                                crate::command::InvocationParameters::OptionalText(Some(
-                                    arg.clone(),
-                                ))
-                            },
-                            crate::command::CommandExecutionContext::default(),
+                    if action == "mode-enter" {
+                        let arg = arg.as_ref().ok_or("mode-enter requires action/arg")?;
+                        mode_graph::valid_name(arg)?;
+                        S::Action(actions::Action::Invocation(
+                            CommandInvocation::from_parts(
+                                crate::command::CommandId::Editor(
+                                    crate::command::EditorCommand::ModeEnter,
+                                ),
+                                if temporary.unwrap_or(false) {
+                                    crate::command::InvocationParameters::TemporaryMode(arg.clone())
+                                } else {
+                                    crate::command::InvocationParameters::OptionalText(Some(
+                                        arg.clone(),
+                                    ))
+                                },
+                                crate::command::CommandExecutionContext::default(),
+                            )
+                            .map_err(|error| error.to_string())?,
+                        ))
+                    } else {
+                        S::Action(
+                            actions::resolve_action(action, arg.as_deref(), Mode::Normal, true)?.0,
                         )
-                        .map_err(|error| error.to_string())?,
-                    ))
-                }
-                StepDef::Command(command) => {
-                    if command.command == "mode-enter" {
-                        return Err("mode-enter requires action/arg".into());
                     }
-                    let mut value = serde_yaml::Mapping::new();
-                    value.insert("command".into(), command.command.clone().into());
-                    if let Some(arg) = &command.argument {
-                        value.insert("argument".into(), arg.clone().into());
-                    }
-                    S::Action(actions::parse_action(&Value::Mapping(value), Mode::Normal, true)?.0)
                 }
                 StepDef::Conditional(c) => S::If {
                     condition: match &c.condition {
@@ -753,11 +668,44 @@ fn compile_for_platform(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     fn parsed_program(source: &str) -> Result<program::Program, String> {
         let steps: Vec<StepDef> = serde_yaml::from_str(source).map_err(|e| e.to_string())?;
         let program = program(&steps, 0)?;
         validate_entry_targets(&program, keymap_for(false).mode_graph().unwrap())?;
         Ok(program)
+    }
+
+    #[test]
+    fn standalone_and_sequence_steps_share_strict_syntax() {
+        for source in [
+            "{action: help, arg: null}",
+            "{action: help, arg: 2}",
+            "{action: yank, then: null}",
+            "{action: yank, else: null}",
+            "{action: yank, if: null}",
+            "{command: null}",
+            "{action: yank, count: null}",
+            "{action: yank, extend: false}",
+        ] {
+            assert!(
+                serde_yaml::from_str::<BindingDef>(source).is_err(),
+                "{source}"
+            );
+            assert!(
+                serde_yaml::from_str::<BindingDef>(&format!("[{source}]")).is_err(),
+                "{source}"
+            );
+        }
+        for source in ["{action: yank}", "{action: help, arg: key-actions}"] {
+            let BindingDef::Action(step) = serde_yaml::from_str(source).unwrap() else {
+                panic!()
+            };
+            let direct = program(&[step], 0).unwrap();
+            let value = serde_yaml::from_str(source).unwrap();
+            let action = actions::parse_action(&value, Mode::Normal, true).unwrap().0;
+            assert_eq!(direct, program::Program::new(vec![action]).unwrap());
+        }
     }
 
     #[test]
@@ -941,7 +889,7 @@ mod tests {
             "mystery: true",
             "bind: {normal: {x: {steps: [move-left], platforms: []}}}",
             "bind: {normal: {x: {steps: [move-left], platforms: [unknown]}}}",
-            "bind: {normal: {x: {command: move-left, platforms: [macos]}}}",
+            "bind: {normal: {x: {action: move-left, platforms: [macos]}}}",
             "bind: {normal: {x: move-left, x: move-right}}",
             "bind: {normal: {x: {steps: [move-left], mystery: true}}}",
             "bind: {normal: {x: {steps: [move-left], role: other}}}",
@@ -985,7 +933,6 @@ mod tests {
                 "{action: mode-enter, arg: select, temporary: true}",
                 "{if: {mode: select}, then: [move-left], else: []}",
                 "mode-enter",
-                "{command: mode-enter}",
             ] {
                 for source in [
                     format!("bind: {{normal: {{F6: {step}}}}}"),

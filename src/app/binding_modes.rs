@@ -441,7 +441,7 @@ mod tests {
         let path =
             std::env::temp_dir().join(format!("runyte-mode-theme-{}.yaml", std::process::id()));
         let config: Config = serde_yaml::from_str(
-            "editor: {scratch_markdown: false}\nkeys:\n  bind:\n    normal:\n      F6: [{command: theme, argument: dark}, move-right]\n",
+            "editor: {scratch_markdown: false}\nkeys:\n  bind:\n    normal:\n      F6: [{action: theme, arg: dark}, move-right]\n",
         ).unwrap();
         let mut app = App::new(config, None).unwrap();
         app.note_loaded_config(&path);

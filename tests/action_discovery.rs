@@ -55,12 +55,17 @@ fn provenance_tracks_flow_quoted_keys_fragments_aliases_and_rollback() {
 fn copied_yaml_preserves_order_arguments_descriptions_and_scope() {
     for (source, scope, key) in [
         (
+            "bind: {normal: {F6: {steps: [{action: select-all}, {action: help, arg: key-actions}], description: Read help}}}",
+            BindingScope::Global,
+            "F6",
+        ),
+        (
             "bind: {normal: {F6: [select-all, yank]}}",
             BindingScope::Global,
             "F6",
         ),
         (
-            "bind: {normal: {F6: {command: help, argument: key-actions}}}",
+            "bind: {normal: {F6: {action: help, arg: key-actions}}}",
             BindingScope::Global,
             "F6",
         ),
@@ -80,6 +85,8 @@ fn copied_yaml_preserves_order_arguments_descriptions_and_scope() {
         };
         let yaml = discovery::binding_yaml(binding, Mode::Normal, Some(&section), &compiled.keymap)
             .unwrap();
+        assert!(!yaml.contains("command:"), "{yaml}");
+        assert!(!yaml.contains("argument:"), "{yaml}");
         let document: serde_yaml::Value = serde_yaml::from_str(&yaml).unwrap();
         let rebuilt = configured::compile(&document["keys"], default_keymap());
         assert!(rebuilt.errors.is_empty(), "{:?}", rebuilt.errors);
@@ -125,7 +132,7 @@ fn generated_guide_contracts_match_the_shared_renderer() {
 fn composed_keys_are_listed_for_every_member_without_claiming_plain_binding() {
     use runyte::command::{CommandId, EditorCommand};
     let section = serde_yaml::from_str(
-        "bind: {normal: {F6: [select-all, yank], F7: {command: help, argument: key-actions}}}",
+        "bind: {normal: {F6: [select-all, yank], F7: {action: help, arg: key-actions}}}",
     )
     .unwrap();
     let compiled = configured::compile(&section, default_keymap());

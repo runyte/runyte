@@ -203,11 +203,11 @@ fn configuration_rejects_blocking_effects_and_retains_mode_boundaries() {
     use runyte::keymap::{configured, default_keymap};
     for source in [
         "bind: {normal: {F8: [split-vertical, move-left]}}",
-        "bind: {normal: {F8: [{command: pipe, argument: sort}, move-left]}}",
+        "bind: {normal: {F8: [{action: pipe, arg: sort}, move-left]}}",
         "bind: {normal: {F8: list-next}}",
         "bind: {normal: {F8: commit-undo-checkpoint}}",
         "bind: {insert: {F8: git-status}}",
-        "bind: {normal: {F8: {command: surround-replace, argument: ab}}}",
+        "bind: {normal: {F8: {action: surround-replace, arg: ab}}}",
     ] {
         let value = serde_yaml::from_str(source).unwrap();
         let compiled = configured::compile(&value, default_keymap());

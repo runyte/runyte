@@ -12,7 +12,7 @@ fn compile(source: &str) -> configured::CompiledKeymap {
 #[test]
 fn action_bindings_override_after_remapping_and_follow_declared_inheritance() {
     let compiled = compile(
-        "leader: Ctrl-x\nrebind:\n  Space g: Leader G\nbind:\n  normal:\n    X: select-line-up\n    Leader G z: [select-all, yank]\n    F7: { command: pipe, argument: sort }\n  insert:\n    F8: insert-newline\n  replace:\n    F8: insert-other-indent\n",
+        "leader: Ctrl-x\nrebind:\n  Space g: Leader G\nbind:\n  normal:\n    X: select-line-up\n    Leader G z: [select-all, yank]\n    F7: { action: pipe, arg: sort }\n  insert:\n    F8: insert-newline\n  replace:\n    F8: insert-other-indent\n",
     );
     assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
     validate::assert_valid(&compiled.keymap);
@@ -43,7 +43,7 @@ fn action_bindings_override_after_remapping_and_follow_declared_inheritance() {
 #[test]
 fn action_binding_conflicts_roll_back_without_losing_valid_remaps() {
     let compiled = compile(
-        "leader: Ctrl-x\nbind:\n  normal:\n    F1: yank\n    F1 x: select-all\n    F2: [search, yank]\n    F3: not-an-action\n    F4: insert-newline\n    F5: commit-undo-checkpoint\n    F6: {command: pipe}\n    Leader g: yank\n    F8: yank\n",
+        "leader: Ctrl-x\nbind:\n  normal:\n    F1: yank\n    F1 x: select-all\n    F2: [search, yank]\n    F3: not-an-action\n    F4: insert-newline\n    F5: commit-undo-checkpoint\n    F6: {action: pipe}\n    Leader g: yank\n    F8: yank\n",
     );
     assert!(compiled.errors.len() >= 7, "{:?}", compiled.errors);
     validate::assert_valid(&compiled.keymap);
@@ -97,11 +97,11 @@ fn action_configuration_rejects_malformed_and_oversized_values_nonfatally() {
         "bind: {normal: false}",
         "bind: {normal: {1: yank}}",
         "bind: {normal: {F1: []}}",
-        "bind: {normal: {F1: {command: yank, surprise: true}}}",
+        "bind: {normal: {F1: {action: yank, surprise: true}}}",
         "bind: {normal: {'1': yank}}",
         "bind: {normal: {'F1 Esc': yank}}",
         "bind: {normal: {'F1 a b c d e f g h': yank}}",
-        "bind: {normal: {F1: {command: pipe, argument: 2}}}",
+        "bind: {normal: {F1: {action: pipe, arg: 2}}}",
     ] {
         let compiled = compile(source);
         assert!(!compiled.errors.is_empty(), "{source}");
@@ -218,8 +218,8 @@ fn configured_continuation_uses_effects_and_actual_prompt_arguments() {
         "focus-window-right, move-left",
         "show-help, move-file-end",
         "match-bracket, yank",
-        "{command: terminal-rename, argument: build}, move-left",
-        "{command: path}, move-file-end",
+        "{action: terminal-rename, arg: build}, move-left",
+        "{action: path}, move-file-end",
     ] {
         let compiled = compile(&format!("bind: {{normal: {{F8: [{steps}]}}}}"));
         assert!(compiled.errors.is_empty(), "{steps}: {:?}", compiled.errors);
@@ -228,13 +228,99 @@ fn configured_continuation_uses_effects_and_actual_prompt_arguments() {
         "search, yank",
         "goto-word, delete-selection",
         "terminal-rename, move-left",
-        "{command: terminal-rename, argument: ''}, move-left",
-        "{command: file-picker-path, argument: .}, move-left",
-        "{command: pipe, argument: sort}, move-left",
+        "{action: terminal-rename, arg: ''}, move-left",
+        "{action: file-picker-path, arg: .}, move-left",
+        "{action: pipe, arg: sort}, move-left",
         "macro-replay-default, move-left",
         "macro-replay, move-left",
     ] {
         let compiled = compile(&format!("bind: {{normal: {{F8: [{steps}]}}}}"));
         assert!(!compiled.errors.is_empty(), "unexpected admission: {steps}");
+    }
+}
+
+#[test]
+fn typed_steps_reject_legacy_syntax_and_preserve_atomic_rollback() {
+    for step in [
+        "{command: help, argument: key-actions}",
+        "{command: mode-enter, argument: normal}",
+        "{command: null}",
+        "{action: yank, argument: null}",
+        "{pipe: sort}",
+    ] {
+        let result = compile(&format!(
+            "bind: {{normal: {{F6: [select-all, {step}, yank], F7: yank}}}}"
+        ));
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("{ action: <name>, arg: <argument> }")),
+            "{step}: {:?}",
+            result.errors
+        );
+        assert!(matches!(
+            result
+                .keymap
+                .lookup(Mode::Normal, &KeySequence::parse("F6").unwrap()),
+            Lookup::NoMatch
+        ));
+        assert!(matches!(
+            result
+                .keymap
+                .lookup(Mode::Normal, &KeySequence::parse("F7").unwrap()),
+            Lookup::Exact(_)
+        ));
+    }
+}
+
+#[test]
+fn typed_steps_keep_types_options_and_scoped_internal_syntax_strict() {
+    for step in [
+        "{action: yank, then: null}",
+        "{action: yank, else: null}",
+        "{action: yank, if: null}",
+        "{action: help, arg: null}",
+        "{action: help, arg: 2}",
+        "{action: help, arg: true}",
+        "{action: help, arg: []}",
+        "{action: null}",
+        "{action: 2}",
+        "{action: ''}",
+        "{action: yank, count: null}",
+        "{action: yank, register: a}",
+        "{action: yank, extend: false}",
+        "{action: yank, temporary: false}",
+        "{action: mode-enter, arg: normal, temporary: false}",
+        "{if: recording-macro, then: [yank], else: []}",
+        "{action: yank, surprise: false}",
+        "{action: search, arg: TODO}",
+    ] {
+        for mode in ["normal", "directory", "terminal"] {
+            let result = compile(&format!("bind: {{{mode}: {{F6: {step}}}}}"));
+            assert!(!result.errors.is_empty(), "{mode}: {step}");
+            assert_eq!(
+                result.keymap.bindings(),
+                default_keymap().bindings(),
+                "{mode}: {step}"
+            );
+        }
+    }
+}
+
+#[test]
+fn mapped_actions_preserve_bare_action_and_colon_semantics() {
+    for action in ["yank", "select-all", "help"] {
+        let bare = compile(&format!("bind: {{normal: {{F6: {action}}}}}"));
+        let mapped = compile(&format!("bind: {{normal: {{F6: {{action: {action}}}}}}}"));
+        assert!(mapped.errors.is_empty(), "{:?}", mapped.errors);
+        let key = KeySequence::parse("F6").unwrap();
+        let (Lookup::Exact(a), Lookup::Exact(b)) = (
+            bare.keymap.lookup(Mode::Normal, &key),
+            mapped.keymap.lookup(Mode::Normal, &key),
+        ) else {
+            panic!()
+        };
+        assert_eq!(a.program, b.program);
     }
 }
