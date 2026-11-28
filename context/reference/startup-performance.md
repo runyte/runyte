@@ -18,6 +18,37 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — Per-step count, register and extension (stage 5d)
+
+[PR #163](https://github.com/runyte/runyte/pull/163) adds per-step options and
+count-aware mode-flow validation. Ten alternating fresh-process samples after
+warm-up compare the stage 5c probes on x86-64 and merged dev `7a9d45ae` on ARM
+with implementation `30243dd6`. Later commits update documentation and test
+expectations only. [Raw samples](../../benchmarks/results/keymap-steps-2026-11-28.json)
+include local binary hashes, all reload phases and ARM preset/readiness samples.
+The [ARM run](https://github.com/runyte/runyte/actions/runs/46120176196) checks out
+the revisions above; its summary text retains labels from an older diagnostic.
+
+| Platform/profile | Baseline changed ms | 5d changed ms | Baseline unchanged ms | 5d unchanged ms |
+| --- | ---: | ---: | ---: | ---: |
+| x86_64 debug | 1033.355 | 1036.259 | 274.315 | 278.515 |
+| x86_64 release | 95.334 | 95.356 | 26.016 | 25.952 |
+| aarch64 debug | 2906.099 | 2907.969 | 771.261 | 772.369 |
+| aarch64 release | 154.769 | 154.199 | 41.208 | 40.954 |
+
+Both release reload comparisons meet the 25%/20 ms gate. The local idle release
+guard measured 100.764 ms changed and 26.967 ms unchanged, below its 350/100 ms
+ceilings. Installed-binding and zero repeated flow-work assertions pass.
+
+| ARM release readiness | Dev ms | 5d ms | Change |
+| --- | ---: | ---: | ---: |
+| short.txt | 41.801 | 42.094 | +0.70% |
+| short.lua | 42.545 | 42.480 | -0.15% |
+
+Readiness uses ten alternating pairs per fixture; both remain within 5%.
+ARM debug preset initialization: 123.739 → 123.172 ms median.
+ARM release preset initialization: 8.967 → 8.869 ms median.
+
 ## 2026-11-28 — Supplied arguments and literal insertion (stage 5c)
 
 [PR #162](https://github.com/runyte/runyte/pull/162) adds supplied argument
