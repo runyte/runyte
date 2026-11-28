@@ -747,9 +747,12 @@ preset described below.
 
 ### Pending stage 4 splits
 
-`yank-collapse-normal-mode`, `yank-line-collapse-normal-mode`, `paste-after-or-replace`,
-`paste-before`, `clipboard-paste-after`, `clipboard-paste-before`, `search-next`,
-`search-previous`, `clipboard-paste`.
+`paste-after-or-replace`, `clipboard-paste`.
+
+Stage 4c separates terminal paste and review search, makes document paste and
+repeat-search mode-preserving, and replaces bundled yank actions with programs.
+Terminal `Y` now copies whole review rows; it was previously refused. Stage 4c2
+must finish terminal undo-paste and insert/open-line transitions before 4d.
 
 ### Pending stage 5 splits
 
@@ -829,6 +832,8 @@ with its implementation. This is the order for the remaining stage 4 work:
 - **4c — Terminal meanings and programs.** Split operations with distinct
   terminal meanings and author their explicit programs and mode tails. Retain
   shared operations where their meaning is unchanged.
+- **4c2 — Remaining terminal meanings.** Split undo-paste and insert/open-line
+  transitions; empty the terminal dispatch inventory’s pending entries.
 - **4d — Remaining directory, tree and clipboard splits.** Include inherited
   tree `N` and preserve clipboard image/text decisions. Leave the stage 4
   pending-split classification empty.
@@ -957,3 +962,14 @@ Frozen #151 registry and preferred-spelling fixtures cover both variants.
 Decision 39's profiling amendment is recorded in the startup register: optimized
 stock readiness passes the deciding 5% budget without a disk cache. Stage 4
 configuration consolidation and stage 5 public programs remain outstanding.
+
+### Decision 45 — Validate mode-entry roles when loading
+
+For each buffer type, validate every mode-entry role target in effective bindings
+reachable from its role map, including inherited bindings, conditional branches,
+and named destinations. Respect overrides and removals. Report the buffer type,
+active mode, key and missing role; reject the incompatible graph and restore the
+preset graph while retaining valid key edits. Embedded presets pass the same
+check. Terminal paste programs therefore cannot deliver text with an unresolved
+Insert tail. This is the role-resolution part of stage 5 validation; sequential
+mode tracking remains in stage 5. No runtime paste-tail preflight is used.

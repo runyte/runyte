@@ -168,7 +168,8 @@ A word is then selected with `v` first: `v e d` deletes to the end of the word.
 
 **Yank ends the gesture.** `y` and `Y` return to Normal mode and collapse each
 range to a caret on the last character copied, one caret per selection. Their
-actions are `yank-collapse-normal-mode` and `yank-line-collapse-normal-mode`.
+programs run `yank` or `yank-line`, then `collapse-selection` and `mode-enter
+normal`. The primitive actions themselves preserve the selection and mode.
 
 - That makes `y` then `p` a duplicate: the caret pastes past the text just
   yanked. A range that outlived the yank would be invisible in Normal mode

@@ -26,6 +26,17 @@ pub fn admits(scope: BindingScope, target: BindingTarget) -> bool {
 /// Whether `command` does anything in `scope`. Every scope not listed here
 /// shows its buffer as text, where every command has its ordinary meaning.
 pub fn admits_command(scope: BindingScope, command: C) -> bool {
+    if matches!(
+        command,
+        C::TerminalPaste
+            | C::TerminalClipboardPasteText
+            | C::TerminalSearch
+            | C::TerminalSearchRegex
+            | C::TerminalSearchNext
+            | C::TerminalSearchPrevious
+    ) {
+        return scope == BindingScope::Terminal;
+    }
     if command == C::FitSelectionForNormalMode {
         return admits_command(scope, C::EnterNormalMode);
     }
@@ -179,8 +190,6 @@ pub(crate) const TREE_PASSES: &[C] = &[
 /// terminal must be one the same pane can stop.
 const TERMINAL: &[C] = &[
     C::AppendAfter,
-    C::ClipboardPasteAfter,
-    C::ClipboardPasteBefore,
     C::ClipboardYank,
     C::CollapseSelection,
     C::CopySelectionDown,
@@ -230,21 +239,12 @@ const TERMINAL: &[C] = &[
     C::OpenLineBelow,
     C::PageDown,
     C::PageUp,
-    C::PasteAfterOrReplace,
-    C::PasteAfter,
-    C::PasteBefore,
     C::RecordDefaultMacro,
     C::RecordMacro,
     C::ReplayDefaultMacro,
     C::ReplayMacro,
-    C::RotateSelectionBackward,
-    C::RotateSelectionForward,
     C::ScrollViewDown,
     C::ScrollViewUp,
-    C::Search,
-    C::SearchNext,
-    C::SearchPrevious,
-    C::SearchRegex,
     C::SelectAll,
     C::SelectLine,
     C::SelectLineUp,
@@ -254,5 +254,5 @@ const TERMINAL: &[C] = &[
     C::StopMacroRecording,
     C::Undo,
     C::Yank,
-    C::YankCollapseNormalMode,
+    C::YankLine,
 ];

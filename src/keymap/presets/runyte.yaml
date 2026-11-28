@@ -338,10 +338,10 @@ keys:
         alias: Alt-U
       u: undo
       U: redo
-      y: yank-collapse-normal-mode
-      Y: yank-line-collapse-normal-mode
-      p: paste-after-or-replace
-      P: paste-before
+      y: [yank, collapse-selection, {action: mode-enter, arg: normal}]
+      Y: [yank-line, collapse-selection, {action: mode-enter, arg: normal}]
+      p: [paste-after-or-replace, {action: mode-enter, arg: normal}]
+      P: [paste-before, {action: mode-enter, arg: normal}]
       '>': indent
       <: unindent
       Ctrl-c: toggle-comments
@@ -409,8 +409,8 @@ keys:
       Space p t: format-table
       s: search
       /: search-regex
-      n: search-next
-      N: search-previous
+      n: [search-next, {action: mode-enter, arg: select}]
+      N: [search-previous, {action: mode-enter, arg: select}]
       '*':
         - search-set-from-selection
         - search-select-all-matches
@@ -569,8 +569,8 @@ keys:
       Space g r: git-refresh
       Space g t: git-stashes
       Space c y: clipboard-yank
-      Space c p: clipboard-paste-after
-      Space c P: clipboard-paste-before
+      Space c p: [clipboard-paste-after, {action: mode-enter, arg: normal}]
+      Space c P: [clipboard-paste-before, {action: mode-enter, arg: normal}]
       Space l h: show-documentation
       Space l c:
         steps:
@@ -1102,6 +1102,7 @@ keys:
       L: goto-window-bottom
       .: toggle-hidden-files
       /: search-regex
+      N: search-previous
       Ctrl-n: search-next
       Ctrl-p: search-previous
       n: directory-tree-new
@@ -1253,6 +1254,24 @@ keys:
       Right: git-review-right
       Enter: git-review-enter
       Ctrl-c: git-review-cancel
+    terminal:
+      y: [yank, {action: mode-enter, arg: normal}]
+      p:
+        - terminal-paste
+        - action: mode-enter
+          arg: insert
+      P:
+        - terminal-paste
+        - action: mode-enter
+          arg: insert
+      s: terminal-search
+      /: terminal-search-regex
+      n: terminal-search-next
+      N: terminal-search-previous
+      ')': terminal-search-next
+      '(': terminal-search-previous
+      Space c p: terminal-clipboard-paste-text
+      Space c P: terminal-clipboard-paste-text
     terminal-insert: &id001
       Ctrl-w v:
         steps:

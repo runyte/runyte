@@ -357,7 +357,7 @@ mod tests {
         assert_ne!(previous, app.current_binding_mode());
         assert_eq!(app.binding_mode_name().as_deref(), Some("second"));
         let config: Config = serde_yaml::from_str(
-            "editor: {scratch_markdown: false}\nbuffer-types:\n  text: {normal: normal}\n",
+            "editor: {scratch_markdown: false}\nbuffer-types:\n  text: {normal: normal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F5: open-command-palette}\n",
         )
         .unwrap();
         let mut app = App::new(config, None).unwrap();
@@ -368,7 +368,7 @@ mod tests {
     #[test]
     fn missing_roles_refuse_default_and_configured_entry_before_editing() {
         let config: Config = serde_yaml::from_str(
-            "editor: {scratch_markdown: false}\nbuffer-types:\n  text: {normal: normal}\nkeys:\n  bind:\n    normal:\n      F6: open-line-below\n      F7: append-after\n",
+            "editor: {scratch_markdown: false}\nbuffer-types:\n  text: {normal: normal}\nkeys:\n  defaults: false\n  bind:\n    normal:\n      F5: open-command-palette\n      i: enter-insert-mode\n      R: enter-replace-mode\n      v: enter-select-mode\n      o: open-line-below\n      F6: open-line-below\n      F7: append-after\n",
         ).unwrap();
         let compiled = crate::keymap::configured::compile_configuration(
             &config,
@@ -462,7 +462,7 @@ mod tests {
         app.enter_named_binding_mode("insert");
         assert_eq!(app.mode, Mode::Insert);
         let config: Config =
-            serde_yaml::from_str("buffer-types: {text: {normal: normal}}").unwrap();
+            serde_yaml::from_str("buffer-types: {text: {normal: normal}}\nkeys: {defaults: false, bind: {normal: {F5: open-command-palette}}}").unwrap();
         let compiled = crate::keymap::configured::compile_configuration(
             &config,
             crate::keymap::default_keymap(),
@@ -482,7 +482,7 @@ mod tests {
             std::env::temp_dir().join(format!("runyte-mode-focus-{}.md", std::process::id()));
         std::fs::write(&path, "markdown").unwrap();
         let config: Config = serde_yaml::from_str(
-            "editor: {scratch_markdown: false}\nbuffer-types: {markdown: {normal: markdown}}",
+            "editor: {scratch_markdown: false}\nmodes: {review-markdown: {}}\nbuffer-types: {markdown: {normal: review-markdown}}\nkeys: {bind: {review-markdown: {\":\": open-command-palette}}}",
         )
         .unwrap();
         let mut app = App::new(config, None).unwrap();
@@ -498,7 +498,7 @@ mod tests {
         }
         assert_eq!(app.active_pane, destination);
         assert_eq!(app.mode, Mode::Normal);
-        assert_eq!(app.binding_mode_name().as_deref(), Some("markdown"));
+        assert_eq!(app.binding_mode_name().as_deref(), Some("review-markdown"));
         app.handle_input(InputEvent::Key(KeyStroke::char(':')))
             .unwrap();
         assert_eq!(app.mode, Mode::Command);

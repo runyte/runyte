@@ -54,8 +54,6 @@ false|normal|align-view-middle|z m
 false|normal|align-view-top|z t
 false|normal|append-after|a
 false|normal|browse-actions|Space h a
-false|normal|clipboard-paste-after|Space c p
-false|normal|clipboard-paste-before|Space c P
 false|normal|clipboard-paste|Ctrl-v
 false|normal|clipboard-yank|Ctrl-C
 false|normal|close-window|Space w c
@@ -174,8 +172,6 @@ false|normal|open-theme-settings|Space o t
 false|normal|open-working-directory-explorer|Space E
 false|normal|page-down|Ctrl-f
 false|normal|page-up|Ctrl-b
-false|normal|paste-after-or-replace|p
-false|normal|paste-before|P
 false|normal|previous-destination|Ctrl-w p
 false|normal|previous-running-session|Shift-Left
 false|normal|previous-session|Ctrl-w a
@@ -196,8 +192,6 @@ false|normal|rotate-selection-forward|)
 false|normal|save|Ctrl-s
 false|normal|scroll-view-down|z j
 false|normal|scroll-view-up|z k
-false|normal|search-next|n
-false|normal|search-previous|N
 false|normal|search-regex|/
 false|normal|search|s
 false|normal|select-register|"
@@ -235,8 +229,6 @@ false|normal|undo|u
 false|normal|unfold-all-syntax|Space x u
 false|normal|unindent|<
 false|normal|workspace-symbols|Space l S
-false|normal|yank-collapse-normal-mode|y
-false|normal|yank-line-collapse-normal-mode|Y
 false|replace|clipboard-paste|Ctrl-v
 false|replace|clipboard-yank|Ctrl-C
 false|replace|delete-char-backward|Backspace
@@ -281,8 +273,6 @@ false|select|align-view-middle|z m
 false|select|align-view-top|z t
 false|select|append-after|a
 false|select|browse-actions|Space h a
-false|select|clipboard-paste-after|Space c p
-false|select|clipboard-paste-before|Space c P
 false|select|clipboard-paste|Ctrl-v
 false|select|clipboard-yank|Ctrl-C
 false|select|close-window|Space w c
@@ -401,8 +391,6 @@ false|select|open-theme-settings|Space o t
 false|select|open-working-directory-explorer|Space E
 false|select|page-down|Ctrl-f
 false|select|page-up|Ctrl-b
-false|select|paste-after-or-replace|p
-false|select|paste-before|P
 false|select|previous-destination|Ctrl-w p
 false|select|previous-running-session|Shift-Left
 false|select|previous-session|Ctrl-w a
@@ -423,8 +411,6 @@ false|select|rotate-selection-forward|)
 false|select|save|Ctrl-s
 false|select|scroll-view-down|z j
 false|select|scroll-view-up|z k
-false|select|search-next|n
-false|select|search-previous|N
 false|select|search-regex|/
 false|select|search|s
 false|select|select-register|"
@@ -462,8 +448,6 @@ false|select|undo|u
 false|select|unfold-all-syntax|Space x u
 false|select|unindent|<
 false|select|workspace-symbols|Space l S
-false|select|yank-collapse-normal-mode|y
-false|select|yank-line-collapse-normal-mode|Y
 true|insert|clipboard-paste|Ctrl-v
 true|insert|clipboard-yank|Ctrl-C
 true|insert|delete-char-backward|Backspace
@@ -519,8 +503,6 @@ true|normal|align-view-middle|z m
 true|normal|align-view-top|z t
 true|normal|append-after|a
 true|normal|browse-actions|Space h a
-true|normal|clipboard-paste-after|Space c p
-true|normal|clipboard-paste-before|Space c P
 true|normal|clipboard-paste|Ctrl-v
 true|normal|clipboard-yank|Ctrl-C
 true|normal|close-window|Space w c
@@ -639,8 +621,6 @@ true|normal|open-theme-settings|Space o t
 true|normal|open-working-directory-explorer|Space E
 true|normal|page-down|Ctrl-f
 true|normal|page-up|Ctrl-b
-true|normal|paste-after-or-replace|p
-true|normal|paste-before|P
 true|normal|previous-destination|Ctrl-w p
 true|normal|previous-running-session|Shift-Left
 true|normal|previous-session|Ctrl-w a
@@ -661,8 +641,6 @@ true|normal|rotate-selection-forward|)
 true|normal|save|Ctrl-s
 true|normal|scroll-view-down|z j
 true|normal|scroll-view-up|z k
-true|normal|search-next|n
-true|normal|search-previous|N
 true|normal|search-regex|/
 true|normal|search|s
 true|normal|select-register|"
@@ -700,8 +678,6 @@ true|normal|undo|u
 true|normal|unfold-all-syntax|Space x u
 true|normal|unindent|<
 true|normal|workspace-symbols|Space l S
-true|normal|yank-collapse-normal-mode|y
-true|normal|yank-line-collapse-normal-mode|Y
 true|replace|clipboard-paste|Ctrl-v
 true|replace|clipboard-yank|Ctrl-C
 true|replace|delete-char-backward|Backspace
@@ -745,8 +721,6 @@ true|select|align-view-middle|z m
 true|select|align-view-top|z t
 true|select|append-after|a
 true|select|browse-actions|Space h a
-true|select|clipboard-paste-after|Space c p
-true|select|clipboard-paste-before|Space c P
 true|select|clipboard-paste|Ctrl-v
 true|select|clipboard-yank|Ctrl-C
 true|select|close-window|Space w c
@@ -865,8 +839,6 @@ true|select|open-theme-settings|Space o t
 true|select|open-working-directory-explorer|Space E
 true|select|page-down|Ctrl-f
 true|select|page-up|Ctrl-b
-true|select|paste-after-or-replace|p
-true|select|paste-before|P
 true|select|previous-destination|Ctrl-w p
 true|select|previous-running-session|Shift-Left
 true|select|previous-session|Ctrl-w a
@@ -887,8 +859,6 @@ true|select|rotate-selection-forward|)
 true|select|save|Ctrl-s
 true|select|scroll-view-down|z j
 true|select|scroll-view-up|z k
-true|select|search-next|n
-true|select|search-previous|N
 true|select|search-regex|/
 true|select|search|s
 true|select|select-register|"
@@ -926,5 +896,3 @@ true|select|undo|u
 true|select|unfold-all-syntax|Space x u
 true|select|unindent|<
 true|select|workspace-symbols|Space l S
-true|select|yank-collapse-normal-mode|y
-true|select|yank-line-collapse-normal-mode|Y

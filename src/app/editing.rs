@@ -3627,12 +3627,6 @@ impl App {
         true
     }
 
-    // Bundled until stage 4 supplies separate terminal and document modes.
-    pub(super) fn collapse_after_yank(&mut self) {
-        self.collapse_selection();
-        self.set_editing_role(Mode::Normal);
-    }
-
     pub(super) fn yank_value(&self, linewise_extent: bool) -> Register {
         // An explorer caret names the entry on its row rather than the
         // character under it, which is how `directory_register` already reads
@@ -3959,9 +3953,6 @@ impl App {
             self.active_mut()
                 .replace_selection(Selection::new(ranges, primary));
         }
-        if matches!(paste, Paste::Before | Paste::AfterOrReplace) {
-            self.set_editing_role(Mode::Normal);
-        }
         self.normalize_buffer(buffer_id);
     }
 
@@ -4026,9 +4017,6 @@ impl App {
                 &register.entries,
                 register.mode,
             )?;
-        }
-        if paste != Paste::After {
-            self.set_editing_role(Mode::Normal);
         }
         self.normalize_buffer(buffer_id);
         self.status(format!(

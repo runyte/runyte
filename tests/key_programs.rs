@@ -387,54 +387,30 @@ fn removed_action_names_report_migrations_in_both_configuration_forms() {
 }
 
 #[test]
-fn paste_yank_cut_and_search_classification_names_postponed_stage_4_bundles() {
+fn paste_yank_and_repeat_search_primitives_do_not_change_mode() {
     use runyte::command::descriptor::ActionEffect;
-    // Decision 34: stage 4 must empty this list when terminal and tree modes
-    // let these defaults use ordinary programs with explicit mode steps.
-    const BUNDLED_ACTIONS_PENDING_STAGE_4: &[C] = &[
-        C::YankCollapseNormalMode,
-        C::YankLineCollapseNormalMode,
-        C::PasteAfterOrReplace,
+    for command in [
+        C::Yank,
+        C::YankLine,
+        C::PasteAfter,
         C::PasteBefore,
+        C::PasteAfterOrReplace,
         C::ClipboardPasteAfter,
         C::ClipboardPasteBefore,
         C::SearchNext,
         C::SearchPrevious,
-    ];
-    for command in BUNDLED_ACTIONS_PENDING_STAGE_4.iter().copied().chain([
-        C::Yank,
-        C::YankLine,
-        C::PasteAfter,
-        C::CutSelection,
-        C::CutSelectionForChange,
-        C::SearchSetFromSelection,
-        C::SearchSelectAllMatches,
-        C::SearchExtendNext,
-        C::SearchExtendPrevious,
-    ]) {
-        assert_eq!(
-            command
+        C::TerminalPaste,
+        C::TerminalClipboardPasteText,
+        C::TerminalSearchNext,
+        C::TerminalSearchPrevious,
+    ] {
+        assert!(
+            !command
                 .action_policy()
                 .effects
                 .contains(&ActionEffect::Mode),
-            BUNDLED_ACTIONS_PENDING_STAGE_4.contains(&command),
-            "unclassified bundled action: {command:?}"
+            "{command:?}"
         );
-    }
-    for &command in BUNDLED_ACTIONS_PENDING_STAGE_4 {
-        assert!(
-            default_keymap()
-                .bindings()
-                .iter()
-                .any(|b| b.target == command.into())
-        );
-        for binding in default_keymap()
-            .bindings()
-            .iter()
-            .filter(|b| b.target == command.into())
-        {
-            assert!(binding.is_plain_action(), "{command:?}");
-        }
     }
 }
 

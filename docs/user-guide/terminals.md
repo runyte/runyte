@@ -371,3 +371,24 @@ Colour depth and palette rendering belong to each attached client.
 
 <!-- navigation -->
 [Contents](README.md) · [Previous: Panes](panes.md) · [Next: Git](git.md)
+
+### Composable terminal actions
+
+Terminal review uses `terminal-search` and `terminal-search-regex` for its search
+prompts, and `terminal-search-next` / `terminal-search-previous` for match
+navigation (`n`, `N`, `)` and `(`). These use the captured output's search state
+and preserve the current mode; document search state stays separate.
+
+`terminal-paste` sends the selected register to the child. Default `p` and `P`
+then explicitly enter Insert after successful delivery. A standalone
+`terminal-paste` binding preserves mode. `terminal-clipboard-paste-text` sends
+clipboard text without entering Insert; `Space c p` and `Space c P` use it.
+Counts belong to the send action. Empty sources, oversized pastes and queue
+refusals stop the program before its mode tail. Live Insert input ownership and
+clipboard image delivery are unchanged.
+
+`yank` and `yank-line` retain their shared meanings. Terminal `y` copies the
+review selection and enters Normal without collapsing it. Terminal `Y`, which
+was previously refused, now copies all review rows touched by the selection,
+including line breaks, then collapses the selection and enters Normal. A
+standalone `yank-line` preserves the selection and mode.

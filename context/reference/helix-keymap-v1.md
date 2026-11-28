@@ -973,3 +973,8 @@ a count that produced a selection before exhausting navigation still completes
 its mode step. Syntax shrink restores the selection, coordinate semantics and
 mode captured by expansion. Paragraph whole-row state and mode restoration
 remain bundled until the stage 4 line-selection split.
+
+Stage 4c of #132 gives terminal `Y` the shared whole-row yank meaning; it was
+previously refused. Terminal `y` retains its review selection. Terminal paste
+and review search now have separate action identities, with explicit default
+mode tails; their key spellings are unchanged.

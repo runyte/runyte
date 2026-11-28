@@ -693,8 +693,10 @@ keys:
 ```
 
 `yank` leaves the selection and mode alone, so the buffer stays selected
-afterwards. Use `yank-collapse-normal-mode`, what `y` runs, to end on a caret
-in Normal mode instead.
+afterwards. The default `y` program adds `collapse-selection` and `mode-enter
+normal`; terminal `y` omits the collapse. The former bundled
+`yank-collapse-normal-mode` and `yank-line-collapse-normal-mode` actions now
+report their replacement programs.
 
 **Sort the selected lines:**
 
@@ -969,6 +971,12 @@ Paste stays literal, and macros record the physical keys you press, as before.
 
 ### Limits and errors
 
+Mode-entry role targets are checked against every buffer type that can reach
+the binding. A missing role reports the buffer type, mode, key and role, and
+restores the preset role graph. Remove or replace inherited bindings that enter
+a role before omitting that role. Effective overrides and exact removals apply
+before this check; both conditional branches are checked.
+
 | Limit | Value |
 | --- | --- |
 | Assignments in `keys.bind`, across all files | 65,536 |
@@ -1057,8 +1065,6 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `redo` | normal, select | can be followed by another action | Redo the last change |
 | `yank` | normal, select | can be followed by another action | Yank the selection or character |
 | `yank-line` | normal, select | can be followed by another action | Yank the lines the selection touches |
-| `yank-collapse-normal-mode` | normal, select | can be followed by another action | Yank, then leave a caret in normal mode |
-| `yank-line-collapse-normal-mode` | normal, select | can be followed by another action | Yank lines, then leave a normal-mode caret |
 | `paste-after-or-replace` | normal, select | can be followed by another action | Replace the selection, or paste after the caret |
 | `paste-after` | normal, select | can be followed by another action | Paste after the selection or caret |
 | `replace-with-register` | normal, select | can be followed by another action | Replace the selection or character |
@@ -1626,6 +1632,12 @@ indicated buffer owner; raw UI input remains under `keys.ui`.
 
 - `split-horizontal`: insert
 - `split-vertical`: insert
+- `terminal-clipboard-paste-text`: normal, select
+- `terminal-paste`: normal, select
+- `terminal-search`: normal, select
+- `terminal-search-next`: normal, select
+- `terminal-search-previous`: normal, select
+- `terminal-search-regex`: normal, select
 - `toggle-fullscreen`: insert
 - `toggle-zen`: insert
 
@@ -1684,7 +1696,7 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 
 | Action | Effects | Count | Character operands | Palette argument | View differences | Classification |
 | --- | --- | --- | --- | --- | --- | --- |
-| `fit-selection-for-normal-mode` | selection, view | not accepted | none | none |  | atomic operation |
+| `fit-selection-for-normal-mode` | selection, view | not accepted | none | none | terminal: Fit the live or captured review selection for Normal mode without entering it | atomic operation |
 | `mode-enter` | mode | not accepted | none | none |  | mode action |
 | `enter-normal-mode` | mode, selection | not accepted | none | none | terminal: Leave child input for live Normal mode; otherwise capture review and collapse its selection | pending stage 5 split; then mode action |
 | `open-command-palette` | prompt | not accepted | none | none |  | atomic operation |
@@ -1730,13 +1742,11 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `undo` | text, terminal input | repeats | none | none | terminal: Ask the child to erase the last text Runyte sent, if it has not been submitted | atomic operation |
 | `redo` | text | repeats | none | none |  | atomic operation |
 | `yank` | register | not accepted | none | none | terminal: Copy the review selection to the selected register and retain its selection and mode; directory: Copy selected entries and record a directory copy payload | atomic operation |
-| `yank-line` | register | not accepted | none | none | directory: Copy selected entry lines and record a directory copy payload | atomic operation |
-| `yank-collapse-normal-mode` | register, selection, mode | not accepted | none | none | terminal: Copy the review selection, retain it on screen and enter Normal mode; directory: Copy selected entries, collapse the selection and enter Normal mode | pending stage 4 split; then atomic operation |
-| `yank-line-collapse-normal-mode` | register, selection, mode | not accepted | none | none | directory: Copy selected entry lines, collapse the selection and enter Normal mode | pending stage 4 split; then atomic operation |
-| `paste-after-or-replace` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing | pending stage 4 split; then decision: Chooses insertion or replacement independently for each selection range. |
-| `paste-after` | text, selection, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child without changing mode; directory: Stage copies or moves from a directory register into the listing | atomic operation |
+| `yank-line` | register | not accepted | none | none | terminal: Copy whole review rows to the selected register, preserving selection and mode; directory: Copy selected entry lines and record a directory copy payload | atomic operation |
+| `paste-after-or-replace` | text, selection | interpreted as an address or extent | none | none | directory: Stage copies or moves from a directory register into the listing | pending stage 4 split; then decision: Chooses insertion or replacement independently for each selection range. |
+| `paste-after` | text, selection | interpreted as an address or extent | none | none | directory: Stage copies or moves from a directory register into the listing | atomic operation |
 | `replace-with-register` | text | not accepted | none | none | directory: Replace listing text from a text register; directory move/copy payloads are refused because entries cannot replace a text selection | atomic operation |
-| `paste-before` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child and enter Insert mode after successful queueing; directory: Stage copies or moves from a directory register into the listing | pending stage 4 split; then atomic operation |
+| `paste-before` | text, selection | interpreted as an address or extent | none | none | directory: Stage copies or moves from a directory register into the listing | atomic operation |
 | `indent` | text | not accepted | none | none |  | atomic operation |
 | `unindent` | text | not accepted | none | none |  | atomic operation |
 | `toggle-comments` | text | not accepted | none | none |  | atomic operation |
@@ -1804,8 +1814,8 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `copy-selection-up` | selection | not accepted | none | none | terminal: Copy the review cursor to the adjacent captured output line | atomic operation |
 | `copy-selection-down-padded` | text, selection | not accepted | none | none |  | atomic operation |
 | `copy-selection-up-padded` | text, selection | not accepted | none | none |  | atomic operation |
-| `rotate-selection-forward` | selection | not accepted | none | none | terminal: Select the next or previous terminal review search match | atomic operation |
-| `rotate-selection-backward` | selection | not accepted | none | none | terminal: Select the next or previous terminal review search match | atomic operation |
+| `rotate-selection-forward` | selection | not accepted | none | none |  | atomic operation |
+| `rotate-selection-backward` | selection | not accepted | none | none |  | atomic operation |
 | `rotate-selection-contents-forward` | text, selection | not accepted | none | none |  | atomic operation |
 | `rotate-selection-contents-backward` | text, selection | not accepted | none | none |  | atomic operation |
 | `keep-matching-selections` | prompt, selection | not accepted | none | none |  | atomic operation |
@@ -1818,10 +1828,10 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `join-selections` | prompt, text | not accepted | none | none |  | atomic operation |
 | `join-lines` | text | not accepted | none | none |  | atomic operation |
 | `format-table` | text | not accepted | none | none |  | atomic operation |
-| `search` | prompt, search state, selection, mode | not accepted | none | none | terminal: Prompt for a case-insensitive search of captured output | decision: Owns the search prompt and enters Select only when its accepted search succeeds (decision 30). |
-| `search-regex` | prompt, search state, selection, mode | not accepted | none | none | terminal: Prompt for a regular-expression search of captured output; directory-tree: Prompt to search visible tree entries | decision: Owns the regular-expression search prompt and its selection-mode completion (decision 30). |
-| `search-next` | selection, view, mode | not accepted | none | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry | pending stage 4 split; then atomic operation |
-| `search-previous` | selection, view, mode | not accepted | none | none | terminal: Select the next or previous review match without changing mode; directory-tree: Select the next or previous matching tree entry | pending stage 4 split; then atomic operation |
+| `search` | prompt, search state, selection, mode | not accepted | none | none |  | decision: Owns the search prompt and enters Select only when its accepted search succeeds (decision 30). |
+| `search-regex` | prompt, search state, selection, mode | not accepted | none | none | directory-tree: Prompt to search visible tree entries | decision: Owns the regular-expression search prompt and its selection-mode completion (decision 30). |
+| `search-next` | selection, view | not accepted | none | none | directory-tree: Select the next or previous matching tree entry | atomic operation |
+| `search-previous` | selection, view | not accepted | none | none | directory-tree: Select the next or previous matching tree entry | atomic operation |
 | `search-extend-next` | selection, view | not accepted | none | none |  | atomic operation |
 | `search-extend-previous` | selection, view | not accepted | none | none |  | atomic operation |
 | `search-select-all-matches` | selection, view | not accepted | none | none |  | atomic operation |
@@ -1970,6 +1980,12 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `close-window` | pane, mode | not accepted | none | none | directory-tree: Close the directory tree and restore pane focus | decision: Activates or restores a view and its destination mode as one guarded workflow. |
 | `only-window` | pane | not accepted | none | none |  | atomic operation |
 | `equalize-windows` | pane | not accepted | none | none |  | atomic operation |
+| `terminal-paste` | terminal input | interpreted as an address or extent | none | none | terminal: Send register text to the child without changing mode | atomic operation |
+| `terminal-clipboard-paste-text` | terminal input | interpreted as an address or extent | none | none | terminal: Send system clipboard text to the child without changing mode | atomic operation |
+| `terminal-search` | prompt, search state, selection, view | not accepted | none | none | terminal: Prompt for a case-insensitive search of captured output | atomic operation |
+| `terminal-search-regex` | prompt, search state, selection, view | not accepted | none | none | terminal: Prompt for a regular-expression search of captured output | atomic operation |
+| `terminal-search-next` | selection, view | not accepted | none | none | terminal: Select the next or previous terminal review search match | atomic operation |
+| `terminal-search-previous` | selection, view | not accepted | none | none | terminal: Select the next or previous terminal review search match | atomic operation |
 | `open-terminal` | background work, view, mode | not accepted | none | terminal [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
 | `open-terminal-file-directory` | background work, view, mode | not accepted | none | terminal-file-directory [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
 | `open-terminal-directory-root` | background work, view, mode | not accepted | none | terminal-directory-root [command] |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
@@ -2036,14 +2052,14 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `workspace-symbols` | prompt, background work, view | not accepted | none | none |  | atomic operation |
 | `diagnostics` | view | not accepted | none | none |  | atomic operation |
 | `trigger-completion` | background work, prompt, text, mode | not accepted | none | none |  | decision: Enters Insert only when a language server is available, then owns the completion request and later text acceptance. |
-| `jump-backward` | view, selection, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `jump-forward` | view, selection, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `jump-backward-buffer` | view, selection, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
-| `jump-forward-buffer` | view, selection, mode | not accepted | none | none |  | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `jump-backward` | view, selection, mode | not accepted | none | none | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `jump-forward` | view, selection, mode | not accepted | none | none | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `jump-backward-buffer` | view, selection, mode | not accepted | none | none | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a view and its destination mode as one guarded workflow. |
+| `jump-forward-buffer` | view, selection, mode | not accepted | none | none | terminal: Navigate retained jump history through the ordinary pane workflow | decision: Activates or restores a view and its destination mode as one guarded workflow. |
 | `rename-symbol` | background work, prompt, text | not accepted | none | none |  | atomic operation |
 | `code-action` | background work, prompt, text | not accepted | none | none |  | atomic operation |
-| `clipboard-paste-after` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send system clipboard text to the child without changing mode | pending stage 4 split; then atomic operation |
-| `clipboard-paste-before` | text, selection, mode, terminal input | interpreted as an address or extent | none | none | terminal: Send system clipboard text to the child without changing mode | pending stage 4 split; then atomic operation |
+| `clipboard-paste-after` | text, selection | interpreted as an address or extent | none | none |  | atomic operation |
+| `clipboard-paste-before` | text, selection | interpreted as an address or extent | none | none |  | atomic operation |
 | `clipboard-yank` | register | not accepted | none | none | terminal: Copy the captured review selection to the system clipboard; media: Copy selected PDF text or an image region | atomic operation |
 | `clipboard-paste` | text, terminal input, mode | not accepted | none | none | terminal: Paste clipboard text or an image reference into the terminal input queue | pending stage 4 split; then decision: Chooses image insertion or text paste from clipboard content. |
 | `select-register` | character input, register | not accepted | one character | none |  | atomic operation |

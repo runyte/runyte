@@ -83,7 +83,27 @@ pub fn compile_configuration(config: &crate::config::Config, built_in: &Keymap) 
         config.buffer_types.as_ref(),
         section.get("bind"),
     ) {
-        Ok(base) => compile(section, &base),
+        Ok(base) => {
+            let result = compile(section, &base);
+            let violations = super::named::role_target_errors(&result.keymap);
+            if violations.is_empty() {
+                result
+            } else {
+                let mut fallback = compile(section, built_in);
+                fallback.errors.extend(result.errors);
+                fallback.errors.extend(
+                    violations.into_iter().map(|reason| {
+                        format!("mode graph rejected; preset graph restored: {reason}")
+                    }),
+                );
+                let remaining = super::named::role_target_errors(&fallback.keymap);
+                if !remaining.is_empty() {
+                    fallback.errors.extend(remaining);
+                    fallback.keymap = Arc::new(built_in.clone());
+                }
+                fallback
+            }
+        }
         Err(reason) => {
             let mut result = compile(section, built_in);
             result.errors.insert(

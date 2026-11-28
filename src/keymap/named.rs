@@ -33,6 +33,52 @@ pub(super) fn required_buffer_types() -> Vec<&'static str> {
         .collect()
 }
 
+/// Validate only role resolution here; sequential mode flow belongs to stage 5.
+/// Effective tables ensure overrides and tombstones hide ancestor bindings.
+pub(super) fn role_target_errors(map: &super::Keymap) -> Vec<String> {
+    use crate::command::{CommandId, EditorCommand, InvocationParameters};
+    let Some(tables) = &map.overrides.1 else {
+        return Vec::new();
+    };
+    let mut errors = Vec::new();
+    for kind in tables.buffer_types.keys() {
+        let mut pending = EditingRole::ALL
+            .into_iter()
+            .filter_map(|role| tables.graph.role_mode(kind, role))
+            .collect::<Vec<_>>();
+        let mut seen = HashSet::new();
+        while let Some(mode) = pending.pop() {
+            if !seen.insert(mode) {
+                continue;
+            }
+            for index in tables.indices(&map.bindings, mode) {
+                let binding = &map.bindings[index];
+                for action in binding.program.iter() {
+                    let super::actions::Action::Invocation(invocation) = action else {
+                        continue;
+                    };
+                    if invocation.id() != CommandId::Editor(EditorCommand::ModeEnter) {
+                        continue;
+                    }
+                    let (InvocationParameters::OptionalText(Some(target))
+                    | InvocationParameters::TemporaryMode(target)) = invocation.parameters()
+                    else {
+                        continue;
+                    };
+                    match tables.graph.entry_mode(kind, target) {
+                        Some(destination) => pending.push(destination),
+                        None => errors.push(format!(
+                            "buffer type {kind:?}, mode {:?}, key {:?}: mode-enter role {target:?} is unavailable",
+                            tables.graph.get(mode).expect("same graph").name(), binding.sequence.to_string()
+                        )),
+                    }
+                }
+            }
+        }
+    }
+    errors
+}
+
 impl Tables {
     pub fn mode_for(&self, mode: Mode, scope: BindingScope) -> Option<ModeId> {
         let role = match mode {
@@ -593,6 +639,117 @@ mod tests {
         configured::compile_configuration(&config, default_keymap())
     }
     #[test]
+    fn missing_roles_are_checked_after_effective_removals_and_replacements() {
+        let builtin = default_keymap();
+        let normal = builtin
+            .named_mode_for(Mode::Normal, BindingScope::Global)
+            .unwrap();
+        let mut bindings = serde_yaml::Mapping::new();
+        for binding in builtin.bindings_for_named_mode(normal) {
+            if binding
+                .program
+                .iter()
+                .any(|action| action.target() == crate::command::EditorCommand::ModeEnter.into())
+            {
+                bindings.insert(binding.sequence.to_string().into(), serde_yaml::Value::Null);
+            }
+        }
+        bindings.insert("F6".into(), "yank".into());
+        let source = format!(
+            "buffer-types:\n  text: {{normal: normal}}\nkeys:\n  bind:\n    normal: {}",
+            serde_json::to_string(&bindings).unwrap()
+        );
+        let result = compile(&source);
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert!(
+            result
+                .keymap
+                .named_mode_for(Mode::Insert, BindingScope::Global)
+                .is_none()
+        );
+        // An unrelated valid key survives rollback of a broken role map.
+        let rejected = compile(
+            "buffer-types:\n  text: {normal: normal}\nkeys:\n  bind:\n    normal: {F6: yank}\n",
+        );
+        assert!(
+            rejected
+                .errors
+                .iter()
+                .any(|e| e.contains("buffer type \"text\"")
+                    && e.contains("mode \"normal\"")
+                    && e.contains("key")
+                    && e.contains("role")),
+            "{:?}",
+            rejected.errors
+        );
+        assert!(
+            rejected
+                .keymap
+                .named_mode_for(Mode::Insert, BindingScope::Global)
+                .is_some()
+        );
+        assert!(
+            matches!(rejected.keymap.lookup(Mode::Normal, &KeySequence::parse("F6").unwrap()), Lookup::Exact(binding) if binding.target == crate::command::EditorCommand::Yank.into())
+        );
+    }
+
+    #[test]
+    fn role_validation_traverses_conditional_branches_and_named_destinations() {
+        use crate::command::{
+            CommandExecutionContext, CommandId, CommandInvocation, EditorCommand as C,
+            InvocationParameters,
+        };
+        use crate::keymap::{
+            actions::Action,
+            program::{Condition, Program},
+        };
+        let result = compile(
+            "modes:\n  extra: {}\nbuffer-types:\n  text: {normal: normal}\nkeys:\n  defaults: false\n  bind:\n    normal: {F6: open-command-palette}\n    extra: {F7: yank}\n",
+        );
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        let mut map = (*result.keymap).clone();
+        let enter = |name: &str| {
+            Program::new(vec![Action::Invocation(
+                CommandInvocation::from_parts(
+                    CommandId::Editor(C::ModeEnter),
+                    InvocationParameters::OptionalText(Some(name.into())),
+                    CommandExecutionContext::default(),
+                )
+                .unwrap(),
+            )])
+            .unwrap()
+        };
+        let extra = map
+            .bindings
+            .iter()
+            .position(|b| b.binding_mode.as_deref() == Some("extra"))
+            .unwrap();
+        map.bindings[extra].program = Program::conditional(
+            Condition::RecordingMacro,
+            Program::single(C::Yank.into()),
+            enter("insert"),
+        );
+        assert!(
+            role_target_errors(&map).is_empty(),
+            "unreachable mode is not an active role"
+        );
+        let normal = map
+            .bindings
+            .iter()
+            .position(|b| b.binding_mode.as_deref() == Some("normal"))
+            .unwrap();
+        map.bindings[normal].program = enter("extra");
+        let errors = role_target_errors(&map);
+        assert!(
+            errors.iter().any(|e| e.contains("text")
+                && e.contains("extra")
+                && e.contains("F7")
+                && e.contains("insert")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
     fn cached_empty_children_preserve_tombstones_and_ancestor_prefixes() {
         let map = compile(
             "modes:
@@ -601,7 +758,7 @@ mod tests {
   child: {inherits: parent}
   empty-child: {inherits: child, unbound-keys: pass-to-buffer}
 buffer-types:
-  text: {normal: empty-child}
+  text: {normal: empty-child, select: select, insert: insert, replace: replace}
 keys:
   bind:
     ancestor: {'F6 z': move-left}

@@ -521,3 +521,238 @@ fn configured_modal_terminal_binding_replaces_the_default() {
         );
     }
 }
+
+#[test]
+fn terminal_actions_do_not_fall_through_to_the_hidden_document() {
+    let mut app = App::new(Config::default(), None).unwrap();
+    let before = app.active().selection.clone();
+    for command in [
+        EditorCommand::TerminalPaste,
+        EditorCommand::TerminalClipboardPasteText,
+        EditorCommand::TerminalSearch,
+        EditorCommand::TerminalSearchRegex,
+        EditorCommand::TerminalSearchNext,
+        EditorCommand::TerminalSearchPrevious,
+    ] {
+        app.execute_editor_command(command).unwrap();
+        assert!(app.status_error, "{command:?}: {}", app.status);
+        assert_eq!(app.status, "this action needs a terminal");
+        assert_eq!(app.active().selection, before);
+        assert_eq!(app.mode, Mode::Normal);
+    }
+}
+
+#[test]
+fn terminal_review_search_actions_preserve_mode_and_document_query() {
+    let (mut app, terminal) = terminal_app("{}");
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"foo bar foo".to_vec(),
+    });
+    app.search.pattern = "document query".into();
+    app.terminals
+        .get_mut(terminal)
+        .unwrap()
+        .search_review("foo", false)
+        .unwrap();
+    for mode in [Mode::Normal, Mode::Select] {
+        app.set_editing_role(mode);
+        for command in [
+            EditorCommand::TerminalSearchNext,
+            EditorCommand::TerminalSearchPrevious,
+        ] {
+            app.execute_editor_command(command).unwrap();
+            assert!(!app.status_error, "{}", app.status);
+            assert_eq!(app.mode, mode);
+            assert_eq!(app.search.pattern, "document query");
+        }
+    }
+}
+
+/// Independent dispatch inventory: a new terminal branch needs a meaning audit.
+#[test]
+fn every_terminal_dispatch_branch_has_a_reviewed_meaning() {
+    use EditorCommand as C;
+    use std::collections::BTreeSet;
+    let terminal = [
+        C::TerminalClipboardPasteText,
+        C::TerminalPaste,
+        C::TerminalSearch,
+        C::TerminalSearchNext,
+        C::TerminalSearchPrevious,
+        C::TerminalSearchRegex,
+    ];
+    let shared = [
+        C::ClipboardYank,
+        C::CollapseSelection,
+        C::CopySelectionDown,
+        C::CopySelectionUp,
+        C::ExtendLineAbove,
+        C::ExtendLineBelow,
+        C::FitSelectionForNormalMode,
+        C::GotoFile,
+        C::GotoNextParagraph,
+        C::GotoPreviousParagraph,
+        C::GotoWindowBottom,
+        C::GotoWindowCenter,
+        C::GotoWindowTop,
+        C::GotoWord,
+        C::HalfPageDown,
+        C::HalfPageUp,
+        C::JumpBackward,
+        C::JumpBackwardBuffer,
+        C::JumpForward,
+        C::JumpForwardBuffer,
+        C::KeepPrimarySelection,
+        C::MoveDown,
+        C::MoveFileEnd,
+        C::MoveFileStart,
+        C::MoveFirstNonWhitespace,
+        C::MoveLeft,
+        C::MoveLineEnd,
+        C::MoveLineStart,
+        C::MoveLongWordBackward,
+        C::MoveLongWordEnd,
+        C::MoveLongWordForward,
+        C::MoveRight,
+        C::MoveUp,
+        C::MoveWordBackward,
+        C::MoveWordEnd,
+        C::MoveWordForward,
+        C::PageDown,
+        C::PageUp,
+        C::ScrollViewDown,
+        C::ScrollViewUp,
+        C::SelectAll,
+        C::SelectLine,
+        C::SelectLineUp,
+        C::SelectionRedo,
+        C::SelectionUndo,
+        C::Yank,
+        C::YankLine,
+    ];
+    let pending_4c2 = [
+        C::Undo,
+        C::EnterNormalMode,
+        C::EnterSelectMode,
+        C::EnterInsertMode,
+        C::EnterReplaceMode,
+        C::AppendAfter,
+        C::InsertLineStart,
+        C::InsertLineEnd,
+        C::OpenLineAbove,
+        C::OpenLineBelow,
+    ];
+    let expected = terminal
+        .iter()
+        .chain(&shared)
+        .chain(&pending_4c2)
+        .map(|command| format!("{command:?}"))
+        .collect::<BTreeSet<_>>();
+    let source = include_str!("../terminal_workflows.rs")
+        .split_once("pub(super) fn execute_terminal_command_count(")
+        .unwrap()
+        .1
+        .split_once("\n    }\n")
+        .unwrap()
+        .0;
+    let actual = source
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim().strip_prefix("| ").unwrap_or(line.trim());
+            line.starts_with("Command::")
+                .then_some(line.split("=>").next().unwrap())
+        })
+        .flat_map(|pattern| {
+            pattern.split("Command::").skip(1).map(|command| {
+                command
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect::<String>()
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        actual, expected,
+        "audit new terminal meanings before adding dispatch branches"
+    );
+    for command in shared {
+        assert!(
+            command
+                .descriptor()
+                .view_overrides
+                .iter()
+                .any(|view| view.scope == BindingScope::Terminal),
+            "{command:?} needs terminal view prose"
+        );
+    }
+    for command in terminal {
+        assert!(command.metadata().name.starts_with("terminal-"));
+    }
+}
+
+#[test]
+fn terminal_yank_line_preserves_review_until_default_y_collapses_it() {
+    let (mut app, terminal) = terminal_app("{}");
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"alpha beta\r\ngamma".to_vec(),
+    });
+    app.terminals
+        .get_mut(terminal)
+        .unwrap()
+        .search_review("beta", false)
+        .unwrap();
+    app.set_editing_role(Mode::Select);
+    let before = app
+        .terminals
+        .get_mut(terminal)
+        .unwrap()
+        .review_selection_text();
+    app.execute_editor_command(EditorCommand::YankLine).unwrap();
+    assert_eq!(app.registers[&'"'].text, "alpha beta\n");
+    assert!(app.registers[&'"'].linewise);
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(
+        app.terminals
+            .get_mut(terminal)
+            .unwrap()
+            .review_selection_text(),
+        before
+    );
+    send(&mut app, "Y");
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.registers[&'"'].text, "alpha beta\n");
+    assert!(
+        app.terminals
+            .get(terminal)
+            .unwrap()
+            .review_selection_state()
+            .unwrap()
+            .1
+            .primary()
+            .is_empty()
+    );
+}
+
+#[test]
+fn terminal_yank_line_deduplicates_rows_touched_by_disjoint_ranges() {
+    let (mut app, terminal) = terminal_app("{}");
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"alpha beta\r\ngamma delta".to_vec(),
+    });
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.begin_review();
+    let generation = session.review_selection_state().unwrap().0;
+    let selection = Selection::new(
+        vec![Range::point(0), Range::new(6, 13), Range::point(18)],
+        1,
+    );
+    assert!(session.restore_review_selection(generation, selection.clone()));
+    assert_eq!(
+        session.review_selected_lines_text(),
+        "alpha beta\ngamma delta\n"
+    );
+    assert_eq!(session.review_selection_state().unwrap().1, &selection);
+}

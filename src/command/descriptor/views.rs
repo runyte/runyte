@@ -11,6 +11,12 @@ macro_rules! views {
 
 pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
     match command {
+        C::FitSelectionForNormalMode => {
+            views!(Terminal: "Fit the live or captured review selection for Normal mode without entering it")
+        }
+        C::JumpBackward | C::JumpForward | C::JumpBackwardBuffer | C::JumpForwardBuffer => {
+            views!(Terminal: "Navigate retained jump history through the ordinary pane workflow")
+        }
         C::EnterNormalMode => {
             views!(Terminal: "Leave child input for live Normal mode; otherwise capture review and collapse its selection")
         }
@@ -84,36 +90,33 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
         C::AlignViewCenter | C::AlignViewMiddle => {
             views!(Media: "Center the image or PDF in its pane")
         }
-        C::Search => views!(Terminal: "Prompt for a case-insensitive search of captured output"),
-        C::SearchRegex => {
-            views!(Terminal: "Prompt for a regular-expression search of captured output", DirectoryTree: "Prompt to search visible tree entries")
+        C::TerminalSearch => {
+            views!(Terminal: "Prompt for a case-insensitive search of captured output")
         }
+        C::TerminalSearchRegex => {
+            views!(Terminal: "Prompt for a regular-expression search of captured output")
+        }
+        C::SearchRegex => views!(DirectoryTree: "Prompt to search visible tree entries"),
         C::SearchNext | C::SearchPrevious => {
-            views!(Terminal: "Select the next or previous review match without changing mode", DirectoryTree: "Select the next or previous matching tree entry")
+            views!(DirectoryTree: "Select the next or previous matching tree entry")
         }
-        C::RotateSelectionForward | C::RotateSelectionBackward => {
+        C::TerminalSearchNext | C::TerminalSearchPrevious => {
             views!(Terminal: "Select the next or previous terminal review search match")
         }
         C::Yank => {
             views!(Terminal: "Copy the review selection to the selected register and retain its selection and mode", Directory: "Copy selected entries and record a directory copy payload")
         }
         C::YankLine => {
-            views!(Directory: "Copy selected entry lines and record a directory copy payload")
-        }
-        C::YankCollapseNormalMode => {
-            views!(Terminal: "Copy the review selection, retain it on screen and enter Normal mode", Directory: "Copy selected entries, collapse the selection and enter Normal mode")
-        }
-        C::YankLineCollapseNormalMode => {
-            views!(Directory: "Copy selected entry lines, collapse the selection and enter Normal mode")
+            views!(Terminal: "Copy whole review rows to the selected register, preserving selection and mode", Directory: "Copy selected entry lines and record a directory copy payload")
         }
         C::CutSelection | C::CutSelectionForChange => {
             views!(Directory: "Record selected entries as a move payload without removing files; delete or change the listing selection")
         }
         C::PasteAfter => {
-            views!(Terminal: "Send register text to the child without changing mode", Directory: "Stage copies or moves from a directory register into the listing")
+            views!(Directory: "Stage copies or moves from a directory register into the listing")
         }
         C::PasteAfterOrReplace | C::PasteBefore => {
-            views!(Terminal: "Send register text to the child and enter Insert mode after successful queueing", Directory: "Stage copies or moves from a directory register into the listing")
+            views!(Directory: "Stage copies or moves from a directory register into the listing")
         }
         C::ReplaceWithRegister => {
             views!(Directory: "Replace listing text from a text register; directory move/copy payloads are refused because entries cannot replace a text selection")
@@ -121,7 +124,10 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
         C::ClipboardYank => {
             views!(Terminal: "Copy the captured review selection to the system clipboard", Media: "Copy selected PDF text or an image region")
         }
-        C::ClipboardPasteAfter | C::ClipboardPasteBefore => {
+        C::TerminalPaste => {
+            views!(Terminal: "Send register text to the child without changing mode")
+        }
+        C::TerminalClipboardPasteText => {
             views!(Terminal: "Send system clipboard text to the child without changing mode")
         }
         C::ClipboardPaste => {

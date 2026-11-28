@@ -1011,7 +1011,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
     let macos_bindings = if cfg!(target_os = "macos") { 3 } else { 0 };
     assert_eq!(
         bindings.len(),
-        717 + macos_bindings,
+        729 + macos_bindings,
         "current binding inventory changed"
     );
 
@@ -1037,7 +1037,7 @@ fn command_inventory_classifies_every_command_and_current_binding() {
     }
     assert_eq!(
         rows.len(),
-        1212 + 2 * macos_bindings,
+        1236 + 2 * macos_bindings,
         "mode-expanded binding inventory changed"
     );
 
@@ -1111,14 +1111,14 @@ fn command_inventory_classifies_every_command_and_current_binding() {
             .iter()
             .filter(|exposure| **exposure == CommandExposure::ConfigurableOnly)
             .count(),
-        14
+        12
     );
     assert_eq!(
         exposures
             .iter()
             .filter(|exposure| **exposure == CommandExposure::Bound)
             .count(),
-        EditorCommand::ALL.len() - INTERNAL_EDITOR_COMMANDS.len() - 72
+        EditorCommand::ALL.len() - INTERNAL_EDITOR_COMMANDS.len() - 70
     );
 
     for spec in COMMANDS {

@@ -717,7 +717,7 @@ fn context_review_hints_exclude_ui_owned_motion_strokes_and_prefix_tails() {
         }
     }
     app.set_keymap(std::sync::Arc::new(
-        crate::keymap::Keymap::new(bindings).unwrap(),
+        app.keymap.as_ref().clone().with_fixture_bindings(bindings),
     ));
     configure_review(
         &mut app,
