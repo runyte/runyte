@@ -409,15 +409,15 @@ fn delete_and_change_selection_leave_registers_alone_while_d_and_c_yank() {
     assert_eq!(app.registers[&'"'].text, "abc");
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
 
-    // A register chosen for a delete that writes nothing must not linger
-    // and capture the next yank instead.
+    // A delete that uses no register leaves the prefix for the next
+    // eligible action.
     seed(&mut app, "ghi jkl");
     press(&mut app, '"');
     press(&mut app, 'a');
     key(&mut app, KeyCode::Function(5), Modifiers::NONE);
     assert!(!app.registers.contains_key(&'a'));
     press(&mut app, 'y');
-    assert!(!app.registers.contains_key(&'a'));
+    assert_eq!(app.registers[&'a'].text, "h");
     assert_eq!(app.registers[&'"'].text, "h");
 
     // `delete-selection` continues a sequence, so it can follow a selection.

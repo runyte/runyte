@@ -1264,7 +1264,6 @@ Regenerate this block with `cargo run --example action_reference`.
 <a id="clipboard-register-and-macro-actions"></a>
 <!-- action-reference:start -->
 
-
 Use these names in `keys.bind`. Modes are independent. Sequence position says whether
 an action may be followed by another action. Counts go to the first accepting step in every binding. If none accepts a count,
 the count is dropped silently and the binding runs. Plugin bindings use `plugins[].bindings`.
@@ -2084,8 +2083,8 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `media-actual-size` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `media-pan-left` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `media-pan-right` | view | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-| `media-move-up` | view, selection | repeats | false | false | none | none | palette argument, if any |  | decision: Pans zoomed or non-PDF media, but changes PDF pages at fit zoom; the native viewport owns that decision (decision 31). |
-| `media-move-down` | view, selection | repeats | false | false | none | none | palette argument, if any |  | decision: Pans zoomed or non-PDF media, but changes PDF pages at fit zoom; the native viewport owns that decision (decision 31). |
+| `media-move-up` | view, selection | repeats | false | true | none | none | palette argument, if any |  | decision: Pans zoomed or non-PDF media, but changes PDF pages at fit zoom; the native viewport owns that decision (decision 31). |
+| `media-move-down` | view, selection | repeats | false | true | none | none | palette argument, if any |  | decision: Pans zoomed or non-PDF media, but changes PDF pages at fit zoom; the native viewport owns that decision (decision 31). |
 | `media-copy-selection` | register | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
 | `media-back` | view, mode, selection | not accepted | false | false | none | none | palette argument, if any | media: Enter Normal mode, then fit media, clear selection or leave preview; pdf-pages: Collapse a Select-mode page selection, otherwise open the parent explorer | decision: Fits zoomed media, otherwise clears native selection, otherwise leaves preview; authoritative native state chooses the branch (decision 31). |
 | `media-select-all` | selection | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
@@ -2397,7 +2396,6 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `session-stop` | background work | not accepted | false | false | none | session-stop [workspace] | palette argument, if any |  | atomic operation |
 | `session-rename` | background work, configuration | not accepted | false | false | none | session-rename <workspace> <name> | palette argument, if any |  | atomic operation |
 | `session-clean` | background work | not accepted | false | false | none | none | palette argument, if any |  | atomic operation |
-
 <!-- action-reference:end -->
 
 <!-- navigation -->
