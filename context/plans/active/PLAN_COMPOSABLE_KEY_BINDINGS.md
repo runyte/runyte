@@ -403,7 +403,7 @@ decision revises an earlier one, the earlier entry says so.
     Reject identifiable removed constructs, including `keys.scopes`, with
     migration diagnostics. The guide and 0.5 migration notes explain that
     `bind.normal` applies to normal and modes inheriting it; bindings intended
-    across modal views belong in `bind.modal-keys`. `bind.common` also reaches
+    across modal buffer types belong in `bind.modal-keys`. `bind.common` also reaches
     Insert and Replace, so only actions valid in every inheriting mode belong
     there (clarified after decision 49). `common`, `modal-keys` and `insert-keys`
     are public, stable shared-mode names in the Runyte preset.
@@ -729,7 +729,7 @@ its eventual semantic class: it does not certify the current action as atomic.
 | Native media navigation | Decision, with native-state reason | Decision 31 retains it through 0.5 |
 | Clipboard image/text dispatch | Decision | Text fallback mode split in stage 4 |
 | Save-and-close commands | Decision | Retain guarded save continuation and success-dependent close |
-| View/pane activation, Git workflow destinations and completion | Decision | Mode belongs to guarded destination/continuation; no unconditional mode tail |
+| Buffer/pane activation, Git workflow destinations and completion | Decision | Mode belongs to guarded destination/continuation; no unconditional mode tail |
 | Bundled operations listed below | Pending split; underlying semantic class retained separately | Must empty each exact set before its stage is complete |
 
 Surround add/delete/replace now preserve mode; their default `m s`, `m d`,
@@ -840,7 +840,7 @@ with its implementation. This is the order for the remaining stage 4 work:
   terminal meanings and author their explicit programs and mode tails. Retain
   shared operations where their meaning is unchanged.
 - **4c2 — Remaining terminal meanings.** Terminal undo-paste and live-input
-  entry have distinct identities; Normal/Select entry remains shared with view
+  entry have distinct identities; Normal/Select entry remains shared with buffer-type
   prose. Document input aliases are refused. The pending inventory is empty.
 - **4d — Remaining directory, tree and clipboard splits.** Include inherited
   tree `N` and preserve clipboard image/text decisions. Leave the stage 4
@@ -1155,15 +1155,18 @@ preset initialization alone does not establish configured-reload cost.
 Caching may reuse validated work, but must preserve the effective-path
 admission contract above, including paths removed by configuration.
 
-### Decision 50 — Temporary gestures belong to their view
+### Decision 50 — Temporary gestures belong to their pane and buffer type
 
-Changing pane focus, active buffer, or active buffer type ends a temporary
+A temporary gesture belongs to the pane and buffer type it was entered in,
+with the captured buffer or terminal-session identity. Changing pane focus,
+active buffer, terminal session, or active buffer type ends a temporary
 mode gesture and discards its return mode. This includes directory-tree focus,
 Help and generated pages. The destination uses its ordinary activation rule;
-role identities resolve against the destination buffer type. Same-view
-restoration remains unchanged. This extends the focus ownership rule for
-pending programs from #141 and fixes a stage 4 regression where a directory
-return mode could replace Help's key table. Scope-specific commands exposed
+role identities resolve against the destination buffer type. Restoration within
+the same pane, active buffer or terminal session, and buffer type remains
+unchanged. This extends the focus
+ownership rule for pending programs from #141 and fixes a stage 4 regression where a directory
+return mode could replace Help's key table. Buffer-type-specific commands exposed
 through stale return identities are bugs, not runtime capability exceptions.
 
 
@@ -1202,24 +1205,25 @@ and operand waits together.
 `selection-has-text` tests whether any selection range has different anchor
 and head offsets. A collapsed caret is false even when yank would copy its
 grapheme. `multiple-selections` tests for at least two ranges. These conditions
-apply to ordinary text selections, including generated text views and terminal
-review, but are rejected for media, directory-tree, session-manager and list
+apply to buffer types with ordinary text selections, including generated buffer
+types and terminal review, but are rejected for media, directory-tree and UI
 owners. Live terminal output has no review selection, so both are false.
 
 `read-only`, `register-empty`, mode, buffer-type and recording-macro conditions
-apply everywhere programs execute, excluding list owners. Read-only reflects effective text-editing protection,
-including terminal and media surfaces. Buffer-type matches exact configured
+apply everywhere programs execute, excluding UI owners. Read-only reflects
+effective text-editing protection, including terminal and media surfaces. Buffer-type matches exact configured
 buffer-type keys; unknown names are rejected. The generated condition contract
 table documents applicability alongside the action contracts.
 
-### Decision 54 — List bindings remain single actions in 0.5
+### Decision 54 — UI owner bindings remain single actions in 0.5
 
-List-dispatched owners, including `list`, `session-manager` and the separate
-`git-merge-review`, `git-merge-detail`, and `git-merge-input` UI dispatchers, accept one
+UI owners, including `list`, `session-manager` and the separate
+`git-merge-review`, `git-merge-detail`, and `git-merge-input` dispatchers, accept one
 plain action only. Step lists (even singleton lists), conditionals, arguments
-and step options are rejected at load with `bindings in <owner> take a single action in 0.5`. This prevents programs from being accepted while dispatch silently
-executes only the representative target. Decision 53's universal conditions
-apply everywhere programs execute, not to list owners. This preserves decision
+and step options are rejected at load with
+`bindings in <owner> take a single action in 0.5`. This prevents programs from
+being accepted while dispatch silently executes only the representative target. Decision 53's universal conditions
+apply everywhere programs execute, not to UI owners. This preserves decision
 10's separation of UI and list owners from editor programs.
 
 Post-0.5: decide a general list program executor together with the `keys.ui`

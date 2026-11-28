@@ -171,7 +171,7 @@ impl Program {
                             .is_some_and(|d| d.supports_extend_in(scope))
                     })
                 {
-                    return Err("extend is unavailable in this view");
+                    return Err("extend is unavailable for this buffer type");
                 }
             }
             let tail = outer_tail || index + 1 < self.steps().len();
@@ -325,37 +325,37 @@ pub const CONDITION_DESCRIPTORS: &[(&str, &str, &str)] = &[
     (
         "selection-has-text",
         "At least one range has different anchor and head offsets; a caret is false",
-        "Ordinary text selections, including generated text views and terminal review; excludes media, directory-tree, session-manager and list owners",
+        "Buffer types with ordinary text selections, including generated buffer types and terminal review; excludes media, directory-tree and UI owners",
     ),
     (
         "multiple-selections",
         "Two or more selection ranges",
-        "Ordinary text selections, including generated text views and terminal review; excludes media, directory-tree, session-manager and list owners",
+        "Buffer types with ordinary text selections, including generated buffer types and terminal review; excludes media, directory-tree and UI owners",
     ),
     (
         "register-empty",
         "Pending selected register has no text or directory entries; after consumption, tests the unnamed register",
-        "Everywhere programs execute; excludes list owners",
+        "Everywhere programs execute; excludes UI owners",
     ),
     (
         "read-only",
-        "The active view's text cannot be edited, including terminal and media surfaces",
-        "Everywhere programs execute; excludes list owners",
+        "The active buffer type's text cannot be edited, including terminal and media surfaces",
+        "Everywhere programs execute; excludes UI owners",
     ),
     (
         "{mode: <name>}",
         "Role membership for normal/select/insert/replace; exact named mode otherwise",
-        "Everywhere programs execute; excludes list owners",
+        "Everywhere programs execute; excludes UI owners",
     ),
     (
         "{buffer-type: <type>}",
         "Exact buffer-types key; unknown names are rejected",
-        "Everywhere programs execute; excludes list owners",
+        "Everywhere programs execute; excludes UI owners",
     ),
     (
         "recording-macro",
         "A macro is currently being recorded",
-        "Everywhere programs execute; excludes list owners",
+        "Everywhere programs execute; excludes UI owners",
     ),
     (
         "tree-entry-expanded",

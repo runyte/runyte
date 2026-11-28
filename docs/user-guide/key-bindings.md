@@ -6,7 +6,7 @@ advertised aliases. See [Custom key
 bindings](custom-key-bindings.md#custom-key-bindings). Live help, hints, About,
 tutorials, and action messages always show the effective spelling.
 
-Other sections document the keys of their own views: [Files and
+Other sections document the keys of their own buffer types: [Files and
 buffers](files-and-buffers.md#files-and-buffers), [Panes](panes.md#panes), [Terminals](terminals.md#terminals),
 [Git](git.md#git), [Language support](language-support.md#language-support), and [Workspaces and
 persistent sessions](workspaces-and-persistent-sessions.md#workspaces-and-persistent-sessions).

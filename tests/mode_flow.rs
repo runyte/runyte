@@ -396,14 +396,10 @@ fn list_owners_reject_program_syntax_with_the_migration_diagnostic() {
 
 #[test]
 fn builtin_list_owners_only_contain_single_plain_actions() {
-    use runyte::keymap::{BindingScope, program::Step};
+    use runyte::keymap::BindingScope;
     for &scope in BindingScope::ALL {
         for binding in default_keymap().bindings_for_scope(Mode::List, scope) {
-            assert!(
-                matches!(binding.program.steps(), [Step::Action(_)]),
-                "{}",
-                binding.sequence
-            );
+            assert!(binding.is_plain_action(), "{}", binding.sequence);
         }
     }
 }
@@ -441,7 +437,7 @@ fn merge_review_owners_reject_programs_instead_of_flattening_them() {
             );
         }
     }
-    use runyte::keymap::{BindingScope, program::Step};
+    use runyte::keymap::BindingScope;
     for scope in [
         BindingScope::GitMergeReview,
         BindingScope::GitMergeDetail,
@@ -449,11 +445,7 @@ fn merge_review_owners_reject_programs_instead_of_flattening_them() {
     ] {
         for binding in default_keymap().bindings_for_scope(Mode::Normal, scope) {
             if binding.scope == scope {
-                assert!(
-                    matches!(binding.program.steps(), [Step::Action(_)]),
-                    "{}",
-                    binding.sequence
-                );
+                assert!(binding.is_plain_action(), "{}", binding.sequence);
             }
         }
     }

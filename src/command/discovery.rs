@@ -123,7 +123,7 @@ pub fn details_indexed(
         .collect::<Vec<_>>()
         .join(", ");
     let mut text = format!(
-        "{}\n\n{}\n\nView: {}\nMode: {}\nEffects: {}\nCount: {}\nCharacter operands: {}\nSequence position: {}\nGlobal configurable modes: {}\nDefault keys here: {}\nEffective keys here: {}\n",
+        "{}\n\n{}\n\nBuffer type: {}\nMode: {}\nEffects: {}\nCount: {}\nCharacter operands: {}\nSequence position: {}\nGlobal configurable modes: {}\nDefault keys here: {}\nEffective keys here: {}\n",
         d.metadata.name,
         d.metadata.description,
         scope.name(),
@@ -179,7 +179,7 @@ pub fn details_indexed(
         text.push_str("Palette argument: none\n");
     }
     if let Some(view) = d.view(scope) {
-        text.push_str(&format!("Current view: {}\n", view.description));
+        text.push_str(&format!("Current buffer type: {}\n", view.description));
     }
     for view in d.view_overrides {
         text.push_str(&format!("{}: {}\n", view.scope.name(), view.description));
@@ -312,7 +312,7 @@ fn argument_text(value: &super::InvocationParameters) -> String {
             .map(|kind| kind.name())
             .unwrap_or("current grammar")
             .into(),
-        P::Help(HelpInvocation::ActiveView) => "current view".into(),
+        P::Help(HelpInvocation::ActiveView) => "current buffer type".into(),
         P::Help(HelpInvocation::Manual(topic)) => topic.as_deref().unwrap_or("manual").into(),
     }
 }
@@ -386,7 +386,7 @@ pub fn admitted_here(id: CommandId, mode: Mode, scope: BindingScope) -> bool {
 pub fn descriptor_reference() -> String {
     use std::fmt::Write;
     let mut out = String::from(
-        "\n## Action contracts\n\nGenerated from built-in descriptors. Effects include owned continuations and specialized views; remaining prompt and background effects require the last step. Key-program arguments replace the listed operands or prompts; palette spellings remain separate.\n\n| Action | Effects | Count | Uses register | Supports extend | Character operands | Palette argument | Key-program argument | View differences | Classification |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
+        "\n## Action contracts\n\nGenerated from built-in descriptors. Effects include owned continuations and specialized buffer types; remaining prompt and background effects require the last step. Key-program arguments replace the listed operands or prompts; palette spellings remain separate.\n\n| Action | Effects | Count | Uses register | Supports extend | Character operands | Palette argument | Key-program argument | Buffer-type differences | Classification |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
     );
     for id in identities() {
         let d = id.descriptor().unwrap();
