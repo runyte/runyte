@@ -1206,7 +1206,7 @@ impl TerminalSession {
         let mut result = String::new();
         for row in rows {
             let line = &review.lines[row];
-            result.extend(text[line.text_start..line.text_end].iter());
+            result.extend(line.characters(&text).iter());
             result.push('\n');
         }
         result

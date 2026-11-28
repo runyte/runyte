@@ -756,3 +756,17 @@ fn terminal_yank_line_deduplicates_rows_touched_by_disjoint_ranges() {
     );
     assert_eq!(session.review_selection_state().unwrap().1, &selection);
 }
+
+#[test]
+fn whole_row_yank_handles_trimmed_blank_review_rows() {
+    let (mut app, terminal) = terminal_app("{}");
+    let session = app.terminals.get_mut(terminal).unwrap();
+    session.begin_review();
+    session.move_review(crate::terminal::ReviewMotion::HalfPageDown, false);
+    assert_eq!(
+        session.review_selection_state().unwrap().1.primary().head,
+        12
+    );
+    assert_eq!(session.review_selected_lines_text(), "\n");
+}
+
