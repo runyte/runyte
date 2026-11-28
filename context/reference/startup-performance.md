@@ -18,6 +18,29 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — ARM debug shared typed action syntax
+
+Stage 5a of [#132](https://github.com/runyte/runyte/issues/132) was measured
+against stage 4e with one discarded warm-up per binary and ten alternating
+fresh-process debug-profile `preset_startup` samples on one
+`ubuntu-24.04-arm` runner.
+[Run 46100371965](https://github.com/runyte/runyte/actions/runs/46100371965)
+compares `6a16a798` with `3dbc2185`. Later test-only scope corrections do not
+change the measured production paths.
+
+| Phase | Stage 4e ms | Stage 5a ms |
+| --- | ---: | ---: |
+| Typed YAML parsing | 17.787 (17.663–17.938) | 18.413 (18.204–18.581) |
+| Programs and metadata | 7.347 (7.319–7.382) | 7.285 (7.244–7.324) |
+| Construction, lookup index and role validation | 97.545 (97.200–98.025) | 97.310 (96.937–98.126) |
+| Total keymap initialization | 122.659 (122.457–123.161) | 122.972 (122.728–123.757) |
+
+Cells are median (min–max). Typed parsing increases by 0.626 ms (3.52%);
+total median increases by 0.313 ms (0.26%). The preset remains directly typed,
+without a generic YAML value conversion. These component measurements do not
+establish end-to-end desktop readiness or release-profile costs. Raw samples
+are attached to the linked run.
+
 ## 2026-11-28 — ARM debug subject-first action names
 
 Stage 4e of [#132](https://github.com/runyte/runyte/issues/132) was measured
