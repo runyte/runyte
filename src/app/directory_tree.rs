@@ -27,6 +27,16 @@ impl App {
     /// can interpret them. The ordinary pane remains the file destination.
     pub(super) fn handle_directory_tree_command(&mut self, command: EditorCommand) -> Result<bool> {
         use EditorCommand as Command;
+        if matches!(
+            command,
+            Command::DirectoryTreeSearch
+                | Command::DirectoryTreeSearchNext
+                | Command::DirectoryTreeSearchPrevious
+        ) && !self.directory_tree.focused
+        {
+            self.action_failed("this action needs the directory tree");
+            return Ok(true);
+        }
         let show_hidden = self
             .directory_tree
             .show_hidden(self.config.editor.show_hidden_files);
@@ -112,13 +122,15 @@ impl App {
                 self.directory_tree
                     .toggle_hidden(self.config.editor.show_hidden_files);
             }
-            Command::SearchRegex if self.directory_tree.focused => {
+            Command::DirectoryTreeSearch if self.directory_tree.focused => {
                 self.open_prompt(PromptKind::DirectoryTreeSearch);
             }
-            Command::SearchNext | Command::SearchPrevious if self.directory_tree.focused => {
+            Command::DirectoryTreeSearchNext | Command::DirectoryTreeSearchPrevious
+                if self.directory_tree.focused =>
+            {
                 let result = self
                     .directory_tree
-                    .search_next(command == Command::SearchNext);
+                    .search_next(command == Command::DirectoryTreeSearchNext);
                 self.report_tree_search(result);
             }
             Command::DirectoryTreeOpen
@@ -531,7 +543,7 @@ impl App {
             (Command::DirectoryTreeHorizontal, "open in h-split"),
             (Command::DirectoryTreeLegend, "legend"),
             (Command::ToggleHiddenFiles, "hidden files"),
-            (Command::SearchRegex, "search"),
+            (Command::DirectoryTreeSearch, "search"),
         ];
         let bindings = self
             .keymap

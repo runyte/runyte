@@ -120,6 +120,9 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
         | C::DirectoryTreeSelectParent
         | C::DirectoryTreeExpand
         | C::DirectoryTreeSelectFirstChild
+        | C::DirectoryTreeSearch
+        | C::DirectoryTreeSearchNext
+        | C::DirectoryTreeSearchPrevious
         | C::DirectoryTreeFirst
         | C::DirectoryTreeLast
         | C::DirectoryTreePageUp
@@ -349,11 +352,17 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
             semantic: SemanticClass::Atomic,
             pending_split: None,
         },
+        C::DirectoryPaste => ActionClassification {
+            semantic: SemanticClass::Decision(
+                "Stages directory copy or move payloads beside entry rows, or pastes a text register using each range's insertion/replacement decision.",
+            ),
+            pending_split: None,
+        },
         C::PasteAfterOrReplace => ActionClassification {
             semantic: SemanticClass::Decision(
                 "Chooses insertion or replacement independently for each selection range.",
             ),
-            pending_split: Some(SplitStage::Stage4),
+            pending_split: None,
         },
         C::CutSelection => ActionClassification {
             semantic: SemanticClass::Decision(
@@ -474,7 +483,7 @@ pub(super) const fn editor_classification(command: EditorCommand) -> ActionClass
             semantic: SemanticClass::Decision(
                 "Chooses image insertion or text paste from clipboard content.",
             ),
-            pending_split: Some(SplitStage::Stage4),
+            pending_split: None,
         },
     }
 }

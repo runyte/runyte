@@ -3801,3 +3801,67 @@ fn quoted_path_completion_preserves_apostrophe_and_backslashes() {
         &crate::command::InvocationParameters::Path(PathBuf::from(r"C:\Bob's notes.txt"))
     );
 }
+
+#[test]
+fn directory_paste_primitives_preserve_mode_and_transfer_ownership() {
+    for cut in [false, true] {
+        for command in [EditorCommand::DirectoryPaste, EditorCommand::PasteBefore] {
+            let parent = temporary("directory-atomic-paste");
+            let source = parent.join("source");
+            let destination = parent.join("destination");
+            fs::create_dir_all(&source).unwrap();
+            fs::create_dir_all(&destination).unwrap();
+            fs::write(source.join("note.txt"), "payload").unwrap();
+            let mut app = App::new(Config::default(), Some(source.clone())).unwrap();
+            press(&mut app, 'x');
+            press(&mut app, if cut { 'd' } else { 'y' });
+            app.open_file(destination.clone()).unwrap();
+            app.set_editing_role(Mode::Select);
+            app.execute_editor_command(command).unwrap();
+            assert!(!app.status_error, "{}", app.status);
+            assert_eq!(app.mode, Mode::Select);
+            assert_eq!(app.active_buffer().to_string(), "note.txt\n");
+            let plan = app.active_buffer().directory_plan().unwrap();
+            assert!(matches!(plan.operations(), [FsOperation::Move { .. }]) == cut);
+            assert!(matches!(plan.operations(), [FsOperation::Copy { .. }]) == !cut);
+            assert!(source.join("note.txt").exists());
+            assert!(!destination.join("note.txt").exists());
+            app.undo();
+            assert!(app.active_buffer().directory_plan().unwrap().is_empty());
+            fs::remove_dir_all(parent).unwrap();
+        }
+    }
+}
+
+#[test]
+fn directory_paste_keeps_text_register_fallback_and_refuses_outside_listing() {
+    let root = temporary("directory-text-paste");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("abc"), "").unwrap();
+    let mut app = App::new(Config::default(), Some(root.clone())).unwrap();
+    app.registers.insert(
+        'a',
+        Register {
+            text: "xy".into(),
+            linewise: false,
+            directory: None,
+        },
+    );
+    app.selected_register = 'a';
+    app.set_editing_role(Mode::Select);
+    app.execute_editor_command(EditorCommand::DirectoryPaste)
+        .unwrap();
+    assert_eq!(app.active_buffer().to_string(), "xybc\n");
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.selected_register, '"');
+    assert!(matches!(
+        app.active_buffer().directory_plan().unwrap().operations(),
+        [FsOperation::Rename { .. }]
+    ));
+    app.open_file(root.join("abc")).unwrap();
+    app.execute_editor_command(EditorCommand::DirectoryPaste)
+        .unwrap();
+    assert!(app.status_error);
+    assert_eq!(app.active_buffer().to_string(), "");
+    fs::remove_dir_all(root).unwrap();
+}

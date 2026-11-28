@@ -39,6 +39,15 @@ pub fn admits_command(scope: BindingScope, command: C) -> bool {
     ) {
         return scope == BindingScope::Terminal;
     }
+    if command == C::DirectoryPaste {
+        return scope == BindingScope::Directory;
+    }
+    if matches!(
+        command,
+        C::DirectoryTreeSearch | C::DirectoryTreeSearchNext | C::DirectoryTreeSearchPrevious
+    ) {
+        return scope == BindingScope::DirectoryTree;
+    }
     if command == C::FitSelectionForNormalMode {
         return admits_command(scope, C::EnterNormalMode);
     }
@@ -165,9 +174,9 @@ const TREE: &[C] = &[
     C::GotoWindowCenter,
     C::GotoWindowBottom,
     C::ToggleHiddenFiles,
-    C::SearchRegex,
-    C::SearchNext,
-    C::SearchPrevious,
+    C::DirectoryTreeSearch,
+    C::DirectoryTreeSearchNext,
+    C::DirectoryTreeSearchPrevious,
     C::ShowHelp,
 ];
 

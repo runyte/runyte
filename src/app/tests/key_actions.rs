@@ -1569,7 +1569,7 @@ fn oversized_counted_paste_fails_before_editing_and_transient_yank_retains_linew
 }
 
 #[test]
-fn standalone_clipboard_input_normalizes_after_leaving_insert_or_replace() {
+fn standalone_clipboard_input_preserves_insert_or_replace() {
     for mode in [Mode::Insert, Mode::Replace] {
         for event in [
             InputEvent::ClipboardPaste,
@@ -1587,8 +1587,8 @@ fn standalone_clipboard_input_normalizes_after_leaving_insert_or_replace() {
                 app.sequence_halted = true;
                 app.handle_input(event.clone()).unwrap();
                 assert_eq!(text(&app), if original == "ab" { "abx" } else { "abx\ncd" });
-                assert_eq!(app.mode, Mode::Normal);
-                assert_eq!(app.active().selection.primary(), Range::point(2));
+                assert_eq!(app.mode, mode);
+                assert_eq!(app.active().selection.primary(), Range::point(3));
             }
         }
     }

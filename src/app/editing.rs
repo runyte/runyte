@@ -3699,10 +3699,33 @@ impl App {
             self.sequence_halted = true;
             return;
         }
+        if paste == Paste::AfterOrReplace
+            && self.active_buffer().is_directory()
+            && register.directory.is_some()
+        {
+            self.action_failed("use directory-paste to stage directory entries");
+            return;
+        }
         let Some(register) = self.counted_register(register, count) else {
             return;
         };
         self.paste_register(&register, paste, linewise_extent);
+    }
+
+    pub(super) fn directory_paste_count(&mut self, linewise_extent: bool, count: usize) {
+        if !self.active_buffer().is_directory() || self.active_terminal().is_some() {
+            self.action_failed("this action needs a directory listing");
+            return;
+        }
+        let register = self.read_selected_register();
+        if register.text.is_empty() {
+            self.sequence_halted = true;
+            return;
+        }
+        let Some(register) = self.counted_register(register, count) else {
+            return;
+        };
+        self.paste_register(&register, Paste::AfterOrReplace, linewise_extent);
     }
 
     /// Counted paste expands once, before choosing each range's insertion or

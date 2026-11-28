@@ -18,6 +18,27 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — ARM debug directory/tree and clipboard actions
+
+Stage 4d of [#132](https://github.com/runyte/runyte/issues/132) was measured
+against stage 4c2 with one discarded warm-up per binary and ten alternating
+fresh-process debug-profile `preset_startup` samples on one
+`ubuntu-24.04-arm` runner.
+[Run 46094450429](https://github.com/runyte/runyte/actions/runs/46094450429)
+compares `76127923` with `ca751f5b`. Subsequent parent CRLF fixes affect test
+source parsing only and do not change either measured production path.
+
+| Phase | Stage 4c2 ms | Stage 4d ms |
+| --- | ---: | ---: |
+| Typed YAML parsing | 17.813 (17.612–18.084) | 17.926 (17.666–18.088) |
+| Programs and metadata | 7.379 (7.328–7.421) | 7.420 (7.381–7.498) |
+| Construction, lookup index and role validation | 97.729 (97.525–97.899) | 98.152 (97.636–98.493) |
+| Total keymap initialization | 122.905 (122.801–123.025) | 123.387 (123.172–124.022) |
+
+Cells are median (min–max). Total median increases by 0.482 ms (0.39%).
+These component measurements do not establish end-to-end desktop readiness
+or release-profile costs. Raw samples are attached to the linked run.
+
 ## 2026-11-28 — ARM debug remaining terminal meanings
 
 Stage 4c2 of [#132](https://github.com/runyte/runyte/issues/132) was measured

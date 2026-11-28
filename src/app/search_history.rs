@@ -96,10 +96,6 @@ impl App {
             Ok(Some(bytes)) => self.paste_clipboard_image(&bytes),
             Ok(None) => {
                 self.clipboard_paste_count(false, linewise_extent, 1);
-                if !self.status_error && !self.sequence_halted {
-                    self.set_editing_role(Mode::Normal);
-                    self.normalize_buffer(self.active().buffer);
-                }
             }
             Err(error) => {
                 self.error_from("Clipboard", "Clipboard operation failed", error.to_string())
@@ -164,9 +160,6 @@ impl App {
                 super::editing::Paste::AfterOrReplace,
                 false,
             );
-            if !self.status_error && !self.sequence_halted {
-                self.set_editing_role(Mode::Normal);
-            }
         }
         self.status(format!("pasted Image {number} as {target}"));
     }

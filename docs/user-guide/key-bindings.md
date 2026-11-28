@@ -208,7 +208,13 @@ normal`. The primitive actions themselves preserve the selection and mode.
 #### Pasting images
 
 `Ctrl-v` and `Alt-v` paste from the system clipboard in Normal, Select,
-Insert, and Replace modes. When the clipboard holds an image:
+Insert, and Replace modes. Both text and image paste keep Insert/Replace;
+Normal/Select bindings return to Normal after success. Previously, pasting text
+with `Ctrl-v` in Insert returned to Normal; now you can continue typing immediately,
+just as after pasting an image. Native clipboard paste follows the same policy.
+The `clipboard-paste` action itself preserves mode; the bindings supply the tail.
+
+When the clipboard holds an image:
 
 1. The image is stored under `.runyte/cache/images/` in the workspace, named
    by the hash of its content.

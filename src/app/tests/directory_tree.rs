@@ -1172,8 +1172,10 @@ fn tree_search_wraps_visible_names_without_searching_or_editing_the_pane() {
     assert_eq!(app.directory_tree.selected, root.join("λ-alpha.txt"));
     key(&mut app, KeyCode::Char('n'), Modifiers::CONTROL);
     assert_eq!(app.directory_tree.selected, root.join("Alpha.txt"));
-    key(&mut app, KeyCode::Char('p'), Modifiers::CONTROL);
+    key(&mut app, KeyCode::Char('N'), Modifiers::NONE);
     assert_eq!(app.directory_tree.selected, root.join("λ-alpha.txt"));
+    assert!(app.directory_tree.focused);
+    assert_eq!(app.mode, Mode::Normal);
     key(&mut app, KeyCode::Char('/'), Modifiers::NONE);
     key(&mut app, KeyCode::Enter, Modifiers::NONE);
     assert_eq!(app.directory_tree.selected, root.join("Alpha.txt"));
@@ -1908,4 +1910,62 @@ fn conditional_tree_keys_preserve_root_directory_file_and_split_behavior() {
         chord(&mut app, 'd');
     }
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tree_search_actions_refuse_document_context_and_document_search_refuses_tree() {
+    let (mut app, root) = isolated("tree-search-identities");
+    let before = app.active().selection.clone();
+    for command in [
+        EditorCommand::DirectoryTreeSearch,
+        EditorCommand::DirectoryTreeSearchNext,
+        EditorCommand::DirectoryTreeSearchPrevious,
+    ] {
+        app.execute_editor_command(command).unwrap();
+        assert!(app.status_error, "{command:?}");
+        assert!(!app.directory_tree.focused);
+        assert_eq!(app.active().selection, before);
+    }
+    chord(&mut app, 'd');
+    wait_tree(&mut app);
+    let selected = app.directory_tree.selected.clone();
+    for command in [
+        EditorCommand::SearchRegex,
+        EditorCommand::SearchNext,
+        EditorCommand::SearchPrevious,
+    ] {
+        app.execute_editor_command(command).unwrap();
+        assert!(app.status_error, "{command:?}");
+        assert!(app.directory_tree.focused);
+        assert_eq!(app.directory_tree.selected, selected);
+        assert_eq!(app.active().selection, before);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn directory_tree_configuration_uses_tree_search_identities() {
+    for (name, accepted) in [
+        ("search-regex", false),
+        ("search-next", false),
+        ("search-previous", false),
+        ("directory-tree-search", true),
+        ("directory-tree-search-next", true),
+        ("directory-tree-search-previous", true),
+    ] {
+        let mut config = Config::default();
+        config
+            .merge_keys_source(&format!("bind:\n  directory-tree:\n    F6: {name}\n"))
+            .unwrap();
+        let result = crate::keymap::configured::compile_configuration(
+            &config,
+            crate::keymap::default_keymap(),
+        );
+        assert_eq!(
+            result.errors.is_empty(),
+            accepted,
+            "{name}: {:?}",
+            result.errors
+        );
+    }
 }

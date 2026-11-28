@@ -377,11 +377,20 @@ fn effects_distinguish_synchronous_views_from_owned_async_and_prompt_work() {
     for c in [
         EditorCommand::TerminalPaste,
         EditorCommand::TerminalClipboardPasteText,
-        EditorCommand::ClipboardPaste,
         EditorCommand::TerminalUndoPaste,
     ] {
         assert!(c.action_policy().effects.contains(&E::TerminalInput));
     }
+    assert_eq!(
+        EditorCommand::ClipboardPaste.action_policy().effects,
+        &[E::Text, E::Selection]
+    );
+    assert!(
+        EditorCommand::DirectoryTreeSearch
+            .action_policy()
+            .effects
+            .contains(&E::SearchState)
+    );
     for c in [EditorCommand::MoveLeft, EditorCommand::MoveFileEnd] {
         assert!(c.action_policy().effects.contains(&E::View));
     }

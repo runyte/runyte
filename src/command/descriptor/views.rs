@@ -91,8 +91,8 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
         C::TerminalSearchRegex => {
             views!(Terminal: "Prompt for a regular-expression search of captured output")
         }
-        C::SearchRegex => views!(DirectoryTree: "Prompt to search visible tree entries"),
-        C::SearchNext | C::SearchPrevious => {
+        C::DirectoryTreeSearch => views!(DirectoryTree: "Prompt to search visible tree entries"),
+        C::DirectoryTreeSearchNext | C::DirectoryTreeSearchPrevious => {
             views!(DirectoryTree: "Select the next or previous matching tree entry")
         }
         C::TerminalSearchNext | C::TerminalSearchPrevious => {
@@ -110,7 +110,7 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
         C::PasteAfter => {
             views!(Directory: "Stage copies or moves from a directory register into the listing")
         }
-        C::PasteAfterOrReplace | C::PasteBefore => {
+        C::DirectoryPaste | C::PasteBefore => {
             views!(Directory: "Stage copies or moves from a directory register into the listing")
         }
         C::ReplaceWithRegister => {
@@ -124,9 +124,6 @@ pub(super) const fn editor_views(command: C) -> &'static [ViewBehavior] {
         }
         C::TerminalClipboardPasteText => {
             views!(Terminal: "Send system clipboard text to the child without changing mode")
-        }
-        C::ClipboardPaste => {
-            views!(Terminal: "Paste clipboard text or an image reference into the terminal input queue")
         }
         C::TerminalUndoPaste => {
             views!(Terminal: "Ask the child to erase the last text Runyte sent, if it has not been submitted")

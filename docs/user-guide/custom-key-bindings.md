@@ -1491,6 +1491,7 @@ indicated buffer owner; raw UI input remains under `keys.ui`.
 ##### directory
 
 - `choose-explorer-order`: normal, select
+- `directory-paste`: normal, select
 - `open-directory-entry`: normal, select
 - `open-explorer-finder`: normal, select
 - `open-explorer-session`: normal, select
@@ -1529,6 +1530,9 @@ indicated buffer owner; raw UI input remains under `keys.ui`.
 - `directory-tree-pane-9`: normal, select
 - `directory-tree-refresh`: normal, select
 - `directory-tree-rename`: normal, select
+- `directory-tree-search`: normal, select
+- `directory-tree-search-next`: normal, select
+- `directory-tree-search-previous`: normal, select
 - `directory-tree-select-first-child`: normal, select
 - `directory-tree-select-parent`: normal, select
 - `directory-tree-up`: normal, select
@@ -1745,7 +1749,7 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `redo` | text | repeats | none | none |  | atomic operation |
 | `yank` | register | not accepted | none | none | terminal: Copy the review selection to the selected register and retain its selection and mode; directory: Copy selected entries and record a directory copy payload | atomic operation |
 | `yank-line` | register | not accepted | none | none | terminal: Copy whole review rows to the selected register, preserving selection and mode; directory: Copy selected entry lines and record a directory copy payload | atomic operation |
-| `paste-after-or-replace` | text, selection | interpreted as an address or extent | none | none | directory: Stage copies or moves from a directory register into the listing | pending stage 4 split; then decision: Chooses insertion or replacement independently for each selection range. |
+| `paste-after-or-replace` | text, selection | interpreted as an address or extent | none | none |  | decision: Chooses insertion or replacement independently for each selection range. |
 | `paste-after` | text, selection | interpreted as an address or extent | none | none | directory: Stage copies or moves from a directory register into the listing | atomic operation |
 | `replace-with-register` | text | not accepted | none | none | directory: Replace listing text from a text register; directory move/copy payloads are refused because entries cannot replace a text selection | atomic operation |
 | `paste-before` | text, selection | interpreted as an address or extent | none | none | directory: Stage copies or moves from a directory register into the listing | atomic operation |
@@ -1831,9 +1835,9 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `join-lines` | text | not accepted | none | none |  | atomic operation |
 | `format-table` | text | not accepted | none | none |  | atomic operation |
 | `search` | prompt, search state, selection, mode | not accepted | none | none |  | decision: Owns the search prompt and enters Select only when its accepted search succeeds (decision 30). |
-| `search-regex` | prompt, search state, selection, mode | not accepted | none | none | directory-tree: Prompt to search visible tree entries | decision: Owns the regular-expression search prompt and its selection-mode completion (decision 30). |
-| `search-next` | selection, view | not accepted | none | none | directory-tree: Select the next or previous matching tree entry | atomic operation |
-| `search-previous` | selection, view | not accepted | none | none | directory-tree: Select the next or previous matching tree entry | atomic operation |
+| `search-regex` | prompt, search state, selection, mode | not accepted | none | none |  | decision: Owns the regular-expression search prompt and its selection-mode completion (decision 30). |
+| `search-next` | selection, view | not accepted | none | none |  | atomic operation |
+| `search-previous` | selection, view | not accepted | none | none |  | atomic operation |
 | `search-extend-next` | selection, view | not accepted | none | none |  | atomic operation |
 | `search-extend-previous` | selection, view | not accepted | none | none |  | atomic operation |
 | `search-select-all-matches` | selection, view | not accepted | none | none |  | atomic operation |
@@ -1877,6 +1881,10 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `directory-tree-select-parent` | view, selection | not accepted | none | none |  | atomic operation |
 | `directory-tree-expand` | view, selection | not accepted | none | none |  | atomic operation |
 | `directory-tree-select-first-child` | view, selection | not accepted | none | none |  | atomic operation |
+| `directory-paste` | text, selection | interpreted as an address or extent | none | none | directory: Stage copies or moves from a directory register into the listing | decision: Stages directory copy or move payloads beside entry rows, or pastes a text register using each range's insertion/replacement decision. |
+| `directory-tree-search` | prompt, selection, view, search state | not accepted | none | none | directory-tree: Prompt to search visible tree entries | atomic operation |
+| `directory-tree-search-next` | selection, view | not accepted | none | none | directory-tree: Select the next or previous matching tree entry | atomic operation |
+| `directory-tree-search-previous` | selection, view | not accepted | none | none | directory-tree: Select the next or previous matching tree entry | atomic operation |
 | `directory-tree-first` | selection | not accepted | none | none |  | atomic operation |
 | `directory-tree-last` | selection | not accepted | none | none |  | atomic operation |
 | `directory-tree-page-up` | selection | not accepted | none | none |  | atomic operation |
@@ -2065,7 +2073,7 @@ Generated from built-in descriptors. Effects include owned continuations and spe
 | `clipboard-paste-after` | text, selection | interpreted as an address or extent | none | none |  | atomic operation |
 | `clipboard-paste-before` | text, selection | interpreted as an address or extent | none | none |  | atomic operation |
 | `clipboard-yank` | register | not accepted | none | none | terminal: Copy the captured review selection to the system clipboard; media: Copy selected PDF text or an image region | atomic operation |
-| `clipboard-paste` | text, terminal input, mode | not accepted | none | none | terminal: Paste clipboard text or an image reference into the terminal input queue | pending stage 4 split; then decision: Chooses image insertion or text paste from clipboard content. |
+| `clipboard-paste` | text, selection | not accepted | none | none |  | decision: Chooses image insertion or text paste from clipboard content. |
 | `select-register` | character input, register | not accepted | one character | none |  | atomic operation |
 | `record-macro` | character input, macro | not accepted | one character | none |  | atomic operation |
 | `record-default-macro` | macro | not accepted | none | none |  | atomic operation |

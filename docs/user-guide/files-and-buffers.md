@@ -576,6 +576,12 @@ Edit the listing with ordinary modal editing and multiple selections:
 - **Copying within one directory:** rename the pasted row before writing.
 - **Nothing happens until you write.** See [Applying changes](files-and-buffers.md#applying-changes).
 
+The directory `p` binding runs `directory-paste` then enters Normal. The action
+stages copy/move entries after each head row, or uses ordinary per-range paste
+for a text-only register, and preserves mode. `P` retains shared `paste-before`.
+Configured `paste-after-or-replace` refuses directory entry payloads; use
+`directory-paste` for those payloads. Clipboard text carries no entry identity.
+
 **Rows that are not changes:**
 
 - Trailing whitespace and whitespace-only rows are ignored. Writing a listing
@@ -883,7 +889,9 @@ override belongs to this workspace's tree and survives hiding it.
 - Collapsed directories are not searched.
 - An empty prompt repeats the previous search, and Escape cancels without
   moving.
-- `Ctrl-n` / `Ctrl-p` repeat it; `n` keeps its create action.
+- `Ctrl-n` repeats forward; `Ctrl-p` and `N` repeat backward. `n` keeps its create action.
+- The tree mode binds `directory-tree-search`, `directory-tree-search-next` and
+  `directory-tree-search-previous`; these preserve mode and tree focus.
 - Tree searches do not affect buffer searches.
 
 **Quitting from the tree.** While the tree is focused, `:q`, `:wc`, and
