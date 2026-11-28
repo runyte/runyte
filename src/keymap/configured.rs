@@ -1685,3 +1685,19 @@ mod tests {
         );
     }
 }
+
+#[cfg(feature = "startup-timing")]
+thread_local! {
+    static MODE_FLOW_TIME_NS: std::cell::Cell<u128> = const { std::cell::Cell::new(0) };
+}
+
+/// Drain this thread's mode-flow admission time for the startup/reload probe.
+#[cfg(feature = "startup-timing")]
+pub fn take_mode_flow_time_ns() -> u128 {
+    MODE_FLOW_TIME_NS.replace(0)
+}
+
+#[cfg(feature = "startup-timing")]
+pub(super) fn record_mode_flow_time_ns(elapsed: u128) {
+    MODE_FLOW_TIME_NS.set(MODE_FLOW_TIME_NS.get().saturating_add(elapsed));
+}

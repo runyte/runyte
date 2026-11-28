@@ -175,3 +175,8 @@ stylo_derive = { path = "vendor/stylo_derive" }
 name = "preset_startup"
 path = "benchmarks/preset_startup.rs"
 required-features = ["startup-timing"]
+
+[[example]]
+name = "config_reload"
+path = "benchmarks/config_reload.rs"
+required-features = ["startup-timing"]

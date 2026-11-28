@@ -649,7 +649,12 @@ impl Analysis<'_> {
 }
 
 pub(super) fn failures(map: &Keymap, admission: &Keymap) -> Vec<Failure> {
-    failures_with_limit(map, admission, MAX_WORK)
+    #[cfg(feature = "startup-timing")]
+    let started = std::time::Instant::now();
+    let result = failures_with_limit(map, admission, MAX_WORK);
+    #[cfg(feature = "startup-timing")]
+    super::configured::record_mode_flow_time_ns(started.elapsed().as_nanos());
+    result
 }
 
 fn failures_with_limit(map: &Keymap, admission: &Keymap, work_limit: usize) -> Vec<Failure> {
