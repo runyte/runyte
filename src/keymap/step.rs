@@ -349,8 +349,93 @@ pub(super) fn compile(
     Ok(program)
 }
 
+/// Stable discovery label from executable identities and typed arguments.
+/// Authored prose is separate; generated labels are bounded valid metadata.
+pub(super) fn description(program: &program::Program) -> String {
+    use crate::command::{HelpInvocation, InvocationParameters as P};
+    let mut text = String::new();
+    for action in program.iter() {
+        if !text.is_empty() {
+            text.push_str(" → ");
+        }
+        text.push_str(action.target().name());
+        if let actions::Action::Invocation(invocation) = action {
+            let argument = match invocation.parameters() {
+                P::None => invocation.execution().character().map(|first| {
+                    let mut text = first.to_string();
+                    if let Some(second) = invocation.execution().second_character() {
+                        text.push(second);
+                    }
+                    text
+                }),
+                P::Path(path) | P::OptionalPath(Some(path)) => Some(path.display().to_string()),
+                P::OptionalText(Some(text)) | P::TemporaryMode(text) => Some(text.clone()),
+                P::SessionRename { workspace, name } => {
+                    Some(format!("{} {name}", workspace.display()))
+                }
+                P::Grammar(Some(grammar)) => Some(grammar.name().into()),
+                P::Help(HelpInvocation::Manual(Some(topic))) => Some(topic.clone()),
+                _ => None,
+            };
+            if let Some(argument) = argument {
+                text.push(' ');
+                text.push_str(&argument);
+            }
+        }
+    }
+    let mut label = String::new();
+    for ch in text.chars() {
+        if ch.is_control() {
+            let escaped = ch.escape_default().to_string();
+            if label.len() + escaped.len() > 1021 {
+                label.push('…');
+                break;
+            }
+            label.push_str(&escaped);
+        } else {
+            if label.len() + ch.len_utf8() > 1021 {
+                label.push('…');
+                break;
+            }
+            label.push(ch);
+        }
+    }
+    label
+}
+
 pub(super) fn yaml(program: &program::Program) -> Result<serde_yaml::Value, String> {
     use serde_yaml::{Mapping, Value};
+    fn path_argument(path: &std::path::Path, selector: bool) -> Result<String, String> {
+        let path = path.to_str().ok_or("binding path is not Unicode")?;
+        if !path.starts_with(['\'', '"']) && (!selector || !path.chars().any(char::is_whitespace)) {
+            return Ok(path.into());
+        }
+        let quoted = ['"', '\'']
+            .into_iter()
+            .filter_map(|quote| {
+                let inner = if cfg!(windows) {
+                    (!path.contains(quote)).then(|| path.to_owned())?
+                } else {
+                    let mut escaped = String::new();
+                    let mut chars = path.chars().peekable();
+                    while let Some(ch) = chars.next() {
+                        if ch == quote
+                            || ch == '\\'
+                                && chars
+                                    .peek()
+                                    .is_none_or(|next| *next == quote || *next == '\\')
+                        {
+                            escaped.push('\\');
+                        }
+                        escaped.push(ch);
+                    }
+                    escaped
+                };
+                Some(format!("{quote}{inner}{quote}"))
+            })
+            .min_by_key(String::len);
+        quoted.ok_or_else(|| "binding path has no public quoted spelling".into())
+    }
     fn value(step: &program::Step) -> Result<Value, String> {
         Ok(match step {
             program::Step::ActionWithOptions { action, options } => {
@@ -415,11 +500,27 @@ pub(super) fn yaml(program: &program::Program) -> Result<serde_yaml::Value, Stri
                                 map.insert("arg".into(), arg.clone().into());
                                 map.insert("temporary".into(), true.into());
                             }
-                            _ => {
-                                return Err(
-                                    "binding arguments require their authored configuration source"
-                                        .into(),
-                                );
+                            P::OptionalPath(None) | P::OptionalText(None) | P::Grammar(None) => {
+                                return Ok(name.into());
+                            }
+                            P::Path(path) | P::OptionalPath(Some(path)) => {
+                                map.insert("arg".into(), path_argument(path, false)?.into());
+                            }
+                            P::SessionRename { workspace, name } => {
+                                let workspace = path_argument(workspace, true)?;
+                                map.insert("arg".into(), format!("{workspace} {name}").into());
+                            }
+                            P::Grammar(Some(grammar)) => {
+                                map.insert("arg".into(), grammar.name().into());
+                            }
+                            P::Help(crate::command::HelpInvocation::Manual(None)) => {
+                                return Ok("help".into());
+                            }
+                            P::Help(crate::command::HelpInvocation::Manual(Some(topic))) => {
+                                map.insert("arg".into(), topic.clone().into());
+                            }
+                            P::Help(crate::command::HelpInvocation::ActiveView) => {
+                                return Ok(name.into());
                             }
                         }
                         Value::Mapping(map)
@@ -476,6 +577,52 @@ pub(super) fn yaml(program: &program::Program) -> Result<serde_yaml::Value, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supplied_path_and_colon_arguments_round_trip() {
+        let mut cases = vec![
+            ("open", "some file.txt".to_owned()),
+            ("open", " x ".to_owned()),
+            ("open", "a".repeat(4096)),
+            ("open", format!(" {} ", "a".repeat(4094))),
+            ("open", r#"'"quoted" path'"#.to_owned()),
+            ("session-rename", r#""old session" new name"#.to_owned()),
+            ("session-rename", "old new name".to_owned()),
+            ("write-config", "".to_owned()),
+            ("help", "key-actions".to_owned()),
+            ("help", "".to_owned()),
+            ("grammar", "helix".to_owned()),
+        ];
+        if cfg!(windows) {
+            cases.push(("open", r#""C:\work files\file.txt""#.to_owned()));
+            cases.push((
+                "session-rename",
+                r#""C:\work files\project" New name"#.to_owned(),
+            ));
+        } else {
+            cases.push((
+                "session-rename",
+                r#""old \"quoted\" session" New name"#.to_owned(),
+            ));
+            cases.push(("open", r#""a\\b""#.to_owned()));
+        }
+        #[cfg(not(windows))]
+        cases.push(("open", format!("'\"{}a'", "\\z".repeat(2046))));
+        for (name, arg) in cases {
+            let action = serde_yaml::to_value(std::collections::BTreeMap::from([
+                ("action", name),
+                ("arg", arg.as_str()),
+            ]))
+            .unwrap();
+            let def: StepDef = serde_yaml::from_value(action).unwrap();
+            let original = compile(&[def], 0, false).unwrap();
+            let rendered = yaml(&original).unwrap();
+            let def: StepDef = serde_yaml::from_value(rendered.clone()).unwrap();
+            let reloaded = compile(&[def], 0, false).unwrap();
+            assert_eq!(original, reloaded, "{name} {arg:?}");
+            assert_eq!(rendered, yaml(&reloaded).unwrap());
+        }
+    }
 
     #[test]
     fn public_control_flow_round_trips_without_changing_semantics() {

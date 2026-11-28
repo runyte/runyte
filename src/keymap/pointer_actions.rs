@@ -338,6 +338,22 @@ impl Bindings {
         self.0[action as usize] == DEFAULTS.get_or_init(Self::default).0[action as usize]
     }
 
+    pub(super) fn export(&self) -> Value {
+        let mut actions = std::collections::BTreeMap::new();
+        for action in Action::ALL {
+            if !self.is_default(action) {
+                let label = self.label(action);
+                let labels = if label == "unbound" {
+                    Vec::new()
+                } else {
+                    label.split(" / ").map(str::to_owned).collect()
+                };
+                actions.insert(action.name(), labels);
+            }
+        }
+        serde_yaml::to_value(actions).expect("string mappings")
+    }
+
     pub fn label(&self, action: Action) -> String {
         if self.is_default(action) {
             return match action {

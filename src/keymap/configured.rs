@@ -775,6 +775,25 @@ fn resolve(
     }
 }
 
+/// The preset assignments an exported fragment will inherit after its two
+/// named prefixes are applied. Reuse the compiler's rewrite without validation
+/// or authored remaps; the exported assignments supply the final collision policy.
+pub(super) fn export_base(map: &Keymap) -> Vec<Binding> {
+    let parsed = Parsed {
+        leader: Some((map.leader().to_string(), map.leader())),
+        window: Some((map.window_prefix().to_string(), map.window_prefix())),
+        ..Default::default()
+    };
+    resolve(
+        &parsed,
+        &HashSet::new(),
+        true,
+        true,
+        &super::keymap_for(map.fast_pane_keys()),
+    )
+    .bindings
+}
+
 fn unreachable_namespace_provenance(
     resolution: &Resolution,
     violation: &validate::Violation,

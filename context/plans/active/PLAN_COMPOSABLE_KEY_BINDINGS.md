@@ -1244,3 +1244,45 @@ apply everywhere programs execute, not to UI owners. This preserves decision
 
 Post-0.5: decide a general list program executor together with the `keys.ui`
 revisit; do not introduce a partial conditional resolver in 0.5.
+
+### Decision 56 — Effective keymap export (2026-11-28)
+
+`:keymap-export [path]` writes the full effective named keymap: `modes`,
+`buffer-types`, and bindings with executable programs and descriptions. It
+resolves remaps and removals rather than copying the user's authored deltas.
+Preset-only teaching metadata and planned/unsupported bindings are omitted.
+
+Decision 54's UI/list owners are the exception: unchanged preset rows stay
+implicit because the public single-action form cannot carry their descriptions;
+changed rows and exact removals are exported. The header identifies the post-0.5
+list executor as the point where these owners can become a full export. UI and
+pointer overrides retain their existing public syntax. Plugin registrations and
+bindings remain external and are excluded.
+
+The default output is `keymap.yaml` beside the per-user configuration target.
+An existing file is refused, with its path in the diagnostic. The round-trip
+contract uses the same preset, platform and fast-pane-key setting: export,
+load, export is byte-identical, with equal effective executable lookup,
+programs, descriptions and mode graph. Coverage includes supplied arguments,
+step options, conditional and temporary programs, remaps, platform keys,
+unbinds, and changed, removed and untouched list-owner rows.
+
+### Decision 57 — Export bounds and generated labels (2026-11-28)
+
+Export refuses a result above the loader's 65,536-assignment cap before
+writing, reporting the bound and count. Loader accounting is unchanged.
+Unchanged preset rows that cannot be assigned while their UI owner is active
+stay implicit; assignability comes from the loader, and a checked-in inventory
+lists each implicit row and reason. This includes the context launcher's Tab.
+
+Generated descriptions come from canonical typed programs at load time.
+Control characters are escaped and labels are truncated to at most 1024 UTF-8
+bytes. Explicit descriptions remain unchanged. Export requires no source-file
+reads or source-text recovery. Long arguments and unusually spelled arguments
+therefore retain identical labels through export, load and export.
+
+Normalized rebind deltas for relocated UI rows are permitted if such rows
+become expressible. Currently remaps originate only in the Space/Ctrl-w
+namespaces, while preset list/merge rows use neither; arbitrary Down-to-F2
+remapping is rejected. No extra rebind representation is needed for those
+owners in 0.5.

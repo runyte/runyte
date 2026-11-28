@@ -629,6 +629,22 @@ impl Bindings {
         }
         defaults
     }
+    pub(super) fn export(&self) -> Value {
+        let mut owners = std::collections::BTreeMap::new();
+        for (&owner, bindings) in &self.owners {
+            let mut actions = std::collections::BTreeMap::new();
+            for action in &bindings.configured {
+                let mut labels = bindings.labels.get(action).cloned().unwrap_or_default();
+                labels.sort();
+                actions.insert(action.name(), labels);
+            }
+            if !actions.is_empty() {
+                owners.insert(owner.name(), actions);
+            }
+        }
+        serde_yaml::to_value(owners).expect("string mappings")
+    }
+
     pub fn explicitly_configured(&self, owner: Owner, action: Action) -> bool {
         self.owners[&owner].configured.contains(&action)
     }

@@ -767,27 +767,9 @@ pub(super) fn parse_rule_in(
             super::presets::validate_entry_targets(&program, graph)?;
         }
     }
-    fn labels(steps: &[super::step::StepDef], out: &mut Vec<String>) {
-        use super::step::StepDef;
-        for step in steps {
-            match step {
-                StepDef::Name(name) => out.push(name.clone()),
-                StepDef::Action(step) => out.push(match &step.arg {
-                    Some(arg) => format!("{} {arg}", step.action),
-                    None => step.action.clone(),
-                }),
-                StepDef::Conditional(step) => {
-                    labels(&step.then, out);
-                    labels(&step.otherwise, out);
-                }
-            }
-        }
-    }
-    let description = authored_description.map(str::to_owned).unwrap_or_else(|| {
-        let mut names = Vec::new();
-        labels(&steps, &mut names);
-        names.join(" → ")
-    });
+    let description = authored_description
+        .map(str::to_owned)
+        .unwrap_or_else(|| super::step::description(&program));
     Ok(Rule {
         mode,
         sequence,
