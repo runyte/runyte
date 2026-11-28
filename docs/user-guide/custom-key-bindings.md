@@ -771,7 +771,8 @@ Later eligible steps run without a count or use the unnamed register. Fixed,
 `none`, and `inherit` overrides leave the pending prefix available; skipped
 branches consume nothing. `register-select` explicitly updates the pending
 register, while `register: inherit` still refers to the binding-entry prefix.
-An operand wait preserves both captured and pending values.
+An operand wait preserves both captured and pending values. Any unused entry
+prefix is discarded with its binding; it cannot affect the next key binding.
 
 ```yaml
 keys:

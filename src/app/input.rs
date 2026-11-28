@@ -2689,6 +2689,7 @@ impl App {
                         None
                     }
                 });
+            let resuming_program = self.grammar.program_description().is_some();
             let context = GrammarContext::new(self.mode, self.key_binding_scope(), &self.keymap)
                 .with_binding_mode(self.current_binding_mode())
                 .with_recording_macro(self.recording_macro.is_some())
@@ -2699,6 +2700,11 @@ impl App {
                 post_action,
                 resolved_binding,
             } = self.grammar.translate(input, context)?;
+            if !resuming_program && self.grammar.program_description().is_some() {
+                // The program owns the captured prefix, including across operand
+                // waits. An unused prefix must not escape into the next binding.
+                self.selected_register = '"';
+            }
             if self.grammar.program_description().is_none() {
                 self.finish_program_undo(false);
             }

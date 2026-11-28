@@ -409,15 +409,15 @@ fn delete_and_change_selection_leave_registers_alone_while_d_and_c_yank() {
     assert_eq!(app.registers[&'"'].text, "abc");
     key(&mut app, KeyCode::Escape, Modifiers::NONE);
 
-    // A delete that uses no register leaves the prefix for the next
-    // eligible action.
+    // A register chosen for a delete that writes nothing must not linger
+    // and capture the next yank instead.
     seed(&mut app, "ghi jkl");
     press(&mut app, '"');
     press(&mut app, 'a');
     key(&mut app, KeyCode::Function(5), Modifiers::NONE);
     assert!(!app.registers.contains_key(&'a'));
     press(&mut app, 'y');
-    assert_eq!(app.registers[&'a'].text, "h");
+    assert!(!app.registers.contains_key(&'a'));
     assert_eq!(app.registers[&'"'].text, "h");
 
     // `delete-selection` continues a sequence, so it can follow a selection.
@@ -1940,7 +1940,7 @@ fn no_yank_delete_actions_preserve_mode_and_distinct_caret_seams() {
             assert_eq!(app.active().selection.primary().head, head);
             assert_eq!(app.registers[&'"'].text, "saved");
             assert!(!app.registers.contains_key(&'a'));
-            assert_eq!(app.selected_register, 'a');
+            assert_eq!(app.selected_register, '"');
         }
     }
 }
@@ -2818,9 +2818,10 @@ fn step_register_overrides_preserve_pending_prefix_and_inherit_original() {
     seed(&mut app, "abc");
     app.selected_register = 'a';
     key(&mut app, KeyCode::Function(6), Modifiers::NONE);
-    assert_eq!(app.selected_register, 'a');
+    assert_eq!(app.selected_register, '"');
     press(&mut app, 'y');
-    assert_eq!(app.registers[&'a'].text, "b");
+    assert!(!app.registers.contains_key(&'a'));
+    assert_eq!(app.registers[&'"'].text, "b");
 }
 
 #[test]
@@ -2935,5 +2936,22 @@ fn step_extend_false_leaves_ordinary_carets_from_half_open_selections() {
         );
         assert_eq!(app.registers[&'"'].text, "d", "{action}");
         assert_eq!(app.mode, Mode::Select);
+    }
+}
+
+#[test]
+fn unused_count_ends_with_its_binding() {
+    for steps in [
+        "[yank]",
+        "[{action: move-right, count: none}]",
+        "[{action: move-right, count: 1}]",
+    ] {
+        let mut app = configured(&format!("bind: {{normal: {{F6: {steps}}}}}"));
+        seed(&mut app, "abcdef");
+        press(&mut app, '3');
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        let before = app.active().selection.primary().head;
+        press(&mut app, 'l');
+        assert_eq!(app.active().selection.primary().head, before + 1, "{steps}");
     }
 }
