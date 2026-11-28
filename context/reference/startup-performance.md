@@ -18,6 +18,33 @@ cargo build --release
 benchmarks/run.py
 ```
 
+## 2026-11-28 — Configured reload guard calibration
+
+The release reload guard in [#161](https://github.com/runyte/runyte/pull/161)
+uses 350 ms for changed keys and 100 ms for unchanged source, through the
+existing `budget()` profile scaling. It catches multi-second regressions;
+the separate dev-relative acceptance gate measures smaller performance changes.
+The original 100 ms changed-key ceiling was below ordinary runner cost:
+[CI run 46112216275](https://github.com/runyte/runyte/actions/runs/46112216275)
+measured five-sample medians of 160.315 ms on Linux and 161.287 ms on macOS.
+
+Paired release measurements against dev `d564c471` give a changed-key median
+of 91.822 ms locally on x86 and 149.941 ms on ARM CI. The fixed implementation
+(`01e02205`) measured 96.060 ms and 153.305 ms respectively. The 350 ms ceiling
+provides roughly twice the observed runner cost in headroom. Unchanged reloads
+measured 26.247 ms locally and 40.807 ms on ARM, so their 100 ms ceiling retains
+similar headroom. The test also checks that changed bindings are installed and
+that unchanged source performs no mode-flow validation.
+ARM reload measurements came from
+[run 46112471194](https://github.com/runyte/runyte/actions/runs/46112471194);
+its later readiness phase failed because the Python `pyte` dependency was
+missing, so that run supplies no readiness result.
+
+The local release readiness comparison retained all 50 alternating pairs for
+each fixture: plain text changed from 32.548 to 33.043 ms (+1.52%), and Lua
+from 32.486 to 32.311 ms (−0.54%). Both meet the 5% startup acceptance gate.
+ARM readiness is being measured separately.
+
 ## 2026-11-28 — ARM debug public mode-flow validation
 
 Stage 5b of [#132](https://github.com/runyte/runyte/issues/132) was measured

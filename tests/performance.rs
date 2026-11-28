@@ -1256,10 +1256,14 @@ fn configured_reload_stays_responsive() {
         );
         elapsed
     });
+    // Dev reloads measured 92 ms locally and 150 ms on ARM CI; the fixed
+    // path measured 160–161 ms on Linux/macOS CI. Allow roughly 2x runner
+    // headroom while catching the multi-second regression. The cache-hit
+    // ceiling below stays proportional to its measured 26–41 ms cost.
     within(
         "changed configured reload",
         elapsed,
-        budget(Duration::from_millis(200)),
+        budget(Duration::from_millis(350)),
     );
     #[cfg(feature = "startup-timing")]
     runyte::keymap::configured::take_mode_flow_time_ns();
