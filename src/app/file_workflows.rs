@@ -1696,6 +1696,7 @@ impl App {
             self.refresh_markdown_page(buffer_id);
             return;
         }
+        self.line_select = None;
         let refreshed = self.refresh_background_buffer(buffer_id);
         self.dismiss_popups();
         self.push_jump();
@@ -3103,6 +3104,7 @@ impl App {
         let order = self.advance_pane_history();
         self.pane_activated_at.insert(pane, order);
         if pane != self.active_pane {
+            self.line_select = None;
             self.cancel_program_on_focus_change(pane);
             self.grammar.reset_prefix();
             self.previously_focused_pane = Some(self.active_pane);

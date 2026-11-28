@@ -357,7 +357,7 @@ fn apply_candidate(
     defer_policy: bool,
     applied: &mut Vec<(String, String, KeySequence)>,
 ) -> Result<super::Keymap, Box<(super::Keymap, Vec<super::validate::Violation>)>> {
-    use super::{BindingTarget, actions, program::Program};
+    use super::{BindingTarget, actions};
     let Some(section) = section else {
         return Ok(base);
     };
@@ -439,10 +439,8 @@ fn apply_candidate(
                 ));
                 continue;
             };
-            // Shared tables may contain actions unavailable in some child
-            // views. Runtime capability checks own those refusals. Admission
-            // requires one supported role in the owner's view, not all child
-            // roles; key ownership is still validated in every effective view.
+            // Parse without assuming the entry mode remains active. Completed
+            // effective tables supply every starting context to flow analysis.
             let mut parsed = contexts.iter().map(|&(mode, _)| {
                 actions::parse_rule_in(mode, source, value, &base, Some(owner_scope))
             });
@@ -469,7 +467,7 @@ fn apply_candidate(
                 .bindings
                 .retain(|b| b.binding_mode.as_deref() != Some(name) || b.sequence != rule.sequence);
             let tables = std::sync::Arc::make_mut(candidate.overrides.1.as_mut().unwrap());
-            if rule.actions.is_empty() {
+            if rule.program.is_empty() {
                 tables
                     .removed
                     .entry(name.into())
@@ -481,9 +479,14 @@ fn apply_candidate(
                     .entry(name.into())
                     .or_default()
                     .remove(&rule.sequence);
-                let target = rule.actions.first().map(actions::Action::target).unwrap_or(
-                    BindingTarget::Editor(crate::command::EditorCommand::EnterNormalMode),
-                );
+                let target = rule
+                    .program
+                    .iter()
+                    .next()
+                    .map(actions::Action::target)
+                    .unwrap_or(BindingTarget::Editor(
+                        crate::command::EditorCommand::EnterNormalMode,
+                    ));
                 let mut binding = Binding::implemented_in(
                     actions::mode_slice(rule.mode),
                     owner_scope,
@@ -491,8 +494,7 @@ fn apply_candidate(
                     target,
                 );
                 binding.binding_mode = Some(name.into());
-                binding.program =
-                    Program::new(rule.actions.clone()).expect("validated nonempty actions");
+                binding.program = rule.program.clone();
                 binding.description = rule.description.clone().into();
                 binding.configured_actions = true;
                 binding.source_paths = vec![vec!["bind".into(), name.into(), source.into()]];
@@ -505,7 +507,7 @@ fn apply_candidate(
                     .0
                     .entry((mode, scope))
                     .or_default()
-                    .insert(rule.sequence.clone(), !rule.actions.is_empty());
+                    .insert(rule.sequence.clone(), !rule.program.is_empty());
             }
         }
     }
@@ -548,6 +550,21 @@ fn apply_candidate(
         return Err(Box::new((candidate, violations)));
     }
     candidate.rebuild_lookup_index();
+    let flow = if applied.is_empty() {
+        Vec::new()
+    } else {
+        super::flow::failures(&candidate, super::default_keymap())
+    }
+    .into_iter()
+    .filter(|failure| {
+        candidate.bindings[failure.binding].configured_actions
+            || failure.reason.contains("work bound")
+    })
+    .map(|failure| failure.violation(&candidate))
+    .collect::<Vec<_>>();
+    if !flow.is_empty() {
+        return Err(Box::new((candidate, flow)));
+    }
     Ok(candidate)
 }
 
@@ -667,11 +684,21 @@ mod tests {
             .unwrap();
         let mut bindings = serde_yaml::Mapping::new();
         for binding in builtin.bindings_for_named_mode(normal) {
-            if binding
-                .program
-                .iter()
-                .any(|action| action.target() == crate::command::EditorCommand::ModeEnter.into())
-            {
+            if binding.program.iter().any(|action| {
+                matches!(
+                    action.target(),
+                    crate::keymap::BindingTarget::Editor(
+                        crate::command::EditorCommand::ModeEnter
+                            | crate::command::EditorCommand::EnterInsertMode
+                            | crate::command::EditorCommand::AppendAfter
+                            | crate::command::EditorCommand::InsertLineStart
+                            | crate::command::EditorCommand::InsertLineEnd
+                            | crate::command::EditorCommand::OpenLineAbove
+                            | crate::command::EditorCommand::OpenLineBelow
+                            | crate::command::EditorCommand::EnterReplaceMode
+                    )
+                )
+            }) {
                 bindings.insert(binding.sequence.to_string().into(), serde_yaml::Value::Null);
             }
         }

@@ -77,8 +77,8 @@ keys:
 ```
 
 Unknown preset names report a configuration error and keep the Runyte base.
-Preset names never identify files. Mode-enter and conditional step forms are
-reserved for embedded presets until stage 5 of the composable bindings work.
+Preset names never identify files. The same mode-entry and conditional step
+syntax is available in embedded presets and configured bindings.
 
 ### Changing the leader and window keys
 
@@ -239,9 +239,8 @@ Result lists use `keys.bind.list`; session-manager overrides use
 are independent. Numbered session choices and nested action menus retain their
 own input ownership. `keys.ui.list-close` configures close confirmations.
 
-The public step syntax is unchanged in this slice: action names, action lists,
-and supported command/argument forms remain available. Internal mode-entry and
-conditional forms are still reserved for embedded presets until stage 5.
+Bindings accept action names, action lists, argument mappings, mode entry,
+and conditional branches.
 Prefixes have at most eight keys. Prompt, menu, overlay and native controls
 remain under `keys.ui`; they are not named editor modes.
 
@@ -730,8 +729,58 @@ retain each command's existing argument semantics. Unknown fields, `null`
 arguments and `{ name: arg }` shorthand are rejected. Replace the old
 `{ command: pipe, argument: sort }` syntax with
 `{ action: pipe, arg: sort }`; the old form is no longer accepted.
-Mode/conditional steps and `count`, `register`, and `extend` fields are not yet
-public configuration syntax.
+The `count`, `register`, and `extend` fields are not yet public configuration
+syntax.
+
+### Mode entry and conditional programs
+
+`mode-enter` preserves the selection and changes the active named mode. Its
+`arg` names a declared editor mode or one of the buffer type's `normal`,
+`select`, `insert`, and `replace` roles. A missing role is a configuration error.
+
+```yaml
+modes:
+  composing: {inherits: normal}
+buffer-types:
+  text: {normal: composing, select: select, insert: insert, replace: replace}
+keys:
+  bind:
+    composing:
+      F6:
+        - {action: mode-enter, arg: insert}
+        - insert-newline
+      F7:
+        if: {mode: select}
+        then: [yank]
+        else: [select-all, yank]
+```
+
+Both `then` and `else` must be lists; either may be empty. A mode condition
+using a role name tests editing-role membership, including inherited submodes.
+Other names test the exact active named mode. Other supported conditions are
+`recording-macro`, `tree-entry-expanded`, `tree-entry-is-directory`, and
+`tree-entry-is-root`; a tree condition must only be reached in the directory tree.
+Programs contain at most 16 steps in total and four levels of conditional
+nesting. A program must contain an action, even when some branches are empty.
+
+`{action: mode-enter, arg: select, temporary: true}` saves the current mode as
+the return mode for a temporary selection gesture. Ordinary non-selection
+actions restore that mode before running; selection operations can continue
+or consume the gesture. A later explicit `mode-enter` without `temporary: true`
+clears the return mode. Changing pane focus, buffer, terminal session, or view
+type ends the gesture; its return mode never follows you into another view.
+A condition at the beginning of the next key program
+restores the previous gesture first; a condition later in a program observes
+the mode reached by preceding steps.
+
+Configuration checks every reachable step after inheritance and removals have
+been applied. Each branch contributes its possible resulting modes to the
+tail. Selection undo/redo and syntax shrink can restore historical modes;
+insert an explicit `mode-enter` before a tail that needs one particular mode.
+Diagnostics identify the buffer type, named mode, key and failing step. A bad
+binding is rejected independently. Invalid graph changes restore the preset
+graph while retaining valid key edits. Read-only buffers, terminal state and
+unavailable language services remain runtime refusals and stop the program.
 
 Action names are the hyphenated names in the
 [reference](custom-key-bindings.md#bindable-action-reference). An action does not need a default key
@@ -934,16 +983,16 @@ and `replace-char` preserve the current mode. Their default keys (`%`, `;`,
 `~` and `r`) include a separate internal mode step, so the keys behave as
 before. `fit-selection-for-normal-mode` fits the selection without changing
 mode: it collapses ranges and applies the existing Insert-exit caret rules.
-Escape runs that action followed by an internal Normal-mode step. Public
+Escape runs that action followed by a Normal `mode-enter` step. Public
 mode-entry actions retain their selection-fitting behavior, except
 `enter-select-mode`, which now only enters Select. The default `v` key toggles
-through an internal conditional: from Select it collapses and enters Normal;
+through a conditional: from Select it collapses and enters Normal;
 otherwise it enters Select. Half-open mouse and syntax selections convert to
 inclusive endpoints before collapse, so the resulting caret may be one
 character before the old endpoint. On native media, leaving Select retains the
 media selection for copying and does not move the hidden document caret.
 
-The default macro-recording key also uses an internal conditional.
+The default macro-recording key also uses a conditional.
 `macro-record-default` starts recording and refuses an existing recording;
 `Space m m` stops any active recording, or starts the default one.
 Directory-tree `h`/Left, `l`/Right, Enter, `v` and `s` use tree conditions with
@@ -975,8 +1024,8 @@ enter-normal-mode]`, `[find-next-char, yank]`, `[surround-replace, yank]`,
 accepted. Colon commands with only synchronous effects can also continue.
 Mixed-effect actions such as `split-vertical` and `split-horizontal` remain
 last-only because their path-taking forms can prompt or start background work.
-All steps must still be bindable in the binding's starting mode; mode-flow
-validation is not yet part of the binding format.
+Each step must be admitted in every mode that can reach it. Use explicit
+`mode-enter` steps to establish the mode required by later actions.
 
 Nothing resumes a list after a prompt, confirmation, or background operation.
 If an earlier step opens a list or popup, a subsequent character-operand action
@@ -1133,6 +1182,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 
 | Action | Modes | Sequence position | Description |
 | --- | --- | --- | --- |
+| `mode-enter` | normal, select, insert, replace | can be followed by another action | Enter a mode, preserving the selection |
 | `enter-normal-mode` | normal, select, insert, replace | can be followed by another action | Fit selection and enter Normal mode |
 | `open-command-palette` | normal, select | must be the last action | Open the command palette |
 
@@ -1422,6 +1472,7 @@ the count is dropped silently and the binding runs. Plugin bindings use `plugins
 | `register-select` | normal, select | can be followed by another action | Select a register |
 | `macro-record` | normal, select | can be followed by another action | Record a macro named by the next key |
 | `macro-record-default` | normal, select | can be followed by another action | Start recording the default macro |
+| `macro-stop-recording` | normal, select | can be followed by another action | Stop recording the current macro |
 | `macro-replay` | normal, select | must be the last action | Replay the macro named by the next key |
 | `macro-replay-default` | normal, select | must be the last action | Replay the default macro |
 | `macro-list` | normal, select | can be followed by another action | List the recorded macros |

@@ -77,6 +77,12 @@ pub struct CompiledKeymap {
 pub fn compile_configuration(config: &crate::config::Config, built_in: &Keymap) -> CompiledKeymap {
     let empty = Value::Mapping(Mapping::new());
     let section = config.keys.as_ref().unwrap_or(&empty);
+    // The embedded graph and its programs are validated as a fixture. An
+    // unchanged graph needs only the authored-rule validation in compile().
+    if config.modes.is_none() && config.buffer_types.is_none() && section.get("bind").is_none() {
+        return compile(section, built_in);
+    }
+
     match super::named::configure_graph(
         built_in,
         config.modes.as_ref(),
@@ -85,7 +91,12 @@ pub fn compile_configuration(config: &crate::config::Config, built_in: &Keymap) 
     ) {
         Ok(base) => {
             let result = compile(section, &base);
-            let violations = super::named::role_target_errors(&result.keymap);
+            let mut violations = Vec::new();
+            violations.extend(
+                super::flow::failures(&result.keymap, built_in)
+                    .into_iter()
+                    .map(|f| f.message(&result.keymap)),
+            );
             if violations.is_empty() {
                 result
             } else {
@@ -96,7 +107,12 @@ pub fn compile_configuration(config: &crate::config::Config, built_in: &Keymap) 
                         format!("mode graph rejected; preset graph restored: {reason}")
                     }),
                 );
-                let remaining = super::named::role_target_errors(&fallback.keymap);
+                let mut remaining = Vec::new();
+                remaining.extend(
+                    super::flow::failures(&fallback.keymap, built_in)
+                        .into_iter()
+                        .map(|f| f.message(&fallback.keymap)),
+                );
                 if !remaining.is_empty() {
                     fallback.errors.extend(remaining);
                     fallback.keymap = Arc::new(built_in.clone());

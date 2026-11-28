@@ -22,7 +22,7 @@ struct State {
     semantics: SelectionSemantics,
     mode: Mode,
     binding_mode: Option<String>,
-    line_select: Option<(Mode, Option<String>)>,
+    line_select: Option<super::binding_modes::TemporaryMode>,
 }
 
 /// What a selection is made in: a pane's buffer or a terminal's review.

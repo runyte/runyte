@@ -1657,10 +1657,8 @@ impl EditorCommand {
 /// Commands that exist to name an internal editor transition rather than a
 /// current user-facing binding or colon spelling.
 pub const INTERNAL_EDITOR_COMMANDS: &[EditorCommand] = &[
-    EditorCommand::ModeEnter,
     EditorCommand::CommitUndoCheckpoint,
     EditorCommand::RefreshDirectory,
-    EditorCommand::StopMacroRecording,
 ];
 
 /// One identity shared by every currently inventoried command surface.

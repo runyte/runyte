@@ -125,10 +125,6 @@ pub(super) fn parse_action(
     {
         return Err(super::step::SYNTAX_HINT.into());
     }
-    // Scoped admission does not grant access to embedded-only step syntax.
-    if super::presets::has_stage5_steps(value) {
-        return Err(super::presets::STAGE5_DIAGNOSTIC.into());
-    }
     let step: super::step::StepDef = serde_yaml::from_value(value.clone())
         .map_err(|error| format!("{error}; {}", super::step::SYNTAX_HINT))?;
     match step {
@@ -141,7 +137,9 @@ pub(super) fn parse_action(
             mode,
             bypass_global_admission,
         ),
-        super::step::StepDef::Conditional(_) => Err(super::presets::STAGE5_DIAGNOSTIC.into()),
+        super::step::StepDef::Conditional(_) => {
+            Err("expected one action, not a conditional program".into())
+        }
     }
 }
 
@@ -205,7 +203,7 @@ pub(super) struct Rule {
     pub mode: Mode,
     pub sequence: KeySequence,
     pub source: String,
-    pub actions: Vec<Action>,
+    pub program: super::program::Program,
     pub description: String,
 }
 
@@ -633,44 +631,75 @@ pub(super) fn parse_rule_in(
         }
         _ => vec![value],
     };
-    let parsed = values
-        .into_iter()
-        .map(|value| {
+    // Legacy Keymap::new callers have no graph on which to run mode-flow
+    // analysis. Preserve their starting-mode contract and reject graph syntax.
+    if base.mode_graph().is_none() {
+        for value in &values {
+            if value.get("action").and_then(Value::as_str) == Some("mode-enter")
+                || value.get("if").is_some()
+                || value.as_str() == Some("mode-enter")
+            {
+                return Err(
+                    "mode-entry and conditional programs require a named mode graph".into(),
+                );
+            }
             let scoped = scope.filter(|scope| *scope != BindingScope::Global || mode == Mode::List);
-            let parsed = parse_action(value, mode, scoped.is_some())?;
+            let (action, _) = parse_action(value, mode, scoped.is_some())?;
             if let Some(scope) = scoped
-                && super::scopes::admit(scope, mode, parsed.0.target().name()).is_none()
+                && super::scopes::admit(scope, mode, action.target().name()).is_none()
             {
                 return Err(format!(
                     "{} is unavailable in {} {}",
-                    parsed.0.target().name(),
+                    action.target().name(),
                     scope.name(),
                     mode_name(mode)
                 ));
             }
-            Ok(parsed)
+        }
+    }
+    let steps = values
+        .into_iter()
+        .map(|value| {
+            serde_yaml::from_value::<super::step::StepDef>(value.clone())
+                .map_err(|error| format!("{error}; {}", super::step::SYNTAX_HINT))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    for (action, _) in parsed.iter().take(parsed.len().saturating_sub(1)) {
-        if !action.can_continue() {
-            return Err(format!(
-                "{} must be the last action",
-                action.target().name()
-            ));
+    let program = super::step::compile(&steps, 0, false)?;
+    if !program.is_empty() {
+        if program.iter().next().is_none() {
+            return Err("binding program must contain an action".into());
+        }
+        program.validate_structure().map_err(str::to_owned)?;
+        if let Some(graph) = base.mode_graph() {
+            super::presets::validate_entry_targets(&program, graph)?;
+        }
+    }
+    fn labels(steps: &[super::step::StepDef], out: &mut Vec<String>) {
+        use super::step::StepDef;
+        for step in steps {
+            match step {
+                StepDef::Name(name) => out.push(name.clone()),
+                StepDef::Action(step) => out.push(match &step.arg {
+                    Some(arg) => format!("{} {arg}", step.action),
+                    None => step.action.clone(),
+                }),
+                StepDef::Conditional(step) => {
+                    labels(&step.then, out);
+                    labels(&step.otherwise, out);
+                }
+            }
         }
     }
     let description = authored_description.map(str::to_owned).unwrap_or_else(|| {
-        parsed
-            .iter()
-            .map(|(_, label)| label.as_str())
-            .collect::<Vec<_>>()
-            .join(" → ")
+        let mut names = Vec::new();
+        labels(&steps, &mut names);
+        names.join(" → ")
     });
     Ok(Rule {
         mode,
         sequence,
         source: source.into(),
-        actions: parsed.into_iter().map(|(action, _)| action).collect(),
+        program,
         description,
     })
 }
@@ -787,7 +816,7 @@ pub(super) fn apply(
             })
             .collect();
         for (rule, _) in rules.iter().zip(&active).filter(|(_, enabled)| **enabled) {
-            if let Some(first) = rule.actions.first() {
+            if let Some(first) = rule.program.iter().next() {
                 let mut binding = Binding::implemented(
                     mode_slice(rule.mode),
                     rule.sequence.clone(),
@@ -798,8 +827,7 @@ pub(super) fn apply(
                     mode_name(rule.mode).into(),
                     rule.source.clone(),
                 ]];
-                binding.program = super::program::Program::new(rule.actions.clone())
-                    .expect("nonempty parsed rule");
+                binding.program = rule.program.clone();
                 binding.configured_actions = true;
                 binding.description = rule.description.clone().into();
                 candidate.bindings.push(binding);

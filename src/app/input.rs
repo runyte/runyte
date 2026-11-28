@@ -709,6 +709,7 @@ impl App {
     /// Literal text stays one event and one edit transaction. Macro recording
     /// stores the same raw event ordering that arrived at this boundary.
     pub fn handle_input(&mut self, input: InputEvent) -> Result<()> {
+        self.discard_departed_temporary_mode();
         let previous = self.plugin_physical_input;
         self.plugin_physical_input = self.fresh_physical_approval_key(&input);
         let result = self.handle_frontend_input(input, true, true);
@@ -2869,7 +2870,7 @@ impl App {
         if let EditorIntent::EvaluateCondition(condition) = intent {
             use crate::keymap::program::Condition;
             if self.grammar.condition_starts_program()
-                && let Some((mode, name)) = self.line_select.take()
+                && let Some((mode, name)) = self.take_temporary_mode()
             {
                 self.restore_binding_mode(mode, name.as_deref());
             }
@@ -2879,6 +2880,9 @@ impl App {
             }
             let value = match condition {
                 Condition::Mode(mode) => self.mode == mode,
+                Condition::NamedMode(name) => {
+                    self.binding_mode_name().as_deref() == Some(name.as_str())
+                }
                 Condition::RecordingMacro => self.recording_macro.is_some(),
                 Condition::TreeEntryExpanded => self.directory_tree.selected_expanded(),
                 Condition::TreeEntryIsDirectory => {
@@ -4372,83 +4376,11 @@ impl App {
     }
 
     fn is_atomic_selection_action(command: EditorCommand) -> bool {
-        matches!(
-            command,
-            EditorCommand::ExpandSyntaxSelection
-                | EditorCommand::FlipSelection
-                | EditorCommand::SplitSelectionAtLineEnds
-                | EditorCommand::SplitSelectionAtLineStarts
-                | EditorCommand::SelectSyntaxParent
-                | EditorCommand::SelectSyntaxChild
-                | EditorCommand::SelectPreviousSyntaxSibling
-                | EditorCommand::SelectNextSyntaxSibling
-                | EditorCommand::SelectSyntaxFunction
-                | EditorCommand::SelectInsideSyntaxFunction
-                | EditorCommand::SelectSyntaxClass
-                | EditorCommand::SelectInsideSyntaxClass
-                | EditorCommand::SelectSyntaxParameter
-                | EditorCommand::SelectInsideSyntaxParameter
-                | EditorCommand::SelectAroundParentheses
-                | EditorCommand::SelectInsideParentheses
-                | EditorCommand::SelectAroundSquareBrackets
-                | EditorCommand::SelectInsideSquareBrackets
-                | EditorCommand::SelectAroundBraces
-                | EditorCommand::SelectInsideBraces
-                | EditorCommand::SelectAroundAngleBrackets
-                | EditorCommand::SelectInsideAngleBrackets
-                | EditorCommand::SelectAroundDoubleQuotes
-                | EditorCommand::SelectInsideDoubleQuotes
-                | EditorCommand::SelectAroundSingleQuotes
-                | EditorCommand::SelectInsideSingleQuotes
-                | EditorCommand::SelectAroundBackticks
-                | EditorCommand::SelectInsideBackticks
-                | EditorCommand::SelectInsideWord
-                | EditorCommand::SelectAroundWord
-                | EditorCommand::SelectInsideLongWord
-                | EditorCommand::SelectAroundLongWord
-                | EditorCommand::SelectAroundClosestDelimiter
-                | EditorCommand::SelectInsideClosestDelimiter
-        )
+        crate::keymap::temporary::is_atomic_selection_action(command)
     }
 
     fn finish_atomic_line_selection(&mut self, command: EditorCommand) {
-        if Self::is_atomic_selection_action(command)
-            || matches!(
-                command,
-                EditorCommand::SurroundAdd
-                    | EditorCommand::SurroundReplace
-                    | EditorCommand::SurroundDelete
-                    | EditorCommand::SelectAll
-                    | EditorCommand::CollapseSelection
-                    | EditorCommand::ToggleCase
-                    | EditorCommand::ReplaceChar
-                    | EditorCommand::FitSelectionForNormalMode
-                    | EditorCommand::SearchSetFromSelection
-                    | EditorCommand::SearchExtendNext
-                    | EditorCommand::SearchExtendPrevious
-                    | EditorCommand::SearchSelectAllMatches
-                    | EditorCommand::Yank
-                    | EditorCommand::YankLine
-                    | EditorCommand::PasteAfter
-                    | EditorCommand::PasteBefore
-                    | EditorCommand::DirectoryPaste
-                    | EditorCommand::PasteAfterOrReplace
-                    | EditorCommand::ClipboardPaste
-                    | EditorCommand::ClipboardPasteAfter
-                    | EditorCommand::ClipboardPasteBefore
-                    | EditorCommand::SearchNext
-                    | EditorCommand::SearchPrevious
-                    | EditorCommand::TerminalUndoPaste
-                    | EditorCommand::TerminalPaste
-                    | EditorCommand::TerminalClipboardPasteText
-                    | EditorCommand::TerminalSearch
-                    | EditorCommand::TerminalSearchRegex
-                    | EditorCommand::TerminalSearchNext
-                    | EditorCommand::TerminalSearchPrevious
-            )
-        {
-            // These actions no longer own a mode transition. End the transient
-            // line gesture without letting it restore its previous mode later.
+        if crate::keymap::temporary::discards_temporary(command) {
             self.line_select = None;
         }
     }
@@ -4509,17 +4441,8 @@ impl App {
                 .get(id)
                 .and_then(|session| session.review_selection_state())
                 .is_some_and(|(_, selection)| selection.is_linewise());
-            if !matches!(
-                command,
-                Command::SelectLine
-                    | Command::SelectLineUp
-                    | Command::ExtendLineAbove
-                    | Command::ExtendLineBelow
-                    | Command::SelectInsideParagraph
-                    | Command::SelectAroundParagraph
-                    | Command::SelectionUndo
-                    | Command::SelectionRedo
-            ) && let Some((mode, name)) = self.line_select.take()
+            if !crate::keymap::temporary::continues_temporary(command)
+                && let Some((mode, name)) = self.take_temporary_mode()
             {
                 self.restore_binding_mode(mode, name.as_deref());
             }
@@ -4571,17 +4494,8 @@ impl App {
         // A line selection lives only for as long as `x`/`X` keep arriving.
         // Anything else ends it and hands the mode back, so `j` after `x` is a
         // plain motion rather than an extension.
-        if !matches!(
-            command,
-            Command::SelectLine
-                | Command::SelectLineUp
-                | Command::ExtendLineAbove
-                | Command::ExtendLineBelow
-                | Command::SelectInsideParagraph
-                | Command::SelectAroundParagraph
-                | Command::SelectionUndo
-                | Command::SelectionRedo
-        ) && let Some((mode, name)) = self.line_select.take()
+        if !crate::keymap::temporary::continues_temporary(command)
+            && let Some((mode, name)) = self.take_temporary_mode()
             && !matches!(
                 command,
                 Command::CutSelection
@@ -5966,6 +5880,7 @@ impl App {
     /// outcomes; `Result::Err` is reserved for a fatal invariant failure at
     /// the application boundary.
     pub fn execute(&mut self, invocation: CommandInvocation) -> Result<CommandOutcome> {
+        self.discard_departed_temporary_mode();
         self.pane_resize = None;
         self.with_selection_action(|app| app.execute_selection_action(invocation))
     }
@@ -6106,7 +6021,7 @@ impl App {
             let previous = self
                 .line_select
                 .clone()
-                .unwrap_or_else(|| (self.mode, self.binding_mode_name()));
+                .unwrap_or_else(|| self.temporary_mode_origin());
             self.enter_named_binding_mode(name);
             if !self.status_error && !self.sequence_halted {
                 self.line_select = Some(previous);

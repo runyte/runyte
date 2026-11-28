@@ -485,7 +485,7 @@ fn conditional_program_bounds_scope_and_continuation_cover_every_branch() {
 }
 
 #[test]
-fn conditional_discovery_shows_both_branches_and_refuses_incomplete_exports() {
+fn conditional_discovery_shows_both_branches_and_exports_complete_programs() {
     use runyte::{command::discovery, keymap::BindingScope};
     let map = default_keymap();
     let binding = map
@@ -503,11 +503,12 @@ fn conditional_discovery_shows_both_branches_and_refuses_incomplete_exports() {
     ] {
         assert!(rendered.contains(expected), "{rendered}");
     }
-    assert!(
-        discovery::binding_yaml(binding, Mode::Normal, None, map)
-            .unwrap_err()
-            .contains("conditional")
+    let yaml = discovery::binding_yaml(binding, Mode::Normal, None, map).unwrap();
+    let compiled = runyte::keymap::configured::compile_configuration(
+        &serde_yaml::from_str(&yaml).unwrap(),
+        map,
     );
+    assert!(compiled.errors.is_empty(), "{:?}", compiled.errors);
     let only_conditional = Keymap::new(vec![binding.clone()]).unwrap();
     for command in [C::EnterSelectMode, C::CollapseSelection, C::ModeEnter] {
         assert!(

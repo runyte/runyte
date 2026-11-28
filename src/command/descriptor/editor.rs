@@ -59,7 +59,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             buffer_mutation: BufferMutation::Unchanged,
         },
         C::ModeEnter => ActionPolicy {
-            global_binding_modes: NONE,
+            global_binding_modes: ALL,
             effects: &[Mode],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,
@@ -1291,7 +1291,7 @@ pub(super) const fn editor_policy(command: C) -> ActionPolicy {
             buffer_mutation: BufferMutation::Unchanged,
         },
         C::StopMacroRecording => ActionPolicy {
-            global_binding_modes: NONE,
+            global_binding_modes: NORMAL_SELECT,
             effects: &[Macro],
             count: CountBehavior::Reject,
             operands: OperandArity::Zero,

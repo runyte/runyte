@@ -18,6 +18,7 @@ pub mod actions;
 pub mod admission;
 pub mod configured;
 mod effective;
+mod flow;
 pub mod mode_graph;
 mod named;
 pub mod native_preview;
@@ -28,6 +29,7 @@ pub mod presets;
 pub mod program;
 mod scopes;
 mod step;
+pub(crate) mod temporary;
 pub(crate) use scopes::admit as admits_scoped_action;
 pub mod terminal_input;
 pub mod ui;
@@ -1440,6 +1442,11 @@ pub fn keymap_for(fast_pane_keys: bool) -> Arc<Keymap> {
     } else {
         Arc::clone(&DEFAULT_KEYMAP)
     }
+}
+
+/// Render the publicly writable program syntax used by binding discovery.
+pub(crate) fn program_yaml(program: &program::Program) -> Result<serde_yaml::Value, String> {
+    step::yaml(program)
 }
 
 #[cfg(test)]

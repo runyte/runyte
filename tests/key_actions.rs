@@ -291,8 +291,6 @@ fn typed_steps_keep_types_options_and_scoped_internal_syntax_strict() {
         "{action: yank, register: a}",
         "{action: yank, extend: false}",
         "{action: yank, temporary: false}",
-        "{action: mode-enter, arg: normal, temporary: false}",
-        "{if: recording-macro, then: [yank], else: []}",
         "{action: yank, surprise: false}",
         "{action: search, arg: TODO}",
     ] {

@@ -76,6 +76,7 @@ impl App {
                     self.directory_tree.selected = self.directory_tree.root.clone();
                 }
                 if !self.directory_tree.focused {
+                    self.line_select = None;
                     self.directory_tree_previous_mode = self.mode;
                     self.directory_tree_previous_binding_mode = self.binding_mode_name();
                     self.set_editing_role(Mode::Normal);
@@ -322,6 +323,7 @@ impl App {
 
     pub(super) fn enter_directory_tree(&mut self) {
         if !self.directory_tree.focused {
+            self.line_select = None;
             self.directory_tree_previous_mode = self.mode;
             self.directory_tree_previous_binding_mode = self.binding_mode_name();
             self.set_editing_role(Mode::Normal);
@@ -604,6 +606,7 @@ impl App {
 
     pub(super) fn leave_directory_tree(&mut self) {
         if self.directory_tree.focused {
+            self.line_select = None;
             self.jump = None;
             self.directory_tree_jump_paths.clear();
             self.directory_tree.focused = false;

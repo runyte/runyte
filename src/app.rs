@@ -3334,7 +3334,7 @@ pub struct App {
     /// Temporary mode entry authored by the default line/paragraph programs.
     /// Holds the editing role and named binding identity to restore when the
     /// gesture ends. Whole-line extent lives independently on the selection.
-    line_select: Option<(Mode, Option<String>)>,
+    line_select: Option<binding_modes::TemporaryMode>,
     selection_action_depth: usize,
     selection_history_epoch: u64,
     /// Selection history of each terminal's review, which belongs to the

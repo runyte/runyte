@@ -978,3 +978,15 @@ fn terminal_undo_refusal_stops_its_program_before_leaving_the_terminal() {
     assert_eq!(app.active_terminal(), Some(terminal));
     assert_eq!(app.mode, Mode::Normal);
 }
+
+#[test]
+fn switching_terminal_sessions_discards_a_temporary_mode() {
+    let (mut app, first) = terminal_app("{}");
+    let second = app.terminals.insert_test_session(80, 24);
+    app.set_editing_role(Mode::Normal);
+    send(&mut app, "x");
+    assert!(app.line_select.is_some());
+    app.show_terminal(second);
+    assert_ne!(app.active_terminal(), Some(first));
+    assert!(app.line_select.is_none());
+}

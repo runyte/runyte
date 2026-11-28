@@ -8,10 +8,11 @@ use crate::command::Mode;
 pub const MAX_STEPS: usize = 16;
 pub const MAX_DEPTH: usize = 4;
 
-/// Internal conditions used by built-in programs. Public syntax lands in stage 5.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Conditions shared by embedded and configured programs.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Condition {
     Mode(Mode),
+    NamedMode(String),
     RecordingMacro,
     TreeEntryExpanded,
     TreeEntryIsDirectory,
@@ -19,16 +20,17 @@ pub enum Condition {
 }
 
 impl Condition {
-    pub fn applicable_in(self, scope: BindingScope) -> bool {
+    pub fn applicable_in(&self, scope: BindingScope) -> bool {
         match self {
-            Self::Mode(_) | Self::RecordingMacro => true,
+            Self::Mode(_) | Self::NamedMode(_) | Self::RecordingMacro => true,
             _ => scope == BindingScope::DirectoryTree,
         }
     }
 
-    pub fn label(self) -> String {
+    pub fn label(&self) -> String {
         match self {
-            Self::Mode(mode) => format!("mode: {}", super::actions::mode_name(mode)),
+            Self::Mode(mode) => format!("mode: {}", super::actions::mode_name(*mode)),
+            Self::NamedMode(name) => format!("mode: {name}"),
             Self::RecordingMacro => "recording-macro".into(),
             Self::TreeEntryExpanded => "tree-entry-expanded".into(),
             Self::TreeEntryIsDirectory => "tree-entry-is-directory".into(),
@@ -71,10 +73,21 @@ impl Program {
         if self.is_empty() {
             return Err("binding program must not be empty");
         }
-        self.validate_paths(scope, false)
+        self.validate_paths(Some(scope), false)
     }
 
-    fn validate_paths(&self, scope: BindingScope, outer_tail: bool) -> Result<(), &'static str> {
+    pub(super) fn validate_structure(&self) -> Result<(), &'static str> {
+        if self.is_empty() {
+            return Err("binding program must not be empty");
+        }
+        self.validate_paths(None, false)
+    }
+
+    fn validate_paths(
+        &self,
+        scope: Option<BindingScope>,
+        outer_tail: bool,
+    ) -> Result<(), &'static str> {
         for (index, step) in self.steps().iter().enumerate() {
             let tail = outer_tail || index + 1 < self.steps().len();
             match step {
@@ -87,7 +100,7 @@ impl Program {
                     then,
                     otherwise,
                 } => {
-                    if !condition.applicable_in(scope) {
+                    if scope.is_some_and(|scope| !condition.applicable_in(scope)) {
                         return Err("condition is not available for this buffer type");
                     }
                     then.validate_paths(scope, tail)?;
