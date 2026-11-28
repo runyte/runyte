@@ -550,10 +550,17 @@ impl App {
     /// Returning false leaves the intent unapplied and makes the whole root
     /// replay abort at the next scheduler boundary.
     pub(super) fn reserve_macro_replay_range_work(&mut self, repetitions: usize) -> bool {
+        self.reserve_macro_replay_program_work(&[repetitions])
+    }
+
+    pub(super) fn reserve_macro_replay_program_work(&mut self, repetitions: &[usize]) -> bool {
         let Some(replay) = self.macro_replay.as_mut() else {
             return true;
         };
-        if repetitions > MAX_MACRO_REPLAY_ATOMIC_REPETITIONS {
+        if repetitions
+            .iter()
+            .any(|&n| n > MAX_MACRO_REPLAY_ATOMIC_REPETITIONS)
+        {
             replay.abort_reason = Some(format!(
                 "macro replay stopped after {} work unit(s); counted range exceeds the \
                  {MAX_MACRO_REPLAY_ATOMIC_REPETITIONS}-repetition per-action limit",
@@ -561,7 +568,9 @@ impl App {
             ));
             return false;
         }
-        let work = repetitions.saturating_sub(1);
+        let work = repetitions
+            .iter()
+            .fold(0usize, |total, n| total.saturating_add(n.saturating_sub(1)));
         if work > replay.remaining_work {
             replay.abort_reason = Some(Self::macro_replay_limit_reason(replay.processed_work));
             return false;
@@ -970,7 +979,7 @@ impl App {
 
     pub(super) fn find_character(&mut self, character: char, forward: bool, till: bool) {
         let buffer = self.active_buffer();
-        let extend = self.mode == Mode::Select;
+        let extend = self.motion_extends();
         let mut missed = false;
         let mut matched = false;
         let selection = self.active().selection.transform(|range| {

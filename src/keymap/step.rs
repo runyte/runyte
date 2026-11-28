@@ -64,6 +64,7 @@ pub(super) struct ActionDef {
     pub action: String,
     pub arg: Option<String>,
     pub temporary: Option<bool>,
+    pub options: program::StepOptions,
 }
 #[derive(Debug, PartialEq)]
 pub(super) struct Conditional {
@@ -123,11 +124,33 @@ impl StepRecord {
         if self.command.is_some() || self.argument.is_some() {
             return Err(E::custom(SYNTAX_HINT));
         }
-        if self.count.is_some() || self.register.is_some() || self.extend.is_some() {
-            return Err(E::custom(
-                "count, register and extend step fields are not available until stage 5d",
-            ));
+        let has_options = self.count.is_some() || self.register.is_some() || self.extend.is_some();
+        if has_options && self.action.is_none() {
+            return Err(E::custom("step options require an action"));
         }
+        let options = program::StepOptions {
+            count: parse_prefix(self.count, |v| {
+                v.as_u64()
+                    .filter(|n| (1..=999_999).contains(n))
+                    .map(|n| n as usize)
+            })
+            .map_err(E::custom)?,
+            register: parse_prefix(self.register, |v| {
+                v.as_str().and_then(|s| {
+                    let mut chars = s.chars();
+                    let c = chars.next()?;
+                    (chars.next().is_none() && !c.is_control()).then_some(c)
+                })
+            })
+            .map_err(E::custom)?,
+            extend: self
+                .extend
+                .map(|v| {
+                    v.as_bool()
+                        .ok_or_else(|| E::custom("extend must be a boolean"))
+                })
+                .transpose()?,
+        };
         if self.temporary.is_some() && self.action.as_deref() != Some("mode-enter") {
             return Err(E::custom("temporary requires mode-enter"));
         }
@@ -144,6 +167,7 @@ impl StepRecord {
                     action,
                     arg,
                     temporary: self.temporary,
+                    options,
                 }))
             }
             (None, None, Some(condition), Some(then), Some(otherwise)) => {
@@ -182,6 +206,23 @@ impl<'de> Deserialize<'de> for StepDef {
     }
 }
 
+fn parse_prefix<T>(
+    value: Option<serde_yaml::Value>,
+    fixed: impl FnOnce(&serde_yaml::Value) -> Option<T>,
+) -> Result<program::Prefix<T>, &'static str> {
+    use program::Prefix;
+    let Some(value) = value else {
+        return Ok(Prefix::Consume);
+    };
+    match value.as_str() {
+        Some("inherit") => Ok(Prefix::Inherit),
+        Some("none") => Ok(Prefix::None),
+        _ => fixed(&value)
+            .map(Prefix::Fixed)
+            .ok_or("invalid step prefix override"),
+    }
+}
+
 pub(super) fn compile(
     steps: &[StepDef],
     depth: usize,
@@ -212,8 +253,9 @@ pub(super) fn compile(
                     action,
                     arg,
                     temporary,
+                    options,
                 }) => {
-                    if action == "mode-enter" {
+                    let step = if action == "mode-enter" {
                         let arg = arg.as_ref().ok_or("mode-enter requires action/arg")?;
                         mode_graph::valid_name(arg)?;
                         S::Action(actions::Action::Invocation(
@@ -236,6 +278,18 @@ pub(super) fn compile(
                         S::Action(
                             actions::resolve_action(action, arg.as_deref(), Mode::Normal, true)?.0,
                         )
+                    };
+                    let S::Action(action) = step else {
+                        unreachable!()
+                    };
+                    options.validate(&action)?;
+                    if *options == program::StepOptions::default() {
+                        S::Action(action)
+                    } else {
+                        S::ActionWithOptions {
+                            action,
+                            options: *options,
+                        }
                     }
                 }
                 StepDef::Conditional(c) => S::If {
@@ -276,6 +330,41 @@ pub(super) fn yaml(program: &program::Program) -> Result<serde_yaml::Value, Stri
     use serde_yaml::{Mapping, Value};
     fn value(step: &program::Step) -> Result<Value, String> {
         Ok(match step {
+            program::Step::ActionWithOptions { action, options } => {
+                let plain = value(&program::Step::Action(action.clone()))?;
+                let mut map = match plain {
+                    Value::Mapping(map) => map,
+                    name => {
+                        let mut map = Mapping::new();
+                        map.insert("action".into(), name);
+                        map
+                    }
+                };
+                fn prefix<T: ToString>(p: program::Prefix<T>) -> Option<Value> {
+                    use program::Prefix::*;
+                    match p {
+                        Consume => Option::None,
+                        Inherit => Some("inherit".into()),
+                        None => Some("none".into()),
+                        Fixed(v) => Some(v.to_string().into()),
+                    }
+                }
+                if let Some(v) = prefix(options.count) {
+                    let v = if let program::Prefix::Fixed(n) = options.count {
+                        Value::Number(n.into())
+                    } else {
+                        v
+                    };
+                    map.insert("count".into(), v);
+                }
+                if let Some(v) = prefix(options.register) {
+                    map.insert("register".into(), v);
+                }
+                if let Some(v) = options.extend {
+                    map.insert("extend".into(), v.into());
+                }
+                Value::Mapping(map)
+            }
             program::Step::Action(action) => {
                 let name = action.target().name();
                 match action {
@@ -368,6 +457,8 @@ mod tests {
             "[{if: recording-macro, then: [macro-stop-recording], else: []}]",
             "[{action: find-next-char, arg: λ}, {action: surround-replace, arg: '(]'}]",
             "[{action: search, arg: abc}, {action: join-selections, arg: ''}]",
+            "[{action: move-right, count: 3, extend: true}, {action: yank, register: a}]",
+            "[{action: move-right, count: inherit, extend: false}, {action: paste-after, count: none, register: none}, {action: yank, register: inherit}]",
             r#"[{action: insert-text, arg: "λ\n\t"}]"#,
             "[{if: tree-entry-expanded, then: [directory-tree-collapse], else: [directory-tree-expand]}]",
             "[{if: tree-entry-is-directory, then: [directory-tree-expand], else: []}]",
@@ -409,7 +500,7 @@ mod tests {
             "{pipe: sort}",
             "{action: yank, count: null}",
             "{action: yank, register: null}",
-            "{action: yank, extend: false}",
+            "{action: yank, extend: null}",
             "{action: yank, temporary: false}",
             "{action: yank, extra: true}",
         ] {

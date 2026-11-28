@@ -26,6 +26,7 @@ pub struct GrammarContext<'a> {
     scope: BindingScope,
     keymap: &'a Keymap,
     recording_macro: bool,
+    selected_register: char,
 }
 
 impl<'a> GrammarContext<'a> {
@@ -36,6 +37,7 @@ impl<'a> GrammarContext<'a> {
             scope,
             keymap,
             recording_macro: false,
+            selected_register: '"',
         }
     }
 
@@ -81,6 +83,11 @@ impl<'a> GrammarContext<'a> {
 
     pub const fn with_recording_macro(mut self, recording_macro: bool) -> Self {
         self.recording_macro = recording_macro;
+        self
+    }
+
+    pub const fn with_register(mut self, register: char) -> Self {
+        self.selected_register = register;
         self
     }
 
@@ -237,7 +244,10 @@ struct ProgramExecution {
     next: usize,
     count: Option<usize>,
     original_count: Option<usize>,
-    count_step: Option<usize>,
+    original_register: char,
+    pending_register: char,
+    step_register: Option<(char, bool)>,
+    step_extend: Option<bool>,
     frames: Vec<(crate::keymap::program::Program, usize)>,
     pending_branch: Option<(
         crate::keymap::program::Program,
@@ -290,6 +300,22 @@ impl ActiveGrammar {
         }
     }
 
+    pub(crate) fn set_pending_register(&mut self, register: char) {
+        let Self::Runyte(grammar) = self;
+        if let Some(program) = grammar.program.as_mut() {
+            program.pending_register = register;
+        }
+    }
+
+    pub(crate) fn step_overrides(&self) -> (Option<(char, bool)>, Option<bool>) {
+        let Self::Runyte(grammar) = self;
+        grammar
+            .program
+            .as_ref()
+            .map(|p| (p.step_register, p.step_extend))
+            .unwrap_or_default()
+    }
+
     pub(crate) fn program_description(&self) -> Option<&str> {
         match self {
             Self::Runyte(grammar) => grammar.program.as_ref().map(|p| p.description.as_ref()),
@@ -326,32 +352,50 @@ impl ActiveGrammar {
         grammar.program.as_ref().is_some_and(|p| p.conditional)
     }
 
-    pub(crate) fn program_repetitions(&self) -> Option<usize> {
+    pub(crate) fn program_repetitions(&self) -> Option<Vec<usize>> {
         let Self::Runyte(grammar) = self;
         let p = grammar.program.as_ref()?;
         if p.conditional {
-            return Some(1);
+            return Some(vec![1]);
         }
-        if p.program.len() == 1 {
+        if p.program.len() == 1 && !p.program.has_options() {
             return None;
         }
-        Some(
-            p.count_step
-                .filter(|index| *index >= p.next.saturating_sub(1))
-                .and_then(|index| {
-                    let command = p.program.get(index)?.target();
-                    let policy = command.id().descriptor()?.policy;
-                    (policy.count == crate::command::descriptor::CountBehavior::Repeat
-                        && !matches!(
-                            command,
-                            BindingTarget::Editor(
-                                EditorCommand::ReplayMacro | EditorCommand::ReplayDefaultMacro
-                            )
-                        ))
-                    .then_some(p.original_count.unwrap_or(1))
-                })
-                .unwrap_or(1),
-        )
+        let mut pending = p.original_count;
+        let mut repetitions = Vec::new();
+        for (index, step) in p.program.steps().iter().enumerate() {
+            use crate::keymap::program::{Prefix, Step};
+            let (action, options) = match step {
+                Step::Action(action) => (action, Default::default()),
+                Step::ActionWithOptions { action, options } => (action, *options),
+                Step::If { .. } => unreachable!("flat program"),
+            };
+            let Some(descriptor) = action.target().id().descriptor() else {
+                continue;
+            };
+            let count = if descriptor.policy.count.accepts() {
+                match options.count {
+                    Prefix::Consume => pending.take(),
+                    Prefix::Inherit => p.original_count,
+                    Prefix::None => None,
+                    Prefix::Fixed(n) => Some(n),
+                }
+            } else {
+                None
+            };
+            if index >= p.next.saturating_sub(1)
+                && descriptor.policy.count == crate::command::descriptor::CountBehavior::Repeat
+                && !matches!(
+                    action.target(),
+                    BindingTarget::Editor(
+                        EditorCommand::ReplayMacro | EditorCommand::ReplayDefaultMacro
+                    )
+                )
+            {
+                repetitions.push(count.unwrap_or(1));
+            }
+        }
+        Some(repetitions)
     }
 
     pub(crate) fn retain_operand_context(
@@ -535,13 +579,17 @@ impl RunyteGrammar {
     fn program_intents(
         &mut self,
         binding: &crate::keymap::Binding,
+        selected_register: char,
     ) -> Result<Vec<EditorIntent>, CommandInvocationError> {
         self.program = Some(ProgramExecution {
             program: binding.program.clone(),
             next: 0,
             original_count: self.count,
+            original_register: selected_register,
+            pending_register: selected_register,
+            step_register: None,
+            step_extend: None,
             count: self.count.take(),
-            count_step: binding.program.count_step(),
             frames: if binding.program.has_conditions() {
                 vec![(binding.program.clone(), 0)]
             } else {
@@ -602,7 +650,7 @@ impl RunyteGrammar {
                 program.frames.pop();
             }
         };
-        let action = match step {
+        let (action, options) = match step {
             crate::keymap::program::Step::If {
                 condition,
                 then,
@@ -611,7 +659,10 @@ impl RunyteGrammar {
                 program.pending_branch = Some((*then, *otherwise));
                 return Ok(Some(EditorIntent::EvaluateCondition(condition)));
             }
-            crate::keymap::program::Step::Action(action) => action,
+            crate::keymap::program::Step::Action(action) => (action, Default::default()),
+            crate::keymap::program::Step::ActionWithOptions { action, options } => {
+                (action, options)
+            }
         };
         self.count = if action
             .target()
@@ -619,10 +670,32 @@ impl RunyteGrammar {
             .descriptor()
             .is_some_and(|d| d.policy.count.accepts())
         {
-            program.count.take()
+            use crate::keymap::program::Prefix;
+            match options.count {
+                Prefix::Consume => program.count.take(),
+                Prefix::Inherit => program.original_count,
+                Prefix::None => None,
+                Prefix::Fixed(n) => Some(n),
+            }
         } else {
             None
         };
+        use crate::keymap::program::Prefix;
+        program.step_register = action
+            .target()
+            .id()
+            .descriptor()
+            .filter(|d| d.uses_register)
+            .map(|_| match options.register {
+                Prefix::Consume => {
+                    let register = std::mem::replace(&mut program.pending_register, '"');
+                    (register, true)
+                }
+                Prefix::Inherit => (program.original_register, false),
+                Prefix::None => ('"', false),
+                Prefix::Fixed(register) => (register, false),
+            });
+        program.step_extend = options.extend;
         program.previous_continues = action.can_continue();
         program.next += 1;
         let availability = program.availability;
@@ -677,7 +750,7 @@ impl RunyteGrammar {
                     binding.target
                 };
                 self.pending.clear();
-                let intents = self.program_intents(binding)?;
+                let intents = self.program_intents(binding, context.selected_register)?;
                 if self.awaiting_character.is_some() {
                     self.awaiting_binding = Some((candidate, target));
                     Ok(GrammarOutput {
@@ -712,7 +785,7 @@ impl RunyteGrammar {
                     } else {
                         binding.target
                     };
-                    let intents = self.program_intents(binding)?;
+                    let intents = self.program_intents(binding, context.selected_register)?;
                     if self.awaiting_character.is_some() {
                         self.awaiting_binding = Some((prefix.clone(), target));
                     }
@@ -895,7 +968,7 @@ impl RunyteGrammar {
                         .first()
                         .is_some_and(|key| *key == Key::char('Z'));
                 self.pending.clear();
-                let intents = self.program_intents(binding)?;
+                let intents = self.program_intents(binding, context.selected_register)?;
                 if self.awaiting_character.is_some() {
                     self.awaiting_binding = Some((resolved_sequence.clone(), target));
                 }

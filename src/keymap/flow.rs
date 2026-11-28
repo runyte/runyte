@@ -20,6 +20,38 @@ struct State {
     tree_return: Option<(usize, ModeId)>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct CountState {
+    pending: bool,
+    original: Option<bool>,
+}
+impl CountState {
+    fn entry(program: &Program, state: State) -> Vec<(State, Self)> {
+        if program.inherits_count() {
+            [false, true]
+                .into_iter()
+                .map(|present| {
+                    (
+                        state,
+                        Self {
+                            pending: true,
+                            original: Some(present),
+                        },
+                    )
+                })
+                .collect()
+        } else {
+            vec![(
+                state,
+                Self {
+                    pending: true,
+                    original: None,
+                },
+            )]
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Failure {
     pub binding: usize,
@@ -174,7 +206,20 @@ impl Analysis<'_> {
             })
             .collect()
     }
-    fn step(&self, action: &Action, state: State, follow: bool) -> Result<Vec<State>, String> {
+    fn step(
+        &self,
+        action: &Action,
+        state: State,
+        follow: bool,
+        counted: Option<bool>,
+    ) -> Result<Vec<State>, String> {
+        let boundary = matches!(
+            action.target().id(),
+            CommandId::Editor(C::MoveFileStart | C::MoveFileEnd)
+        );
+        if boundary && let Some(counted) = counted {
+            return self.step_path(action, state, follow, counted);
+        }
         let mut outputs = self.step_path(action, state, follow, false)?;
         if state.temporary.is_some()
             && matches!(
@@ -562,9 +607,9 @@ impl Analysis<'_> {
     }
     fn append_states(
         &mut self,
-        next: &mut Vec<State>,
-        seen: &mut HashSet<State>,
-        outputs: Vec<State>,
+        next: &mut Vec<(State, CountState)>,
+        seen: &mut HashSet<(State, CountState)>,
+        outputs: Vec<(State, CountState)>,
     ) -> Result<(), String> {
         self.charge(outputs.len())?;
         next.extend(outputs.into_iter().filter(|state| seen.insert(*state)));
@@ -573,30 +618,71 @@ impl Analysis<'_> {
     fn walk(
         &mut self,
         program: &Program,
-        mut states: Vec<State>,
+        mut states: Vec<(State, CountState)>,
         prefix: &str,
         first: bool,
         outer_tail: bool,
-    ) -> Result<Vec<State>, String> {
+    ) -> Result<Vec<(State, CountState)>, String> {
         for (index, step) in program.steps().iter().enumerate() {
             self.charge(states.len())?;
             let path = format!("{prefix}{}", index + 1);
             let mut next = Vec::new();
             let mut seen = HashSet::new();
-            for &state in &states {
+            for &(state, _) in &states {
                 self.remember_history(state);
             }
 
             match step {
-                Step::Action(action) => {
-                    for state in states {
+                Step::Action(action) | Step::ActionWithOptions { action, .. } => {
+                    let count = match step {
+                        Step::ActionWithOptions { options, .. } => options.count,
+                        _ => program::Prefix::Consume,
+                    };
+                    for (state, mut count_state) in states {
+                        if matches!(step, Step::ActionWithOptions { options, .. } if options.extend.is_some())
+                            && (!action
+                                .target()
+                                .id()
+                                .descriptor()
+                                .is_some_and(|d| d.supports_extend_in(self.scope(state)))
+                                || self.role(state) == Mode::List)
+                        {
+                            return Err(format!(
+                                "step {path}: extend is unavailable in {}",
+                                self.kinds[state.kind]
+                            ));
+                        }
+                        use program::Prefix;
+                        let counted = match count {
+                            Prefix::Fixed(_) => Some(true),
+                            Prefix::None => Some(false),
+                            Prefix::Inherit => count_state.original,
+                            Prefix::Consume => {
+                                if count_state.pending {
+                                    count_state.original
+                                } else {
+                                    Some(false)
+                                }
+                            }
+                        };
+                        count_state.pending = count_state.pending
+                            && !(count == Prefix::Consume
+                                && action
+                                    .target()
+                                    .id()
+                                    .descriptor()
+                                    .is_some_and(|d| d.policy.count.accepts()));
                         let outputs = self
                             .step(
                                 action,
                                 state,
                                 outer_tail || index + 1 < program.steps().len(),
+                                counted,
                             )
-                            .map_err(|reason| format!("step {path}: {reason}"))?;
+                            .map_err(|reason| format!("step {path}: {reason}"))?
+                            .into_iter()
+                            .map(|state| (state, count_state))
+                            .collect();
                         self.append_states(&mut next, &mut seen, outputs)?;
                     }
                 }
@@ -607,7 +693,7 @@ impl Analysis<'_> {
                 } => {
                     let mut yes = Vec::new();
                     let mut no = Vec::new();
-                    for mut state in states {
+                    for (mut state, pending) in states {
                         if first && index == 0 {
                             state = self.restore_temporary(state);
                         }
@@ -625,10 +711,10 @@ impl Analysis<'_> {
                             _ => None,
                         };
                         if matches != Some(false) {
-                            yes.push(state);
+                            yes.push((state, pending));
                         }
                         if matches != Some(true) {
-                            no.push(state);
+                            no.push((state, pending));
                         }
                     }
                     let outputs = self.walk(
@@ -971,7 +1057,20 @@ fn analyze(
             let result = if let Some(cached) = memo.get(&(state, index)) {
                 cached.clone()
             } else {
-                let result = analysis.walk(&binding.program, vec![state], "", true, false);
+                let result = analysis
+                    .walk(
+                        &binding.program,
+                        CountState::entry(&binding.program, state),
+                        "",
+                        true,
+                        false,
+                    )
+                    .map(|states| {
+                        states
+                            .into_iter()
+                            .map(|(state, _)| state)
+                            .collect::<Vec<_>>()
+                    });
                 if independent[index] {
                     memo.insert((state, index), result.clone());
                 }
@@ -1077,7 +1176,13 @@ mod tests {
         };
         let program = Program::new(vec![Action::Editor(C::NextWindow)]).unwrap();
         let error = analysis
-            .walk(&program, vec![initial], "", true, true)
+            .walk(
+                &program,
+                CountState::entry(&program, initial),
+                "",
+                true,
+                true,
+            )
             .unwrap_err();
         assert!(error.contains("work bound"), "{error}");
         assert_eq!(

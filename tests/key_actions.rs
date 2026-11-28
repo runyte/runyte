@@ -288,7 +288,7 @@ fn typed_steps_keep_types_options_and_scoped_internal_syntax_strict() {
         "{action: 2}",
         "{action: ''}",
         "{action: yank, count: null}",
-        "{action: yank, register: a}",
+        "{action: yank, register: null}",
         "{action: yank, extend: false}",
         "{action: yank, temporary: false}",
         "{action: yank, surprise: false}",

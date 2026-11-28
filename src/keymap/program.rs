@@ -42,6 +42,10 @@ impl Condition {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Step {
     Action(Action),
+    ActionWithOptions {
+        action: Action,
+        options: StepOptions,
+    },
     If {
         condition: Condition,
         then: Box<Program>,
@@ -58,6 +62,44 @@ enum Steps {
 /// Empty branch bodies are permitted; a binding still requires a nonempty root.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Program(Steps);
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Prefix<T> {
+    #[default]
+    Consume,
+    Inherit,
+    None,
+    Fixed(T),
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct StepOptions {
+    pub count: Prefix<usize>,
+    pub register: Prefix<char>,
+    pub extend: Option<bool>,
+}
+
+impl StepOptions {
+    pub fn validate(self, action: &Action) -> Result<(), &'static str> {
+        if matches!(self.count, Prefix::Fixed(n) if !(1..=999_999).contains(&n)) {
+            return Err("count must be between 1 and 999999");
+        }
+        if matches!(self.register, Prefix::Fixed(c) if c.is_control()) {
+            return Err("invalid register name");
+        }
+        let descriptor = action.target().id().descriptor();
+        if self.count != Prefix::Consume && !descriptor.is_some_and(|d| d.policy.count.accepts()) {
+            return Err("count requires an action that accepts a count");
+        }
+        if self.register != Prefix::Consume && !descriptor.is_some_and(|d| d.uses_register) {
+            return Err("register requires an action that uses a register");
+        }
+        if self.extend.is_some() && !descriptor.is_some_and(|d| d.supports_extend) {
+            return Err("extend requires a supported motion");
+        }
+        Ok(())
+    }
+}
 
 impl Program {
     pub fn conditional(condition: Condition, then: Self, otherwise: Self) -> Self {
@@ -89,12 +131,28 @@ impl Program {
         outer_tail: bool,
     ) -> Result<(), &'static str> {
         for (index, step) in self.steps().iter().enumerate() {
+            if let Step::ActionWithOptions { action, options } = step {
+                options.validate(action)?;
+                if options.extend.is_some()
+                    && scope.is_some_and(|scope| {
+                        !action
+                            .target()
+                            .id()
+                            .descriptor()
+                            .is_some_and(|d| d.supports_extend_in(scope))
+                    })
+                {
+                    return Err("extend is unavailable in this view");
+                }
+            }
             let tail = outer_tail || index + 1 < self.steps().len();
             match step {
-                Step::Action(action) if tail && !action.can_continue() => {
+                Step::Action(action) | Step::ActionWithOptions { action, .. }
+                    if tail && !action.can_continue() =>
+                {
                     return Err("prompt, background or plugin action must end every program path");
                 }
-                Step::Action(_) => {}
+                Step::Action(_) | Step::ActionWithOptions { .. } => {}
                 Step::If {
                     condition,
                     then,
@@ -147,13 +205,33 @@ impl Program {
         self.steps()
             .iter()
             .map(|step| match step {
-                Step::Action(_) => 0,
+                Step::Action(_) | Step::ActionWithOptions { .. } => 0,
                 Step::If {
                     then, otherwise, ..
                 } => 1 + then.depth().max(otherwise.depth()),
             })
             .max()
             .unwrap_or(0)
+    }
+
+    pub fn inherits_count(&self) -> bool {
+        self.steps().iter().any(|step| match step {
+            Step::Action(_) => false,
+            Step::ActionWithOptions { options, .. } => options.count == Prefix::Inherit,
+            Step::If {
+                then, otherwise, ..
+            } => then.inherits_count() || otherwise.inherits_count(),
+        })
+    }
+
+    pub fn has_options(&self) -> bool {
+        self.steps().iter().any(|step| match step {
+            Step::Action(_) => false,
+            Step::ActionWithOptions { .. } => true,
+            Step::If {
+                then, otherwise, ..
+            } => then.has_options() || otherwise.has_options(),
+        })
     }
 
     pub fn has_conditions(&self) -> bool {
@@ -167,7 +245,9 @@ impl Program {
         std::iter::from_fn(move || {
             loop {
                 match current.next() {
-                    Some(Step::Action(action)) => return Some(action),
+                    Some(Step::Action(action) | Step::ActionWithOptions { action, .. }) => {
+                        return Some(action);
+                    }
                     Some(Step::If {
                         then, otherwise, ..
                     }) => {
@@ -185,7 +265,7 @@ impl Program {
         self.steps()
             .iter()
             .map(|step| match step {
-                Step::Action(_) => 1,
+                Step::Action(_) | Step::ActionWithOptions { .. } => 1,
                 Step::If {
                     then, otherwise, ..
                 } => 1 + then.len() + otherwise.len(),

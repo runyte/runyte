@@ -633,7 +633,7 @@ mod tests {
             "{action: yank, if: null}",
             "{command: null}",
             "{action: yank, count: null}",
-            "{action: yank, extend: false}",
+            "{action: yank, extend: null}",
         ] {
             assert!(
                 serde_yaml::from_str::<BindingDef>(source).is_err(),

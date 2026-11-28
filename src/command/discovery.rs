@@ -141,6 +141,11 @@ pub fn details_indexed(
         joined(effective.keys(id))
     );
     text.push_str(&format!(
+        "Uses register: {}\nSupports extend: {}\n",
+        d.uses_register,
+        d.supports_extend_in(scope)
+    ));
+    text.push_str(&format!(
         "Classification: {}\n",
         d.classification.description()
     ));
@@ -217,7 +222,7 @@ fn render_program(
                 render_program(then, scope, depth + 1),
                 render_program(otherwise, scope, depth + 1)
             ),
-            Step::Action(action) => {
+            Step::Action(action) | Step::ActionWithOptions { action, .. } => {
                 let target = action.target();
                 let description = target
                     .id()
@@ -228,6 +233,33 @@ fn render_program(
                             .or(Some(d.metadata.description))
                     })
                     .unwrap_or_else(|| target.description());
+                let options = match step {
+                    Step::ActionWithOptions { options, .. } => {
+                        let mut fields = Vec::new();
+                        fn prefix<T: ToString>(
+                            value: crate::keymap::program::Prefix<T>,
+                        ) -> Option<String> {
+                            use crate::keymap::program::Prefix;
+                            match value {
+                                Prefix::Consume => None,
+                                Prefix::Inherit => Some("inherit".into()),
+                                Prefix::None => Some("none".into()),
+                                Prefix::Fixed(v) => Some(v.to_string()),
+                            }
+                        }
+                        if let Some(v) = prefix(options.count) {
+                            fields.push(format!("count: {v}"));
+                        }
+                        if let Some(v) = prefix(options.register) {
+                            fields.push(format!("register: {v}"));
+                        }
+                        if let Some(v) = options.extend {
+                            fields.push(format!("extend: {v}"));
+                        }
+                        format!(" ({})", fields.join(", "))
+                    }
+                    _ => String::new(),
+                };
                 let argument = match action {
                     actions::Action::Invocation(invocation) => format!(
                         " (argument: {})",
@@ -244,10 +276,11 @@ fn render_program(
                     _ => String::new(),
                 };
                 format!(
-                    "{indent}{}. {}{} — {}\n",
+                    "{indent}{}. {}{}{} — {}\n",
                     index + 1,
                     target.name(),
                     argument,
+                    options,
                     description
                 )
             }
@@ -353,7 +386,7 @@ pub fn admitted_here(id: CommandId, mode: Mode, scope: BindingScope) -> bool {
 pub fn descriptor_reference() -> String {
     use std::fmt::Write;
     let mut out = String::from(
-        "\n## Action contracts\n\nGenerated from built-in descriptors. Effects include owned continuations and specialized views; remaining prompt and background effects require the last step. Key-program arguments replace the listed operands or prompts; palette spellings remain separate.\n\n| Action | Effects | Count | Character operands | Palette argument | Key-program argument | View differences | Classification |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n",
+        "\n## Action contracts\n\nGenerated from built-in descriptors. Effects include owned continuations and specialized views; remaining prompt and background effects require the last step. Key-program arguments replace the listed operands or prompts; palette spellings remain separate.\n\n| Action | Effects | Count | Uses register | Supports extend | Character operands | Palette argument | Key-program argument | View differences | Classification |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n",
     );
     for id in identities() {
         let d = id.descriptor().unwrap();
@@ -366,10 +399,12 @@ pub fn descriptor_reference() -> String {
         let argument = d.argument().map(|a| a.usage).unwrap_or("none");
         let _ = writeln!(
             out,
-            "| `{}` | {} | {} | {} | {} | {} | {} | {} |",
+            "| `{}` | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
             d.metadata.name,
             display::effects(d.policy.effects),
             display::count(d.policy.count),
+            d.uses_register,
+            d.supports_extend,
             display::operands(d.policy.operands),
             argument.replace('|', "&#124;"),
             match id {

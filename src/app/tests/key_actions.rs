@@ -2764,3 +2764,194 @@ fn supplied_literal_turns_half_open_ranges_into_ordinary_carets() {
     );
     assert_eq!(app.registers[&'"'].text, "c");
 }
+
+#[test]
+fn step_counts_consume_once_and_inherit_across_skipped_branches() {
+    for (steps, expected) in [
+        (
+            "[{action: move-right, count: 2}, move-right, {action: move-right, count: inherit}, move-right]",
+            9,
+        ),
+        ("[{action: move-right, count: none}, move-right]", 4),
+        (
+            "[{if: {mode: select}, then: [{action: move-right, count: inherit}], else: []}, move-right, move-right]",
+            4,
+        ),
+    ] {
+        let mut app = configured(&format!("bind: {{normal: {{F6: {steps}}}}}"));
+        seed(&mut app, "abcdefghijklmnop");
+        press(&mut app, '3');
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert!(!app.status_error, "{}", app.status);
+        assert_eq!(app.active().selection.primary().head, expected, "{steps}");
+    }
+}
+
+#[test]
+fn step_count_none_preserves_unprefixed_file_address_semantics() {
+    let mut app =
+        configured("bind: {normal: {F6: [{action: move-file-end, count: none}, move-up]}}");
+    seed(&mut app, "a\nb\nc\nd\ne\n");
+    press(&mut app, '2');
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(
+        app.active_buffer()
+            .offset_to_row(app.active().selection.primary().head),
+        3
+    );
+}
+
+#[test]
+fn step_register_overrides_preserve_pending_prefix_and_inherit_original() {
+    let mut app = configured(
+        "bind: {normal: {F6: [{action: yank, register: b}, move-right, yank, move-right, {action: yank, register: inherit}, move-right, yank]}}",
+    );
+    seed(&mut app, "abcdef");
+    app.selected_register = 'a';
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.registers[&'b'].text, "a");
+    assert_eq!(app.registers[&'a'].text, "c");
+    assert_eq!(app.registers[&'"'].text, "d");
+    assert_eq!(app.selected_register, '"');
+
+    let mut app = configured("bind: {normal: {F6: [{action: yank, register: none}, move-right]}}");
+    seed(&mut app, "abc");
+    app.selected_register = 'a';
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.selected_register, '"');
+    press(&mut app, 'y');
+    assert!(!app.registers.contains_key(&'a'));
+    assert_eq!(app.registers[&'"'].text, "b");
+}
+
+#[test]
+fn non_register_delete_and_skipped_branch_leave_prefix_for_yank() {
+    let mut app = configured(
+        "bind: {normal: {F6: [{if: {mode: select}, then: [yank], else: []}, delete-selection, yank]}}",
+    );
+    seed(&mut app, "abc");
+    app.selected_register = 'a';
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.registers[&'a'].text, "b");
+}
+
+#[test]
+fn step_extend_preserves_mode_and_restores_policy_after_each_motion() {
+    let mut app = configured(
+        "bind: {normal: {F6: [{action: move-right, count: 2, extend: true}, yank], F7: {action: move-right, extend: false}}}",
+    );
+    seed(&mut app, "abcdef");
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.active().selection.primary(), Range::new(0, 2));
+    assert_eq!(app.registers[&'"'].text, "abc");
+    key(&mut app, KeyCode::Function(7), Modifiers::NONE);
+    assert_eq!(app.active().selection.primary(), Range::point(3));
+    assert_eq!(app.step_extend, None);
+
+    let mut app = configured("bind: {select: {F6: {action: move-right, extend: false}}}");
+    seed(&mut app, "abcdef");
+    app.set_editing_role(Mode::Select);
+    app.active_mut()
+        .replace_selection(Selection::single(Range::new(0, 2)));
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Select);
+    assert_eq!(app.active().selection.primary(), Range::point(3));
+}
+
+#[test]
+fn step_options_survive_character_wait_and_reset_on_cancel() {
+    let mut app =
+        configured("bind: {normal: {F6: [{action: find-next-char, extend: true}, yank]}}");
+    seed(&mut app, "abcabcabc");
+    app.selected_register = 'a';
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.step_extend, None);
+    press(&mut app, 'c');
+    assert_eq!(app.registers[&'a'].text, "abc");
+    assert_eq!(app.active().selection.primary(), Range::new(0, 2));
+    assert_eq!(app.mode, Mode::Normal);
+    key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+    key(&mut app, KeyCode::Escape, Modifiers::NONE);
+    assert_eq!(app.step_extend, None);
+    press(&mut app, 'h');
+    assert_eq!(app.active().selection.primary(), Range::point(1));
+}
+
+#[test]
+fn step_register_selection_updates_pending_but_not_inherited_across_operand_wait() {
+    for select in ["{action: register-select, arg: b}", "register-select"] {
+        let mut app = configured(&format!(
+            "bind: {{normal: {{F6: [{select}, yank, move-right, {{action: yank, register: inherit}}]}}}}"
+        ));
+        seed(&mut app, "abc");
+        app.selected_register = 'a';
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        if select == "register-select" {
+            press(&mut app, 'b');
+        }
+        assert_eq!(app.registers[&'b'].text, "a");
+        assert_eq!(app.registers[&'a'].text, "b");
+        assert_eq!(app.selected_register, '"');
+    }
+}
+
+#[test]
+fn step_options_macro_preflight_rejects_before_any_prefix_edits() {
+    let mut app = configured(
+        "bind: {normal: {F6: [{action: insert-text, arg: X}, {action: move-right, count: 129}]}}",
+    );
+    seed(&mut app, "abc");
+    app.macros.insert(
+        DEFAULT_MACRO_REGISTER,
+        vec![InputEvent::Key(KeyStroke::plain(KeyCode::Function(6)))],
+    );
+    for c in [' ', 'm', 'r'] {
+        press(&mut app, c);
+    }
+    finish_macro_replay(&mut app);
+    assert!(app.status.contains("per-action limit"), "{}", app.status);
+    assert_eq!(text(&app), "abc");
+}
+
+#[test]
+fn step_extend_false_leaves_ordinary_carets_from_half_open_selections() {
+    for action in [
+        "{action: move-right, extend: false}",
+        "{action: find-next-char, arg: d, extend: false}",
+    ] {
+        let mut app = configured(&format!("bind: {{select: {{F6: [{action}, yank]}}}}"));
+        seed(&mut app, "abcd");
+        app.set_editing_role(Mode::Select);
+        app.active_mut()
+            .replace_selection(Selection::single(Range::new(0, 2)));
+        app.active_mut()
+            .mark_selection_semantics(SelectionSemantics::HalfOpen);
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        assert_eq!(
+            app.active().selection.primary(),
+            Range::point(3),
+            "{action}"
+        );
+        assert_eq!(app.registers[&'"'].text, "d", "{action}");
+        assert_eq!(app.mode, Mode::Select);
+    }
+}
+
+#[test]
+fn unused_count_ends_with_its_binding() {
+    for steps in [
+        "[yank]",
+        "[{action: move-right, count: none}]",
+        "[{action: move-right, count: 1}]",
+    ] {
+        let mut app = configured(&format!("bind: {{normal: {{F6: {steps}}}}}"));
+        seed(&mut app, "abcdef");
+        press(&mut app, '3');
+        key(&mut app, KeyCode::Function(6), Modifiers::NONE);
+        let before = app.active().selection.primary().head;
+        press(&mut app, 'l');
+        assert_eq!(app.active().selection.primary().head, before + 1, "{steps}");
+    }
+}

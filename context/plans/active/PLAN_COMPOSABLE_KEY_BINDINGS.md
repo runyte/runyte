@@ -1183,3 +1183,16 @@ and tab) at every range head without deleting the selection. Every resulting
 caret is after its insertion. It is one transaction under program undo, valid
 in all four editing roles, with read-only refusal and no automatic indentation,
 pairing or mode change. Replacement composes an explicit deletion with insertion.
+
+
+### Decision 52 — Explicit prefix-setting steps (2026-11-28)
+
+Binding-entry capture in decisions 18 and 48 preserves what was selected before
+the binding. An explicit `register-select` step updates only the pending register
+for subsequent steps without a register field. `register: inherit` continues to
+reuse the original captured register; fixed and `none` overrides are unaffected.
+Thus `[{action: register-select, arg: a}, yank]` still writes register `a`.
+The captured and pending values survive character-operand waits independently.
+A future explicit count-setting action would update only the pending count in
+the same way. Stage 5d tests cover entry prefixes, explicit selection, inheritance,
+and operand waits together.

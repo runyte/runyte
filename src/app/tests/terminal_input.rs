@@ -1009,3 +1009,33 @@ fn supplied_terminal_search_continues_only_after_a_match() {
         assert_eq!(app.search.pattern, "document query");
     }
 }
+
+#[test]
+fn step_extension_and_register_overrides_apply_to_terminal_review() {
+    let (mut app, terminal) = terminal_app(
+        "bind: {terminal: {F6: [{action: move-right, count: 2, extend: true}, {action: yank, register: a}], F7: {action: move-right, extend: false}}}",
+    );
+    app.apply_terminal_output(TerminalOutput::Bytes {
+        id: terminal,
+        bytes: b"abcdef".to_vec(),
+    });
+    app.set_editing_role(Mode::Normal);
+    app.terminals
+        .get_mut(terminal)
+        .unwrap()
+        .search_review("a", false)
+        .unwrap();
+    send(&mut app, "F6");
+    assert_eq!(app.mode, Mode::Normal);
+    assert_eq!(app.registers[&'a'].text, "abc");
+    send(&mut app, "F7");
+    let selection = app
+        .terminals
+        .get(terminal)
+        .unwrap()
+        .review_selection_state()
+        .unwrap()
+        .1;
+    assert!(selection.primary().is_empty());
+    assert_eq!(app.mode, Mode::Normal);
+}

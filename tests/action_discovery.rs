@@ -289,7 +289,7 @@ fn discovery_uses_shared_readable_contracts_and_grouped_reference() {
     ] {
         assert!(!reference.contains(internal), "{internal}");
     }
-    assert!(reference.contains("| repeats | none |"));
+    assert!(reference.contains("| repeats | false | true | none |"));
 }
 
 #[test]
